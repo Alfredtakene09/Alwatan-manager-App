@@ -1,0 +1,231 @@
+/* Modale formulaire — shell partagé (UiFormModal) */
+
+.ui-form-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(4px);
+}
+
+.ui-form-modal {
+  width: 100%;
+  max-width: 32rem;
+  max-height: min(90dvh, 820px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.ui-form-modal--wide {
+  max-width: 40rem;
+}
+
+.ui-form-modal--large {
+  max-width: 44rem;
+}
+
+.ui-form-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.ui-form-modal__header-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.ui-form-modal__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex-shrink: 0;
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--primary-500), var(--primary-700));
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(90, 104, 51, 0.28);
+}
+
+.ui-form-modal__header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.3;
+}
+
+.ui-form-modal__subtitle {
+  margin: 0.3rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.ui-form-modal__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ui-form-modal__close:hover {
+  background: #e2e8f0;
+  color: var(--text);
+}
+
+.ui-form-modal__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1rem 1.5rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.ui-form-modal__form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.ui-form-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  padding: 1rem 1.5rem 1.35rem;
+  border-top: 1px solid var(--border);
+  background: linear-gradient(180deg, transparent, rgba(244, 246, 239, 0.65));
+  flex-shrink: 0;
+}
+
+/* Panneaux & grilles dans les modales */
+
+.form-panel {
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.form-panel--accent {
+  background: linear-gradient(165deg, rgba(244, 246, 239, 0.95) 0%, #fff 40%);
+  border-color: rgba(107, 124, 62, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.form-panel__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--primary-800);
+}
+
+.form-panel__intro,
+.form-panel__hint {
+  margin: -0.35rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.form-panel__hint {
+  margin: -0.25rem 0 0;
+  font-size: 0.75rem;
+}
+
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 1rem;
+}
+
+.form-grid-compact {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0 0.65rem;
+}
+
+.form-grid-compact--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 50%;
+}
+
+.form-grid-compact .ui-field,
+.form-grid-compact :deep(.ui-field) {
+  margin-bottom: 0.45rem;
+}
+
+.form-grid-compact .ui-field__label,
+.form-grid-compact :deep(.ui-field__label) {
+  margin-bottom: 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.form-grid-compact .ui-field__input,
+.form-grid-compact .ui-select,
+.form-grid-compact :deep(.ui-field__input),
+.form-grid-compact :deep(.ui-select) {
+  padding: 0.42rem 0.55rem;
+  font-size: 0.8125rem;
+  border-radius: 8px;
+}
+
+@media (max-width: 700px) {
+  .ui-form-modal-overlay {
+    padding: 0.75rem;
+  }
+
+  .ui-form-modal,
+  .ui-form-modal--wide,
+  .ui-form-modal--large {
+    max-width: 100%;
+  }
+
+  .form-grid-2,
+  .form-grid-compact {
+    grid-template-columns: 1fr;
+  }
+
+  .form-grid-compact--2 {
+    max-width: 100%;
+  }
+}

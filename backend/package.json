@@ -1,0 +1,48 @@
+{
+  "name": "alwatan-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "dev:generate": "prisma generate && tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:seed:demo": "SEED_DEMO_RESET=1 npm run db:seed",
+    "db:setup": "npx prisma db push && npm run db:seed",
+    "db:docker:up": "docker compose -f ../docker-compose.yml up -d postgres",
+    "db:docker:down": "docker compose -f ../docker-compose.yml down",
+    "db:docker:logs": "docker compose -f ../docker-compose.yml logs -f postgres",
+    "db:docker:setup": "npm run db:docker:up && npx prisma db push && npm run db:seed"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jose": "^6.2.3",
+    "multer": "^2.2.0",
+    "pdfkit": "^0.19.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.1.0",
+    "@types/node": "^25.9.3",
+    "@types/pdfkit": "^0.17.6",
+    "prisma": "^6.19.3",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}

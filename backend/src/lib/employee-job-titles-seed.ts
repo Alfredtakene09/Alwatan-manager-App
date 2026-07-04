@@ -1,0 +1,16 @@
+export const DEFAULT_EMPLOYEE_JOB_TITLES = [
+  "Administrateur système",
+  "Réceptionniste",
+  "Secrétaire médicale",
+  "Direction",
+  "Médecin généraliste",
+  "Médecin spécialiste",
+  "Chirurgien",
+  "Assistant chirurgie",
+  "Infirmière",
+  "Aide-soignante",
+  "Laborantin",
+  "Pharmacien",
+  "Agent de sécurité",
+  "Agent d'entretien",
+] as const;

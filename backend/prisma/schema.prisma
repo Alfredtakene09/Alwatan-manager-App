@@ -1,0 +1,876 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  GESTIONNAIRE
+  RECEPTIONNISTE
+  MEDECIN
+  COMPTABLE
+  LABORANTIN
+  SOIGNANT
+  PHARMACIEN
+}
+
+enum VisitStatus {
+  WAITING_CONSULTATION
+  IN_CONSULTATION
+  NEEDS_SURGERY
+  NEEDS_HOSPITALIZATION
+  AWAITING_ACCOUNTING
+  IN_TREATMENT
+  COMPLETED
+  CANCELLED
+}
+
+enum RoomType {
+  VIP
+  SIMPLE
+}
+
+enum SurgeryStatus {
+  NOTIFIED
+  QUOTED
+  PAID
+  AUTHORIZED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum HospitalizationStatus {
+  REQUESTED
+  RESERVED
+  ACTIVE
+  DISCHARGED
+  CANCELLED
+}
+
+enum DoctorCompensationType {
+  QUOTA
+  FIXED_SALARY
+}
+
+enum ConsultationRenewalPolicy {
+  FULL
+  HALF
+}
+
+enum ConsultationQuotaMode {
+  PERCENT
+  FIXED_AMOUNT
+}
+
+enum InvoiceStatus {
+  DRAFT
+  PENDING
+  PAID
+  CANCELLED
+}
+
+enum PatientCategory {
+  STANDARD
+  ASSOCIE
+  ONG
+}
+
+enum InvoiceType {
+  SURGERY
+  HOSPITALIZATION_DEPOSIT
+  HOSPITALIZATION_FINAL
+  PHARMACY
+  CONSULTATION
+  LAB_EXAM
+}
+
+enum ReceptionShiftSlot {
+  MORNING
+  EVENING
+  NIGHT
+}
+
+enum InterventionCategory {
+  MAJEURE_A
+  MOYENNE_B
+  PETITE_C
+}
+
+enum ExamCatalogKind {
+  EXAMEN
+  ODONTO
+  RADIO
+  ECHO
+}
+
+enum PatientDocumentKind {
+  EXAMEN
+  ODONTO
+  RADIO
+  ECHO
+  CONSULTATION
+  AUTRE
+}
+
+enum ExamReclamationStatus {
+  PENDING
+  IN_PROGRESS
+  REFUNDED
+  REJECTED
+}
+
+enum ExamReclamationReason {
+  EXAM_MISSING
+  RESULT_MISSING
+  ERROR
+  OTHER
+}
+
+model EmployeeJobTitle {
+  id        String   @id @default(cuid())
+  label     String   @unique
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Employee {
+  id                       String                 @id @default(cuid())
+  firstName                String
+  lastName                 String
+  phone                    String?
+  jobTitle                 String?
+  isMedecin                Boolean                @default(false)
+  doctorCompensationType   DoctorCompensationType @default(QUOTA)
+  consultationTotalFcfa    Int?
+  consultationQuotaMode    ConsultationQuotaMode  @default(PERCENT)
+  consultationQuotaPercent Int?
+  consultationQuotaFcfa    Int?
+  consultationValidityDays Int?
+  consultationRenewalPolicy ConsultationRenewalPolicy @default(FULL)
+  surgeryQuotaPercent      Int?
+  fixedSalaryFcfa          Int?
+  birthDate                DateTime?              @db.Date
+  address                  String?
+  service                  String?
+  hiredAt                  DateTime?              @db.Date
+  contractType             ContractType?
+  contractStatus           EmployeeContractStatus @default(ACTIF)
+  bonusFcfa                Int?
+  photoPath                String?
+  active                   Boolean                @default(true)
+  createdAt                DateTime               @default(now())
+  updatedAt                DateTime               @updatedAt
+
+  user     User?
+  payrolls EmployeePayroll[]
+  salaryAdvances SalaryAdvance[]
+}
+
+model User {
+  id            String              @id @default(cuid())
+  username      String              @unique
+  email         String              @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  role          UserRole
+  active        Boolean             @default(true)
+  employeeId    String              @unique
+  /// Créneau caisse assigné (obligatoire pour les réceptionnistes)
+  cashShiftSlot ReceptionShiftSlot?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  employee              Employee            @relation(fields: [employeeId], references: [id])
+  recordedVitals        VitalSign[]
+  consultations         Consultation[]
+  surgeriesAsSurgeon    SurgeryCase[]       @relation("SurgeonCases")
+  surgeriesAsAccountant SurgeryCase[]       @relation("SurgeryAccountant")
+  surgeonPayments       SurgeryCase[]       @relation("SurgeonPayer")
+  assistantPayments     SurgeryCase[]       @relation("AssistantPayer")
+  clinicSharePayments   SurgeryCase[]       @relation("ClinicPayer")
+  interventionsAsSurgeon          InterventionType[] @relation("InterventionSurgeon")
+  interventionsAsAnesthesiologist InterventionType[] @relation("InterventionAnesthesiologist")
+  hospitalizations      Hospitalization[]   @relation("HospitalizationAccountant")
+  invoices              Invoice[]
+  prescriptions         Prescription[]
+  auditLogs             AuditLog[]
+  assignedVisits        Visit[]             @relation("VisitAssignedDoctor")
+  labApprovals          Consultation[]      @relation("LabApprovedBy")
+  uploadedDocuments     PatientDocument[]
+  receptionCashSettlementsAsReceptionist ReceptionCashSettlement[] @relation("SettlementReceptionist")
+  receptionCashSettlementsAsAccountant   ReceptionCashSettlement[] @relation("SettlementAccountant")
+  clinicExpensesPaid                     ClinicExpense[]           @relation("ExpensePaidBy")
+  clinicExpensesRecorded                 ClinicExpense[]           @relation("ExpenseRecordedBy")
+  changeTransfersAsRequester             CashChangeTransfer[]      @relation("ChangeRequester")
+  changeTransfersAsProvider              CashChangeTransfer[]      @relation("ChangeProvider")
+  changeTransfersRecorded                CashChangeTransfer[]      @relation("ChangeRecordedBy")
+  changeTransfersRefunded                CashChangeTransfer[]      @relation("ChangeRefundedBy")
+  examReclamationsCreated                ExamReclamation[]         @relation("ExamReclamationCreatedBy")
+  examReclamationsHandled                ExamReclamation[]         @relation("ExamReclamationHandledBy")
+  payrollsPaid                           EmployeePayroll[]         @relation("PayrollPaidBy")
+  salaryAdvancesRecorded                 SalaryAdvance[]           @relation("SalaryAdvanceRecordedBy")
+  expensesValidated                      ClinicExpense[]           @relation("ExpenseValidatedBy")
+  pharmacyStockMovements                 StockMovement[]
+}
+
+enum AgeUnit {
+  YEARS
+  MONTHS
+  DAYS
+}
+
+model Patient {
+  id          String           @id @default(cuid())
+  code        String           @unique
+  firstName   String
+  lastName    String
+  age         Int?
+  ageUnit     AgeUnit          @default(YEARS)
+  dateOfBirth DateTime?
+  phone       String?
+  gender      String?
+  address     String?
+  category    PatientCategory  @default(STANDARD)
+  ongName     String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  visits        Visit[]
+  prescriptions Prescription[]
+  invoices      Invoice[]
+  dossier       PatientDossier?
+  documents     PatientDocument[]
+  examReclamations ExamReclamation[]
+}
+
+model PatientDossier {
+  id        String   @id @default(cuid())
+  patientId String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  patient   Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  documents PatientDocument[]
+}
+
+model PatientDocument {
+  id           String              @id @default(cuid())
+  dossierId    String
+  patientId    String
+  visitId      String?
+  kind         PatientDocumentKind
+  title        String
+  documentDate DateTime
+  fileName     String
+  mimeType     String
+  fileSize     Int
+  storagePath  String
+  uploadedById String
+  createdAt    DateTime            @default(now())
+
+  dossier    PatientDossier @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+  patient    Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  visit      Visit?         @relation(fields: [visitId], references: [id], onDelete: SetNull)
+  uploadedBy User           @relation(fields: [uploadedById], references: [id])
+
+  @@index([patientId, kind])
+  @@index([dossierId, documentDate])
+}
+
+model Visit {
+  id                  String      @id @default(cuid())
+  patientId           String
+  status              VisitStatus @default(WAITING_CONSULTATION)
+  assignedDoctorId    String?
+  consultationFeeFcfa Int?
+  reductionFcfa       Int?        @default(0)
+  notes               String?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  patient         Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  assignedDoctor  User?            @relation("VisitAssignedDoctor", fields: [assignedDoctorId], references: [id])
+  vitalSigns      VitalSign[]
+  consultation    Consultation?
+  surgeryCase     SurgeryCase?
+  hospitalization Hospitalization?
+  invoices        Invoice[]
+  prescriptions   Prescription[]
+  documents       PatientDocument[]
+  examReclamations ExamReclamation[]
+
+  @@index([patientId])
+  @@index([status])
+}
+
+model VitalSign {
+  id            String   @id @default(cuid())
+  visitId       String
+  patientId     String
+  weightKg      Float?
+  bloodPressure String?
+  temperatureC  Float?
+  pulseBpm      Int?
+  recordedById  String
+  recordedAt    DateTime @default(now())
+
+  visit      Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  recordedBy User  @relation(fields: [recordedById], references: [id])
+
+  @@index([visitId])
+}
+
+model Consultation {
+  id                   String    @id @default(cuid())
+  visitId              String    @unique
+  doctorId             String?
+  diagnosis            String?
+  doctorComment        String?
+  clinicalNotes        String?
+  needsSurgery         Boolean   @default(false)
+  needsHospitalization Boolean   @default(false)
+  completedAt          DateTime?
+  labSentToLabAt       DateTime?
+  labApprovedById      String?
+  labExamReductionFcfa Int       @default(0)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  visit         Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  doctor        User? @relation(fields: [doctorId], references: [id])
+  labApprovedBy User? @relation("LabApprovedBy", fields: [labApprovedById], references: [id])
+  examReclamations ExamReclamation[]
+}
+
+model InterventionType {
+  id                      String               @id @default(cuid())
+  code                    String               @unique
+  label                   String
+  category                InterventionCategory
+  totalCostFcfa           Int
+  surgeonPercent          Int
+  anesthesiologistPercent Int                  @default(0)
+  surgeonId               String?
+  surgeonName             String?
+  anesthesiologistId      String?
+  anesthesiologistName    String?
+  active                  Boolean              @default(true)
+
+  surgeon          User?         @relation("InterventionSurgeon", fields: [surgeonId], references: [id])
+  anesthesiologist User?         @relation("InterventionAnesthesiologist", fields: [anesthesiologistId], references: [id])
+  surgeryCases     SurgeryCase[]
+}
+
+model ExamCatalogItem {
+  id        String          @id @default(cuid())
+  kind      ExamCatalogKind
+  code      String
+  label     String
+  category  String?
+  priceFcfa Int
+  active    Boolean         @default(true)
+  sortOrder Int             @default(0)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([kind, code])
+  @@index([kind, active])
+}
+
+model SurgeryCase {
+  id                 String        @id @default(cuid())
+  visitId            String        @unique
+  interventionTypeId String
+  surgeonId          String
+  accountantId       String?
+  totalCostFcfa      Int
+  surgeonShareFcfa   Int
+  clinicShareFcfa    Int
+  status             SurgeryStatus @default(NOTIFIED)
+  paidAt             DateTime?
+  authorizedAt       DateTime?
+  operationScheduledAt DateTime?
+  completedAt        DateTime?
+  surgeonPaidAt      DateTime?
+  surgeonPaidById    String?
+  assistantPaidAt    DateTime?
+  assistantPaidById  String?
+  clinicPaidAt       DateTime?
+  clinicPaidById     String?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  visit            Visit            @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  interventionType InterventionType @relation(fields: [interventionTypeId], references: [id])
+  surgeon          User             @relation("SurgeonCases", fields: [surgeonId], references: [id])
+  accountant       User?            @relation("SurgeryAccountant", fields: [accountantId], references: [id])
+  surgeonPaidBy    User?            @relation("SurgeonPayer", fields: [surgeonPaidById], references: [id])
+  assistantPaidBy  User?            @relation("AssistantPayer", fields: [assistantPaidById], references: [id])
+  clinicPaidBy     User?            @relation("ClinicPayer", fields: [clinicPaidById], references: [id])
+  invoice          Invoice?
+}
+
+model Room {
+  id            String   @id @default(cuid())
+  name          String
+  type          RoomType
+  description   String?
+  dailyRateFcfa Int
+  active        Boolean  @default(true)
+
+  hospitalizations Hospitalization[]
+}
+
+model Hospitalization {
+  id            String                @id @default(cuid())
+  visitId       String                @unique
+  roomId        String?
+  accountantId  String?
+  roomType      RoomType
+  dailyRateFcfa Int
+  depositFcfa   Int                   @default(0)
+  reductionFcfa Int                   @default(0)
+  nightsCount   Int                   @default(0)
+  totalDueFcfa  Int                   @default(0)
+  status        HospitalizationStatus @default(REQUESTED)
+  startDate     DateTime?
+  endDate       DateTime?
+  service              String?
+  attendingDoctor      String?
+  doctorInstructions   String?
+  paidAt        DateTime?
+  dischargedAt  DateTime?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  visit      Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  room       Room? @relation(fields: [roomId], references: [id])
+  accountant User? @relation("HospitalizationAccountant", fields: [accountantId], references: [id])
+  invoices   Invoice[]
+}
+
+model Invoice {
+  id                String        @id @default(cuid())
+  invoiceNumber     String        @unique
+  patientId         String?
+  externalClientId  String?
+  visitId           String?
+  surgeryCaseId     String?       @unique
+  hospitalizationId String?
+  type              InvoiceType
+  amountFcfa        Int
+  status            InvoiceStatus @default(PENDING)
+  issuedById        String
+  paidAt            DateTime?
+  createdAt         DateTime      @default(now())
+
+  patient            Patient?                @relation(fields: [patientId], references: [id])
+  externalClient     PharmacyExternalClient? @relation(fields: [externalClientId], references: [id])
+  visit              Visit?                  @relation(fields: [visitId], references: [id])
+  surgeryCase        SurgeryCase?            @relation(fields: [surgeryCaseId], references: [id])
+  hospitalization    Hospitalization?        @relation(fields: [hospitalizationId], references: [id])
+  issuedBy           User                    @relation(fields: [issuedById], references: [id])
+  pharmacyLines      PharmacySaleLine[]
+  cashSettlementLine ReceptionCashSettlementLine?
+
+  @@index([patientId])
+  @@index([externalClientId])
+}
+
+enum StockMovementType {
+  ENTRY
+  EXIT
+  ADJUSTMENT
+  DISPENSATION
+}
+
+model PharmacySupplier {
+  id          String   @id @default(cuid())
+  name        String
+  contactName String?
+  phone       String?
+  email       String?
+  address     String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  stockMovements StockMovement[]
+  products       Product[]
+
+  @@index([name])
+}
+
+model ProductCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@index([sortOrder])
+}
+
+model Product {
+  id                 String    @id @default(cuid())
+  name               String
+  sku                String    @unique
+  barcode            String?   @unique
+  dosage             String?
+  pharmaceuticalForm String?
+  categoryId         String?
+  supplierId         String?
+  expiryDate         DateTime? @db.Date
+  noExpiry           Boolean   @default(false)
+  quantity           Int       @default(0)
+  unitPriceFcfa      Int
+  minStock           Int       @default(10)
+  sachetsPerBox      Int       @default(1)
+  sachetPriceFcfa    Int?
+  sellBySachet       Boolean   @default(false)
+  active             Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  category       ProductCategory?  @relation(fields: [categoryId], references: [id])
+  supplier       PharmacySupplier? @relation(fields: [supplierId], references: [id])
+  saleLines      PharmacySaleLine[]
+  stockMovements StockMovement[]
+
+  @@index([categoryId])
+  @@index([supplierId])
+}
+
+model StockMovement {
+  id             String            @id @default(cuid())
+  productId      String
+  type           StockMovementType
+  quantity       Int
+  unitCostFcfa   Int?
+  supplierId     String?
+  reference      String?
+  notes          String?
+  prescriptionId String?
+  userId         String
+  stockAfter     Int
+  createdAt      DateTime          @default(now())
+
+  product      Product           @relation(fields: [productId], references: [id])
+  supplier     PharmacySupplier? @relation(fields: [supplierId], references: [id])
+  prescription Prescription?     @relation(fields: [prescriptionId], references: [id])
+  user         User              @relation(fields: [userId], references: [id])
+
+  @@index([productId, createdAt])
+  @@index([createdAt])
+}
+
+model Prescription {
+  id               String   @id @default(cuid())
+  patientId        String?
+  externalClientId String?
+  visitId          String?
+  pharmacistId     String
+  notes            String?
+  createdAt        DateTime @default(now())
+
+  patient        Patient?                @relation(fields: [patientId], references: [id])
+  externalClient PharmacyExternalClient? @relation(fields: [externalClientId], references: [id])
+  visit          Visit?                  @relation(fields: [visitId], references: [id])
+  pharmacist     User                    @relation(fields: [pharmacistId], references: [id])
+  saleLines      PharmacySaleLine[]
+  stockMovements StockMovement[]
+
+  @@index([patientId])
+  @@index([externalClientId])
+}
+
+model PharmacyExternalClient {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  firstName String
+  lastName  String
+  phone     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prescriptions Prescription[]
+  invoices      Invoice[]
+
+  @@index([lastName, firstName])
+}
+
+model PharmacySaleLine {
+  id             String  @id @default(cuid())
+  prescriptionId String
+  productId      String
+  invoiceId      String?
+  quantity       Int
+  unitPriceFcfa  Int
+  lineTotalFcfa  Int
+
+  prescription Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id])
+  invoice      Invoice?     @relation(fields: [invoiceId], references: [id])
+}
+
+model ReceptionCashSettlement {
+  id               String             @id @default(cuid())
+  receptionistId   String
+  accountantId     String
+  businessDate     DateTime           @db.Date
+  shiftSlot        ReceptionShiftSlot
+  systemTotalFcfa  Int
+  physicalCashFcfa Int
+  disbursementFcfa Int
+  varianceFcfa     Int
+  isCoherent       Boolean
+  comment          String?
+  settledAt        DateTime           @default(now())
+  createdAt        DateTime           @default(now())
+
+  receptionist User @relation("SettlementReceptionist", fields: [receptionistId], references: [id])
+  accountant   User @relation("SettlementAccountant", fields: [accountantId], references: [id])
+  lines        ReceptionCashSettlementLine[]
+
+  @@unique([receptionistId, businessDate, shiftSlot])
+  @@index([businessDate, shiftSlot])
+}
+
+model ReceptionCashSettlementLine {
+  id           String @id @default(cuid())
+  settlementId String
+  invoiceId    String @unique
+
+  settlement ReceptionCashSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  invoice      Invoice               @relation(fields: [invoiceId], references: [id])
+
+  @@index([settlementId])
+}
+
+enum ClinicExpenseCategory {
+  FOURNITURES
+  TRANSPORT
+  MAINTENANCE
+  ACHAT_URGENT
+  AUTRE
+}
+
+enum ClinicExpenseStatus {
+  PENDING
+  VALIDATED
+  REJECTED
+}
+
+enum PaymentMethod {
+  ESPECES
+  VIREMENT
+  CHEQUE
+}
+
+enum EmployeeContractStatus {
+  ACTIF
+  EN_CONGE
+  INACTIF
+}
+
+enum ContractType {
+  CDI
+  CDD
+  PRESTATION
+  AUTRE
+}
+
+enum PayrollStatus {
+  PENDING
+  PAID
+  LATE
+}
+
+enum SalaryAdvanceStatus {
+  PENDING
+  DEDUCTED
+  CANCELLED
+}
+
+/** Indice / motif prédéfini pour le formulaire de dépense clinique. */
+model ClinicExpenseIndice {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ExpenseCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  icon      String   @default("receipt")
+  color     String   @default("#64748b")
+  archived  Boolean  @default(false)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  expenses ClinicExpense[]
+}
+
+/** Dépense clinique payée en caisse (réception / comptabilité). */
+model ClinicExpense {
+  id                String                @id @default(cuid())
+  businessDate      DateTime              @db.Date
+  amountFcfa        Int
+  label             String
+  category          ClinicExpenseCategory @default(AUTRE)
+  expenseCategoryId String?
+  status            ClinicExpenseStatus   @default(VALIDATED)
+  comment           String?
+  rejectionReason   String?
+  beneficiary       String?
+  paymentMethod     PaymentMethod?
+  receiptPath       String?
+  paidById          String
+  recordedById      String
+  validatedById     String?
+  validatedAt       DateTime?
+  createdAt         DateTime              @default(now())
+
+  expenseCategory ExpenseCategory? @relation(fields: [expenseCategoryId], references: [id])
+  paidBy          User             @relation("ExpensePaidBy", fields: [paidById], references: [id])
+  recordedBy      User             @relation("ExpenseRecordedBy", fields: [recordedById], references: [id])
+  validatedBy     User?            @relation("ExpenseValidatedBy", fields: [validatedById], references: [id])
+
+  @@index([businessDate])
+  @@index([paidById, businessDate])
+  @@index([status])
+}
+
+/** Fiche de paie mensuelle — suivi admin des salaires. */
+model EmployeePayroll {
+  id         String        @id @default(cuid())
+  year       Int
+  month      Int
+  employeeId String
+  grossFcfa            Int
+  primeFcfa            Int            @default(0)
+  advanceDeductionFcfa Int            @default(0)
+  status        PayrollStatus  @default(PENDING)
+  paymentMethod PaymentMethod?
+  remarks       String?
+  paidAt        DateTime?
+  paidById   String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  paidBy   User?    @relation("PayrollPaidBy", fields: [paidById], references: [id])
+
+  @@unique([employeeId, year, month])
+  @@index([year, month])
+  @@index([status])
+}
+
+/** Avance sur salaire — déduite à la prochaine paie. */
+model SalaryAdvance {
+  id           String              @id @default(cuid())
+  employeeId   String
+  amountFcfa   Int
+  businessDate DateTime            @db.Date
+  comment      String?
+  status       SalaryAdvanceStatus @default(PENDING)
+  payrollYear  Int?
+  payrollMonth Int?
+  recordedById String
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  recordedBy User     @relation("SalaryAdvanceRecordedBy", fields: [recordedById], references: [id])
+
+  @@index([employeeId, status])
+  @@index([businessDate])
+  @@index([status])
+}
+
+/** Coupure de monnaie entre caissiers (un envoie le patient chez l'autre pour la monnaie). */
+model CashChangeTransfer {
+  id           String   @id @default(cuid())
+  businessDate DateTime @db.Date
+  /** Caissier qui n'avait pas la monnaie (envoie le patient). */
+  requesterId  String
+  /** Caissier qui a donné la monnaie au patient. */
+  providerId   String
+  amountFcfa   Int
+  patientHint  String?
+  comment      String?
+  recordedById String
+  refundedAt   DateTime?
+  refundedById String?
+  createdAt    DateTime @default(now())
+
+  requester  User  @relation("ChangeRequester", fields: [requesterId], references: [id])
+  provider   User  @relation("ChangeProvider", fields: [providerId], references: [id])
+  recordedBy User  @relation("ChangeRecordedBy", fields: [recordedById], references: [id])
+  refundedBy User? @relation("ChangeRefundedBy", fields: [refundedById], references: [id])
+
+  @@index([businessDate])
+  @@index([requesterId, businessDate])
+  @@index([providerId, businessDate])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([createdAt])
+}
+
+model ExamReclamation {
+  id             String                @id @default(cuid())
+  consultationId String
+  visitId        String
+  patientId      String
+  examKind       String?
+  examLabel      String?
+  examLines      Json?
+  totalFcfa      Int                   @default(0)
+  reason         ExamReclamationReason
+  reasonDetail   String?
+  status         ExamReclamationStatus @default(PENDING)
+  createdById    String
+  handledById    String?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  resolvedAt     DateTime?
+
+  consultation Consultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  visit        Visit        @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  patient      Patient      @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  createdBy    User         @relation("ExamReclamationCreatedBy", fields: [createdById], references: [id])
+  handledBy    User?        @relation("ExamReclamationHandledBy", fields: [handledById], references: [id])
+
+  @@index([patientId])
+  @@index([consultationId])
+  @@index([status])
+  @@index([createdAt])
+}

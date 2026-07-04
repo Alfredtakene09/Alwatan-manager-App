@@ -1,0 +1,168 @@
+/* Accents colorés modernes pour les cartes (UiCard, UiStatCard) */
+
+.card-accent {
+  position: relative;
+  border-width: 1.5px;
+  border-style: solid;
+  transition:
+    transform 0.22s ease,
+    box-shadow 0.22s ease,
+    border-color 0.22s ease;
+}
+
+.card-accent::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.card-accent--teal {
+  border-color: rgba(107, 124, 62, 0.28);
+  background: linear-gradient(165deg, rgba(244, 246, 239, 0.92) 0%, #fff 32%);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 6px 22px rgba(107, 124, 62, 0.09);
+}
+
+.card-accent--teal::before {
+  background: linear-gradient(90deg, #5a6833, #8a9a5b, #6b7c3e);
+}
+
+.card-accent--blue {
+  border-color: rgba(107, 124, 62, 0.24);
+  background: linear-gradient(165deg, rgba(244, 246, 239, 0.9) 0%, #fff 32%);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 6px 22px rgba(107, 124, 62, 0.08);
+}
+
+.card-accent--blue::before {
+  background: linear-gradient(90deg, #5a6833, #8a9a5b, #6b7c3e);
+}
+
+/* Contour vert — cartes statistiques (toutes pages) */
+.card-accent--green {
+  border-color: rgba(107, 124, 62, 0.28);
+  background: linear-gradient(165deg, rgba(244, 246, 239, 0.92) 0%, #fff 32%);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 6px 22px rgba(107, 124, 62, 0.09);
+}
+
+.card-accent--green::before {
+  background: linear-gradient(90deg, #5a6833, #8a9a5b, #6b7c3e);
+}
+
+.card-accent--green:hover {
+  border-color: rgba(107, 124, 62, 0.42);
+  box-shadow:
+    var(--shadow-md),
+    0 10px 28px rgba(107, 124, 62, 0.14);
+}
+
+.card-accent--amber {
+  border-color: rgba(217, 119, 6, 0.22);
+  background: linear-gradient(165deg, rgba(254, 243, 199, 0.55) 0%, #fff 32%);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 6px 22px rgba(217, 119, 6, 0.08);
+}
+
+.card-accent--amber::before {
+  background: linear-gradient(90deg, #b45309, #f59e0b, #d97706);
+}
+
+.card-accent--rose {
+  border-color: rgba(225, 29, 72, 0.2);
+  background: linear-gradient(165deg, rgba(255, 228, 230, 0.55) 0%, #fff 32%);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 6px 22px rgba(225, 29, 72, 0.07);
+}
+
+.card-accent--rose::before {
+  background: linear-gradient(90deg, #be123c, #fb7185, #e11d48);
+}
+
+.card-accent--violet {
+  border-color: rgba(124, 58, 237, 0.2);
+  background: linear-gradient(165deg, rgba(237, 233, 254, 0.65) 0%, #fff 32%);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 6px 22px rgba(124, 58, 237, 0.07);
+}
+
+.card-accent--violet::before {
+  background: linear-gradient(90deg, #6d28d9, #a78bfa, #7c3aed);
+}
+
+.card-accent--cyan {
+  border-color: rgba(8, 145, 178, 0.22);
+  background: linear-gradient(165deg, rgba(207, 250, 254, 0.6) 0%, #fff 32%);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 6px 22px rgba(8, 145, 178, 0.08);
+}
+
+.card-accent--cyan::before {
+  background: linear-gradient(90deg, #0e7490, #22d3ee, #0891b2);
+}
+
+.card-accent:hover {
+  transform: translateY(-2px);
+}
+
+.card-accent--teal:hover {
+  border-color: rgba(165, 28, 48, 0.35);
+  box-shadow:
+    var(--shadow-md),
+    0 10px 28px rgba(165, 28, 48, 0.12);
+}
+
+.card-accent--blue:hover {
+  border-color: rgba(107, 124, 62, 0.38);
+  box-shadow:
+    var(--shadow-md),
+    0 10px 28px rgba(107, 124, 62, 0.13);
+}
+
+.card-accent--amber:hover {
+  border-color: rgba(217, 119, 6, 0.38);
+  box-shadow:
+    var(--shadow-md),
+    0 10px 28px rgba(217, 119, 6, 0.13);
+}
+
+.card-accent--rose:hover {
+  border-color: rgba(225, 29, 72, 0.35);
+  box-shadow:
+    var(--shadow-md),
+    0 10px 28px rgba(225, 29, 72, 0.12);
+}
+
+.card-accent--violet:hover {
+  border-color: rgba(124, 58, 237, 0.35);
+  box-shadow:
+    var(--shadow-md),
+    0 10px 28px rgba(124, 58, 237, 0.12);
+}
+
+.card-accent--cyan:hover {
+  border-color: rgba(8, 145, 178, 0.35);
+  box-shadow:
+    var(--shadow-md),
+    0 10px 28px rgba(8, 145, 178, 0.13);
+}

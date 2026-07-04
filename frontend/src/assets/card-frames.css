@@ -1,0 +1,130 @@
+/* Contour — boutons menu sidebar (vert foncé) */
+
+.ui-card-frame {
+  position: relative;
+  border-style: solid;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    border-color 0.2s ease,
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.nav-item.ui-card-frame--menu,
+.ui-card-frame--menu {
+  background: var(--menu-btn-bg);
+  border-color: var(--menu-btn-border);
+  border-width: 2px;
+  border-radius: 12px;
+  color: var(--menu-btn-text) !important;
+  box-shadow:
+    0 0 0 1px var(--menu-btn-border-ring),
+    0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+.ui-card-frame--menu.ui-card-frame--compact {
+  border-width: 2px;
+  border-radius: 10px;
+}
+
+.nav-item.ui-card-frame--menu:hover,
+.ui-card-frame--menu:hover {
+  transform: translateY(-1px);
+  background: var(--menu-btn-bg-hover) !important;
+  border-color: var(--menu-btn-border-hover) !important;
+  color: var(--menu-btn-text-hover) !important;
+  box-shadow:
+    0 0 0 2px var(--menu-btn-border-ring),
+    0 6px 18px rgba(0, 0, 0, 0.22);
+}
+
+.nav-item.ui-card-frame--menu.nav-item--active,
+.nav-item.ui-card-frame--menu.nav-item--group-active,
+.nav-item.ui-card-frame--menu.nav-item--group-open,
+.ui-card-frame--menu.nav-item--active,
+.ui-card-frame--menu.nav-item--group-active,
+.ui-card-frame--menu.nav-item--group-open {
+  background: var(--menu-btn-bg-active) !important;
+  border-color: var(--menu-btn-border-hover) !important;
+  color: var(--menu-btn-text-active) !important;
+  box-shadow:
+    0 0 0 2px var(--menu-btn-border-ring),
+    0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.nav-item.ui-card-frame--menu.nav-item--active:hover,
+.nav-item.ui-card-frame--menu.nav-item--group-active:hover {
+  background: var(--menu-btn-bg-hover) !important;
+}
+
+.user-card.ui-card-frame--menu {
+  background: var(--menu-btn-bg);
+}
+
+.ui-btn.ui-card-frame--menu {
+  border: 2px solid var(--menu-btn-border) !important;
+  background: var(--menu-btn-bg) !important;
+  color: var(--menu-btn-text) !important;
+  font-weight: 700 !important;
+}
+
+.ui-btn.ui-card-frame--menu:hover {
+  background: var(--menu-btn-bg-hover) !important;
+  border-color: var(--menu-btn-border-hover) !important;
+  color: var(--menu-btn-text-hover) !important;
+}
+
+/* Bouton déconnexion — bordeaux logo */
+.ui-btn.ui-card-frame--logout {
+  border: 2px solid var(--brand-red-100) !important;
+  background: linear-gradient(135deg, var(--brand-red), var(--brand-red-700)) !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  box-shadow:
+    0 0 0 1px rgba(240, 212, 216, 0.5),
+    0 4px 14px rgba(0, 0, 0, 0.22);
+}
+
+.ui-btn.ui-card-frame--logout:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(135deg, var(--brand-red-600), var(--brand-red-800)) !important;
+  border-color: #f0d4d8 !important;
+  color: #ffffff !important;
+  box-shadow:
+    0 0 0 2px rgba(240, 212, 216, 0.55),
+    0 6px 18px rgba(0, 0, 0, 0.28);
+}
+
+.ui-card-frame--logout.ui-card-frame--compact {
+  border-width: 2px;
+  border-radius: 10px;
+}
+
+/* Panneaux — zone contenu (login, modales, cartes) */
+.ui-card-frame--panel {
+  position: relative;
+  background: var(--panel-bg, #ffffff);
+  border: 2px solid var(--panel-border);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    var(--shadow-lg),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  overflow: hidden;
+}
+
+.ui-card-frame--panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--panel-accent-bar);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.ui-card-frame--panel:hover {
+  border-color: var(--panel-border-hover);
+}

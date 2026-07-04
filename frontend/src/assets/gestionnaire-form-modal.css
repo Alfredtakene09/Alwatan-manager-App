@@ -1,0 +1,221 @@
+/* Formulaires modaux — thème gestionnaire (ambre) */
+
+.gestionnaire-form-panel {
+  border-color: rgba(217, 119, 6, 0.18);
+}
+
+.gestionnaire-form-panel--accent {
+  background: linear-gradient(165deg, rgba(255, 251, 235, 0.95) 0%, #fff 45%);
+  border-color: rgba(217, 119, 6, 0.28);
+}
+
+.gestionnaire-form-panel .form-panel__title {
+  color: #92400e;
+}
+
+.gestionnaire-modal-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 48%, #fff 100%);
+  border: 1px solid rgba(217, 119, 6, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.gestionnaire-modal-hero--center {
+  align-items: center;
+}
+
+.gestionnaire-modal-hero__eyebrow {
+  margin: 0 0 0.15rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #b45309;
+}
+
+.gestionnaire-modal-hero__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #78350f;
+  line-height: 1.3;
+}
+
+.gestionnaire-modal-hero__amount {
+  margin: 0;
+  font-size: 1.65rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: #78350f;
+  font-variant-numeric: tabular-nums;
+}
+
+.gestionnaire-modal-hero__meta {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  color: #92400e;
+}
+
+.gestionnaire-modal-hero__meta--muted {
+  color: #a8a29e;
+  font-style: italic;
+}
+
+.gestionnaire-modal-hero__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  background: #fef3c7;
+  border: 1px solid rgba(217, 119, 6, 0.25);
+  color: #92400e;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.gestionnaire-preview-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid rgba(217, 119, 6, 0.22);
+}
+
+.gestionnaire-preview-box__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.8125rem;
+  color: #78716c;
+}
+
+.gestionnaire-preview-box__row strong {
+  font-size: 0.875rem;
+  color: #44403c;
+}
+
+.gestionnaire-preview-box__row--total strong,
+.gestionnaire-preview-box__row--amount strong {
+  color: #b45309;
+  font-size: 1rem;
+}
+
+.gestionnaire-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.gestionnaire-chips__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem;
+  border: 2px solid rgba(217, 119, 6, 0.18);
+  border-radius: 999px;
+  background: #fff;
+  color: #78350f;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.gestionnaire-chips__item:hover {
+  border-color: rgba(217, 119, 6, 0.4);
+}
+
+.gestionnaire-chips__item--active {
+  box-shadow: 0 0 0 1px rgba(217, 119, 6, 0.12);
+}
+
+.gestionnaire-chips__item--square {
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 11px;
+  min-width: 4.5rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.gestionnaire-color-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.gestionnaire-color-presets__swatch {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+
+.gestionnaire-color-presets__swatch:hover {
+  transform: scale(1.08);
+}
+
+.gestionnaire-color-presets__swatch--active {
+  border-color: #78350f;
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px rgba(217, 119, 6, 0.35);
+}
+
+.gestionnaire-payment-methods {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.gestionnaire-payment-methods__option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.85rem 0.65rem;
+  border: 2px solid rgba(217, 119, 6, 0.18);
+  border-radius: 11px;
+  background: #fff;
+  color: #78716c;
+  font-family: inherit;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
+
+.gestionnaire-payment-methods__option:hover {
+  border-color: rgba(217, 119, 6, 0.4);
+  color: #92400e;
+}
+
+.gestionnaire-payment-methods__option--active {
+  border-color: #d97706;
+  background: #fffbeb;
+  color: #92400e;
+  box-shadow: 0 0 0 1px rgba(217, 119, 6, 0.12);
+}
+
+.gestionnaire-payment-methods__label {
+  font-size: 0.8125rem;
+  font-weight: 800;
+}
+
+@media (max-width: 700px) {
+  .gestionnaire-payment-methods {
+    grid-template-columns: 1fr;
+  }
+}

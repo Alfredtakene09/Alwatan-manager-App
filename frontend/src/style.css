@@ -1,0 +1,13 @@
+/* Polices locales (pas de CDN) */
+@import '@fontsource/plus-jakarta-sans/400.css';
+@import '@fontsource/plus-jakarta-sans/400-italic.css';
+@import '@fontsource/plus-jakarta-sans/500.css';
+@import '@fontsource/plus-jakarta-sans/600.css';
+@import '@fontsource/plus-jakarta-sans/700.css';
+@import '@fontsource/noto-naskh-arabic/400.css';
+@import '@fontsource/noto-naskh-arabic/700.css';
+
+@import './assets/medical-theme.css';
+@import './assets/card-accents.css';
+@import './assets/card-frames.css';
+@import './assets/form-modal.css';
