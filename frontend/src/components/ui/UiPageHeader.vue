@@ -1,11 +1,23 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Component } from 'vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
-defineProps<{
+const props = defineProps<{
   title: string
   subtitle?: string
   icon?: Component
 }>()
+
+const { uiText, localeCode, isArabic } = useAppI18n()
+const titleText = computed(() => {
+  void localeCode.value
+  return uiText(props.title)
+})
+const subtitleText = computed(() => {
+  void localeCode.value
+  return props.subtitle ? uiText(props.subtitle) : ''
+})
 </script>
 
 <template>
@@ -15,8 +27,8 @@ defineProps<{
         <component :is="icon" :size="18" />
       </div>
       <div>
-        <h1>{{ title }}</h1>
-        <p v-if="subtitle">{{ subtitle }}</p>
+        <h1 :class="{ 'lang-ar': isArabic }" :lang="isArabic ? 'ar' : undefined">{{ titleText }}</h1>
+        <p v-if="subtitle" :class="{ 'lang-ar': isArabic }" :lang="isArabic ? 'ar' : undefined">{{ subtitleText }}</p>
       </div>
     </div>
     <div v-if="$slots.actions" class="page-header__actions">

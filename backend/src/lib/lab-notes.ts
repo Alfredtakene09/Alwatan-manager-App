@@ -4,6 +4,7 @@ export const EXAMS_PRESCRIBED_PREFIX = "Examens prescrits";
 export const EXAMS_PAID_PREFIX = "Examens payés";
 export const EXAM_COMMENT_PREFIX = "Commentaire";
 export const LAB_RESULTS_PREFIX = "Résultats laboratoire";
+export const LAB_RESULTS_COMPLETION_MARKER = `${LAB_RESULTS_PREFIX} — validé le `;
 
 export const EXAM_KIND_SECTION_LABELS = {
   examen: "Laboratoire",
@@ -41,7 +42,7 @@ export function hasExamsPrescribed(notes?: string | null): boolean {
 }
 
 export function hasLabResults(notes?: string | null): boolean {
-  return !!notes?.includes(LAB_RESULTS_PREFIX);
+  return !!notes?.includes(LAB_RESULTS_COMPLETION_MARKER);
 }
 
 function allPrescriptionOrClauses() {
@@ -89,7 +90,7 @@ export function labsWaitingWhere(doctorId?: string) {
         clinicalNotes: { contains: `${EXAMS_PAID_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]})` },
       })),
     ],
-    NOT: { clinicalNotes: { contains: LAB_RESULTS_PREFIX } },
+    NOT: { clinicalNotes: { contains: LAB_RESULTS_COMPLETION_MARKER } },
   };
 }
 
@@ -97,12 +98,7 @@ export function labsWaitingWhere(doctorId?: string) {
 export function labsCompletedWhere(doctorId?: string) {
   return {
     ...(doctorId ? { doctorId } : {}),
-    labSentToLabAt: { not: null },
-    clinicalNotes: { contains: LAB_RESULTS_PREFIX },
-    OR: [
-      { clinicalNotes: { contains: `${EXAMS_PRESCRIBED_PREFIX} (${EXAM_KIND_SECTION_LABELS.examen})` } },
-      { clinicalNotes: { contains: `${EXAMS_PRESCRIBED_PREFIX} : ` } },
-    ],
+    clinicalNotes: { contains: LAB_RESULTS_COMPLETION_MARKER },
   };
 }
 
@@ -381,14 +377,14 @@ export function countNewExamsInAppend(
  */
 export function labsResultsWhere() {
   return {
-    clinicalNotes: { contains: LAB_RESULTS_PREFIX },
+    clinicalNotes: { contains: LAB_RESULTS_COMPLETION_MARKER },
   };
 }
 
 /** Dernière validation globale des résultats labo (ligne la plus récente). */
 export function parseLabResultsCompletionAt(notes?: string | null): Date | null {
   if (!notes) return null;
-  const marker = `${LAB_RESULTS_PREFIX} — validé le `;
+  const marker = LAB_RESULTS_COMPLETION_MARKER;
   let latest: Date | null = null;
   for (const line of notes.split("\n")) {
     const trimmed = line.trim();

@@ -11,6 +11,7 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
+    "db:split-routine-hormones": "tsx scripts/_split-routine-hormones-panel.ts",
     "db:seed:demo": "SEED_DEMO_RESET=1 npm run db:seed",
     "db:setup": "npx prisma db push && npm run db:seed",
     "db:docker:up": "docker compose -f ../docker-compose.yml up -d postgres",

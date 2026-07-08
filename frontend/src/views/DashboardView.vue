@@ -10,31 +10,24 @@ import {
   CalendarDays,
   FlaskConical,
   BedDouble,
-  Bell,
-  Plus,
   Wallet,
-  ClipboardList,
+  Bell,
+  Clock,
+  AlertTriangle,
 } from '@lucide/vue'
 import api from '@/api/client'
-import { formatFcfa } from '@/lib/roles'
-import { confirmAppModal } from '@/lib/api-modal-helper'
-import type { AdminDashboardOverview, AdminExpenseRow, TrendFilter } from '@/lib/admin-dashboard'
+import { useAuthStore } from '@/stores/auth'
+import { canAccessModule, formatFcfa } from '@/lib/roles'
+import type { AdminDashboardOverview, TrendFilter } from '@/lib/admin-dashboard'
+import { filterTrend, formatTrendPercent } from '@/lib/admin-dashboard'
 import {
-  EXPENSE_STATUS_VARIANT,
-  PAYROLL_STATUS_LABEL,
-  filterTrend,
-  formatRelativeTime,
-  formatShortDate,
-  formatTrendPercent,
-} from '@/lib/admin-dashboard'
-import AdminExpenseFormModal, {
-  type AdminExpenseFormPayload,
-} from '@/components/admin/AdminExpenseFormModal.vue'
+  formatCashDelayLabel,
+  type GestionnaireDashboardOverview,
+} from '@/lib/gestionnaire-dashboard'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiTextarea from '@/components/ui/UiTextarea.vue'
 import RoleDashboardShell from '@/components/dashboard/RoleDashboardShell.vue'
 import DashboardLineChart from '@/components/dashboard/DashboardLineChart.vue'
 import DashboardDonutChart from '@/components/dashboard/DashboardDonutChart.vue'
@@ -42,16 +35,21 @@ import DashboardHorizontalBars from '@/components/dashboard/DashboardHorizontalB
 import type { SummaryStat } from '@/lib/dashboard-summary'
 
 const router = useRouter()
+const auth = useAuthStore()
+
 const overview = ref<AdminDashboardOverview | null>(null)
+const gestionnaireOverview = ref<GestionnaireDashboardOverview | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const trendFilter = ref<TrendFilter>('year')
-const expenseFilter = ref<'all' | 'month' | 'pending'>('all')
-const showExpenseModal = ref(false)
-const showRejectModal = ref(false)
-const rejectTarget = ref<AdminExpenseRow | null>(null)
-const rejectReason = ref('')
-const expenseSaving = ref(false)
+const showAlertsModal = ref(false)
+
+const showAdminSection = computed(() =>
+  auth.user ? canAccessModule(auth.user.role, 'admin') : false,
+)
+const showGestionnaireSection = computed(() =>
+  auth.user ? canAccessModule(auth.user.role, 'gestionnaire') : false,
+)
 
 const REVENUE_COLORS: Record<string, string> = {
   consultations: '#2563eb',
@@ -70,7 +68,7 @@ const EXPENSE_COLORS: Record<string, string> = {
 }
 
 const summaryStats = computed((): SummaryStat[] => {
-  const k = overview.value?.financialKpis
+  const k = gestionnaireOverview.value?.financialKpis ?? overview.value?.financialKpis
   if (!k) return []
   return [
     {
@@ -155,89 +153,119 @@ const expenseBars = computed(() =>
   })),
 )
 
-const filteredExpenses = computed(() => {
-  const rows = overview.value?.recentExpenses ?? []
-  if (expenseFilter.value === 'pending') {
-    return rows.filter((row) => row.status === 'PENDING')
+const comptableCashAlert = computed(
+  () => gestionnaireOverview.value?.alerts.cashRegisters.find((row) => row.id === 'comptabilite') ?? null,
+)
+
+const dashboardAlerts = computed(() => {
+  const items: Array<{
+    id: string
+    severity: 'danger' | 'warning' | 'info'
+    title: string
+    message: string
+    actionLabel?: string
+    actionTo?: string
+  }> = []
+
+  const cash = comptableCashAlert.value
+  if (cash && cash.pendingFcfa > 0) {
+    const delay = formatCashDelayLabel(cash.hoursSinceLastDisbursement, cash.lastDisbursementAt)
+    const scheduleHint = cash.hint ?? cash.workflowHint ?? ''
+    const statusLabel = cash.disbursementStatusLabel ?? 'Solde comptable en attente'
+    const isDuringDay = cash.disbursementPhase === 'during_day'
+    let cashSeverity: 'danger' | 'warning' | 'info' = 'warning'
+    if (cash.overdue) cashSeverity = 'danger'
+    else if (isDuringDay) cashSeverity = 'info'
+    items.push({
+      id: 'cash-comptable',
+      severity: cashSeverity,
+      title: statusLabel,
+      message: `${formatFcfa(cash.pendingFcfa)} en tirelire comptable (${delay}). ${scheduleHint}`,
+      actionLabel: cash.overdue ? 'Récupérer la tirelire' : 'Voir la caisse comptable',
+      actionTo: '/gestionnaire/caisse',
+    })
   }
-  if (expenseFilter.value === 'month') {
-    const now = new Date()
-    const prefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-    return rows.filter((row) => row.date.startsWith(prefix))
+
+  const unpaidPayroll =
+    gestionnaireOverview.value?.alerts.unpaidPayroll ?? overview.value?.alerts.unpaidPayroll ?? 0
+  if (unpaidPayroll > 0) {
+    items.push({
+      id: 'payroll',
+      severity: 'warning',
+      title: 'Paie du mois incomplète',
+      message: `${unpaidPayroll} salaire${unpaidPayroll > 1 ? 's' : ''} encore à valider ce mois.`,
+      actionLabel: 'Ouvrir la paie',
+      actionTo: showGestionnaireSection.value ? '/gestionnaire/salaires' : '/admin/salaires',
+    })
   }
-  return rows
+
+  const pendingExpenses = overview.value?.alerts.pendingExpenses ?? 0
+  if (pendingExpenses > 0) {
+    items.push({
+      id: 'pending-expenses',
+      severity: 'warning',
+      title: 'Dépenses à valider',
+      message: `${pendingExpenses} dépense${pendingExpenses > 1 ? 's' : ''} en attente de validation.`,
+      actionLabel: 'Voir les dépenses',
+      actionTo: '/admin/depenses',
+    })
+  }
+
+  const lowStock = overview.value?.alerts.lowStock ?? 0
+  if (lowStock > 0) {
+    items.push({
+      id: 'low-stock',
+      severity: 'warning',
+      title: 'Stock pharmacie bas',
+      message: `${lowStock} produit${lowStock > 1 ? 's' : ''} en stock critique.`,
+      actionLabel: 'Voir la pharmacie',
+      actionTo: '/pharmacie/alertes',
+    })
+  }
+
+  return items
 })
 
-const payrollProgress = computed(() => {
-  const payroll = overview.value?.payroll
-  if (!payroll || !payroll.totalCount) return 0
-  return Math.round((payroll.paidCount / payroll.totalCount) * 100)
-})
+const alertsCount = computed(() => dashboardAlerts.value.length)
+
+function openAlertTarget(to?: string) {
+  showAlertsModal.value = false
+  if (to) router.push(to)
+}
 
 async function loadOverview() {
   loading.value = true
   loadError.value = ''
   try {
-    const { data } = await api.get<AdminDashboardOverview>('/dashboard/admin')
-    overview.value = data
+    const requests: Promise<void>[] = []
+
+    if (showAdminSection.value) {
+      requests.push(
+        api.get<AdminDashboardOverview>('/dashboard/admin').then(({ data }) => {
+          overview.value = data
+        }),
+      )
+    } else {
+      overview.value = null
+    }
+
+    if (showGestionnaireSection.value) {
+      requests.push(
+        api.get<GestionnaireDashboardOverview>('/dashboard/gestionnaire').then(({ data }) => {
+          gestionnaireOverview.value = data
+        }),
+      )
+    } else {
+      gestionnaireOverview.value = null
+    }
+
+    await Promise.all(requests)
   } catch {
-    loadError.value = 'Impossible de charger le tableau de bord administrateur.'
+    loadError.value = 'Impossible de charger le tableau de bord.'
     overview.value = null
+    gestionnaireOverview.value = null
   } finally {
     loading.value = false
-  }
-}
-
-async function validateExpense(row: AdminExpenseRow) {
-  const ok = await confirmAppModal({
-    type: 'CONFIRM',
-    title: 'Valider la dépense',
-    message: `Confirmer la validation de « ${row.description} » pour ${formatFcfa(row.amountFcfa)} ?`,
-    confirmLabel: 'Valider',
-    cancelLabel: 'Annuler',
-  })
-  if (!ok) return
-  await api.patch(`/admin/expenses/${row.id}/validate`)
-  await loadOverview()
-}
-
-async function rejectExpense(row: AdminExpenseRow) {
-  rejectTarget.value = row
-  rejectReason.value = ''
-  showRejectModal.value = true
-}
-
-async function submitReject() {
-  if (!rejectTarget.value || rejectReason.value.trim().length < 3) return
-  await api.patch(`/admin/expenses/${rejectTarget.value.id}/reject`, {
-    reason: rejectReason.value.trim(),
-  })
-  showRejectModal.value = false
-  rejectTarget.value = null
-  await loadOverview()
-}
-
-async function payPayroll(id: string, employeeName: string) {
-  const ok = await confirmAppModal({
-    type: 'CONFIRM',
-    title: 'Valider la paie',
-    message: `Confirmer le paiement du salaire de ${employeeName} ?`,
-    confirmLabel: 'Confirmer le paiement',
-    cancelLabel: 'Annuler',
-  })
-  if (!ok) return
-  await api.post(`/admin/payroll/${id}/pay`)
-  await loadOverview()
-}
-
-async function submitExpense(payload: AdminExpenseFormPayload) {
-  expenseSaving.value = true
-  try {
-    await api.post('/admin/expenses', payload)
-    showExpenseModal.value = false
-    await loadOverview()
-  } finally {
-    expenseSaving.value = false
   }
 }
 
@@ -246,15 +274,72 @@ onMounted(loadOverview)
 
 <template>
   <RoleDashboardShell
-    subtitle="Gestion financière, dépenses, salaires et supervision de la clinique"
+    title="Tableau de board"
+    subtitle="Vue d'ensemble, finances, caisses et supervision de la clinique"
     :icon="LayoutDashboard"
     :stats="summaryStats"
     :loading="loading"
     :load-error="loadError"
     @refresh="loadOverview"
   >
+    <template #actions>
+      <button
+        type="button"
+        class="alerts-bell"
+        :class="{ 'alerts-bell--active': alertsCount > 0 }"
+        :aria-label="`Alertes (${alertsCount})`"
+        @click="showAlertsModal = true"
+      >
+        <Bell :size="18" />
+        <span v-if="alertsCount > 0" class="alerts-bell__badge">{{ alertsCount }}</span>
+      </button>
+      <UiButton
+        v-if="showAdminSection"
+        variant="ghost"
+        size="sm"
+        :icon="Wallet"
+        @click="router.push('/admin/depenses')"
+      >
+        Dépenses récentes
+      </UiButton>
+      <UiButton variant="ghost" size="sm" :disabled="loading" @click="loadOverview">
+        Actualiser
+      </UiButton>
+    </template>
+
     <div class="admin-dashboard">
-      <section class="charts-grid">
+      <section v-if="showAdminSection" class="clinical-cards">
+        <UiStatCard
+          label="Patients aujourd'hui"
+          :value="overview?.clinical.patientsToday ?? 0"
+          :icon="Users"
+          variant="teal"
+          mini
+        />
+        <UiStatCard
+          label="RDV du jour"
+          :value="overview?.clinical.appointmentsToday ?? 0"
+          :icon="CalendarDays"
+          variant="blue"
+          mini
+        />
+        <UiStatCard
+          label="Examens en attente"
+          :value="overview?.clinical.examsPending ?? 0"
+          :icon="FlaskConical"
+          variant="amber"
+          mini
+        />
+        <UiStatCard
+          label="Hospitalisations actives"
+          :value="overview?.clinical.activeHospitalizations ?? 0"
+          :icon="BedDouble"
+          variant="violet"
+          mini
+        />
+      </section>
+
+      <section v-if="showAdminSection" class="charts-grid">
         <UiCard
           title="Évolution mensuelle"
           description="Recettes, dépenses et bénéfice net — 12 mois glissants"
@@ -313,265 +398,44 @@ onMounted(loadOverview)
           <DashboardHorizontalBars :rows="expenseBars" :format-value="formatFcfa" />
         </UiCard>
       </section>
-
-      <section class="admin-dashboard__grid">
-        <UiCard title="Dépenses récentes" description="Suivi et validation" :icon="Wallet" icon-variant="amber">
-          <div class="section-toolbar">
-            <div class="section-toolbar__filters">
-              <button
-                type="button"
-                class="trend-filters__btn"
-                :class="{ 'trend-filters__btn--active': expenseFilter === 'all' }"
-                @click="expenseFilter = 'all'"
-              >
-                Toutes
-              </button>
-              <button
-                type="button"
-                class="trend-filters__btn"
-                :class="{ 'trend-filters__btn--active': expenseFilter === 'month' }"
-                @click="expenseFilter = 'month'"
-              >
-                Ce mois
-              </button>
-              <button
-                type="button"
-                class="trend-filters__btn"
-                :class="{ 'trend-filters__btn--active': expenseFilter === 'pending' }"
-                @click="expenseFilter = 'pending'"
-              >
-                En attente
-              </button>
-            </div>
-            <div class="section-toolbar__actions">
-              <UiButton size="sm" :icon="Plus" @click="showExpenseModal = true">Nouvelle dépense</UiButton>
-              <UiButton size="sm" variant="ghost" @click="router.push('/admin/depenses')">Voir tout</UiButton>
-            </div>
-          </div>
-
-          <div v-if="!filteredExpenses.length" class="chart-empty">Aucune dépense à afficher</div>
-          <div v-else class="data-table-wrap">
-            <table class="admin-table">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Catégorie</th>
-                  <th>Description</th>
-                  <th>Montant</th>
-                  <th>Statut</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in filteredExpenses.slice(0, 8)" :key="row.id">
-                  <td>{{ formatShortDate(row.date) }}</td>
-                  <td>{{ row.category }}</td>
-                  <td>{{ row.description }}</td>
-                  <td>{{ formatFcfa(row.amountFcfa) }}</td>
-                  <td>
-                    <span class="status-badge" :class="`status-badge--${EXPENSE_STATUS_VARIANT[row.status]}`">
-                      {{ row.statusLabel }}
-                    </span>
-                  </td>
-                  <td class="admin-table__actions">
-                    <UiButton
-                      v-if="row.status === 'PENDING'"
-                      size="sm"
-                      variant="ghost"
-                      @click="validateExpense(row)"
-                    >
-                      Valider
-                    </UiButton>
-                    <UiButton
-                      v-if="row.status === 'PENDING'"
-                      size="sm"
-                      variant="ghost"
-                      @click="rejectExpense(row)"
-                    >
-                      Rejeter
-                    </UiButton>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </UiCard>
-
-        <div class="admin-dashboard__stack">
-          <UiCard title="Aperçu employés" description="Effectif actif" :icon="Users" icon-variant="teal">
-            <div class="employees-summary">
-              <div>
-                <strong class="employees-summary__count">{{ overview?.employees.totalActive ?? 0 }}</strong>
-                <span>employés actifs</span>
-              </div>
-              <span v-if="overview?.employees.newThisMonth" class="employees-summary__badge">
-                +{{ overview.employees.newThisMonth }} nouveaux ce mois
-              </span>
-            </div>
-            <div class="service-list">
-              <div
-                v-for="row in overview?.employees.byService ?? []"
-                :key="row.service"
-                class="service-list__row"
-              >
-                <span>{{ row.service }}</span>
-                <strong>{{ row.count }}</strong>
-              </div>
-            </div>
-          </UiCard>
-
-          <UiCard
-            title="Paie du mois"
-            description="Mois en cours"
-            :icon="Banknote"
-            icon-variant="violet"
-          >
-            <div class="payroll-progress">
-              <div class="payroll-progress__bar">
-                <div class="payroll-progress__fill" :style="{ width: `${payrollProgress}%` }" />
-              </div>
-              <span>
-                {{ overview?.payroll.paidCount ?? 0 }}/{{ overview?.payroll.totalCount ?? 0 }} employés payés
-              </span>
-            </div>
-            <div v-if="!(overview?.payroll.rows.length)" class="chart-empty">Aucune fiche de paie ce mois</div>
-            <div v-else class="data-table-wrap">
-              <table class="admin-table admin-table--compact">
-                <thead>
-                  <tr>
-                    <th>Employé</th>
-                    <th>Poste</th>
-                    <th>Brut</th>
-                    <th>Statut</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="row in overview?.payroll.rows.slice(0, 6)" :key="row.id">
-                    <td>{{ row.employeeName }}</td>
-                    <td>{{ row.jobTitle ?? '—' }}</td>
-                    <td>{{ formatFcfa(row.grossFcfa) }}</td>
-                    <td>{{ PAYROLL_STATUS_LABEL[row.status] }}</td>
-                    <td>
-                      <UiButton
-                        v-if="row.status !== 'PAID'"
-                        size="sm"
-                        variant="ghost"
-                        @click="payPayroll(row.id, row.employeeName)"
-                      >
-                        Valider la paie
-                      </UiButton>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <UiButton class="section-link" size="sm" variant="ghost" @click="router.push('/admin/salaires')">
-              Voir tout
-            </UiButton>
-          </UiCard>
-        </div>
-      </section>
-
-      <section class="clinical-cards">
-        <UiStatCard
-          label="Patients aujourd'hui"
-          :value="overview?.clinical.patientsToday ?? 0"
-          :icon="Users"
-          variant="teal"
-          mini
-        />
-        <UiStatCard
-          label="RDV du jour"
-          :value="overview?.clinical.appointmentsToday ?? 0"
-          :icon="CalendarDays"
-          variant="blue"
-          mini
-        />
-        <UiStatCard
-          label="Examens en attente"
-          :value="overview?.clinical.examsPending ?? 0"
-          :icon="FlaskConical"
-          variant="amber"
-          mini
-        />
-        <UiStatCard
-          label="Hospitalisations actives"
-          :value="overview?.clinical.activeHospitalizations ?? 0"
-          :icon="BedDouble"
-          variant="violet"
-          mini
-        />
-      </section>
-
-      <section class="admin-dashboard__bottom">
-        <UiCard title="Alertes importantes" :icon="Bell" icon-variant="amber">
-          <ul class="alerts-list">
-            <li v-if="overview?.alerts.pendingExpenses" class="alerts-list__item alerts-list__item--danger">
-              Dépenses en attente de validation — {{ overview.alerts.pendingExpenses }}
-            </li>
-            <li v-if="overview?.alerts.unpaidPayroll" class="alerts-list__item alerts-list__item--warning">
-              Salaires non payés ce mois — {{ overview.alerts.unpaidPayroll }}
-            </li>
-            <li v-if="overview?.alerts.lowStock" class="alerts-list__item alerts-list__item--warning">
-              Stock pharmacie bas — {{ overview.alerts.lowStock }} produit(s)
-            </li>
-            <li
-              v-for="item in overview?.alerts.recentValidations ?? []"
-              :key="item.id"
-              class="alerts-list__item alerts-list__item--success"
-            >
-              Dépense validée — {{ item.label }} — {{ formatFcfa(item.amountFcfa) }}
-            </li>
-            <li
-              v-if="
-                !overview?.alerts.pendingExpenses &&
-                !overview?.alerts.unpaidPayroll &&
-                !overview?.alerts.lowStock &&
-                !(overview?.alerts.recentValidations.length)
-              "
-              class="chart-empty"
-            >
-              Aucune alerte pour le moment
-            </li>
-          </ul>
-        </UiCard>
-
-        <UiCard title="Journal d'activité Admin" :icon="ClipboardList" icon-variant="blue">
-          <ul class="journal-list">
-            <li v-for="entry in overview?.activityJournal ?? []" :key="entry.id">
-              <span>{{ entry.message }} — {{ formatRelativeTime(entry.createdAt) }}</span>
-              <small>{{ entry.actorName }}</small>
-            </li>
-            <li v-if="!(overview?.activityJournal.length)" class="chart-empty">Aucune action récente</li>
-          </ul>
-          <UiButton size="sm" variant="ghost" class="section-link" @click="router.push('/admin/depenses')">
-            Voir l'historique complet
-          </UiButton>
-        </UiCard>
-      </section>
     </div>
 
-    <AdminExpenseFormModal
-      :open="showExpenseModal"
-      :saving="expenseSaving"
-      @close="showExpenseModal = false"
-      @submit="submitExpense"
-    />
-
     <UiFormModal
-      v-if="showRejectModal"
-      title="Rejeter la dépense"
-      subtitle="Justification obligatoire"
-      @close="showRejectModal = false"
+      v-if="showAlertsModal"
+      title="Alertes"
+      :subtitle="alertsCount ? `${alertsCount} alerte${alertsCount > 1 ? 's' : ''} à traiter` : 'Aucune alerte'"
+      :icon="Bell"
+      @close="showAlertsModal = false"
     >
-      <UiTextarea v-model="rejectReason" label="Motif du rejet" />
-      <template #footer>
-        <UiButton variant="ghost" @click="showRejectModal = false">Annuler</UiButton>
-        <UiButton variant="danger" :disabled="rejectReason.trim().length < 3" @click="submitReject">
-          Confirmer le rejet
-        </UiButton>
-      </template>
+      <ul v-if="dashboardAlerts.length" class="alerts-list">
+        <li
+          v-for="alert in dashboardAlerts"
+          :key="alert.id"
+          class="alerts-list__item"
+          :class="`alerts-list__item--${alert.severity}`"
+        >
+          <div class="alerts-list__content">
+            <AlertTriangle v-if="alert.severity === 'danger'" :size="18" />
+            <Clock v-else :size="18" />
+            <div>
+              <strong class="alerts-list__title">{{ alert.title }}</strong>
+              <p class="alerts-list__message">{{ alert.message }}</p>
+              <UiButton
+                v-if="alert.actionTo"
+                size="sm"
+                variant="ghost"
+                class="alerts-list__action"
+                @click="openAlertTarget(alert.actionTo)"
+              >
+                {{ alert.actionLabel }}
+              </UiButton>
+            </div>
+          </div>
+        </li>
+      </ul>
+      <p v-else class="alerts-list__item alerts-list__item--ok">
+        Tout est à jour — aucune action urgente sur la caisse comptable, les dépenses ni la paie.
+      </p>
     </UiFormModal>
   </RoleDashboardShell>
 </template>
@@ -593,24 +457,6 @@ onMounted(loadOverview)
 
 .charts-grid > :first-child {
   grid-column: 1 / -1;
-}
-
-.admin-dashboard__grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-  gap: 1rem;
-}
-
-.admin-dashboard__stack {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.admin-dashboard__bottom {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
 }
 
 .clinical-cards {
@@ -642,161 +488,115 @@ onMounted(loadOverview)
   border-color: rgba(107, 124, 62, 0.35);
 }
 
-.section-toolbar {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.75rem;
-}
-
-.section-toolbar__filters,
-.section-toolbar__actions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.data-table-wrap {
-  overflow-x: auto;
-}
-
-.admin-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.8125rem;
-}
-
-.admin-table th,
-.admin-table td {
-  padding: 0.55rem 0.45rem;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-}
-
-.admin-table th {
-  color: var(--text-muted);
-  font-weight: 600;
-}
-
-.admin-table__actions {
-  display: flex;
-  gap: 0.25rem;
-  flex-wrap: wrap;
-}
-
-.status-badge {
+.alerts-bell {
+  position: relative;
   display: inline-flex;
-  padding: 0.15rem 0.5rem;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.alerts-bell:hover {
+  color: var(--primary-800);
+  border-color: var(--accent-400);
+}
+
+.alerts-bell--active {
+  color: #b45309;
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.alerts-bell__badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.3rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #dc2626;
+  color: #fff;
   border-radius: 999px;
   font-size: 0.6875rem;
-  font-weight: 600;
-}
-
-.status-badge--green { background: #dcfce7; color: #166534; }
-.status-badge--amber { background: #fef3c7; color: #b45309; }
-.status-badge--rose { background: #ffe4e6; color: #be123c; }
-
-.employees-summary {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-}
-
-.employees-summary__count {
-  display: block;
-  font-size: 2rem;
+  font-weight: 700;
   line-height: 1;
 }
 
-.employees-summary__badge {
-  background: #dcfce7;
-  color: #166534;
-  border-radius: 999px;
-  padding: 0.25rem 0.6rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.service-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-}
-
-.service-list__row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-}
-
-.payroll-progress {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  margin-bottom: 0.75rem;
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-}
-
-.payroll-progress__bar {
-  height: 0.55rem;
-  border-radius: 999px;
-  background: #f1f5f9;
-  overflow: hidden;
-}
-
-.payroll-progress__fill {
-  height: 100%;
-  background: linear-gradient(90deg, #7c3aed, #a78bfa);
-  border-radius: 999px;
-}
-
-.alerts-list,
-.journal-list {
+.alerts-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.55rem;
+  gap: 0.65rem;
 }
 
 .alerts-list__item {
-  padding: 0.55rem 0.7rem;
-  border-radius: var(--radius);
-  font-size: 0.8125rem;
-}
-
-.alerts-list__item--danger { background: #ffe4e6; color: #be123c; }
-.alerts-list__item--warning { background: #fef3c7; color: #b45309; }
-.alerts-list__item--success { background: #dcfce7; color: #166534; }
-
-.journal-list li {
   display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  padding: 0.45rem 0;
-  border-bottom: 1px dashed var(--border);
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.65rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.alerts-list__content {
+  display: flex;
+  gap: 0.65rem;
+  align-items: flex-start;
+}
+
+.alerts-list__title {
+  display: block;
+  margin-bottom: 0.2rem;
+  font-size: 0.9rem;
+}
+
+.alerts-list__message {
+  margin: 0;
   font-size: 0.8125rem;
+  line-height: 1.45;
+  opacity: 0.95;
 }
 
-.journal-list small {
-  color: var(--text-light);
+.alerts-list__action {
+  margin-top: 0.5rem;
+  padding-left: 0;
 }
 
-.section-link {
-  margin-top: 0.75rem;
+.alerts-list__item--danger {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.alerts-list__item--warning {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.alerts-list__item--info {
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+.alerts-list__item--ok {
+  background: #f0fdf4;
+  color: #166534;
 }
 
 @media (max-width: 1100px) {
   .charts-grid,
-  .admin-dashboard__grid,
-  .admin-dashboard__bottom,
   .clinical-cards {
     grid-template-columns: 1fr;
   }

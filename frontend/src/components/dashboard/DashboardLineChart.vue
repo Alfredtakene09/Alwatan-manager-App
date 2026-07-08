@@ -15,21 +15,31 @@ const props = defineProps<{
   loading?: boolean
 }>()
 
+const PAD_X = 12
+const PAD_TOP = 14
+const PAD_BOTTOM = 12
+
 const maxValue = computed(() => {
   const all = props.series.flatMap((s) => s.values)
   return Math.max(1, ...all, 0)
 })
 
 function pointY(value: number, height: number) {
-  return height - (value / maxValue.value) * (height - 8) - 4
+  const usable = height - PAD_TOP - PAD_BOTTOM
+  return PAD_TOP + (1 - value / maxValue.value) * usable
+}
+
+function pointX(index: number, count: number, width: number) {
+  if (count <= 1) return width / 2
+  const usable = width - PAD_X * 2
+  return PAD_X + (index / (count - 1)) * usable
 }
 
 function buildPath(values: number[], width: number, height: number) {
   if (!values.length) return ''
-  const step = values.length > 1 ? width / (values.length - 1) : 0
   return values
     .map((value, index) => {
-      const x = index * step
+      const x = pointX(index, values.length, width)
       const y = pointY(value, height)
       return `${index === 0 ? 'M' : 'L'} ${x} ${y}`
     })
@@ -41,7 +51,7 @@ function buildPath(values: number[], width: number, height: number) {
   <div v-if="loading" class="line-chart-skeleton" />
   <div v-else-if="!labels.length" class="chart-empty">Aucune donnée disponible</div>
   <div v-else class="line-chart">
-    <svg class="line-chart__svg" viewBox="0 0 600 200" preserveAspectRatio="none">
+    <svg class="line-chart__svg" viewBox="0 0 600 200" preserveAspectRatio="none" overflow="visible">
       <g v-for="row in series" :key="row.key">
         <path
           :d="buildPath(row.values, 600, 200)"
@@ -81,12 +91,25 @@ function buildPath(values: number[], width: number, height: number) {
 }
 
 .line-chart__labels {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  display: flex;
+  justify-content: space-between;
   gap: 0.25rem;
+  padding: 0 2%;
   font-size: 0.6875rem;
   color: var(--text-light);
+}
+
+.line-chart__labels span {
+  flex: 1;
   text-align: center;
+}
+
+.line-chart__labels span:first-child {
+  text-align: left;
+}
+
+.line-chart__labels span:last-child {
+  text-align: right;
 }
 
 .line-chart-skeleton {

@@ -5,22 +5,26 @@ import axios from 'axios'
 import { User, Lock } from '@lucide/vue'
 import { useAuthStore } from '@/stores/auth'
 import { CLINIC } from '@/lib/clinic'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
+import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 
 const DEMO_PASSWORD = 'Clinique2026!'
 
 const DEMO_ACCOUNTS = [
-  { id: 'reception', label: 'Réception', username: 'reception' },
-  { id: 'medecin', label: 'Médecin', username: 'medecin' },
-  { id: 'direction', label: 'Direction', username: 'direction' },
-  { id: 'pharmacie', label: 'Pharmacie', username: 'pharmacie' },
-  { id: 'laboratoire', label: 'Laboratoire', username: 'laborantin' },
+  { id: 'reception', roleKey: 'reception', username: 'reception' },
+  { id: 'medecin', roleKey: 'medecin', username: 'medecin' },
+  { id: 'direction', roleKey: 'direction', username: 'direction' },
+  { id: 'pharmacie', roleKey: 'pharmacie', username: 'pharmacie' },
+  { id: 'laboratoire', roleKey: 'laboratoire', username: 'laborantin' },
+  { id: 'logistique', roleKey: 'logistique', username: 'logistique' },
 ] as const
 
 const auth = useAuthStore()
 const router = useRouter()
+const { t, isArabic } = useAppI18n()
 const username = ref('')
 const password = ref('')
 const error = ref('')
@@ -44,15 +48,15 @@ async function submit() {
     router.push(redirect)
   } catch (e) {
     if (axios.isAxiosError(e) && !e.response) {
-      error.value = 'Serveur inaccessible. Démarrez le backend : cd backend puis npm run dev (port 4000).'
-    } else if (axios.isAxiosError(e) && (e.response?.status === 401)) {
-      error.value = 'Identifiants invalides. Vérifiez votre nom d\'utilisateur et mot de passe.'
+      error.value = t('login.errors.unreachable')
+    } else if (axios.isAxiosError(e) && e.response?.status === 401) {
+      error.value = t('login.errors.invalid')
     } else if (axios.isAxiosError(e) && (e.response?.status === 502 || e.response?.status === 503)) {
-      error.value = 'Backend indisponible. Lancez .\\scripts\\start-local.ps1 ou npm run dev dans le dossier backend.'
+      error.value = t('login.errors.unavailable')
     } else if (axios.isAxiosError(e) && e.response?.status === 400) {
-      error.value = 'Nom d\'utilisateur ou mot de passe invalide.'
+      error.value = t('login.errors.badRequest')
     } else {
-      error.value = 'Erreur de connexion. Réessayez dans un instant.'
+      error.value = t('login.errors.generic')
     }
   }
 }
@@ -66,14 +70,23 @@ onMounted(async () => {
 
 <template>
   <div class="login">
-    <form class="login__card" @submit.prevent="submit">
+    <div class="login__lang">
+      <LanguageSwitcher />
+    </div>
+
+    <form
+      class="login__card"
+      :class="{ 'lang-ar': isArabic }"
+      :lang="isArabic ? 'ar' : undefined"
+      @submit.prevent="submit"
+    >
       <header class="login__brand">
-        <h1 class="login__title">Connexion</h1>
+        <h1 class="login__title">{{ t('login.title') }}</h1>
         <img class="login__logo" :src="CLINIC.logo" :alt="CLINIC.nameFr" />
       </header>
 
       <div class="login__demo">
-        <p class="login__demo-label">Comptes démo — mot de passe : <code>Clinique2026!</code></p>
+        <p class="login__demo-label">{{ t('login.demoLabel') }} <code>Clinique2026!</code></p>
         <div class="demo-buttons">
           <button
             v-for="account in DEMO_ACCOUNTS"
@@ -83,14 +96,14 @@ onMounted(async () => {
             :class="{ 'demo-btn--active': selectedDemoId === account.id }"
             @click="selectDemoAccount(account.id)"
           >
-            {{ account.label }}
+            {{ t(`login.roles.${account.roleKey}`) }}
           </button>
         </div>
       </div>
 
       <UiInput
         v-model="username"
-        label="Nom d'utilisateur"
+        :label="t('login.username')"
         type="text"
         placeholder="reception"
         :icon="User"
@@ -101,7 +114,7 @@ onMounted(async () => {
       <UiInput
         ref="passwordInputRef"
         v-model="password"
-        label="Mot de passe"
+        :label="t('login.password')"
         type="password"
         placeholder="••••••••"
         :icon="Lock"
@@ -118,7 +131,7 @@ onMounted(async () => {
         :loading="auth.loading"
         class="login__submit"
       >
-        Se connecter
+        {{ t('login.submit') }}
       </UiButton>
     </form>
   </div>
@@ -126,6 +139,7 @@ onMounted(async () => {
 
 <style scoped>
 .login {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -139,6 +153,13 @@ onMounted(async () => {
     radial-gradient(ellipse 50% 40% at 100% 100%, rgba(67, 160, 71, 0.08), transparent 50%),
     radial-gradient(ellipse 40% 35% at 0% 90%, rgba(245, 124, 0, 0.06), transparent 45%),
     #f0f5fb;
+}
+
+.login__lang {
+  position: absolute;
+  top: max(1rem, env(safe-area-inset-top, 0px));
+  inset-inline-end: max(1rem, env(safe-area-inset-end, 0px));
+  z-index: 2;
 }
 
 .login__card {
@@ -241,7 +262,7 @@ onMounted(async () => {
   .login {
     padding: 1rem;
     align-items: flex-start;
-    padding-top: max(1rem, env(safe-area-inset-top, 0px));
+    padding-top: max(3.5rem, calc(env(safe-area-inset-top, 0px) + 3rem));
   }
 
   .login__card {

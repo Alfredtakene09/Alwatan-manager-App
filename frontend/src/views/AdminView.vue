@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Settings, Scissors, Package, BedDouble, Eye } from '@lucide/vue'
+import { Settings, Scissors, Eye } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
@@ -13,10 +13,8 @@ import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
 
 const interventions = ref<any[]>([])
-const products = ref<any[]>([])
-const rooms = ref<any[]>([])
 const message = ref('')
-const tab = ref<'interventions' | 'products' | 'rooms'>('interventions')
+const tab = ref<'interventions'>('interventions')
 const viewModalOpen = ref(false)
 const viewingIntervention = ref<any | null>(null)
 
@@ -42,33 +40,6 @@ const interventionRows = computed(() =>
     statusVariant: item.active ? 'success' : 'danger',
     toggleLabel: item.active ? 'Désactiver' : 'Activer',
     isActive: item.active,
-  })),
-)
-
-const productRows = computed(() =>
-  products.value.map((item) => ({
-    id: item.id,
-    name: item.name,
-    sku: item.sku,
-    price: formatFcfa(item.unitPriceFcfa),
-    priceSort: item.unitPriceFcfa,
-    quantity: item.quantity,
-    minStock: item.minStock,
-    stockLabel: `${item.quantity} unités`,
-    lowStock: item.quantity <= item.minStock,
-    statusVariant: item.quantity <= item.minStock ? 'danger' : 'success',
-  })),
-)
-
-const roomRows = computed(() =>
-  rooms.value.map((room) => ({
-    id: room.id,
-    name: room.name,
-    type: room.type,
-    rate: `${formatFcfa(room.dailyRateFcfa)}/nuit`,
-    rateSort: room.dailyRateFcfa,
-    activeLabel: room.active ? 'Active' : 'Inactive',
-    typeVariant: room.type === 'VIP' ? 'primary' : 'info',
   })),
 )
 
@@ -101,52 +72,9 @@ const interventionColumns = [
   },
 ]
 
-const productColumns = [
-  { data: 'name', title: 'Produit', render: (v: string) => `<span class="dt-name">${v}</span>` },
-  { data: 'sku', title: 'SKU' },
-  {
-    data: 'priceSort',
-    title: 'Prix unitaire',
-    render: (_d: number, _t: string, row: { price: string }) => `<span class="dt-amount">${row.price}</span>`,
-  },
-  {
-    data: 'quantity',
-    title: 'Stock',
-    render: (_qty: number, _t: string, row: { stockLabel: string; statusVariant: string }) =>
-      statusBadge(row.stockLabel, row.statusVariant as 'success' | 'danger'),
-  },
-  { data: 'minStock', title: 'Stock min.' },
-]
-
-const roomColumns = [
-  { data: 'name', title: 'Salle', render: (v: string) => `<span class="dt-name">${v}</span>` },
-  {
-    data: 'type',
-    title: 'Type',
-    render: (type: string, _t: string, row: { typeVariant: string }) =>
-      statusBadge(type, row.typeVariant as 'primary' | 'info'),
-  },
-  {
-    data: 'rateSort',
-    title: 'Tarif nuitée',
-    render: (_d: number, _t: string, row: { rate: string }) => `<span class="dt-date">${row.rate}</span>`,
-  },
-  {
-    data: 'activeLabel',
-    title: 'Statut',
-    render: (label: string) => label,
-  },
-]
-
 async function load() {
-  const [i, p, r] = await Promise.all([
-    api.get('/admin/interventions'),
-    api.get('/admin/products'),
-    api.get('/admin/rooms'),
-  ])
+  const i = await api.get('/admin/interventions')
   interventions.value = i.data
-  products.value = p.data
-  rooms.value = r.data
 }
 
 async function toggleIntervention(id: string) {
@@ -183,7 +111,7 @@ onMounted(load)
   <div>
     <UiPageHeader
       title="Administration"
-      subtitle="Paramétrage nomenclature chirurgicale, produits pharmacie et salles"
+      subtitle="Paramétrage de la nomenclature chirurgicale"
       :icon="Settings"
     />
 
@@ -192,12 +120,6 @@ onMounted(load)
     <div class="tabs">
       <button :class="{ active: tab === 'interventions' }" @click="tab = 'interventions'">
         <Scissors :size="16" /> Chirurgie
-      </button>
-      <button :class="{ active: tab === 'products' }" @click="tab = 'products'">
-        <Package :size="16" /> Pharmacie
-      </button>
-      <button :class="{ active: tab === 'rooms' }" @click="tab = 'rooms'">
-        <BedDouble :size="16" /> Salles
       </button>
     </div>
 
@@ -266,32 +188,6 @@ onMounted(load)
           <UiButton variant="ghost" @click="closeViewIntervention">Fermer</UiButton>
         </template>
       </UiFormModal>
-    </template>
-
-    <template v-if="tab === 'products'">
-      <UiCard title="Catalogue pharmacie" :icon="Package" icon-variant="violet" class="section">
-        <div class="table-panel-scroll">
-          <UiDataTable
-            table-key="admin-products"
-            compact
-            :data="productRows"
-            :columns="productColumns"
-          />
-        </div>
-      </UiCard>
-    </template>
-
-    <template v-if="tab === 'rooms'">
-      <UiCard title="Salles & tarifs nuitée" :icon="BedDouble" icon-variant="blue" class="section">
-        <div class="table-panel-scroll">
-          <UiDataTable
-            table-key="admin-rooms"
-            compact
-            :data="roomRows"
-            :columns="roomColumns"
-          />
-        </div>
-      </UiCard>
     </template>
   </div>
 </template>

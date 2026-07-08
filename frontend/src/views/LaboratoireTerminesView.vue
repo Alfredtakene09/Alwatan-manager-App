@@ -1,18 +1,24 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { CheckCircle2, RefreshCw, Search } from '@lucide/vue'
+import { CheckCircle2, Eye, Pencil, Plus, Printer, RefreshCw, Search } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { fetchAndPrintLabVisitResults } from '@/lib/lab-visit-print'
 import { matchesLabVisitSearch } from '@/lib/lab-visit-search'
+import { fullName } from '@/lib/roles'
+import {
+  countLabPrescribedExams,
+  formatLabPrescribedExamsPreview,
+  formatLabPrescribedExamsSummary,
+  parseLabResultsCompletedAt,
+} from '@/lib/lab-notes'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
-import LabsWaitingDataTable, {
-  type LabsWaitingVisitRow,
-} from '@/components/ui/LabsWaitingDataTable.vue'
+import { type LabsWaitingVisitRow } from '@/components/ui/LabsWaitingDataTable.vue'
+import '@/assets/lab-visit-table.css'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -26,6 +32,29 @@ const printingVisitId = ref<string | null>(null)
 
 const filteredVisits = computed(() =>
   visits.value.filter((visit) => matchesLabVisitSearch(visit, listSearch.value)),
+)
+
+const rows = computed(() =>
+  filteredVisits.value
+    .map((visit) => {
+      const notes = visit.consultation?.clinicalNotes
+      const eventAt =
+        parseLabResultsCompletedAt(notes) ??
+        new Date(visit.consultation?.updatedAt ?? visit.updatedAt)
+      return {
+        id: visit.id,
+        code: visit.patient.code,
+        patientName: fullName(visit.patient.firstName, visit.patient.lastName),
+        patientPhone: visit.patient.phone || '',
+        exams: formatLabPrescribedExamsPreview(notes),
+        examsFull: formatLabPrescribedExamsSummary(notes),
+        examCount: countLabPrescribedExams(notes),
+        eventDate: eventAt.toLocaleDateString('fr-FR'),
+        eventTime: eventAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        eventSort: eventAt.getTime(),
+      }
+    })
+    .sort((a, b) => b.eventSort - a.eventSort),
 )
 
 const hasActiveSearch = computed(() => listSearch.value.trim().length > 0)
@@ -85,6 +114,7 @@ function resetSearch() {
 }
 
 onMounted(loadCompleted)
+onActivated(loadCompleted)
 </script>
 
 <template>
@@ -132,26 +162,85 @@ onMounted(loadCompleted)
           </div>
         </template>
 
-        <p v-if="!loading && !visits.length" class="empty">
+        <p v-if="loading && !visits.length" class="empty">Chargement des examens terminés…</p>
+        <p v-else-if="!loading && !visits.length" class="empty">
           Aucun examen de laboratoire terminé pour le moment.
         </p>
-        <p v-else-if="!loading && visits.length && !filteredVisits.length" class="empty">
+        <p v-else-if="!loading && visits.length && !rows.length" class="empty">
           Aucun dossier ne correspond à votre recherche.
         </p>
-        <div v-else-if="visits.length || loading" class="lab-completed-table">
-          <LabsWaitingDataTable
-            fill
-            actions-mode="lab-completed"
-            exams-summary-mode="lab"
-            date-mode="completed"
-            :visits="filteredVisits"
-            :loading="loading || !!printingVisitId"
-            table-key="lab-completed"
-            @modify="goToEditResults"
-            @saisir="goToResults"
-            @print="printResults"
-            @add="goToAddForm"
-          />
+        <div v-else class="lab-visit-table-wrap">
+          <table class="lab-visit-table">
+            <thead>
+              <tr>
+                <th class="lab-visit-table__num">#</th>
+                <th>Matricule</th>
+                <th>Patient</th>
+                <th>Terminé le</th>
+                <th>Examens</th>
+                <th class="lab-visit-table__actions-head">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in rows" :key="row.id">
+                <td class="lab-visit-table__num">{{ index + 1 }}</td>
+                <td>
+                  <span class="lab-visit-badge">{{ row.code }}</span>
+                </td>
+                <td>
+                  <span class="lab-visit-name">{{ row.patientName }}</span>
+                  <span v-if="row.patientPhone" class="lab-visit-sub">{{ row.patientPhone }}</span>
+                </td>
+                <td>
+                  <span class="lab-visit-date">{{ row.eventDate }}</span>
+                  <span class="lab-visit-sub">{{ row.eventTime }}</span>
+                </td>
+                <td>
+                  <span class="lab-visit-exams" :title="row.examsFull !== row.exams ? row.examsFull : ''">
+                    <span v-if="row.examCount > 0" class="lab-visit-exam-count">{{ row.examCount }}</span>
+                    <span class="lab-visit-sub lab-visit-sub--truncate">{{ row.exams }}</span>
+                  </span>
+                </td>
+                <td>
+                  <div class="lab-visit-actions">
+                    <button
+                      type="button"
+                      class="lab-visit-act lab-visit-act--icon lab-visit-act--accent"
+                      title="Imprimer"
+                      :disabled="printingVisitId === row.id"
+                      @click="printResults(row.id)"
+                    >
+                      <Printer :size="15" />
+                    </button>
+                    <button
+                      type="button"
+                      class="lab-visit-act lab-visit-act--icon"
+                      title="Consulter"
+                      @click="goToResults(row.id)"
+                    >
+                      <Eye :size="15" />
+                    </button>
+                    <button
+                      type="button"
+                      class="lab-visit-act lab-visit-act--icon lab-visit-act--edit"
+                      title="Modifier"
+                      @click="goToEditResults(row.id)"
+                    >
+                      <Pencil :size="15" />
+                    </button>
+                    <button
+                      type="button"
+                      class="lab-visit-act lab-visit-act--icon lab-visit-act--add"
+                      title="Ajouter un formulaire"
+                      @click="goToAddForm(row.id)"
+                    >
+                      <Plus :size="15" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </UiCard>
     </section>
@@ -201,9 +290,5 @@ onMounted(loadCompleted)
   font-size: 0.75rem;
   color: var(--text-muted);
   white-space: nowrap;
-}
-
-.lab-completed-table {
-  min-height: 0;
 }
 </style>

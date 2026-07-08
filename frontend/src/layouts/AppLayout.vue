@@ -3,27 +3,33 @@ import { computed, ref, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { LogOut, ChevronRight, ChevronDown, Menu, X } from '@lucide/vue'
 import { useAuthStore } from '@/stores/auth'
-import { fullName, ROLE_LABELS } from '@/lib/roles'
+import { fullName } from '@/lib/roles'
 import { CLINIC } from '@/lib/clinic'
 import {
-  findNavLabel,
   getNavigation,
+  hasNavChildChildren,
   hasNavChildren,
+  isNavChildGroupActive,
   isNavGroupActive,
   isNavItemActive,
+  type NavChildItem,
   type NavItem,
 } from '@/lib/navigation'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiButton from '@/components/ui/UiButton.vue'
+import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
+const { t, isArabic, localeCode, navLabel, roleLabel } = useAppI18n()
 
 const navConfig = computed(() =>
   auth.user ? getNavigation(auth.user.role) : { sidebarTitle: 'Navigation', sections: [] },
 )
 
 const expandedGroups = ref<Set<string>>(new Set())
+const expandedChildGroups = ref<Set<string>>(new Set())
 const sidebarOpen = ref(false)
 
 function closeSidebar() {
@@ -67,12 +73,29 @@ function toggleGroup(item: NavItem) {
   expandedGroups.value = new Set([key])
 }
 
-const isDashboardPage = computed(() => Boolean(route.meta.dashboard))
+function childGroupKey(parentLabel: string, child: NavChildItem) {
+  return `${parentLabel}/${child.label}`
+}
 
-const currentPage = computed(() => {
-  if (!auth.user) return CLINIC.shortName
-  return findNavLabel(route.path, auth.user.role) ?? CLINIC.shortName
-})
+function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
+  return (
+    expandedChildGroups.value.has(childGroupKey(parentLabel, child)) ||
+    isNavChildGroupActive(route.path, child)
+  )
+}
+
+function toggleChildGroup(parentLabel: string, child: NavChildItem) {
+  const key = childGroupKey(parentLabel, child)
+  const next = new Set(expandedChildGroups.value)
+  if (next.has(key)) {
+    next.delete(key)
+  } else {
+    next.add(key)
+  }
+  expandedChildGroups.value = next
+}
+
+const isDashboardPage = computed(() => Boolean(route.meta.dashboard))
 
 const initials = computed(() => {
   if (!auth.user) return '?'
@@ -86,33 +109,42 @@ async function logout() {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ 'app-shell--ar': isArabic }" :key="localeCode">
     <button
       type="button"
       class="sidebar-backdrop"
       :class="{ 'sidebar-backdrop--visible': sidebarOpen }"
-      aria-label="Fermer le menu"
+      :aria-label="t('common.closeMenu')"
       @click="closeSidebar"
     />
 
-    <aside class="sidebar" :class="{ 'sidebar--open': sidebarOpen }">
+    <aside
+      class="sidebar"
+      :class="{ 'sidebar--open': sidebarOpen, 'lang-ar': isArabic }"
+      :lang="isArabic ? 'ar' : undefined"
+    >
       <div class="sidebar__brand">
         <div class="sidebar__logo">
           <img :src="CLINIC.logo" :alt="CLINIC.nameFr" />
         </div>
         <div>
-          <strong>{{ CLINIC.nameFr }}</strong>
-          <span class="sidebar__brand-ar" dir="rtl">{{ CLINIC.nameAr }}</span>
+          <strong>{{ isArabic ? CLINIC.nameAr : CLINIC.nameFr }}</strong>
+          <span v-if="!isArabic" class="sidebar__brand-ar lang-ar" lang="ar">{{ CLINIC.nameAr }}</span>
+          <span v-else class="sidebar__brand-ar">{{ CLINIC.nameFr }}</span>
         </div>
       </div>
 
       <div class="sidebar__body">
-        <div class="sidebar__section-label">{{ navConfig.sidebarTitle }}</div>
+        <div class="sidebar__section-label">{{ navLabel(navConfig.sidebarTitle) }}</div>
         <nav class="sidebar__nav">
           <template v-for="(section, sectionIdx) in navConfig.sections" :key="sectionIdx">
-            <div v-if="section.label" class="nav-group__label">{{ section.label }}</div>
+            <div
+              class="nav-section"
+              :class="{ 'nav-section--bottom': section.pinnedBottom }"
+            >
+              <div v-if="section.label" class="nav-group__label">{{ navLabel(section.label) }}</div>
 
-            <template v-for="item in section.items" :key="item.label + (item.to ?? '')">
+              <template v-for="item in section.items" :key="item.label + (item.to ?? '')">
               <div v-if="hasNavChildren(item)" class="nav-submenu">
                 <button
                   type="button"
@@ -124,7 +156,7 @@ async function logout() {
                     <component :is="item.icon" :size="18" />
                   </span>
                   <span class="nav-item__text">
-                    <span class="nav-item__label">{{ item.label }}</span>
+                    <span class="nav-item__label">{{ navLabel(item.label) }}</span>
                   </span>
                   <ChevronDown
                     :size="14"
@@ -134,21 +166,71 @@ async function logout() {
                 </button>
 
                 <div v-show="isGroupExpanded(item)" class="nav-submenu__children">
-                  <RouterLink
-                    v-for="child in item.children"
-                    :key="child.to"
-                    :to="child.to"
-                    class="nav-item nav-item--child ui-card-frame ui-card-frame--menu ui-card-frame--compact"
-                    :class="{ 'nav-item--active': isNavItemActive(route.path, child.to) }"
-                  >
-                    <span class="nav-item__icon nav-item__icon--child">
-                      <component :is="child.icon" :size="16" />
-                    </span>
-                    <span class="nav-item__text">
-                      <span class="nav-item__label">{{ child.label }}</span>
-                    </span>
-                    <ChevronRight v-if="isNavItemActive(route.path, child.to)" :size="14" class="nav-item__chevron" />
-                  </RouterLink>
+                  <template v-for="child in item.children" :key="child.to ?? child.label">
+                    <div v-if="hasNavChildChildren(child)" class="nav-submenu nav-submenu--nested">
+                      <button
+                        type="button"
+                        class="nav-item nav-item--child nav-item--group ui-card-frame ui-card-frame--menu ui-card-frame--compact"
+                        :class="{
+                          'nav-item--group-open': isChildGroupExpanded(item.label, child),
+                          'nav-item--group-active': isNavChildGroupActive(route.path, child),
+                        }"
+                        @click="toggleChildGroup(item.label, child)"
+                      >
+                        <span class="nav-item__icon nav-item__icon--child">
+                          <component :is="child.icon" :size="16" />
+                        </span>
+                        <span class="nav-item__text">
+                          <span class="nav-item__label">{{ navLabel(child.label) }}</span>
+                        </span>
+                        <ChevronDown
+                          :size="12"
+                          class="nav-item__toggle"
+                          :class="{ 'nav-item__toggle--collapsed': !isChildGroupExpanded(item.label, child) }"
+                        />
+                      </button>
+
+                      <div
+                        v-show="isChildGroupExpanded(item.label, child)"
+                        class="nav-submenu__children nav-submenu__children--nested"
+                      >
+                        <RouterLink
+                          v-for="nested in child.children"
+                          :key="nested.to"
+                          :to="nested.to!"
+                          class="nav-item nav-item--child nav-item--nested ui-card-frame ui-card-frame--menu ui-card-frame--compact"
+                          :class="{ 'nav-item--active': isNavItemActive(route.path, nested.to!) }"
+                        >
+                          <span class="nav-item__icon nav-item__icon--child">
+                            <component :is="nested.icon" :size="14" />
+                          </span>
+                          <span class="nav-item__text">
+                            <span class="nav-item__label">{{ navLabel(nested.label) }}</span>
+                          </span>
+                          <ChevronRight
+                            v-if="isNavItemActive(route.path, nested.to!)"
+                            :size="14"
+                            class="nav-item__chevron"
+                          />
+                        </RouterLink>
+                      </div>
+                    </div>
+
+                    <RouterLink
+                      v-else-if="child.to"
+                      :to="child.to"
+                      class="nav-item nav-item--child ui-card-frame ui-card-frame--menu ui-card-frame--compact"
+                      :class="{ 'nav-item--active': isNavItemActive(route.path, child.to) }"
+                    >
+                      <span class="nav-item__icon nav-item__icon--child">
+                        <component :is="child.icon" :size="16" />
+                      </span>
+                      <span class="nav-item__text">
+                        <span class="nav-item__label">{{ navLabel(child.label) }}</span>
+                      </span>
+                      <ChevronRight v-if="isNavItemActive(route.path, child.to)" :size="14" class="nav-item__chevron" />
+                    </RouterLink>
+                  </template>
                 </div>
               </div>
 
@@ -165,11 +247,12 @@ async function logout() {
                   <component :is="item.icon" :size="18" />
                 </span>
                 <span class="nav-item__text">
-                  <span class="nav-item__label">{{ item.label }}</span>
+                  <span class="nav-item__label">{{ navLabel(item.label) }}</span>
                 </span>
                 <ChevronRight v-if="isNavItemActive(route.path, item.to)" :size="14" class="nav-item__chevron" />
               </RouterLink>
             </template>
+            </div>
           </template>
         </nav>
       </div>
@@ -194,34 +277,28 @@ async function logout() {
           <button
             type="button"
             class="topbar__menu-btn"
-            :aria-label="sidebarOpen ? 'Fermer le menu' : 'Ouvrir le menu'"
+            :aria-label="sidebarOpen ? t('common.closeMenu') : t('common.openMenu')"
             @click="toggleSidebar"
           >
             <X v-if="sidebarOpen" :size="22" />
             <Menu v-else :size="22" />
           </button>
           <img class="topbar__logo" :src="CLINIC.logo" :alt="CLINIC.nameFr" />
-          <div class="topbar__titles">
-            <div class="topbar__breadcrumb">
-              {{ CLINIC.nameFr }}
-              <ChevronRight :size="14" />
-              {{ currentPage }}
-            </div>
-            <p class="topbar__address" dir="rtl">{{ CLINIC.nameAr }} — {{ CLINIC.fullAddress }}</p>
-          </div>
         </div>
 
         <div class="topbar__right">
+          <LanguageSwitcher />
+
           <div class="topbar__status">
             <span class="status-dot" />
-            <span class="topbar__status-text">PostgreSQL connecté</span>
+            <span class="topbar__status-text">{{ t('common.dbConnected') }}</span>
           </div>
 
           <div v-if="auth.user" class="topbar__user">
             <div class="topbar__user-avatar">{{ initials }}</div>
             <div class="topbar__user-info">
               <strong>{{ fullName(auth.user.firstName, auth.user.lastName) }}</strong>
-              <span>{{ ROLE_LABELS[auth.user.role] }}</span>
+              <span :class="{ 'lang-ar': isArabic }" :lang="isArabic ? 'ar' : undefined">{{ roleLabel(auth.user.role) }}</span>
             </div>
           </div>
         </div>
@@ -358,6 +435,18 @@ async function logout() {
   gap: 0.25rem;
 }
 
+.nav-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.nav-section--bottom {
+  margin-top: auto;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--sidebar-border);
+}
+
 .nav-group__label {
   padding: 0.75rem 0.875rem 0.3rem;
   font-size: 0.625rem;
@@ -381,6 +470,20 @@ async function logout() {
   margin-left: 0.65rem;
   padding-left: 0.55rem;
   border-left: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.nav-submenu--nested {
+  gap: 0.1rem;
+}
+
+.nav-submenu__children--nested {
+  margin-left: 0.45rem;
+  padding-left: 0.45rem;
+}
+
+.nav-item--nested {
+  padding: 0.42rem 0.6rem;
+  font-size: 0.75rem;
 }
 
 .nav-item {
@@ -547,6 +650,51 @@ async function logout() {
   overflow: hidden;
 }
 
+/* Sidebar à droite en arabe (sans dir=rtl global) */
+.app-shell--ar .sidebar {
+  left: auto;
+  right: 0;
+  border-right: none;
+  border-left: 1px solid var(--sidebar-border);
+  box-shadow: -2px 0 20px rgba(20, 26, 14, 0.25);
+}
+
+.app-shell--ar .main-area {
+  margin-left: 0;
+  margin-right: var(--sidebar-width);
+}
+
+.app-shell--ar .sidebar__brand {
+  flex-direction: row-reverse;
+}
+
+.app-shell--ar .nav-item {
+  flex-direction: row-reverse;
+  text-align: right;
+}
+
+.app-shell--ar .nav-submenu__children {
+  margin-left: 0;
+  margin-right: 0.65rem;
+  padding-left: 0;
+  padding-right: 0.55rem;
+  border-left: none;
+  border-right: 2px solid rgba(255, 255, 255, 0.2);
+}
+
+.app-shell--ar .nav-submenu__children--nested {
+  margin-right: 0.45rem;
+  padding-right: 0.45rem;
+}
+
+.app-shell--ar .nav-item__chevron {
+  transform: scaleX(-1);
+}
+
+.app-shell--ar .nav-item__toggle--collapsed {
+  transform: rotate(90deg);
+}
+
 .topbar__menu-btn {
   display: none;
   align-items: center;
@@ -565,10 +713,6 @@ async function logout() {
 .topbar__menu-btn:hover {
   border-color: var(--accent-400);
   color: var(--primary-800);
-}
-
-.topbar__titles {
-  min-width: 0;
 }
 
 .topbar {
@@ -671,22 +815,6 @@ async function logout() {
   flex-shrink: 0;
 }
 
-.topbar__breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-weight: 700;
-  font-size: 1rem;
-  color: var(--text);
-}
-
-.topbar p,
-.topbar__address {
-  margin: 0.15rem 0 0;
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-}
-
 .topbar__status {
   display: flex;
   align-items: center;
@@ -734,12 +862,24 @@ async function logout() {
     transform: translateX(0);
   }
 
+  .app-shell--ar .sidebar {
+    transform: translateX(100%);
+  }
+
+  .app-shell--ar .sidebar--open {
+    transform: translateX(0);
+  }
+
   .sidebar-backdrop {
     display: block;
   }
 
   .main-area {
     margin-left: 0;
+  }
+
+  .app-shell--ar .main-area {
+    margin-right: 0;
   }
 
   .topbar__menu-btn {
@@ -752,13 +892,6 @@ async function logout() {
     gap: 0.75rem;
   }
 
-  .topbar__address {
-    display: none;
-  }
-
-  .topbar__breadcrumb {
-    font-size: 0.9375rem;
-  }
 }
 
 /* ── Mobile ── */
@@ -821,10 +954,6 @@ async function logout() {
 
 /* ── Très petit écran ── */
 @media (max-width: 380px) {
-  .topbar__breadcrumb {
-    font-size: 0.8125rem;
-  }
-
   .nav-item__label {
     font-size: 0.8125rem;
   }
@@ -836,4 +965,5 @@ async function logout() {
     radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.06), transparent 38%),
     var(--bg-app);
 }
+
 </style>

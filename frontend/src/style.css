@@ -11,3 +11,17 @@
 @import './assets/card-accents.css';
 @import './assets/card-frames.css';
 @import './assets/form-modal.css';
+
+/*
+ * Ne jamais appliquer dir=rtl ni une police arabe sur tout le document :
+ * le texte latin non traduit serait inversé caractère par caractère.
+ * L’arabe Unicode s’affiche correctement en LTR grâce au bidi du navigateur.
+ */
+html.locale-ar {
+  --font-ar: 'Noto Naskh Arabic', 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+html.locale-ar .lang-ar,
+html.locale-ar .lang-ar * {
+  font-family: var(--font-ar);
+}

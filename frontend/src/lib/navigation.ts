@@ -10,6 +10,7 @@ import {
   Users,
   FlaskConical,
   UserRound,
+  UserCheck,
   ClipboardList,
   CheckCircle2,
   Clock,
@@ -26,6 +27,7 @@ import {
   BellRing,
   Building2,
   ArrowDownUp,
+  Warehouse,
 } from '@lucide/vue'
 import type { AppUserRole } from './roles'
 import { canAccessModule } from './roles'
@@ -70,6 +72,8 @@ export function hasNavChildChildren(
 export type NavSection = {
   label?: string
   items: NavItem[]
+  /** Ancre la section en bas de la barre latérale (ex. Paramètres). */
+  pinnedBottom?: boolean
 }
 
 export type NavConfig = {
@@ -136,6 +140,73 @@ const pharmacyNavChildren: NavChildItem[] = [
   },
 ]
 
+const logisticsNavChildren: NavChildItem[] = [
+  {
+    to: '/logistique/articles',
+    label: 'Articles',
+    icon: Package,
+    module: 'logistique',
+    description: 'Catalogue des consommables et matériel',
+  },
+  {
+    to: '/logistique/categories',
+    label: 'Catégories',
+    icon: Tags,
+    module: 'logistique',
+    description: 'Classement du stock',
+  },
+  {
+    to: '/logistique/fournisseurs',
+    label: 'Fournisseurs',
+    icon: Building2,
+    module: 'logistique',
+    description: 'Partenaires d’approvisionnement',
+  },
+  {
+    to: '/logistique/mouvements',
+    label: 'Mouvements',
+    icon: ArrowDownUp,
+    module: 'logistique',
+    description: 'Entrées, sorties et ajustements',
+  },
+  {
+    to: '/logistique/demandes',
+    label: 'Demandes',
+    icon: ClipboardList,
+    module: 'logistique',
+    description: 'Bons de sortie internes des services',
+  },
+  {
+    to: '/logistique/alertes',
+    label: 'Alertes',
+    icon: BellRing,
+    module: 'logistique',
+    description: 'Stocks bas et péremption',
+  },
+  {
+    to: '/logistique/rapports',
+    label: 'Rapports',
+    icon: BarChart3,
+    module: 'logistique',
+    description: 'Valeur du stock et statistiques',
+  },
+]
+
+const logistiqueNav: NavSection[] = [
+  {
+    items: [
+      {
+        to: '/logistique/tableau-de-bord',
+        label: 'Tableau de bord',
+        icon: LayoutDashboard,
+        module: 'logistique',
+        primary: true,
+      },
+      ...logisticsNavChildren.map((item) => ({ ...item })),
+    ],
+  },
+]
+
 const receptionNav: NavSection[] = [
   {
     items: [
@@ -157,6 +228,13 @@ const receptionNav: NavSection[] = [
             icon: FlaskConical,
             module: 'reception',
             description: 'Examens sans consultation',
+          },
+          {
+            to: '/reception/patient-personnel',
+            label: 'Personnel',
+            icon: UserCheck,
+            module: 'reception',
+            description: 'Parcours gratuit — recommandé par le personnel',
           },
         ],
       },
@@ -232,13 +310,6 @@ const receptionNav: NavSection[] = [
             module: 'reception',
             description: 'Dépenses clinique payées en caisse',
           },
-          {
-            to: '/reception/coupure-monnaie',
-            label: 'Coupure de monnaie',
-            icon: Coins,
-            module: 'reception',
-            description: 'Échanges de monnaie entre réceptionnistes',
-          },
         ],
       },
     ],
@@ -303,6 +374,13 @@ const directionOperationalNav: NavSection[] = [
   {
     items: [
       {
+        to: '/dashboard',
+        label: 'Tableau de board',
+        icon: LayoutDashboard,
+        module: 'dashboard',
+        description: 'Vue d’ensemble, finances, caisses et supervision',
+      },
+      {
         to: '/reception',
         label: 'Enregistrement',
         icon: UserRound,
@@ -320,30 +398,85 @@ const directionOperationalNav: NavSection[] = [
             icon: FlaskConical,
             module: 'reception',
           },
+          {
+            to: '/reception/patient-personnel',
+            label: 'Personnel',
+            icon: UserCheck,
+            module: 'reception',
+          },
         ],
       },
       {
-        label: 'Examens & paiements',
+        label: 'Finances',
         icon: Wallet,
-        module: 'reception',
+        module: 'comptabilite',
         children: [
           {
-            to: '/reception/en-attente-paiement',
-            label: 'En attente de paiement',
-            icon: Clock,
-            module: 'reception',
+            to: '/comptabilite/tableau-de-bord',
+            label: 'Encaissements',
+            icon: Banknote,
+            module: 'comptabilite',
+            description: "Recettes et files d'attente",
           },
           {
-            to: '/reception/examens-payes',
-            label: 'Examens payés',
-            icon: CheckCircle2,
-            module: 'reception',
+            to: '/admin/depenses',
+            label: 'Validation dépenses',
+            icon: Receipt,
+            module: 'admin',
+            badgeKey: 'depenses',
+            description: 'Validation des dépenses',
           },
           {
-            to: '/reception/examens-payes/reclamations',
-            label: 'Réclamations',
-            icon: ClipboardList,
+            to: '/admin/salaires',
+            label: 'Salaires & paie',
+            icon: Coins,
+            module: 'admin',
+            badgeKey: 'salaires',
+          },
+          {
+            label: 'Examens & paiements',
+            icon: Wallet,
             module: 'reception',
+            children: [
+              {
+                to: '/reception/en-attente-paiement',
+                label: 'En attente de paiement',
+                icon: Clock,
+                module: 'reception',
+              },
+              {
+                to: '/reception/examens-payes',
+                label: 'Examens payés',
+                icon: CheckCircle2,
+                module: 'reception',
+              },
+              {
+                to: '/reception/examens-payes/reclamations',
+                label: 'Réclamations',
+                icon: ClipboardList,
+                module: 'reception',
+              },
+            ],
+          },
+          {
+            label: 'Caisse',
+            icon: Banknote,
+            module: 'reception',
+            children: [
+              {
+                to: '/reception/depenses',
+                label: 'Dépenses',
+                icon: Receipt,
+                module: 'reception',
+              },
+              {
+                to: '/comptabilite/compte-rendu-caisse',
+                label: 'Compte rendu caisse',
+                icon: Banknote,
+                module: 'comptabilite',
+                description: 'Rapprochement des créneaux matin, soir et nuit',
+              },
+            ],
           },
         ],
       },
@@ -380,32 +513,6 @@ const directionOperationalNav: NavSection[] = [
         ],
       },
       {
-        label: 'Caisse',
-        icon: Banknote,
-        module: 'reception',
-        children: [
-          {
-            to: '/reception/depenses',
-            label: 'Dépenses',
-            icon: Receipt,
-            module: 'reception',
-          },
-          {
-            to: '/reception/coupure-monnaie',
-            label: 'Coupure de monnaie',
-            icon: Coins,
-            module: 'reception',
-          },
-          {
-            to: '/comptabilite/compte-rendu-caisse',
-            label: 'Compte rendu caisse',
-            icon: Banknote,
-            module: 'comptabilite',
-            description: 'Rapprochement des créneaux matin, soir et nuit',
-          },
-        ],
-      },
-      {
         label: 'Rapports',
         icon: FileText,
         module: 'comptabilite',
@@ -424,16 +531,37 @@ const directionOperationalNav: NavSection[] = [
           },
         ],
       },
+    ],
+  },
+]
+
+const directionSettingsNav: NavSection[] = [
+  {
+    pinnedBottom: true,
+    items: [
       {
         label: 'Paramètres',
         icon: Settings,
         module: 'comptabilite',
         children: [
           {
+            to: '/admin',
+            label: 'Nomenclatures',
+            icon: Settings,
+            module: 'admin',
+            description: 'Chirurgie et salles',
+          },
+          {
             to: '/comptabilite/types-examen/examen',
             label: "Types d'examen",
             icon: FlaskConical,
             module: 'comptabilite',
+          },
+          {
+            to: '/laboratoire/formulaires',
+            label: 'Formulaires labo',
+            icon: ClipboardList,
+            module: 'laboratoire',
           },
           {
             to: '/comptabilite/parametres/salles',
@@ -467,59 +595,6 @@ const directionOperationalNav: NavSection[] = [
 
 /** Modules admin ajoutés à la Direction (sans dupliquer le menu d’origine). */
 const directionAdminNav: NavSection[] = [
-  {
-    label: 'Administration',
-    items: [
-      {
-        to: '/dashboard',
-        label: "Vue d'ensemble",
-        icon: LayoutDashboard,
-        module: 'dashboard',
-        description: 'KPIs financiers, dépenses et alertes',
-      },
-      {
-        to: '/gestionnaire/tableau-de-bord',
-        label: 'Espace gestionnaire',
-        icon: Wallet,
-        module: 'gestionnaire',
-        description: 'Caisse, journal, dépenses et paie',
-      },
-      {
-        to: '/admin',
-        label: 'Nomenclatures',
-        icon: Settings,
-        module: 'admin',
-        description: 'Chirurgie et salles',
-      },
-    ],
-  },
-  {
-    label: 'Finances',
-    items: [
-      {
-        to: '/comptabilite/tableau-de-bord',
-        label: 'Encaissements',
-        icon: Banknote,
-        module: 'comptabilite',
-        description: "Recettes et files d'attente",
-      },
-      {
-        to: '/admin/depenses',
-        label: 'Validation dépenses',
-        icon: Receipt,
-        module: 'admin',
-        badgeKey: 'depenses',
-        description: 'Validation des dépenses',
-      },
-      {
-        to: '/admin/salaires',
-        label: 'Salaires & paie',
-        icon: Coins,
-        module: 'admin',
-        badgeKey: 'salaires',
-      },
-    ],
-  },
   {
     label: 'Clinique',
     items: [
@@ -561,12 +636,22 @@ const directionAdminNav: NavSection[] = [
         module: 'pharmacie',
         children: pharmacyNavChildren,
       },
+      {
+        label: 'Logistique',
+        icon: Warehouse,
+        module: 'logistique',
+        children: logisticsNavChildren,
+      },
     ],
   },
 ]
 
-/** Direction = pages opérationnelles + modules admin. */
-const directionNav: NavSection[] = [...directionOperationalNav, ...directionAdminNav]
+/** Direction = pages opérationnelles + modules admin + paramètres en bas. */
+const directionNav: NavSection[] = [
+  ...directionOperationalNav,
+  ...directionAdminNav,
+  ...directionSettingsNav,
+]
 
 const soignantNav: NavSection[] = [
   {
@@ -610,6 +695,13 @@ const laborantinNav: NavSection[] = [
         module: 'laboratoire',
         description: 'Patients dont les analyses sont clôturées',
       },
+      {
+        to: '/laboratoire/formulaires',
+        label: 'Formulaires de résultats',
+        icon: ClipboardList,
+        module: 'laboratoire',
+        description: 'Créer et modifier les formulaires de résultats',
+      },
     ],
   },
 ]
@@ -618,7 +710,7 @@ const gestionnaireNav: NavSection[] = [
   {
     items: [
       {
-        to: '/gestionnaire/tableau-de-bord',
+        to: '/dashboard',
         label: 'Tableau de bord',
         icon: LayoutDashboard,
         module: 'gestionnaire',
@@ -683,6 +775,7 @@ const NAV_BY_ROLE: Partial<Record<AppUserRole, NavSection[]>> = {
   SOIGNANT: soignantNav,
   PHARMACIEN: pharmacienNav,
   LABORANTIN: laborantinNav,
+  LOGISTIQUE: logistiqueNav,
 }
 
 const SIDEBAR_TITLES: Record<AppUserRole, string> = {
@@ -694,6 +787,7 @@ const SIDEBAR_TITLES: Record<AppUserRole, string> = {
   SOIGNANT: 'Soins',
   PHARMACIEN: 'Pharmacie',
   LABORANTIN: 'Laboratoire',
+  LOGISTIQUE: 'Logistique',
 }
 
 function filterNavChild(child: NavChildItem, role: AppUserRole): NavChildItem | null {
@@ -747,6 +841,7 @@ const allNavItems: NavItem[] = [
   ...pharmacienNav,
   ...laborantinNav,
   ...gestionnaireNav,
+  ...logistiqueNav,
 ].flatMap((s) => s.items)
 
 function flattenNavChildLinks(children: NavChildItem[]): NavChildItem[] {

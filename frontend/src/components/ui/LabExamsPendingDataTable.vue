@@ -5,7 +5,10 @@ import { formatFcfa, fullName } from '@/lib/roles'
 import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
 import { DT_ICONS } from '@/lib/datatable-defaults'
 import { formatExamLinesSummaryShort, type LabExamPendingItem } from '@/lib/lab-exam-pending'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+
+const { uiText } = useAppI18n()
 
 export type LabExamPendingRow = LabExamPendingItem
 
@@ -73,13 +76,13 @@ const columns = computed(() => {
   const base = [
     {
       data: 'code',
-      title: 'Matricule',
+      title: uiText('Matricule'),
       responsivePriority: 2,
       render: (code: string) => `<span class="dt-badge">${code}</span>`,
     },
     {
       data: 'patientName',
-      title: 'Patient',
+      title: uiText('Patient'),
       responsivePriority: 1,
       render: (name: string, _t: string, row: { patientPhone: string }) =>
         row.patientPhone
@@ -88,13 +91,13 @@ const columns = computed(() => {
     },
     {
       data: 'doctorName',
-      title: 'Médecin',
+      title: uiText('Médecin'),
       responsivePriority: 4,
       render: (name: string) => `<span class="dt-sub">${name}</span>`,
     },
     {
       data: 'exams',
-      title: 'Examens',
+      title: uiText('Examens'),
       responsivePriority: 6,
       className: 'dt-exams-col',
       render: (exams: string, _t: string, row: { examsFull: string; examCount: number }) => {
@@ -109,14 +112,14 @@ const columns = computed(() => {
     },
     {
       data: 'grossSort',
-      title: isPaidMode.value ? 'Net payé' : 'Montant',
+      title: uiText(isPaidMode.value ? 'Net payé' : 'Montant'),
       responsivePriority: 3,
       render: (_d: number, _t: string, row: { gross: string }) =>
         `<strong class="dt-amount">${row.gross}</strong>`,
     },
     {
       data: 'dateSort',
-      title: isPaidMode.value ? 'Payé le' : 'Prescrit le',
+      title: uiText(isPaidMode.value ? 'Payé le' : 'Prescrit le'),
       responsivePriority: 5,
       render: (_d: number, _t: string, row: { date: string; time: string }) =>
         `<span class="dt-date">${row.date}</span><span class="dt-sub">${row.time}</span>`,

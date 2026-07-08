@@ -2,6 +2,7 @@
 import { computed, useId } from 'vue'
 import type { Component } from 'vue'
 import { X } from '@lucide/vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 const props = withDefaults(
   defineProps<{
@@ -20,9 +21,18 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{ close: [] }>()
+const { uiText, localeCode, isArabic } = useAppI18n()
 
 const fallbackTitleId = useId()
 const ariaTitleId = computed(() => props.titleId ?? fallbackTitleId)
+const titleText = computed(() => {
+  void localeCode.value
+  return uiText(props.title)
+})
+const subtitleText = computed(() => {
+  void localeCode.value
+  return props.subtitle ? uiText(props.subtitle) : ''
+})
 </script>
 
 <template>
@@ -43,9 +53,9 @@ const ariaTitleId = computed(() => props.titleId ?? fallbackTitleId)
             <div v-if="icon" class="ui-form-modal__icon">
               <component :is="icon" :size="22" />
             </div>
-            <div>
-              <h2 :id="ariaTitleId">{{ title }}</h2>
-              <p v-if="subtitle" class="ui-form-modal__subtitle">{{ subtitle }}</p>
+            <div :class="{ 'lang-ar': isArabic }" :lang="isArabic ? 'ar' : undefined">
+              <h2 :id="ariaTitleId">{{ titleText }}</h2>
+              <p v-if="subtitle" class="ui-form-modal__subtitle">{{ subtitleText }}</p>
             </div>
           </div>
           <button type="button" class="ui-form-modal__close" aria-label="Fermer" @click="emit('close')">

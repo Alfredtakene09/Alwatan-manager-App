@@ -1,13 +1,25 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Component } from 'vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
-defineProps<{
+const props = defineProps<{
   title: string
   description?: string
   icon?: Component
   iconVariant?: 'green' | 'teal' | 'blue' | 'amber' | 'rose' | 'violet' | 'cyan'
   padding?: boolean
 }>()
+
+const { uiText, localeCode, isArabic } = useAppI18n()
+const titleText = computed(() => {
+  void localeCode.value
+  return uiText(props.title)
+})
+const descriptionText = computed(() => {
+  void localeCode.value
+  return props.description ? uiText(props.description) : ''
+})
 </script>
 
 <template>
@@ -22,9 +34,9 @@ defineProps<{
       <div v-if="icon" class="ui-card__icon" :class="`ui-card__icon--${iconVariant ?? 'green'}`">
         <component :is="icon" :size="20" />
       </div>
-      <div class="ui-card__titles">
-        <h3 v-if="title">{{ title }}</h3>
-        <p v-if="description">{{ description }}</p>
+      <div class="ui-card__titles" :class="{ 'lang-ar': isArabic }" :lang="isArabic ? 'ar' : undefined">
+        <h3 v-if="title">{{ titleText }}</h3>
+        <p v-if="description">{{ descriptionText }}</p>
       </div>
       <div v-if="$slots.actions" class="ui-card__actions">
         <slot name="actions" />

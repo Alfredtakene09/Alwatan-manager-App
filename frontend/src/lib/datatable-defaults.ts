@@ -1,5 +1,6 @@
 import type { Config, ConfigColumns } from 'datatables.net'
-import { DATATABLE_FR } from './datatable-fr'
+import { translateUi } from '@/i18n/translate'
+import { DATATABLE_FR, getDatatableLanguage } from './datatable-fr'
 
 export const DEFAULT_DATATABLE_OPTIONS: Config = {
   paging: false,
@@ -14,6 +15,13 @@ export const DEFAULT_DATATABLE_OPTIONS: Config = {
   stateSave: false,
   dom: 'rt',
   language: DATATABLE_FR,
+}
+
+export function getDefaultDatatableOptions(): Config {
+  return {
+    ...DEFAULT_DATATABLE_OPTIONS,
+    language: getDatatableLanguage(),
+  }
 }
 
 export const DT_ICONS = {
@@ -47,8 +55,8 @@ export const DT_ICONS = {
 }
 
 export function genderBadge(gender?: string) {
-  if (gender === 'F') return '<span class="dt-pill dt-pill--f">Féminin</span>'
-  if (gender === 'M') return '<span class="dt-pill dt-pill--m">Masculin</span>'
+  if (gender === 'F') return `<span class="dt-pill dt-pill--f">${translateUi('Féminin')}</span>`
+  if (gender === 'M') return `<span class="dt-pill dt-pill--m">${translateUi('Masculin')}</span>`
   return '<span class="dt-pill dt-pill--na">—</span>'
 }
 

@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ClipboardList, RefreshCw } from '@lucide/vue'
+import { ClipboardList, Eye, Plus, Printer, RefreshCw } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { fetchAndPrintLabVisitResults } from '@/lib/lab-visit-print'
+import { fullName } from '@/lib/roles'
+import {
+  countLabPrescribedExams,
+  formatLabPrescribedExamsPreview,
+  formatLabPrescribedExamsSummary,
+  parseLatestLabResultAt,
+} from '@/lib/lab-notes'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -13,9 +20,8 @@ import MedecinStatsGrid from '@/components/MedecinStatsGrid.vue'
 import MedecinPrescriptionModal, {
   type PrescriptionVisit,
 } from '@/components/MedecinPrescriptionModal.vue'
-import LabsResultsDataTable, {
-  type LabsResultsVisitRow,
-} from '@/components/ui/LabsResultsDataTable.vue'
+import { type LabsResultsVisitRow } from '@/components/ui/LabsResultsDataTable.vue'
+import '@/assets/lab-visit-table.css'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -27,6 +33,30 @@ const statsRefreshKey = ref(0)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const printError = ref('')
+const printingVisitId = ref<string | null>(null)
+
+const rows = computed(() =>
+  visits.value
+    .map((visit) => {
+      const notes = visit.consultation?.clinicalNotes
+      const resultAt =
+        parseLatestLabResultAt(notes) ??
+        new Date(visit.consultation?.updatedAt ?? visit.updatedAt)
+      return {
+        id: visit.id,
+        code: visit.patient.code,
+        patientName: fullName(visit.patient.firstName, visit.patient.lastName),
+        patientPhone: visit.patient.phone || '',
+        exams: formatLabPrescribedExamsPreview(notes),
+        examsFull: formatLabPrescribedExamsSummary(notes),
+        examCount: countLabPrescribedExams(notes),
+        resultDate: resultAt.toLocaleDateString('fr-FR'),
+        resultTime: resultAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        resultSort: resultAt.getTime(),
+      }
+    })
+    .sort((a, b) => b.resultSort - a.resultSort),
+)
 
 const POLL_MS = 30_000
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -59,8 +89,10 @@ async function printResults(visitId: string) {
   if (!visit) return
 
   printError.value = ''
+  printingVisitId.value = visitId
   const result = await fetchAndPrintLabVisitResults(visit, auth.user, 'medecin')
   if (!result.ok) printError.value = result.error
+  printingVisitId.value = null
 }
 
 function closePrescriptionModal() {
@@ -112,19 +144,80 @@ onUnmounted(() => {
           </UiButton>
         </template>
 
-        <p v-if="!loading && !visits.length" class="empty">
+        <p v-if="loading && !visits.length" class="empty">Chargement des résultats…</p>
+        <p v-else-if="!loading && !visits.length" class="empty">
           Aucun résultat de laboratoire disponible pour le moment.
         </p>
-        <LabsResultsDataTable
-          v-else
-          fill
-          :visits="visits"
-          :selected-id="prescriptionVisit?.id"
-          :loading="loading"
-          @append="openAppendModal"
-          @view="viewResults"
-          @print="printResults"
-        />
+        <div v-else class="lab-visit-table-wrap">
+          <table class="lab-visit-table">
+            <thead>
+              <tr>
+                <th class="lab-visit-table__num">#</th>
+                <th>Matricule</th>
+                <th>Patient</th>
+                <th>Examens</th>
+                <th>Résultats reçus</th>
+                <th class="lab-visit-table__actions-head">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(row, index) in rows"
+                :key="row.id"
+                :class="{ 'is-selected': prescriptionVisit?.id === row.id }"
+              >
+                <td class="lab-visit-table__num">{{ index + 1 }}</td>
+                <td>
+                  <span class="lab-visit-badge">{{ row.code }}</span>
+                </td>
+                <td>
+                  <span class="lab-visit-name">{{ row.patientName }}</span>
+                  <span v-if="row.patientPhone" class="lab-visit-sub">{{ row.patientPhone }}</span>
+                </td>
+                <td>
+                  <span class="lab-visit-exams" :title="row.examsFull !== row.exams ? row.examsFull : ''">
+                    <span v-if="row.examCount > 0" class="lab-visit-exam-count">{{ row.examCount }}</span>
+                    <span class="lab-visit-sub lab-visit-sub--truncate">{{ row.exams }}</span>
+                  </span>
+                </td>
+                <td>
+                  <span class="lab-visit-date">{{ row.resultDate }}</span>
+                  <span class="lab-visit-sub">{{ row.resultTime }}</span>
+                </td>
+                <td>
+                  <div class="lab-visit-actions">
+                    <button
+                      type="button"
+                      class="lab-visit-act lab-visit-act--icon lab-visit-act--accent"
+                      title="Voir les résultats"
+                      @click="viewResults(row.id)"
+                    >
+                      <Eye :size="15" />
+                    </button>
+                    <button
+                      type="button"
+                      class="lab-visit-act lab-visit-act--icon"
+                      title="Imprimer les résultats"
+                      :disabled="printingVisitId === row.id"
+                      @click="printResults(row.id)"
+                    >
+                      <Printer :size="15" />
+                    </button>
+                    <button
+                      type="button"
+                      class="lab-visit-act lab-visit-act--labeled"
+                      title="Ajouter des examens"
+                      @click="openAppendModal(row.id)"
+                    >
+                      <Plus :size="15" />
+                      Ajouter
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </UiCard>
     </section>
 

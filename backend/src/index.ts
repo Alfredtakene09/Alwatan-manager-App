@@ -19,10 +19,14 @@ import examCatalogRoutes from "./routes/exam-catalog.js";
 import examTypesRoutes from "./routes/exam-types.js";
 import patientDossiersRoutes, { initPatientDossiers } from "./routes/patient-dossiers.js";
 import laboratoireRoutes from "./routes/laboratoire.js";
+import labPanelsRoutes from "./routes/lab-panels.js";
+import { seedLabPanelsIfEmpty } from "./lib/lab-panels-seed.js";
+import { refreshLabPanelRegistry } from "./lib/lab-panels-registry.js";
 import surgeriesRoutes from "./routes/surgeries.js";
 import cashSettlementsRoutes from "./routes/cash-settlements.js";
 import cashDeskRoutes from "./routes/cash-desk.js";
 import gestionnaireRoutes from "./routes/gestionnaire.js";
+import logistiqueRoutes from "./routes/logistique.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
@@ -55,14 +59,27 @@ app.use("/api/exam-catalog", examCatalogRoutes);
 app.use("/api/comptabilite/exam-types", examTypesRoutes);
 app.use("/api/patient-dossiers", patientDossiersRoutes);
 app.use("/api/laboratoire", laboratoireRoutes);
+app.use("/api/lab-panels", labPanelsRoutes);
 app.use("/api/surgeries", surgeriesRoutes);
 app.use("/api/cash-settlements", cashSettlementsRoutes);
 app.use("/api/cash-desk", cashDeskRoutes);
 app.use("/api/gestionnaire", gestionnaireRoutes);
+app.use("/api/logistique", logistiqueRoutes);
 
 refreshExamPriceCache().catch((error) => {
   console.error("Impossible de charger le cache des tarifs examens:", error);
 });
+
+seedLabPanelsIfEmpty()
+  .then((created) => {
+    if (created > 0) {
+      console.log(`${created} formulaire(s) de résultats laboratoire initialisé(s).`);
+    }
+    return refreshLabPanelRegistry();
+  })
+  .catch((error) => {
+    console.error("Impossible d'initialiser les formulaires laboratoire:", error);
+  });
 
 initPatientDossiers().catch((error) => {
   console.error("Impossible d'initialiser les dossiers patients:", error);

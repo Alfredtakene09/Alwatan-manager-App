@@ -135,7 +135,6 @@ export async function cleanupDemoData() {
   await prisma.clinicExpense.deleteMany({ where: { label: { startsWith: "[DEMO]" } } });
   await prisma.employeePayroll.deleteMany({ where: { remarks: { startsWith: "[DEMO]" } } });
   await prisma.salaryAdvance.deleteMany({ where: { comment: { startsWith: "[DEMO]" } } });
-  await prisma.cashChangeTransfer.deleteMany({ where: { comment: { contains: "[DEMO]" } } });
 
   const demoEmployees = await prisma.employee.findMany({
     where: { firstName: DEMO_EMPLOYEE_FIRST_NAME, lastName: { startsWith: "Salarié " } },
@@ -1062,20 +1061,6 @@ export async function seedDemoData() {
       },
     });
   }
-
-  // --- Coupure de monnaie ---
-  await prisma.cashChangeTransfer.create({
-    data: {
-      businessDate: dateOnly(1),
-      requesterId: staff.reception,
-      providerId: staff.comptable,
-      amountFcfa: 5000,
-      patientHint: "Patient DEMO-PAT-013",
-      comment: "[DEMO] Monnaie reçue au comptable",
-      recordedById: staff.reception,
-      createdAt: daysAgo(1, 11, 30),
-    },
-  });
 
   // --- Examen réclamation traitée (Youssouf) ---
   const visitYoussouf = await prisma.visit.create({

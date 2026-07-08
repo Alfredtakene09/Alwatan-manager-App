@@ -46,6 +46,12 @@ const router = createRouter({
           meta: { module: 'reception' },
         },
         {
+          path: 'reception/patient-personnel',
+          name: 'reception-patient-personnel',
+          component: () => import('@/views/reception/ReceptionStaffPatientView.vue'),
+          meta: { module: 'reception' },
+        },
+        {
           path: 'reception/operations-attente',
           name: 'reception-operations-attente',
           component: () => import('@/views/operations/OperationsAttenteView.vue'),
@@ -61,12 +67,6 @@ const router = createRouter({
           path: 'reception/depenses',
           name: 'reception-depenses',
           component: () => import('@/views/reception/ReceptionDepensesView.vue'),
-          meta: { module: 'reception' },
-        },
-        {
-          path: 'reception/coupure-monnaie',
-          name: 'reception-coupure-monnaie',
-          component: () => import('@/views/reception/ReceptionCoupureMonnaieView.vue'),
           meta: { module: 'reception' },
         },
         { path: 'reception/bloc-operatoire', redirect: '/reception/operations-attente' },
@@ -168,12 +168,6 @@ const router = createRouter({
           path: 'comptabilite/depenses',
           name: 'comptabilite-depenses',
           component: () => import('@/views/comptabilite/ComptabiliteDepensesView.vue'),
-          meta: { module: 'comptabilite' },
-        },
-        {
-          path: 'comptabilite/coupure-monnaie',
-          name: 'comptabilite-coupure-monnaie',
-          component: () => import('@/views/comptabilite/ComptabiliteCoupureMonnaieView.vue'),
           meta: { module: 'comptabilite' },
         },
         {
@@ -295,6 +289,55 @@ const router = createRouter({
           component: () => import('@/views/dashboard/PharmacieDashboardView.vue'),
           meta: { module: 'pharmacie', dashboard: true },
         },
+        { path: 'logistique', redirect: { name: 'logistique-tableau-de-bord' } },
+        {
+          path: 'logistique/tableau-de-bord',
+          name: 'logistique-tableau-de-bord',
+          component: () => import('@/views/dashboard/LogistiqueDashboardView.vue'),
+          meta: { module: 'logistique', dashboard: true },
+        },
+        {
+          path: 'logistique/articles',
+          name: 'logistique-articles',
+          component: () => import('@/views/logistique/LogistiqueArticlesView.vue'),
+          meta: { module: 'logistique' },
+        },
+        {
+          path: 'logistique/categories',
+          name: 'logistique-categories',
+          component: () => import('@/views/logistique/LogistiqueCategoriesView.vue'),
+          meta: { module: 'logistique' },
+        },
+        {
+          path: 'logistique/fournisseurs',
+          name: 'logistique-fournisseurs',
+          component: () => import('@/views/logistique/LogistiqueSuppliersView.vue'),
+          meta: { module: 'logistique' },
+        },
+        {
+          path: 'logistique/mouvements',
+          name: 'logistique-mouvements',
+          component: () => import('@/views/logistique/LogistiqueMovementsView.vue'),
+          meta: { module: 'logistique' },
+        },
+        {
+          path: 'logistique/demandes',
+          name: 'logistique-demandes',
+          component: () => import('@/views/logistique/LogistiqueRequestsView.vue'),
+          meta: { module: 'logistique' },
+        },
+        {
+          path: 'logistique/alertes',
+          name: 'logistique-alertes',
+          component: () => import('@/views/logistique/LogistiqueAlertsView.vue'),
+          meta: { module: 'logistique' },
+        },
+        {
+          path: 'logistique/rapports',
+          name: 'logistique-rapports',
+          component: () => import('@/views/logistique/LogistiqueReportsView.vue'),
+          meta: { module: 'logistique' },
+        },
         { path: 'factures', name: 'factures', component: () => import('@/views/FacturesView.vue'), meta: { module: 'factures' } },
         { path: 'admin', name: 'admin', component: () => import('@/views/AdminView.vue'), meta: { module: 'admin' } },
         {
@@ -328,9 +371,7 @@ const router = createRouter({
         { path: 'admin/salaires/fiches', redirect: '/admin/salaires' },
         {
           path: 'gestionnaire/tableau-de-bord',
-          name: 'gestionnaire-dashboard',
-          component: () => import('@/views/gestionnaire/GestionnaireDashboardView.vue'),
-          meta: { module: 'gestionnaire', dashboard: true },
+          redirect: { name: 'dashboard' },
         },
         {
           path: 'gestionnaire/caisse',
@@ -393,6 +434,12 @@ const router = createRouter({
           path: 'laboratoire/dossier/:visitId',
           name: 'laboratoire-dossier',
           component: () => import('@/views/LaboratoireDossierView.vue'),
+          meta: { module: 'laboratoire' },
+        },
+        {
+          path: 'laboratoire/formulaires',
+          name: 'laboratoire-formulaires',
+          component: () => import('@/views/LaboratoirePanelsView.vue'),
           meta: { module: 'laboratoire' },
         },
         { path: 'laboratoire/tableau-de-bord', redirect: '/laboratoire' },

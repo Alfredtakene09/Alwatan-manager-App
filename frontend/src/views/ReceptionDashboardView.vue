@@ -45,6 +45,7 @@ import {
   type DoctorOption,
 } from '@/lib/doctor-compensation'
 import { buildConsultationReceiptHtml, openPrintDocument } from '@/lib/print-document'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
@@ -115,6 +116,8 @@ type ReceiptData = {
   gender?: string | null
   phone?: string | null
 }
+
+const { uiText } = useAppI18n()
 
 const patients = ref<Patient[]>([])
 const doctors = ref<Doctor[]>([])
@@ -835,12 +838,12 @@ onUnmounted(clearAlert)
             <component :is="item.icon" :size="18" />
           </div>
           <div class="dash-stat__body">
-            <span class="dash-stat__label">{{ item.label }}</span>
+            <span class="dash-stat__label">{{ uiText(item.label) }}</span>
             <strong class="dash-stat__value">
               {{ item.value }}
               <small v-if="item.id === 'revenue'" class="dash-stat__unit">FCFA</small>
             </strong>
-            <span class="dash-stat__hint">{{ item.hint }}</span>
+            <span class="dash-stat__hint">{{ uiText(item.hint) }}</span>
           </div>
         </article>
       </div>
@@ -848,8 +851,8 @@ onUnmounted(clearAlert)
       <div class="patients-panel-sticky">
         <div class="table-toolbar">
           <div class="table-toolbar__title">
-            <h3>Patients enregistrés</h3>
-            <p>Liste des dossiers créés à la réception</p>
+            <h3>{{ uiText('Patients enregistrés') }}</h3>
+            <p>{{ uiText('Liste des dossiers créés à la réception') }}</p>
           </div>
 
           <div class="table-toolbar__search">
@@ -859,14 +862,14 @@ onUnmounted(clearAlert)
                 v-model="search"
                 type="search"
                 class="search-compact__input"
-                placeholder="Rechercher par matricule, nom ou téléphone…"
+                :placeholder="uiText('Rechercher par matricule, nom ou téléphone…')"
                 @keydown.enter.prevent="loadPatients"
               />
               <button
                 v-if="search"
                 type="button"
                 class="search-compact__clear"
-                aria-label="Effacer la recherche"
+                :aria-label="uiText('Effacer la recherche')"
                 @click="clearSearch"
               >
                 <X :size="14" />
@@ -970,7 +973,7 @@ onUnmounted(clearAlert)
             :icon="Percent"
           />
           <div class="total-preview total-preview--compact">
-            <span>Total à payer</span>
+            <span>{{ uiText('Total à payer') }}</span>
             <strong>{{ formatFcfa(formTotal) }}</strong>
           </div>
         </div>

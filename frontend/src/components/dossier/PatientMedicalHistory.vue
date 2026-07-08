@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChevronDown, ChevronRight, FlaskConical, MessageSquare, Stethoscope, Eye, FileText } from '@lucide/vue'
 import { fullName } from '@/lib/roles'
 import { getLabFormPanel, getFilledLabPanelSections, type LabPanelSlug } from '@/lib/lab-form-panels'
+import { useLabPanelsStore } from '@/stores/lab-panels'
 import UiButton from '@/components/ui/UiButton.vue'
 
 export type MedicalHistoryLabPanel = {
@@ -32,8 +33,13 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const labPanels = useLabPanelsStore()
 const expandedVisitId = ref<string | null>(null)
 const expandedPanel = ref<{ visitId: string; slug: LabPanelSlug } | null>(null)
+
+onMounted(() => {
+  labPanels.fetchPanels()
+})
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('fr-FR', {
@@ -64,6 +70,7 @@ function openLabDossier(visitId: string) {
 
 function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
   const panel = getLabFormPanel(slug)
+  if (!panel) return []
   const values = entry.labPanels.find((p) => p.slug === slug)?.values ?? {}
   return getFilledLabPanelSections(panel, values)
 }

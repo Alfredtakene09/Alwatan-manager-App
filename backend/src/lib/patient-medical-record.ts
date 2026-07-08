@@ -3,13 +3,12 @@ import { prisma } from "./db.js";
 import { flattenPrescribedExams, hasLabResults, parsePrescribedExamsByKind } from "./lab-notes.js";
 import { medecinMatchWhere } from "./medecin-queues.js";
 import {
-  LAB_PANEL_LABELS,
+  labelForSlug,
   parseLabPanelResults,
-  type LabPanelSlug,
 } from "./lab-panel-results.js";
 
 export type MedicalHistoryLabPanel = {
-  slug: LabPanelSlug;
+  slug: string;
   label: string;
   filledCount: number;
   values: Record<string, string>;
@@ -32,10 +31,10 @@ function countFilledValues(values: Record<string, string>) {
 
 function buildLabPanels(clinicalNotes: string | null | undefined): MedicalHistoryLabPanel[] {
   const parsed = parseLabPanelResults(clinicalNotes);
-  return (Object.keys(parsed) as LabPanelSlug[])
+  return Object.keys(parsed)
     .map((slug) => ({
       slug,
-      label: LAB_PANEL_LABELS[slug],
+      label: labelForSlug(slug),
       filledCount: countFilledValues(parsed[slug] ?? {}),
       values: parsed[slug] ?? {},
     }))

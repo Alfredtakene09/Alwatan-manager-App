@@ -7,6 +7,7 @@ export const USER_ROLES = [
   "LABORANTIN",
   "SOIGNANT",
   "PHARMACIEN",
+  "LOGISTIQUE",
 ] as const;
 
 export type AppUserRole = (typeof USER_ROLES)[number];
@@ -20,6 +21,7 @@ export const ROLE_LABELS: Record<AppUserRole, string> = {
   LABORANTIN: "Laborantin",
   SOIGNANT: "Soignant",
   PHARMACIEN: "Pharmacien",
+  LOGISTIQUE: "Logistique",
 };
 
 export const MANAGEABLE_USER_ROLES = [
@@ -29,6 +31,7 @@ export const MANAGEABLE_USER_ROLES = [
   "COMPTABLE",
   "LABORANTIN",
   "PHARMACIEN",
+  "LOGISTIQUE",
 ] as const satisfies readonly AppUserRole[];
 
 export type ManageableUserRole = (typeof MANAGEABLE_USER_ROLES)[number];
@@ -42,6 +45,7 @@ export const MODULE_ACCESS: Record<string, AppUserRole[]> = {
   hospitalisation: ["ADMIN", "RECEPTIONNISTE", "COMPTABLE"],
   "bloc-salles": ["ADMIN", "COMPTABLE"],
   pharmacie: ["ADMIN", "PHARMACIEN", "COMPTABLE"],
+  logistique: ["ADMIN", "LOGISTIQUE", "COMPTABLE"],
   laboratoire: ["ADMIN", "LABORANTIN", "COMPTABLE"],
   "dossier-patient": ["ADMIN", "MEDECIN", "LABORANTIN", "COMPTABLE"],
   factures: ["ADMIN", "COMPTABLE"],
@@ -82,10 +86,12 @@ export function getDefaultRoute(role: AppUserRole) {
       return "/bloc-salles/tableau-de-bord";
     case "PHARMACIEN":
       return "/pharmacie/tableau-de-bord";
+    case "LOGISTIQUE":
+      return "/logistique/tableau-de-bord";
     case "LABORANTIN":
       return "/laboratoire";
     case "GESTIONNAIRE":
-      return "/gestionnaire/tableau-de-bord";
+      return "/dashboard";
     default:
       return "/dashboard";
   }

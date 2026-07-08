@@ -1,4 +1,4 @@
-export type PatientCategory = 'STANDARD' | 'ASSOCIE' | 'ONG'
+export type PatientCategory = 'STANDARD' | 'ASSOCIE' | 'ONG' | 'PERSONNEL'
 
 export const PATIENT_CATEGORIES: {
   value: PatientCategory
@@ -7,13 +7,19 @@ export const PATIENT_CATEGORIES: {
 }[] = [
   { value: 'STANDARD', label: 'Standard', hint: 'Paiement et facture immédiats' },
   { value: 'ASSOCIE', label: 'Associé / enfant', hint: 'Exonéré — aucun frais' },
+  { value: 'PERSONNEL', label: 'Personnel', hint: 'Parcours gratuit — recommandé par un membre du personnel' },
 ]
 
-/** Catégories proposées à l'enregistrement (sans ONG). */
-export const RECEPTION_DASHBOARD_CATEGORIES = PATIENT_CATEGORIES
+/**
+ * Catégories proposées à l'enregistrement standard (sans ONG ni Personnel).
+ * Le parcours Personnel dispose de sa propre page dédiée.
+ */
+export const RECEPTION_DASHBOARD_CATEGORIES = PATIENT_CATEGORIES.filter(
+  (category) => category.value !== 'PERSONNEL',
+)
 
 export function isExemptCategory(category: PatientCategory) {
-  return category === 'ASSOCIE'
+  return category === 'ASSOCIE' || category === 'PERSONNEL'
 }
 
 export function isDeferredCategory(_category: PatientCategory) {

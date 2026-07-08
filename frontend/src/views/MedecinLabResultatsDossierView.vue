@@ -10,9 +10,9 @@ import { patientCategoryLabel, type PatientCategory } from '@/lib/patient-catego
 import {
   getLabFormPanel,
   getFilledLabPanelSections,
-  LAB_FORM_PANELS,
   type LabPanelSlug,
 } from '@/lib/lab-form-panels'
+import { useLabPanelsStore } from '@/stores/lab-panels'
 import { buildPrescribedByLabel, printLabPanelResult } from '@/lib/lab-panel-print'
 import { fetchAndPrintLabVisitResults } from '@/lib/lab-visit-print'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -48,6 +48,7 @@ type PanelFile = {
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const labPanels = useLabPanelsStore()
 
 const visit = ref<LabsResultsVisitRow | null>(null)
 const panelResults = ref<DossierResponse['panelResults']>({})
@@ -98,7 +99,7 @@ const resultsReceivedAt = computed(() => {
 const panelFiles = computed<PanelFile[]>(() => {
   const fallback = resultsReceivedAt.value
 
-  return LAB_FORM_PANELS.filter((panel) => panelResults.value[panel.slug])
+  return labPanels.panels.filter((panel) => panelResults.value[panel.slug])
     .map((panel) => {
       const raw = panelReceivedAt.value?.[panel.slug]
       const receivedAt = raw ? new Date(raw) : fallback
@@ -171,7 +172,7 @@ async function loadDossier() {
     panelResults.value = data.panelResults
     panelReceivedAt.value = data.panelReceivedAt ?? {}
     panelDoctorComments.value = data.panelDoctorComments ?? {}
-    const firstPanel = LAB_FORM_PANELS.find((panel) => data.panelResults[panel.slug])?.slug ?? null
+    const firstPanel = labPanels.panels.find((panel) => data.panelResults[panel.slug])?.slug ?? null
     const nextPanel =
       activePanel.value && data.panelResults[activePanel.value] ? activePanel.value : firstPanel
     selectPanel(nextPanel)
@@ -232,7 +233,8 @@ watch(
   },
 )
 
-onMounted(() => {
+onMounted(async () => {
+  await labPanels.fetchPanels()
   loadDossier()
   pollTimer = setInterval(loadDossier, POLL_MS)
 })

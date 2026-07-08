@@ -11,9 +11,29 @@ import {
 } from '@lucide/vue'
 import type { AppModalType } from '@/lib/app-modal'
 import { useAppModal } from '@/composables/useAppModal'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiButton from '@/components/ui/UiButton.vue'
 
 const { state, confirmModal, cancelModal } = useAppModal()
+const { uiText, localeCode } = useAppI18n()
+
+const titleText = computed(() => {
+  void localeCode.value
+  return uiText(state.title)
+})
+const messageText = computed(() => {
+  void localeCode.value
+  return uiText(state.message)
+})
+const confirmText = computed(() => {
+  void localeCode.value
+  return uiText(state.confirmLabel)
+})
+const cancelText = computed(() => {
+  void localeCode.value
+  return uiText(state.cancelLabel)
+})
+
 
 const MODAL_META: Record<
   AppModalType,
@@ -62,7 +82,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           :aria-labelledby="'app-modal-title'"
           :aria-describedby="'app-modal-message'"
         >
-          <button type="button" class="app-modal__close" aria-label="Fermer" @click="cancelModal">
+          <button type="button" class="app-modal__close" :aria-label="uiText('Fermer')" @click="cancelModal">
             <X :size="18" />
           </button>
 
@@ -70,14 +90,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             <component :is="meta.icon" :size="34" class="app-modal__icon" />
           </div>
 
-          <h2 id="app-modal-title" class="app-modal__title">{{ state.title }}</h2>
-          <p id="app-modal-message" class="app-modal__message">{{ state.message }}</p>
+          <h2 id="app-modal-title" class="app-modal__title">{{ titleText }}</h2>
+          <p id="app-modal-message" class="app-modal__message">{{ messageText }}</p>
 
           <div v-if="existingEntries.length" class="app-modal__existing">
-            <p class="app-modal__existing-title">Enregistrement existant</p>
+            <p class="app-modal__existing-title">{{ uiText('Enregistrement existant') }}</p>
             <dl>
               <div v-for="[label, value] in existingEntries" :key="label" class="app-modal__existing-row">
-                <dt>{{ label }}</dt>
+                <dt>{{ uiText(label) }}</dt>
                 <dd>{{ value }}</dd>
               </div>
             </dl>
@@ -89,13 +109,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               variant="ghost"
               @click="cancelModal"
             >
-              {{ state.cancelLabel }}
+              {{ cancelText }}
             </UiButton>
             <UiButton
               :variant="meta.confirmVariant"
               @click="confirmModal"
             >
-              {{ state.confirmLabel }}
+              {{ confirmText }}
             </UiButton>
           </div>
         </div>

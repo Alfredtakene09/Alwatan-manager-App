@@ -1,27 +1,64 @@
 export const LAB_PANEL_SLUGS = [
   'routine',
-  'coagulation',
-  'diabetic',
+  'hormones',
+  'biochemie',
+  'electrolytes',
   'fertility',
-  'lipid',
   'liver',
-  'renal',
+  'lipid',
   'screening',
   'semen',
   'thyroid',
+  'coagulation',
+  'diabetic',
+  'renal',
   'torch',
 ] as const
 
-/** Ordre d'affichage des formulaires (Routine Investigation en premier). */
-const LAB_PANEL_DISPLAY_ORDER: LabPanelSlug[] = [...LAB_PANEL_SLUGS]
+/**
+ * Un slug de formulaire. Historiquement une union fermée ; désormais ouvert
+ * car les formulaires sont gérés dynamiquement (CRUD) et stockés en base.
+ */
+export type LabPanelSlug = string
 
-export type LabPanelSlug = (typeof LAB_PANEL_SLUGS)[number]
+/** Ordre d'affichage des formulaires (types Labo en premier). */
+const LAB_PANEL_DISPLAY_ORDER: LabPanelSlug[] = [
+  'routine',
+  'hormones',
+  'biochemie',
+  'electrolytes',
+  'fertility',
+  'liver',
+  'lipid',
+  'screening',
+  'semen',
+  'thyroid',
+  'coagulation',
+  'diabetic',
+  'renal',
+  'torch',
+]
+
+/** Types proposés à la saisie (définis en code — indépendants des fichiers PDF). */
+export const LAB_ENTRY_PANEL_SLUGS = [
+  'routine',
+  'hormones',
+  'biochemie',
+  'electrolytes',
+  'fertility',
+  'liver',
+  'lipid',
+  'screening',
+  'semen',
+  'thyroid',
+] as const satisfies readonly LabPanelSlug[]
 
 export type LabFormField = {
   key: string
   label: string
   unit?: string
   reference?: string
+  defaultValue?: string
   type?: 'text' | 'textarea'
 }
 
@@ -36,7 +73,142 @@ export type LabFormPanel = {
   sections: LabFormSection[]
 }
 
-const ALL_LAB_FORM_PANELS: LabFormPanel[] = [
+const DEFAULT_LAB_FORM_PANELS: LabFormPanel[] = [
+  {
+    slug: 'routine',
+    label: 'Routine Investigation',
+    sections: [
+      {
+        fields: [
+          { key: 'bffm', label: 'B.F.F.M' },
+          { key: 'malaria', label: 'No Malaria' },
+          { key: 'stoolTrypanosoma', label: 'Stool for Trypanosoma' },
+          { key: 'typhoidIgg', label: 'Typhoid IgG' },
+          { key: 'sikilingTest', label: 'Sikiling Test' },
+          { key: 'hPyloria', label: 'H.PYLORIA' },
+          { key: 'dDimer', label: 'D.Dimer Test', reference: '0 - 0.5 mg/l' },
+          { key: 'rheumatoidFactor', label: 'Rematoid Factor' },
+          { key: 'urineHcg', label: 'Urine HCG' },
+          { key: 'fbg', label: 'FBG', reference: '70 - 120 mg/dl' },
+          { key: 'rbg', label: 'RBG', reference: '120 - 180 mg/dl' },
+          { key: 'sChlamydia', label: 'S.Chlamydia Test' },
+          { key: 'swapChlamydia', label: 'Swap Chlamydia Test' },
+          { key: 'esr', label: 'ESR', unit: 'mm1/2hour' },
+          { key: 'hb', label: 'HB', unit: 'g/dl' },
+          { key: 'hbPercent', label: 'HB', unit: '%' },
+          { key: 'serumHcg', label: 'Serum HCG' },
+          { key: 'bloodGrouping', label: 'Blood Grouping' },
+          { key: 'crp', label: 'CRP' },
+          { key: 'afbStain', label: 'AFB Stain for M.Tuberculosis' },
+          { key: 'widalTyphiaO', label: 'Widdall S.typhia (O) titer' },
+          { key: 'widalTyphiaBO', label: 'S.typhia (BO) titer' },
+          { key: 'widalComment', label: 'Comment', type: 'textarea' },
+          { key: 'widalBrucellaA', label: 'Widdall Brucelle (A) titer' },
+          { key: 'widalBrucellaM', label: 'Brucella (M) titer' },
+          { key: 'brucellaComment', label: 'Comment', type: 'textarea' },
+        ],
+      },
+      {
+        title: 'Urine General — Macro Exam',
+        fields: [
+          { key: 'urineColor', label: 'Color' },
+          { key: 'urineReaction', label: 'Reaction' },
+          { key: 'urinePh', label: 'PH' },
+          { key: 'urineGlucose', label: 'Glucose' },
+          { key: 'urineSugar', label: 'Sugar' },
+          { key: 'urineAlbumin', label: 'Albumin' },
+          { key: 'urineProtein', label: 'Protein' },
+          { key: 'urineBilirubin', label: 'Bilirubin' },
+          { key: 'urineBile', label: 'Bile' },
+          { key: 'urineKetones', label: 'Ketones' },
+          { key: 'urineAcetone', label: 'Acetone' },
+          { key: 'urineBlood', label: 'Blood' },
+          { key: 'urineUrobilinogen', label: 'Urobillinogen' },
+          { key: 'urineGravity', label: 'S.Grafity' },
+          { key: 'urinePusCells', label: 'Pus Cells' },
+          { key: 'urinePus', label: 'Pus' },
+          { key: 'urineRbcs', label: 'RBCs' },
+          { key: 'urineNitrites', label: 'Nitrites' },
+          { key: 'urineEpithelial', label: 'Epithelial cells' },
+          { key: 'urineCasts', label: 'Casts' },
+          { key: 'urineCrystals', label: 'Crytals' },
+          { key: 'urineOva', label: 'OVA' },
+          { key: 'urineOthers', label: 'Others' },
+        ],
+      },
+      {
+        title: 'Stool General — Macro Exam',
+        fields: [
+          { key: 'stoolColor', label: 'Color' },
+          { key: 'stoolConsistency', label: 'Consistency' },
+          { key: 'stoolMucus', label: 'Mucus' },
+          { key: 'stoolBlood', label: 'Blood' },
+          { key: 'stoolWorm', label: 'Worm' },
+          { key: 'stoolPh', label: 'PH' },
+          { key: 'stoolPusCells', label: 'Pus Cells' },
+          { key: 'stoolRbcs', label: 'RBCs' },
+          { key: 'stoolCysts', label: 'Cysts' },
+          { key: 'stoolTrophozoite', label: 'Trophozoite' },
+          { key: 'stoolOva', label: 'OVA' },
+          { key: 'stoolOthers', label: 'Others' },
+        ],
+      },
+    ],
+  },
+  {
+    slug: 'hormones',
+    label: 'Hormones',
+    sections: [
+      {
+        fields: [
+          { key: 'sTroponin', label: 'S.Troponin' },
+          { key: 'bHcg', label: 'B. HCG' },
+          { key: 'psa', label: 'PSA' },
+          { key: 'aso', label: 'ASO Quantitatif' },
+          { key: 'hormones', label: 'Hormones' },
+        ],
+      },
+    ],
+  },
+  {
+    slug: 'biochemie',
+    label: 'Biochimie',
+    sections: [
+      {
+        fields: [
+          { key: 'fbg', label: 'FBG', unit: 'mg/dl', reference: '70 - 110 mg/dl' },
+          { key: 'hba1c', label: 'HbA1c', unit: '%', reference: '6 - 7 %' },
+          { key: 'bloodUrea', label: 'Blood Urea', unit: 'mg/dl', reference: '15 - 50 mg/dl' },
+          { key: 'creatinine', label: 'S.Creatinine', unit: 'mg/dl', reference: '0.6 - 1.1 mg/dl' },
+          { key: 'sodium', label: 'Sodium (Na+)', unit: 'mmol/L', reference: '135 - 150 mmol/L' },
+          { key: 'potassium', label: 'Potassium (K+)', unit: 'mmol/L', reference: '3.5 - 5 mmol/L' },
+        ],
+      },
+    ],
+  },
+  {
+    slug: 'electrolytes',
+    label: 'ABG + Electrolytes',
+    sections: [
+      {
+        title: 'Gaz du sang',
+        fields: [
+          { key: 'ph', label: 'pH', reference: '7.34 - 7.44' },
+          { key: 'pco2', label: 'PCO2', reference: '24 - 44' },
+          { key: 'po2', label: 'PO2', reference: '96 - 100' },
+        ],
+      },
+      {
+        title: 'Électrolytes',
+        fields: [
+          { key: 'chloride', label: 'Cl-', unit: 'mmol/L', reference: '95 - 107 mmol/L' },
+          { key: 'sodium', label: 'Na+', unit: 'mmol/L', reference: '135 - 150 mmol/L' },
+          { key: 'potassium', label: 'K+', unit: 'mmol/L', reference: '3.5 - 5 mmol/L' },
+          { key: 'ionizedCalcium', label: 'Ionized Calcium', unit: 'mmol/L', reference: '1.15 - 1.30 mmol/L' },
+        ],
+      },
+    ],
+  },
   {
     slug: 'coagulation',
     label: 'Coagulation Test',
@@ -97,18 +269,17 @@ const ALL_LAB_FORM_PANELS: LabFormPanel[] = [
   },
   {
     slug: 'liver',
-    label: 'Liver Function',
+    label: 'LFT',
     sections: [
       {
         fields: [
-          { key: 'totalBilirubin', label: 'Total Bilirubin', unit: 'mg/dl', reference: '0.2 - 1.2 mg/dl' },
-          { key: 'directBilirubin', label: 'Direct Bilirubin (Conjugated)', unit: 'g/dl', reference: '< 1 g/dl' },
-          { key: 'indirectBilirubin', label: 'Indirect Bilirubin (Unconjugated)', unit: 'g/dl', reference: '< 1 g/dl' },
-          { key: 'tProtein', label: 'T.protein', unit: 'g/dl', reference: '6.5 - 8.5 g/dl' },
-          { key: 'albumin', label: 'Albumin', unit: 'g/dl', reference: '3.5 - 5 g/dl' },
-          { key: 'alt', label: 'ALT (Enzyme)', unit: 'u/l', reference: '< 35 u/l' },
-          { key: 'ast', label: 'AST (Enzyme)', unit: 'u/l', reference: '< 35 u/l' },
-          { key: 'alp', label: 'ALP (Enzyme)', unit: 'u/l', reference: '< 250 u/l' },
+          { key: 'tProtein', label: 'T.Protein', unit: 'g/dl', reference: '6.0 - 7.8 g/dl' },
+          { key: 'albumin', label: 'S.Albumin', unit: 'g/dl', reference: '3.5 - 5.0 g/dl' },
+          { key: 'totalBilirubin', label: 'T.Bilirubin', unit: 'mg/dl', reference: '0.0 - 1.1 mg/dl' },
+          { key: 'directBilirubin', label: 'D.Bilirubin', unit: 'mg/dl', reference: '0.0 - 0.3 mg/dl' },
+          { key: 'alp', label: 'ALP', unit: 'U/L', reference: '0 - 115 U/L' },
+          { key: 'ast', label: 'GOT (AST)', unit: 'U/L', reference: 'Up to 40 U/L' },
+          { key: 'alt', label: 'GPT (ALT)', unit: 'U/L', reference: 'Up to 40 U/L' },
         ],
       },
     ],
@@ -148,13 +319,14 @@ const ALL_LAB_FORM_PANELS: LabFormPanel[] = [
           { key: 'hbsAg', label: 'HBsAg' },
           { key: 'hcv', label: 'HCV' },
           { key: 'vdrl', label: 'VDRL' },
+          { key: 'bloodGrouping', label: 'Blood Grouping' },
         ],
       },
     ],
   },
   {
     slug: 'thyroid',
-    label: 'Thyroids Hormones Test',
+    label: 'Thyroid Hormones Test',
     sections: [
       {
         fields: [
@@ -181,79 +353,6 @@ const ALL_LAB_FORM_PANELS: LabFormPanel[] = [
           { key: 'cmvIgm', label: 'Cytomegalo Virus — IgM' },
           { key: 'herpesIgg', label: 'Herpes Virus — IgG' },
           { key: 'herpesIgm', label: 'Herpes Virus — IgM' },
-        ],
-      },
-    ],
-  },
-  {
-    slug: 'routine',
-    label: 'Routine Investigation',
-    sections: [
-      {
-        fields: [
-          { key: 'bffm', label: 'B.F.F.M' },
-          { key: 'sikilingTest', label: 'Sikiling Test' },
-          { key: 'hPyloria', label: 'H.PYLORIA' },
-          { key: 'dDimer', label: 'D.Dimer Test', reference: '0 - 0.5 mg/l' },
-          { key: 'rheumatoidFactor', label: 'Rematoid Factor' },
-          { key: 'urineHcg', label: 'Urine HCG' },
-          { key: 'fbg', label: 'FBG', reference: '70 - 120 mg/dl' },
-          { key: 'rbg', label: 'RBG', reference: '120 - 180 mg/dl' },
-          { key: 'sTroponin', label: 'S.Troponin' },
-          { key: 'sChlamydia', label: 'S.Chlamydia Test' },
-          { key: 'swapChlamydia', label: 'Swap Chlamydia Test' },
-          { key: 'esr', label: 'ESR', unit: 'mm1/2hour' },
-          { key: 'hb', label: 'HB', unit: 'g/dl' },
-          { key: 'hbPercent', label: 'HB', unit: '%' },
-          { key: 'serumHcg', label: 'Serum HCG' },
-          { key: 'bHcg', label: 'B. HCG' },
-          { key: 'bloodGrouping', label: 'Blood Grouping' },
-          { key: 'crp', label: 'CRP' },
-          { key: 'aso', label: 'ASO' },
-          { key: 'psa', label: 'PSA' },
-          { key: 'afbStain', label: 'AFB Stain for M.Tuberculosis' },
-          { key: 'widalTyphiaO', label: 'Widdall S.typhia (O) titer' },
-          { key: 'widalTyphiaBO', label: 'S.typhia (BO) titer' },
-          { key: 'widalComment', label: 'Comment', type: 'textarea' },
-          { key: 'widalBrucellaA', label: 'Widdall Brucelle (A) titer' },
-          { key: 'widalBrucellaM', label: 'Brucella (M) titer' },
-          { key: 'brucellaComment', label: 'Comment', type: 'textarea' },
-        ],
-      },
-      {
-        title: 'Urine General — Macro Exam',
-        fields: [
-          { key: 'urineColor', label: 'Color' },
-          { key: 'urinePh', label: 'PH' },
-          { key: 'urineGlucose', label: 'Glucose' },
-          { key: 'urineBilirubin', label: 'Bilirubin' },
-          { key: 'urineKetones', label: 'Ketones' },
-          { key: 'urineProtein', label: 'Protein' },
-          { key: 'urineUrobilinogen', label: 'Urobillinogen' },
-          { key: 'urineGravity', label: 'S.Grafity' },
-          { key: 'urinePusCells', label: 'Pus Cells' },
-          { key: 'urineRbcs', label: 'RBCs' },
-          { key: 'urineCasts', label: 'Casts' },
-          { key: 'urineCrystals', label: 'Crytals' },
-          { key: 'urineOva', label: 'OVA' },
-          { key: 'urineOthers', label: 'Others' },
-        ],
-      },
-      {
-        title: 'Stool General — Macro Exam',
-        fields: [
-          { key: 'stoolColor', label: 'Color' },
-          { key: 'stoolConsistency', label: 'Consistency' },
-          { key: 'stoolMucus', label: 'Mucus' },
-          { key: 'stoolBlood', label: 'Blood' },
-          { key: 'stoolWorm', label: 'Worm' },
-          { key: 'stoolPh', label: 'PH' },
-          { key: 'stoolPusCells', label: 'Pus Cells' },
-          { key: 'stoolRbcs', label: 'RBCs' },
-          { key: 'stoolCysts', label: 'Cysts' },
-          { key: 'stoolTrophozoite', label: 'Trophozoite' },
-          { key: 'stoolOva', label: 'OVA' },
-          { key: 'stoolOthers', label: 'Others' },
         ],
       },
     ],
@@ -300,19 +399,46 @@ const ALL_LAB_FORM_PANELS: LabFormPanel[] = [
   },
 ]
 
-export const LAB_FORM_PANELS: LabFormPanel[] = LAB_PANEL_DISPLAY_ORDER.map(
-  (slug) => ALL_LAB_FORM_PANELS.find((panel) => panel.slug === slug)!,
+const DEFAULT_ORDERED_PANELS: LabFormPanel[] = LAB_PANEL_DISPLAY_ORDER.map(
+  (slug) => DEFAULT_LAB_FORM_PANELS.find((panel) => panel.slug === slug)!,
 )
 
+const DEFAULT_ENTRY_SLUGS: LabPanelSlug[] = [...LAB_ENTRY_PANEL_SLUGS]
+
+/**
+ * État runtime des formulaires. Initialisé avec les définitions par défaut
+ * (fallback hors-ligne) puis remplacé par les formulaires chargés depuis l'API
+ * (voir le store `useLabPanelsStore`). Ces accès sont volontairement synchrones
+ * pour les helpers non réactifs (impression, historique).
+ */
+let runtimePanels: LabFormPanel[] = [...DEFAULT_ORDERED_PANELS]
+let runtimeEntrySlugs: LabPanelSlug[] = [...DEFAULT_ENTRY_SLUGS]
+
+export function setRuntimeLabPanels(panels: LabFormPanel[], entrySlugs: LabPanelSlug[]) {
+  runtimePanels = panels
+  runtimeEntrySlugs = entrySlugs
+}
+
+export function getAllLabFormPanels(): LabFormPanel[] {
+  return runtimePanels
+}
+
+export function getEntryPanelSlugs(): LabPanelSlug[] {
+  return runtimeEntrySlugs
+}
+
+/** @deprecated Préférez `getAllLabFormPanels()` — conservé pour compatibilité. */
+export const LAB_FORM_PANELS: LabFormPanel[] = DEFAULT_ORDERED_PANELS
+
 export function getLabFormPanel(slug: LabPanelSlug) {
-  return ALL_LAB_FORM_PANELS.find((panel) => panel.slug === slug)
+  return runtimePanels.find((panel) => panel.slug === slug)
 }
 
 export function emptyPanelValues(panel: LabFormPanel): Record<string, string> {
   const values: Record<string, string> = {}
   for (const section of panel.sections) {
     for (const field of section.fields) {
-      values[field.key] = ''
+      values[field.key] = field.defaultValue ?? ''
     }
   }
   return values

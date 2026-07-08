@@ -8,19 +8,25 @@ import {
   Clock,
   CheckCircle2,
   CalendarDays,
+  Eye,
+  Pencil,
 } from '@lucide/vue'
 import api from '@/api/client'
-import { countLabPrescribedExams } from '@/lib/lab-notes'
+import {
+  countLabPrescribedExams,
+  formatLabPrescribedExamsPreview,
+  formatLabPrescribedExamsSummary,
+} from '@/lib/lab-notes'
 import { matchesLabVisitSearch } from '@/lib/lab-visit-search'
+import { fullName } from '@/lib/roles'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
-import LabsWaitingDataTable, {
-  type LabsWaitingVisitRow,
-} from '@/components/ui/LabsWaitingDataTable.vue'
+import { type LabsWaitingVisitRow } from '@/components/ui/LabsWaitingDataTable.vue'
 import LabQueueVisitPanel from '@/components/laboratoire/LabQueueVisitPanel.vue'
+import '@/assets/lab-visit-table.css'
 
 const router = useRouter()
 const visits = ref<LabsWaitingVisitRow[]>([])
@@ -56,6 +62,27 @@ const stats = computed(() => {
 
 const filteredVisits = computed(() =>
   visits.value.filter((visit) => matchesLabVisitSearch(visit, listSearch.value)),
+)
+
+const rows = computed(() =>
+  filteredVisits.value
+    .map((visit) => {
+      const notes = visit.consultation?.clinicalNotes
+      const eventAt = new Date(visit.consultation?.labSentToLabAt ?? visit.updatedAt)
+      return {
+        id: visit.id,
+        code: visit.patient.code,
+        patientName: fullName(visit.patient.firstName, visit.patient.lastName),
+        patientPhone: visit.patient.phone || '',
+        exams: formatLabPrescribedExamsPreview(notes),
+        examsFull: formatLabPrescribedExamsSummary(notes),
+        examCount: countLabPrescribedExams(notes),
+        eventDate: eventAt.toLocaleDateString('fr-FR'),
+        eventTime: eventAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        eventSort: eventAt.getTime(),
+      }
+    })
+    .sort((a, b) => b.eventSort - a.eventSort),
 )
 
 const hasActiveSearch = computed(() => listSearch.value.trim().length > 0)
@@ -152,24 +179,73 @@ onActivated(loadQueue)
             <span class="lab-toolbar__count">{{ filteredVisits.length }} dossier(s)</span>
           </div>
         </template>
-        <p v-if="!loading && !visits.length" class="empty">
+        <p v-if="loading && !visits.length" class="empty">Chargement des analyses en cours…</p>
+        <p v-else-if="!loading && !visits.length" class="empty">
           Aucun examen de laboratoire en attente pour le moment.
         </p>
-        <p v-else-if="!loading && visits.length && !filteredVisits.length" class="empty">
+        <p v-else-if="!loading && visits.length && !rows.length" class="empty">
           Aucun dossier ne correspond à votre recherche.
         </p>
-        <LabsWaitingDataTable
-          v-else-if="visits.length || loading"
-          fill
-          actions-mode="lab"
-          exams-summary-mode="lab"
-          :visits="filteredVisits"
-          :selected-id="panelVisitId"
-          :loading="loading"
-          table-key="lab-queue"
-          @view="openPanel"
-          @saisir="goToDossier"
-        />
+        <div v-else class="lab-visit-table-wrap">
+          <table class="lab-visit-table">
+            <thead>
+              <tr>
+                <th class="lab-visit-table__num">#</th>
+                <th>Matricule</th>
+                <th>Patient</th>
+                <th>Examens</th>
+                <th>Transféré le</th>
+                <th class="lab-visit-table__actions-head">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(row, index) in rows"
+                :key="row.id"
+                :class="{ 'is-selected': panelVisitId === row.id }"
+              >
+                <td class="lab-visit-table__num">{{ index + 1 }}</td>
+                <td>
+                  <span class="lab-visit-badge">{{ row.code }}</span>
+                </td>
+                <td>
+                  <span class="lab-visit-name">{{ row.patientName }}</span>
+                  <span v-if="row.patientPhone" class="lab-visit-sub">{{ row.patientPhone }}</span>
+                </td>
+                <td>
+                  <span class="lab-visit-exams" :title="row.examsFull !== row.exams ? row.examsFull : ''">
+                    <span v-if="row.examCount > 0" class="lab-visit-exam-count">{{ row.examCount }}</span>
+                    <span class="lab-visit-sub lab-visit-sub--truncate">{{ row.exams }}</span>
+                  </span>
+                </td>
+                <td>
+                  <span class="lab-visit-date">{{ row.eventDate }}</span>
+                  <span class="lab-visit-sub">{{ row.eventTime }}</span>
+                </td>
+                <td>
+                  <div class="lab-visit-actions">
+                    <button
+                      type="button"
+                      class="lab-visit-act lab-visit-act--icon lab-visit-act--accent"
+                      title="Saisir les résultats"
+                      @click="goToDossier(row.id)"
+                    >
+                      <Pencil :size="15" />
+                    </button>
+                    <button
+                      type="button"
+                      class="lab-visit-act lab-visit-act--icon"
+                      title="Voir le dossier"
+                      @click="openPanel(row.id)"
+                    >
+                      <Eye :size="15" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </UiCard>
     </section>
 

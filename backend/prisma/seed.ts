@@ -195,6 +195,14 @@ async function main() {
       role: UserRole.PHARMACIEN,
       jobTitle: "Pharmacien",
     },
+    {
+      username: "logistique",
+      email: "logistique@alwatan.local",
+      firstName: "Ousmane",
+      lastName: "Deby",
+      role: UserRole.LOGISTIQUE,
+      jobTitle: "Responsable logistique",
+    },
   ];
 
   // Migration compte comptable → direction (avant upsert, pour conserver l'historique)
@@ -424,6 +432,52 @@ async function main() {
 
   for (const product of products) {
     await prisma.product.upsert({ where: { sku: product.sku }, update: product, create: product });
+  }
+
+  // --- Stock logistique (consommables & matériel non-médicament) ---
+  const logisticsCategories = [
+    { name: "Consommables médicaux", sortOrder: 0 },
+    { name: "Réactifs laboratoire", sortOrder: 1 },
+    { name: "Fournitures de bureau", sortOrder: 2 },
+    { name: "Entretien & hygiène", sortOrder: 3 },
+  ];
+  const categoryByName = new Map<string, string>();
+  for (const category of logisticsCategories) {
+    const saved = await prisma.logisticsCategory.upsert({
+      where: { name: category.name },
+      update: { sortOrder: category.sortOrder, active: true },
+      create: category,
+    });
+    categoryByName.set(saved.name, saved.id);
+  }
+
+  let logisticsSupplier = await prisma.logisticsSupplier.findFirst({ where: { name: "Fournitures Générales Tchad" } });
+  if (!logisticsSupplier) {
+    logisticsSupplier = await prisma.logisticsSupplier.create({
+      data: {
+        name: "Fournitures Générales Tchad",
+        contactName: "Service commercial",
+        phone: "+235 66 00 00 00",
+        email: "contact@fournitures-tchad.local",
+      },
+    });
+  }
+
+  const logisticsItems = [
+    { name: "Gants nitrile (boîte 100)", sku: "LOG-GANTS-NIT", unit: "boîte", category: "Consommables médicaux", quantity: 40, unitCostFcfa: 6500, minStock: 10 },
+    { name: "Seringues 5ml (boîte 100)", sku: "LOG-SERINGUE-5", unit: "boîte", category: "Consommables médicaux", quantity: 25, unitCostFcfa: 8000, minStock: 8 },
+    { name: "Compresses stériles (paquet)", sku: "LOG-COMPRESSE", unit: "paquet", category: "Consommables médicaux", quantity: 60, unitCostFcfa: 1200, minStock: 15 },
+    { name: "Tubes EDTA (boîte 100)", sku: "LOG-TUBE-EDTA", unit: "boîte", category: "Réactifs laboratoire", quantity: 12, unitCostFcfa: 9500, minStock: 5 },
+    { name: "Alcool 70° (bidon 5L)", sku: "LOG-ALCOOL-5L", unit: "bidon", category: "Entretien & hygiène", quantity: 8, unitCostFcfa: 4500, minStock: 4 },
+    { name: "Ramette papier A4", sku: "LOG-PAPIER-A4", unit: "ramette", category: "Fournitures de bureau", quantity: 30, unitCostFcfa: 3500, minStock: 6 },
+  ];
+  for (const item of logisticsItems) {
+    const { category, ...rest } = item;
+    await prisma.logisticsItem.upsert({
+      where: { sku: item.sku },
+      update: { ...rest, categoryId: categoryByName.get(category) ?? null, supplierId: logisticsSupplier.id, active: true },
+      create: { ...rest, categoryId: categoryByName.get(category) ?? null, supplierId: logisticsSupplier.id, noExpiry: true },
+    });
   }
 
   await seedDemoData();

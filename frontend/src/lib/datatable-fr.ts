@@ -1,3 +1,5 @@
+import { translateUi } from '@/i18n/translate'
+
 export const DATATABLE_FR = {
   emptyTable: '',
   info: '',
@@ -13,4 +15,14 @@ export const DATATABLE_FR = {
     next: '',
     previous: '',
   },
+}
+
+/** Libellés DataTables selon la langue active (pas les données des lignes). */
+export function getDatatableLanguage() {
+  return {
+    ...DATATABLE_FR,
+    loadingRecords: translateUi('Chargement…'),
+    processing: translateUi('Traitement en cours…'),
+    search: translateUi('Rechercher :'),
+  }
 }

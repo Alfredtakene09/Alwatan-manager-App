@@ -1,7 +1,7 @@
 import { PatientCategory } from "@prisma/client";
 
 export function isExemptPatient(category: PatientCategory) {
-  return category === PatientCategory.ASSOCIE;
+  return category === PatientCategory.ASSOCIE || category === PatientCategory.PERSONNEL;
 }
 
 export function isDeferredBillingPatient(_category: PatientCategory) {
@@ -49,4 +49,5 @@ export const PATIENT_CATEGORY_LABELS: Record<PatientCategory, string> = {
   [PatientCategory.STANDARD]: "Standard",
   [PatientCategory.ASSOCIE]: "Associé / enfant (exonéré)",
   [PatientCategory.ONG]: "Standard",
+  [PatientCategory.PERSONNEL]: "Personnel (gratuit)",
 };

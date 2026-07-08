@@ -1,0 +1,176 @@
+.lab-visit-table-wrap {
+  min-height: 0;
+  overflow-x: auto;
+}
+
+.lab-visit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.lab-visit-table thead th {
+  text-align: left;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.lab-visit-table tbody td {
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid var(--border-soft, #eef1f5);
+  vertical-align: middle;
+}
+
+.lab-visit-table tbody tr:hover {
+  background: var(--surface-soft, #f6f8fb);
+}
+
+.lab-visit-table tbody tr.is-selected {
+  background: var(--accent-50, #eff6ff);
+}
+
+.lab-visit-table__num {
+  width: 2.5rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.lab-visit-table__actions-head {
+  text-align: right;
+}
+
+.lab-visit-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft, #eef2f7);
+  border: 1px solid var(--border);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.lab-visit-name {
+  display: block;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.lab-visit-date {
+  display: block;
+  color: var(--text);
+}
+
+.lab-visit-sub {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.lab-visit-exams {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 22rem;
+}
+
+.lab-visit-sub--truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lab-visit-exam-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--teal-soft, #d9f2ee);
+  color: var(--teal-strong, #0f766e);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.lab-visit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.lab-visit-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.lab-visit-act--icon {
+  width: 2rem;
+  padding: 0;
+}
+
+.lab-visit-act:hover {
+  background: var(--surface-soft, #f0f4f9);
+  color: var(--text);
+}
+
+.lab-visit-act:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lab-visit-act--accent:hover {
+  border-color: var(--primary, #2563eb);
+  color: var(--primary, #2563eb);
+}
+
+.lab-visit-act--edit:hover {
+  border-color: #d97706;
+  color: #d97706;
+}
+
+.lab-visit-act--add:hover,
+.lab-visit-act--labeled:hover {
+  border-color: #0f766e;
+  color: #0f766e;
+}
+
+.lab-visit-act--labeled {
+  padding-inline: 0.65rem;
+  background: var(--primary, #2563eb);
+  border-color: var(--primary, #2563eb);
+  color: #fff;
+}
+
+.lab-visit-act--labeled:hover {
+  background: var(--primary-dark, #1d4ed8);
+  border-color: var(--primary-dark, #1d4ed8);
+  color: #fff;
+}

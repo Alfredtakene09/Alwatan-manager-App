@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { CheckCircle2, FlaskConical } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -18,6 +19,7 @@ import { emptyExamReductionsByKind } from '@/lib/exam-billing'
 import type { ExamKindSlug } from '@/lib/exam-catalog/types'
 
 const auth = useAuthStore()
+const { t, uiText } = useAppI18n()
 
 const paidItems = ref<LabExamPendingItem[]>([])
 const loading = ref(false)
@@ -130,12 +132,12 @@ onMounted(load)
       >
         <template #actions>
           <UiButton variant="ghost" size="sm" :disabled="loading" @click="load">
-            Actualiser
+            {{ t('common.refresh') }}
           </UiButton>
         </template>
 
         <p v-if="!loading && !paidItems.length" class="empty">
-          Aucun examen payé pour le moment
+          {{ uiText('Aucun examen payé pour le moment') }}
         </p>
         <LabExamsPendingDataTable
           v-else

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Wallet, Plus } from '@lucide/vue'
+import { useRouter } from 'vue-router'
+import { ArrowLeft, Wallet, Plus } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { confirmAppModal } from '@/lib/api-modal-helper'
@@ -15,6 +16,7 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiTextarea from '@/components/ui/UiTextarea.vue'
 
+const router = useRouter()
 const rows = ref<AdminExpenseRow[]>([])
 const filter = ref<'all' | 'month' | 'pending'>('all')
 const loading = ref(false)
@@ -73,13 +75,24 @@ async function submitExpense(payload: AdminExpenseFormPayload) {
   }
 }
 
+function goBack() {
+  if (window.history.state?.back) {
+    router.back()
+    return
+  }
+  router.push('/dashboard')
+}
+
 onMounted(loadRows)
 </script>
 
 <template>
   <div class="admin-page">
-    <UiPageHeader title="Dépenses" subtitle="Gestion et validation des dépenses clinique" :icon="Wallet">
+    <UiPageHeader title="Dépenses récentes" subtitle="Suivi et validation des dépenses clinique" :icon="Wallet">
       <template #actions>
+        <UiButton variant="ghost" size="sm" :icon="ArrowLeft" @click="goBack">
+          Retour
+        </UiButton>
         <UiButton :icon="Plus" @click="showExpenseModal = true">Nouvelle dépense</UiButton>
       </template>
     </UiPageHeader>

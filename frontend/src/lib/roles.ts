@@ -7,6 +7,7 @@ export type AppUserRole =
   | 'LABORANTIN'
   | 'SOIGNANT'
   | 'PHARMACIEN'
+  | 'LOGISTIQUE'
 
 export type SessionUser = {
   id: string
@@ -25,6 +26,7 @@ export const ROLE_LABELS: Record<AppUserRole, string> = {
   LABORANTIN: 'Laborantin',
   SOIGNANT: 'Soignant',
   PHARMACIEN: 'Pharmacien',
+  LOGISTIQUE: 'Logistique',
 }
 
 export const MANAGEABLE_USER_ROLES = [
@@ -34,19 +36,21 @@ export const MANAGEABLE_USER_ROLES = [
   'COMPTABLE',
   'LABORANTIN',
   'PHARMACIEN',
+  'LOGISTIQUE',
 ] as const satisfies readonly AppUserRole[]
 
 export type ManageableUserRole = (typeof MANAGEABLE_USER_ROLES)[number]
 
 /** Direction (COMPTABLE) gère désormais les modules d’administration. */
 export const MODULE_ACCESS: Record<string, AppUserRole[]> = {
-  dashboard: ['ADMIN', 'RECEPTIONNISTE', 'MEDECIN', 'COMPTABLE', 'LABORANTIN', 'PHARMACIEN', 'GESTIONNAIRE'],
+  dashboard: ['ADMIN', 'RECEPTIONNISTE', 'MEDECIN', 'COMPTABLE', 'LABORANTIN', 'PHARMACIEN', 'GESTIONNAIRE', 'LOGISTIQUE'],
   reception: ['ADMIN', 'RECEPTIONNISTE', 'COMPTABLE'],
   consultation: ['ADMIN', 'MEDECIN', 'COMPTABLE'],
   comptabilite: ['ADMIN', 'COMPTABLE'],
   hospitalisation: ['ADMIN', 'RECEPTIONNISTE', 'COMPTABLE'],
   'bloc-salles': ['ADMIN', 'COMPTABLE'],
   pharmacie: ['ADMIN', 'PHARMACIEN', 'COMPTABLE'],
+  logistique: ['ADMIN', 'LOGISTIQUE', 'COMPTABLE'],
   laboratoire: ['ADMIN', 'LABORANTIN', 'COMPTABLE'],
   'dossier-patient': ['ADMIN', 'MEDECIN', 'LABORANTIN', 'COMPTABLE'],
   factures: ['ADMIN', 'COMPTABLE'],
@@ -82,10 +86,12 @@ export function getDefaultRoute(role: AppUserRole) {
       return '/bloc-salles/tableau-de-bord'
     case 'PHARMACIEN':
       return '/pharmacie/tableau-de-bord'
+    case 'LOGISTIQUE':
+      return '/logistique/tableau-de-bord'
     case 'LABORANTIN':
       return '/laboratoire'
     case 'GESTIONNAIRE':
-      return '/gestionnaire/tableau-de-bord'
+      return '/dashboard'
     default:
       return '/dashboard'
   }

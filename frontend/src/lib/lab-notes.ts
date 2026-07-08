@@ -2,6 +2,7 @@ export const EXAMS_PRESCRIBED_PREFIX = 'Examens prescrits'
 export const EXAMS_PAID_PREFIX = 'Examens payés'
 export const EXAM_COMMENT_PREFIX = 'Commentaire'
 export const LAB_RESULTS_PREFIX = 'Résultats laboratoire'
+export const LAB_RESULTS_COMPLETION_MARKER = `${LAB_RESULTS_PREFIX} — validé le `
 export const HOSPITALISATION_DAYS_PREFIX = 'Durée hospitalisation prévue'
 
 export const EXAM_KIND_SECTION_LABELS = {
@@ -189,12 +190,12 @@ export function countLabPrescribedExams(notes?: string | null): number {
 }
 
 export function hasLabResults(notes?: string | null): boolean {
-  return !!notes?.includes(LAB_RESULTS_PREFIX)
+  return !!notes?.includes(LAB_RESULTS_COMPLETION_MARKER)
 }
 
 export function parseLabResultsCompletedAt(notes?: string | null): Date | null {
   if (!notes) return null
-  const marker = `${LAB_RESULTS_PREFIX} — validé le `
+  const marker = LAB_RESULTS_COMPLETION_MARKER
   let latest: Date | null = null
   for (const line of notes.split('\n')) {
     const trimmed = line.trim()
@@ -209,16 +210,18 @@ export function parseLabResultsCompletedAt(notes?: string | null): Date | null {
 const PANEL_RECEIVED_RE = /^Labo panel reçu \(([^)]+)\) : (.+)$/
 
 const LAB_PANEL_LABELS: Record<string, string> = {
+  routine: 'Routine Investigation',
+  biochemie: 'Biochimie',
+  electrolytes: 'ABG + Electrolytes',
   coagulation: 'Coagulation Test',
   diabetic: 'Diabetic Test',
   fertility: 'Fertility Hormones',
   lipid: 'Lipid Profile',
-  liver: 'Liver Function',
+  liver: 'LFT',
   renal: 'Renal function',
-  routine: 'Routine Investigation',
   screening: 'Screening Test',
   semen: 'Semen Analysis',
-  thyroid: 'Thyroids Hormones Test',
+  thyroid: 'Thyroid Hormones Test',
   torch: 'TORCH IgG Combo Rapid Test',
 }
 

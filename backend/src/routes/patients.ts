@@ -46,10 +46,16 @@ const patientSchema = z
     dateOfBirth: z.string().optional(),
     address: z.string().optional(),
     category: z.nativeEnum(PatientCategory).optional(),
+    recommendedByName: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     refinePatientAge(data, ctx);
   });
+
+function normalizeRecommendedByName(name?: string | null) {
+  const trimmed = name?.trim();
+  return trimmed ? trimmed : null;
+}
 
 function resolvePatientCategory(category?: PatientCategory | null) {
   if (!category || category === PatientCategory.ONG) return PatientCategory.STANDARD;
@@ -369,6 +375,7 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
           address: body.address,
           category: resolvePatientCategory(category),
           ongName: null,
+          recommendedByName: normalizeRecommendedByName(body.recommendedByName),
           dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : undefined,
         },
       });
@@ -487,6 +494,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
         address: body.address,
         category: resolvePatientCategory(body.category),
         ongName: null,
+        recommendedByName: normalizeRecommendedByName(body.recommendedByName),
         dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : undefined,
       },
     });
@@ -545,6 +553,7 @@ router.patch("/:id", requireModule("reception"), async (req, res) => {
           address: body.address,
           category: nextCategory,
           ongName: null,
+          recommendedByName: normalizeRecommendedByName(body.recommendedByName),
           dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : undefined,
         },
       });

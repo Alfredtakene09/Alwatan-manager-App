@@ -2,8 +2,11 @@
 import { computed } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
 import { CheckCircle2, ClipboardList } from '@lucide/vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 const route = useRoute()
+const { uiText, locale } = useAppI18n()
+const isArabic = computed(() => locale.value === 'ar')
 
 const basePath = computed(() =>
   route.path.startsWith('/comptabilite/') ? '/comptabilite/examens-payes' : '/reception/examens-payes',
@@ -26,7 +29,12 @@ function isActive(tab: { to: string; exact: boolean }) {
 </script>
 
 <template>
-  <nav class="examens-payes-subnav" aria-label="Examens payés">
+  <nav
+    class="examens-payes-subnav"
+    :class="{ 'lang-ar': isArabic }"
+    :aria-label="uiText('Examens payés')"
+    :lang="isArabic ? 'ar' : undefined"
+  >
     <RouterLink
       v-for="tab in tabs"
       :key="tab.to"
@@ -35,7 +43,7 @@ function isActive(tab: { to: string; exact: boolean }) {
       :class="{ 'examens-payes-subnav__tab--active': isActive(tab) }"
     >
       <component :is="tab.icon" :size="16" />
-      {{ tab.label }}
+      {{ uiText(tab.label) }}
     </RouterLink>
   </nav>
 </template>

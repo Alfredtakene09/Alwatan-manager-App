@@ -10,9 +10,9 @@ import { patientCategoryLabel, type PatientCategory } from '@/lib/patient-catego
 import {
   emptyPanelValues,
   getLabFormPanel,
-  LAB_FORM_PANELS,
   type LabPanelSlug,
 } from '@/lib/lab-form-panels'
+import { useLabPanelsStore } from '@/stores/lab-panels'
 import { buildPrescribedByLabel, printLabPanelResult } from '@/lib/lab-panel-print'
 import { fetchAndPrintLabVisitResults } from '@/lib/lab-visit-print'
 import { panelFormHasValues } from '@/lib/lab-visit-search'
@@ -34,6 +34,7 @@ type DossierResponse = {
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const labPanels = useLabPanelsStore()
 
 const visit = ref<LabsWaitingVisitRow | null>(null)
 const panelResults = ref<DossierResponse['panelResults']>({})
@@ -88,14 +89,16 @@ function isPanelFilled(slug: LabPanelSlug) {
 }
 
 const savedPanelCount = computed(
-  () => LAB_FORM_PANELS.filter((panel) => isPanelFilled(panel.slug)).length,
+  () => labPanels.panels.filter((panel) => isPanelFilled(panel.slug)).length,
 )
+
+const entryPanels = computed(() => labPanels.entryPanels)
 
 const selectablePanels = computed(() => {
   if (isConsultMode.value || isEditMode.value) {
-    return LAB_FORM_PANELS.filter((panel) => isPanelFilled(panel.slug))
+    return labPanels.panels.filter((panel) => isPanelFilled(panel.slug))
   }
-  return LAB_FORM_PANELS.filter((panel) => !isPanelFilled(panel.slug))
+  return entryPanels.value.filter((panel) => !isPanelFilled(panel.slug))
 })
 
 const isActivePanelReadOnly = computed(() => {
@@ -110,7 +113,7 @@ function panelOptionLabel(slug: LabPanelSlug) {
 }
 
 function isLabPanelSlug(value: string): value is LabPanelSlug {
-  return LAB_FORM_PANELS.some((panel) => panel.slug === value)
+  return labPanels.panels.some((panel) => panel.slug === value)
 }
 
 function showMessage(text: string, type: 'success' | 'error' = 'success') {
@@ -171,7 +174,7 @@ async function savePanel() {
       showMessage('Formulaire modifié et envoyé à l\'impression.')
     } else {
       printPanel()
-      const hasRemaining = LAB_FORM_PANELS.some((panel) => !isPanelFilled(panel.slug))
+      const hasRemaining = entryPanels.value.some((panel) => !isPanelFilled(panel.slug))
       showMessage(
         hasRemaining
           ? isAddMode.value
@@ -262,7 +265,10 @@ watch(
   },
 )
 
-onMounted(loadDossier)
+onMounted(async () => {
+  await labPanels.fetchPanels()
+  await loadDossier()
+})
 </script>
 
 <template>
@@ -329,29 +335,36 @@ onMounted(loadDossier)
     <p v-if="loading" class="hint">Chargement du dossier…</p>
 
     <template v-else-if="visit">
-      <UiCard title="Informations patient" icon-variant="blue">
-        <dl class="info-grid">
-          <div>
-            <dt>Matricule</dt>
-            <dd>{{ visit.patient.code }}</dd>
-          </div>
-          <div>
-            <dt>Catégorie</dt>
-            <dd>{{ patientCategoryLabel((visit.patient.category ?? 'STANDARD') as PatientCategory) }}</dd>
-          </div>
-          <div>
-            <dt>Médecin / Prescripteur</dt>
-            <dd>{{ doctorLabel }}</dd>
-          </div>
-          <div>
-            <dt>Examens laboratoire</dt>
-            <dd :title="prescribedExamsFull">{{ prescribedExamsPreview }}</dd>
-          </div>
-          <div v-if="visit.consultation?.labSentToLabAt">
-            <dt>Transféré le</dt>
-            <dd>{{ new Date(visit.consultation.labSentToLabAt).toLocaleString('fr-FR') }}</dd>
-          </div>
-        </dl>
+      <UiCard title="Informations patient" icon-variant="blue" :padding="true">
+        <div class="info-compact">
+          <p class="info-compact__row">
+            <span class="info-compact__item">
+              <span class="info-compact__label">Matricule</span>
+              <strong>{{ visit.patient.code }}</strong>
+            </span>
+            <span class="info-compact__sep" aria-hidden="true">·</span>
+            <span class="info-compact__item">
+              <span class="info-compact__label">Catégorie</span>
+              <strong>{{ patientCategoryLabel((visit.patient.category ?? 'STANDARD') as PatientCategory) }}</strong>
+            </span>
+            <span class="info-compact__sep" aria-hidden="true">·</span>
+            <span class="info-compact__item">
+              <span class="info-compact__label">Prescripteur</span>
+              <strong>{{ doctorLabel }}</strong>
+            </span>
+            <template v-if="visit.consultation?.labSentToLabAt">
+              <span class="info-compact__sep" aria-hidden="true">·</span>
+              <span class="info-compact__item">
+                <span class="info-compact__label">Transféré le</span>
+                <strong>{{ new Date(visit.consultation.labSentToLabAt).toLocaleString('fr-FR') }}</strong>
+              </span>
+            </template>
+          </p>
+          <p class="info-compact__row info-compact__row--exams">
+            <span class="info-compact__label">Examens laboratoire</span>
+            <strong :title="prescribedExamsFull">{{ prescribedExamsPreview }}</strong>
+          </p>
+        </div>
       </UiCard>
 
       <UiCard
@@ -412,7 +425,10 @@ onMounted(loadDossier)
 
           <div v-for="section in activePanelConfig.sections" :key="section.title ?? 'main'" class="form-section">
             <h3 v-if="section.title" class="form-section__title">{{ section.title }}</h3>
-            <div class="form-grid" :class="{ 'form-grid--routine': activePanel === 'routine' }">
+            <div
+              class="form-grid"
+              :class="section.fields.length > 4 ? 'form-grid--cols-4' : 'form-grid--cols-2'"
+            >
               <template v-for="field in section.fields" :key="field.key">
                 <UiInput
                   v-if="field.type !== 'textarea'"
@@ -475,22 +491,53 @@ onMounted(loadDossier)
   color: var(--text-muted);
 }
 
-.info-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem 1rem;
-  margin: 0;
+.info-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
 }
 
-.info-grid dt {
-  margin: 0 0 0.15rem;
+.info-compact__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.5rem;
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.info-compact__row--exams {
+  gap: 0.35rem 0.65rem;
+}
+
+.info-compact__item {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.info-compact__label {
   font-size: 0.75rem;
+  font-weight: 600;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
-.info-grid dd {
-  margin: 0;
-  font-size: 0.875rem;
+.info-compact__sep {
+  color: #cbd5e1;
+  user-select: none;
+}
+
+.info-compact__row strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.info-compact__row--exams strong {
+  flex: 1;
+  min-width: 0;
 }
 
 .saved-hint {
@@ -522,21 +569,24 @@ onMounted(loadDossier)
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
 }
 
-.form-grid--routine {
+.form-grid--cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.form-grid--cols-4 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.65rem 0.75rem;
 }
 
-.form-grid--routine :deep(.ui-field__label) {
+.form-grid--cols-4 :deep(.ui-field__label) {
   font-size: 0.75rem;
   line-height: 1.25;
 }
 
-.form-grid--routine :deep(.ui-field__input) {
+.form-grid--cols-4 :deep(.ui-field__input) {
   padding: 0.5rem 0.6rem;
   font-size: 0.8125rem;
 }
@@ -575,22 +625,31 @@ onMounted(loadDossier)
 }
 
 @media (max-width: 1200px) {
-  .form-grid--routine {
+  .form-grid--cols-4 {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 900px) {
-  .form-grid--routine {
+  .form-grid--cols-4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 768px) {
-  .info-grid,
-  .form-grid,
-  .form-grid--routine {
+  .form-grid--cols-2,
+  .form-grid--cols-4 {
     grid-template-columns: 1fr;
+  }
+
+  .info-compact__sep {
+    display: none;
+  }
+
+  .info-compact__row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
   }
 }
 </style>

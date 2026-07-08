@@ -63,25 +63,26 @@ async function findLabVisit(visitId: string) {
   return visit;
 }
 
+function hasLabDossierContext(
+  notes?: string | null,
+  labSentToLabAt?: Date | null,
+) {
+  if (hasLabExamsPrescribed(notes)) return true;
+  if (hasLabResults(notes)) return true;
+  if (Object.keys(parseLabPanelResults(notes)).length > 0) return true;
+  return hasPaidLabWorkPending(notes, labSentToLabAt);
+}
+
 async function findLabVisitForRead(visitId: string) {
   const visit = await prisma.visit.findFirst({
-    where: {
-      id: visitId,
-      consultation: {
-        is: {
-          labSentToLabAt: { not: null },
-          OR: [
-            { clinicalNotes: { contains: "Examens prescrits (Laboratoire)" } },
-            { clinicalNotes: { contains: "Examens prescrits : " } },
-          ],
-        },
-      },
-    },
+    where: { id: visitId },
     include: visitInclude,
   });
 
   if (!visit?.consultation) return null;
-  if (!hasLabExamsPrescribed(visit.consultation.clinicalNotes)) return null;
+  if (!hasLabDossierContext(visit.consultation.clinicalNotes, visit.consultation.labSentToLabAt)) {
+    return null;
+  }
   return visit;
 }
 
@@ -115,7 +116,14 @@ router.get("/completed", async (_req, res) => {
     take: 100,
   });
 
-  return res.json(visits.filter((visit) => hasLabExamsPrescribed(visit.consultation?.clinicalNotes)));
+  return res.json(
+    visits.filter((visit) =>
+      hasLabDossierContext(
+        visit.consultation?.clinicalNotes,
+        visit.consultation?.labSentToLabAt,
+      ),
+    ),
+  );
 });
 
 router.get("/visits/:visitId", async (req, res) => {
@@ -167,6 +175,15 @@ router.post("/visits/:visitId/complete", async (req, res) => {
   const visit = await findLabVisitForRead(String(req.params.visitId));
   if (!visit?.consultation) {
     return res.status(404).json({ error: "Dossier laboratoire introuvable" });
+  }
+
+  if (hasLabResults(visit.consultation.clinicalNotes)) {
+    return res.json({ ok: true });
+  }
+
+  const panelResults = parseLabPanelResults(visit.consultation.clinicalNotes);
+  if (!Object.keys(panelResults).length) {
+    return res.status(400).json({ error: "Aucun formulaire enregistré — impossible de clôturer." });
   }
 
   const clinicalNotes = appendLabResultsCompletion(visit.consultation.clinicalNotes);

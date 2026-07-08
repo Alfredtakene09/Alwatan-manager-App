@@ -63,6 +63,7 @@ const roleAccent = computed(() => {
     MEDECIN: '#059669',
     LABORANTIN: '#0891b2',
     PHARMACIEN: '#db2777',
+    LOGISTIQUE: '#4f46e5',
     SOIGNANT: '#ea580c',
   }
   return role ? map[role] ?? 'var(--primary-600)' : 'var(--primary-600)'

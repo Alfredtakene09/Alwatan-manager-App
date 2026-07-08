@@ -16,6 +16,7 @@ enum UserRole {
   LABORANTIN
   SOIGNANT
   PHARMACIEN
+  LOGISTIQUE
 }
 
 enum VisitStatus {
@@ -78,6 +79,7 @@ enum PatientCategory {
   STANDARD
   ASSOCIE
   ONG
+  PERSONNEL
 }
 
 enum InvoiceType {
@@ -219,6 +221,9 @@ model User {
   salaryAdvancesRecorded                 SalaryAdvance[]           @relation("SalaryAdvanceRecordedBy")
   expensesValidated                      ClinicExpense[]           @relation("ExpenseValidatedBy")
   pharmacyStockMovements                 StockMovement[]
+  logisticsStockMovements                LogisticsStockMovement[]
+  logisticsRequestsCreated               LogisticsRequest[]        @relation("LogisticsRequestRequestedBy")
+  logisticsRequestsHandled               LogisticsRequest[]        @relation("LogisticsRequestHandledBy")
 }
 
 enum AgeUnit {
@@ -240,6 +245,7 @@ model Patient {
   address     String?
   category    PatientCategory  @default(STANDARD)
   ongName     String?
+  recommendedByName String?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
@@ -383,6 +389,40 @@ model ExamCatalogItem {
 
   @@unique([kind, code])
   @@index([kind, active])
+}
+
+/// Formulaire de résultats laboratoire (panel), géré via le module CRUD du labo.
+model LabPanel {
+  id        String          @id @default(cuid())
+  slug      String          @unique
+  label     String
+  isEntry   Boolean         @default(true)
+  active    Boolean         @default(true)
+  sortOrder Int             @default(0)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  fields    LabPanelField[]
+
+  @@index([active])
+}
+
+/// Champ d'un formulaire de résultats laboratoire (aplati : section = titre optionnel).
+model LabPanelField {
+  id           String   @id @default(cuid())
+  panelId      String
+  section      String?
+  key          String
+  label        String
+  unit         String?
+  reference    String?
+  defaultValue String?
+  type         String   @default("text")
+  sortOrder    Int      @default(0)
+
+  panel     LabPanel @relation(fields: [panelId], references: [id], onDelete: Cascade)
+
+  @@index([panelId])
 }
 
 model SurgeryCase {
@@ -873,4 +913,134 @@ model ExamReclamation {
   @@index([consultationId])
   @@index([status])
   @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Gestion de stock logistique (consommables & matériel non-médicament)
+// Distinct de la pharmacie : fournitures, matériel médical, réactifs, bureautique.
+// ---------------------------------------------------------------------------
+
+enum LogisticsMovementType {
+  ENTRY
+  EXIT
+  ADJUSTMENT
+}
+
+enum LogisticsRequestStatus {
+  PENDING
+  FULFILLED
+  REJECTED
+}
+
+model LogisticsCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items LogisticsItem[]
+
+  @@index([sortOrder])
+}
+
+model LogisticsSupplier {
+  id          String   @id @default(cuid())
+  name        String
+  contactName String?
+  phone       String?
+  email       String?
+  address     String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items     LogisticsItem[]
+  movements LogisticsStockMovement[]
+
+  @@index([name])
+}
+
+model LogisticsItem {
+  id           String    @id @default(cuid())
+  name         String
+  sku          String    @unique
+  reference    String?
+  unit         String    @default("unité")
+  categoryId   String?
+  supplierId   String?
+  quantity     Int       @default(0)
+  unitCostFcfa Int       @default(0)
+  minStock     Int       @default(5)
+  expiryDate   DateTime? @db.Date
+  noExpiry     Boolean   @default(true)
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  category     LogisticsCategory?       @relation(fields: [categoryId], references: [id])
+  supplier     LogisticsSupplier?       @relation(fields: [supplierId], references: [id])
+  movements    LogisticsStockMovement[]
+  requestLines LogisticsRequestLine[]
+
+  @@index([categoryId])
+  @@index([supplierId])
+}
+
+model LogisticsStockMovement {
+  id           String                @id @default(cuid())
+  itemId       String
+  type         LogisticsMovementType
+  quantity     Int
+  unitCostFcfa Int?
+  supplierId   String?
+  reference    String?
+  notes        String?
+  requestId    String?
+  userId       String
+  stockAfter   Int
+  createdAt    DateTime              @default(now())
+
+  item     LogisticsItem      @relation(fields: [itemId], references: [id])
+  supplier LogisticsSupplier? @relation(fields: [supplierId], references: [id])
+  request  LogisticsRequest?  @relation(fields: [requestId], references: [id])
+  user     User               @relation(fields: [userId], references: [id])
+
+  @@index([itemId, createdAt])
+  @@index([createdAt])
+}
+
+model LogisticsRequest {
+  id            String                 @id @default(cuid())
+  code          String                 @unique
+  service       String
+  status        LogisticsRequestStatus @default(PENDING)
+  notes         String?
+  requestedById String
+  handledById   String?
+  handledAt     DateTime?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+
+  requestedBy User                     @relation("LogisticsRequestRequestedBy", fields: [requestedById], references: [id])
+  handledBy   User?                    @relation("LogisticsRequestHandledBy", fields: [handledById], references: [id])
+  lines       LogisticsRequestLine[]
+  movements   LogisticsStockMovement[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model LogisticsRequestLine {
+  id                String @id @default(cuid())
+  requestId         String
+  itemId            String
+  quantityRequested Int
+  quantityIssued    Int    @default(0)
+
+  request LogisticsRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  item    LogisticsItem    @relation(fields: [itemId], references: [id])
+
+  @@index([requestId])
 }

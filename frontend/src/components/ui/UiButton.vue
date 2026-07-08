@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { Component } from 'vue'
+import { Comment, Fragment, Text, computed, useSlots, type Component, type VNode } from 'vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 type Variant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger' | 'success' | 'dark'
 type Size = 'sm' | 'md' | 'lg'
@@ -16,18 +17,51 @@ withDefaults(
   }>(),
   { variant: 'primary', size: 'md', type: 'button' },
 )
+
+const slots = useSlots()
+const { uiText, localeCode, isArabic } = useAppI18n()
+
+function extractPlainText(nodes: VNode[] | undefined): string | null {
+  if (!nodes?.length) return null
+  let text = ''
+  for (const node of nodes) {
+    if (node.type === Comment) continue
+    if (node.type === Text) {
+      text += String(node.children ?? '')
+      continue
+    }
+    if (node.type === Fragment) {
+      const inner = extractPlainText(node.children as VNode[])
+      if (inner === null) return null
+      text += inner
+      continue
+    }
+    return null
+  }
+  const trimmed = text.replace(/\s+/g, ' ').trim()
+  return trimmed || null
+}
+
+/** Texte simple du slot, traduit si présent dans le dictionnaire UI. */
+const plainLabel = computed(() => {
+  void localeCode.value
+  const text = extractPlainText(slots.default?.())
+  return text === null ? null : uiText(text)
+})
 </script>
 
 <template>
   <button
     :type="type"
     class="ui-btn"
-    :class="[`ui-btn--${variant}`, `ui-btn--${size}`, { 'ui-btn--block': block }]"
+    :class="[`ui-btn--${variant}`, `ui-btn--${size}`, { 'ui-btn--block': block, 'lang-ar': isArabic && plainLabel !== null }]"
+    :lang="isArabic && plainLabel !== null ? 'ar' : undefined"
     :disabled="disabled || loading"
   >
     <component :is="icon" v-if="icon" :size="size === 'sm' ? 16 : 18" class="ui-btn__icon" />
     <span v-if="loading" class="ui-btn__spinner" />
-    <slot />
+    <template v-if="plainLabel !== null">{{ plainLabel }}</template>
+    <slot v-else />
   </button>
 </template>
 
@@ -80,27 +114,29 @@ withDefaults(
   box-shadow: 0 6px 20px var(--shadow-action-hover);
 }
 
+.ui-btn--primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
 .ui-btn--secondary {
-  background: var(--menu-btn-bg);
-  color: var(--menu-btn-text);
-  border: 2px solid var(--menu-btn-border);
+  background: var(--bg-card);
+  color: var(--text);
+  border-color: var(--border);
 }
 
 .ui-btn--secondary:hover:not(:disabled) {
-  background: var(--menu-btn-bg-hover);
-  border-color: var(--menu-btn-border-hover);
-  color: var(--menu-btn-text-hover);
+  border-color: var(--primary-400);
+  color: var(--primary-700);
 }
 
 .ui-btn--outline {
   background: transparent;
-  color: var(--action);
-  border-color: var(--accent-500);
+  color: var(--primary-700);
+  border-color: var(--primary-300);
 }
 
 .ui-btn--outline:hover:not(:disabled) {
-  background: var(--accent-50);
-  color: var(--action-hover);
+  background: var(--primary-50);
 }
 
 .ui-btn--ghost {
@@ -109,41 +145,45 @@ withDefaults(
 }
 
 .ui-btn--ghost:hover:not(:disabled) {
-  background: var(--accent-50);
-  color: var(--text);
+  background: var(--primary-50);
+  color: var(--primary-800);
 }
 
 .ui-btn--danger {
-  background: linear-gradient(135deg, #ef4444, #dc2626);
+  background: var(--danger);
   color: #fff;
 }
 
+.ui-btn--danger:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
 .ui-btn--success {
-  background: linear-gradient(135deg, var(--accent-500), var(--accent-600));
+  background: var(--success);
   color: #fff;
 }
 
 .ui-btn--dark {
-  background: rgba(255, 255, 255, 0.06);
-  color: #cbd5e1;
-  border-color: rgba(255, 255, 255, 0.1);
+  background: var(--medical-navy);
+  color: #fff;
 }
 
-.ui-btn--dark:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
+.ui-btn__icon {
+  flex-shrink: 0;
 }
 
 .ui-btn__spinner {
   width: 1rem;
   height: 1rem;
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.35);
   border-top-color: #fff;
   border-radius: 50%;
-  animation: spin 0.7s linear infinite;
+  animation: ui-btn-spin 0.6s linear infinite;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+@keyframes ui-btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

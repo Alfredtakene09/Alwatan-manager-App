@@ -1,6 +1,6 @@
 import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
 import { fullName } from '@/lib/roles'
-import { getLabFormPanel, LAB_FORM_PANELS, type LabFormPanel, type LabPanelSlug } from '@/lib/lab-form-panels'
+import { getAllLabFormPanels, getLabFormPanel, type LabFormPanel, type LabPanelSlug } from '@/lib/lab-form-panels'
 
 type PrintContext = {
   patientName: string
@@ -457,7 +457,7 @@ export function printLabVisitPanelResults(
   panelResults: Partial<Record<LabPanelSlug, Record<string, string>>>,
   context: PrintContext,
 ) {
-  const slugs = LAB_FORM_PANELS.map((panel) => panel.slug).filter((slug) => panelResults[slug])
+  const slugs = getAllLabFormPanels().map((panel) => panel.slug).filter((slug) => panelResults[slug])
   if (!slugs.length) return false
 
   const body = slugs
