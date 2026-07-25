@@ -10,7 +10,6 @@ import {
   FlaskConical,
   Stethoscope,
   Scissors,
-  BedDouble,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'

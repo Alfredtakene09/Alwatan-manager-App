@@ -19,10 +19,12 @@ import {
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import { confirmAppModal } from '@/lib/api-modal-helper'
+import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 
 const surgeries = ref<SurgeryCaseRow[]>([])
 const loading = ref(false)
@@ -68,7 +70,7 @@ async function completeNow(id: string) {
     title: 'Marquer comme effectuée',
     message: 'Confirmer que cette opération a bien été réalisée ? Elle passera dans Opérations effectuées.',
     confirmLabel: 'Confirmer',
-    variant: 'primary',
+    type: 'CONFIRM',
   })
   if (!ok) return
 
@@ -166,6 +168,34 @@ function isBusy(id: string, type: typeof actionType.value) {
   return actionId.value === id && actionType.value === type
 }
 
+const surgeryExportColumns: ExportColumn<SurgeryCaseRow>[] = [
+  {
+    header: 'Patient',
+    value: (r) => fullName(r.visit.patient.firstName, r.visit.patient.lastName),
+  },
+  { header: 'Code', value: (r) => r.visit.patient.code },
+  { header: 'Téléphone', value: (r) => r.visit.patient.phone ?? '—' },
+  { header: 'Intervention', value: (r) => r.interventionType.label },
+  {
+    header: 'Chirurgien',
+    value: (r) => `Dr ${fullName(r.surgeon.firstName, r.surgeon.lastName)}`,
+  },
+  { header: 'Montant', value: (r) => formatFcfa(r.totalCostFcfa) },
+  { header: 'Payée le', value: (r) => formatPaidAt(r.paidAt ?? r.authorizedAt) },
+  {
+    header: "Date d'opération",
+    value: (r) => formatSurgeryDate(r.operationScheduledAt),
+  },
+]
+
+function exportPdf() {
+  exportTablePdf('Opérations en attente', surgeryExportColumns, surgeries.value)
+}
+
+function exportExcel() {
+  exportTableExcel('Opérations en attente', surgeryExportColumns, surgeries.value)
+}
+
 onMounted(load)
 </script>
 
@@ -193,6 +223,7 @@ onMounted(load)
         icon-variant="amber"
       >
         <template #actions>
+          <ExportButtons :disabled="loading || !surgeries.length" @pdf="exportPdf" @excel="exportExcel" />
           <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">
             Actualiser
           </UiButton>

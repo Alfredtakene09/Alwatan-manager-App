@@ -32,18 +32,23 @@ type HospRow = {
   startDate?: string | null
   service?: string | null
   attendingDoctor?: string | null
+  attendingDoctorId?: string | null
+  bedId?: string | null
   doctorInstructions?: string | null
   visit: {
     id: string
     patient: { code: string; firstName: string; lastName: string; phone?: string | null }
     consultation?: {
-      doctor?: { firstName: string; lastName: string } | null
+      doctor?: { id?: string; firstName: string; lastName: string } | null
       doctorComment?: string | null
       diagnosis?: string | null
+      clinicalNotes?: string | null
     } | null
-    assignedDoctor?: { firstName: string; lastName: string } | null
+    assignedDoctor?: { id?: string; firstName: string; lastName: string } | null
   }
   room?: { id?: string; name: string; type: string } | null
+  bed?: { id: string; code: string; label?: string | null } | null
+  attendingDoctorUser?: { id: string; firstName: string; lastName: string } | null
 }
 
 const route = useRoute()
@@ -145,6 +150,8 @@ const admissionRoomTypeOptions = computed((): AdmissionRoomTypeOption[] => {
         dailyRateFcfa: fromApi.dailyRateFcfa,
         availableCount: fromApi.availableCount,
         autoRoomId: fromApi.autoRoomId,
+        autoBedId: fromApi.autoBedId ?? null,
+        availableBeds: fromApi.availableBeds ?? [],
         blockedReason: fromApi.blockedReason,
       }
     }
@@ -160,6 +167,8 @@ const admissionRoomTypeOptions = computed((): AdmissionRoomTypeOption[] => {
       dailyRateFcfa: firstRoom?.dailyRateFcfa ?? 0,
       availableCount: roomsOfType.length,
       autoRoomId: firstRoom?.id ?? null,
+      autoBedId: null,
+      availableBeds: [],
       blockedReason: null,
     }
   })
@@ -173,11 +182,12 @@ const hospitalizedPatients = computed(() =>
   (data.value?.hospitalizations ?? []).filter((h) => isHospitalizedPatient(h)),
 )
 
-const admissionHosp = computed(() =>
-  admissionHospId.value
-    ? (data.value?.hospitalizations.find((h) => h.id === admissionHospId.value) ?? null)
-    : null,
-)
+const admissionHosp = computed(() => {
+  if (!admissionHospId.value) return null
+  const hosp = data.value?.hospitalizations.find((h) => h.id === admissionHospId.value) ?? null
+  if (!hosp) return null
+  return { ...hosp, dailyRateFcfa: hosp.dailyRateFcfa ?? 0 }
+})
 
 const dischargeHosp = computed(() =>
   dischargeHospId.value
@@ -248,7 +258,7 @@ async function addRoom() {
   }
 }
 
-async function confirmAdmission(payload: HospitalizationAdmissionForm & { hospitalizationId: string; roomId?: string }) {
+async function confirmAdmission(payload: HospitalizationAdmissionForm & { hospitalizationId: string; roomId?: string; bedId?: string }) {
   admissionSubmitting.value = true
   try {
     if (admissionMode.value === 'edit') {
@@ -260,6 +270,7 @@ async function confirmAdmission(payload: HospitalizationAdmissionForm & { hospit
         reductionFcfa: Number(payload.reductionFcfa ?? 0),
         service: payload.service,
         attendingDoctor: payload.attendingDoctor,
+        attendingDoctorId: payload.attendingDoctorId || undefined,
         doctorInstructions: payload.doctorInstructions,
       })
       message.value = `Séjour mis à jour — ${res.nights} nuitée(s), total ${formatFcfa(res.totalDueFcfa)}`
@@ -275,11 +286,13 @@ async function confirmAdmission(payload: HospitalizationAdmissionForm & { hospit
       action: 'reserve_room',
       hospitalizationId: payload.hospitalizationId,
       roomId: payload.roomId,
+      bedId: payload.bedId || undefined,
       startDate: payload.startDate,
       endDate: payload.endDate,
       reductionFcfa: Number(payload.reductionFcfa ?? 0),
       service: payload.service,
       attendingDoctor: payload.attendingDoctor,
+      attendingDoctorId: payload.attendingDoctorId || undefined,
       doctorInstructions: payload.doctorInstructions,
     })
     printHospitalizationAdmission(payload)

@@ -14,6 +14,7 @@ const fieldSchema = z.object({
   unit: z.string().max(60).optional().nullable(),
   reference: z.string().max(200).optional().nullable(),
   defaultValue: z.string().max(500).optional().nullable(),
+  hasComment: z.boolean().optional(),
   type: z.enum(["text", "textarea"]).optional(),
 });
 
@@ -84,6 +85,7 @@ function buildFieldRows(fields: z.infer<typeof fieldSchema>[]) {
       unit: field.unit?.trim() || null,
       reference: field.reference?.trim() || null,
       defaultValue: field.defaultValue?.trim() || null,
+      hasComment: field.hasComment === true,
       type: field.type ?? "text",
       sortOrder: index,
     };

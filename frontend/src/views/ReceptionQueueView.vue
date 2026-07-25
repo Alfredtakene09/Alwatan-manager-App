@@ -16,7 +16,10 @@ import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiBadge from '@/components/ui/UiBadge.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import VisitEtatDataTable from '@/components/ui/VisitEtatDataTable.vue'
+import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 type Patient = {
   id: string
@@ -45,13 +48,14 @@ const messageType = ref<'success' | 'error'>('success')
 const loading = ref(false)
 const loadingPatients = ref(false)
 const loadingVisitId = ref<string | null>(null)
+const { uiText } = useAppI18n()
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 let messageTimer: ReturnType<typeof setTimeout> | undefined
 
 function showAlert(text: string, type: 'success' | 'error' = 'success') {
   if (messageTimer) clearTimeout(messageTimer)
-  message.value = text
+  message.value = uiText(text)
   messageType.value = type
   if (type === 'success') {
     messageTimer = setTimeout(() => {
@@ -169,6 +173,43 @@ watch(search, () => {
   searchTimer = setTimeout(loadPatients, 300)
 })
 
+const visitExportColumns: ExportColumn<PatientVisit>[] = [
+  { header: 'Code', value: (r) => r.patient.code },
+  {
+    header: 'Patient',
+    value: (r) => fullName(r.patient.firstName, r.patient.lastName),
+  },
+  { header: 'Téléphone', value: (r) => r.patient.phone ?? '—' },
+  { header: 'Statut', value: (r) => getVisitStatusMeta(r.status).label },
+  {
+    header: 'Médecin',
+    value: (r) =>
+      r.assignedDoctor
+        ? fullName(r.assignedDoctor.firstName, r.assignedDoctor.lastName)
+        : '—',
+  },
+  {
+    header: 'Mis à jour',
+    value: (r) => new Date(r.updatedAt).toLocaleString('fr-FR'),
+  },
+]
+
+function exportPdf() {
+  exportTablePdf(
+    `État des patients — ${tablePanelTitle.value}`,
+    visitExportColumns,
+    filteredVisits.value,
+  )
+}
+
+function exportExcel() {
+  exportTableExcel(
+    `État des patients — ${tablePanelTitle.value}`,
+    visitExportColumns,
+    filteredVisits.value,
+  )
+}
+
 onMounted(loadEtat)
 onUnmounted(clearAlert)
 </script>
@@ -242,7 +283,7 @@ onUnmounted(clearAlert)
     </section>
 
     <section class="etat-body">
-      <div v-if="loadingPatients" class="search-hint">Recherche en cours…</div>
+      <div v-if="loadingPatients" class="search-hint">{{ uiText('Recherche en cours…') }}</div>
       <div v-else-if="patients.length" class="search-results">
         <div v-for="patient in patients" :key="patient.id" class="search-item">
           <div>
@@ -259,7 +300,7 @@ onUnmounted(clearAlert)
           </UiButton>
         </div>
       </div>
-      <div v-else-if="search.trim()" class="search-hint">Aucun patient trouvé</div>
+      <div v-else-if="search.trim()" class="search-hint">{{ uiText('Aucun patient trouvé') }}</div>
 
       <div class="patients-table-card">
         <div class="table-panel-head">
@@ -267,6 +308,11 @@ onUnmounted(clearAlert)
             <h3>{{ tablePanelTitle }}</h3>
             <p>{{ tablePanelSubtitle }}</p>
           </div>
+          <ExportButtons
+            :disabled="loading || !filteredVisits.length"
+            @pdf="exportPdf"
+            @excel="exportExcel"
+          />
         </div>
 
         <div v-if="!filterLevel" class="empty-state">
@@ -274,7 +320,7 @@ onUnmounted(clearAlert)
           <p>Sélectionnez un niveau ci-dessus pour afficher la liste des patients</p>
         </div>
 
-        <div v-else-if="loading" class="empty-state empty-state--compact">Chargement…</div>
+        <div v-else-if="loading" class="empty-state empty-state--compact">{{ uiText('Chargement…') }}</div>
 
         <div v-else-if="filteredVisits.length" class="table-wrap">
           <VisitEtatDataTable fill :visits="filteredVisits" :loading="loading" />
@@ -282,7 +328,13 @@ onUnmounted(clearAlert)
 
         <div v-else class="empty-state empty-state--compact">
           <UserRound :size="28" />
-          <p>{{ search.trim() ? 'Aucun patient correspondant à cette recherche' : 'Aucun patient à ce niveau' }}</p>
+          <p>{{
+            uiText(
+              search.trim()
+                ? 'Aucun patient correspondant à cette recherche'
+                : 'Aucun patient à ce niveau',
+            )
+          }}</p>
         </div>
       </div>
     </section>
@@ -545,6 +597,11 @@ onUnmounted(clearAlert)
 
 .table-panel-head {
   flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   padding: 0.75rem 1rem 0.625rem;
   border-bottom: 1px solid var(--border);
   background: #fff;

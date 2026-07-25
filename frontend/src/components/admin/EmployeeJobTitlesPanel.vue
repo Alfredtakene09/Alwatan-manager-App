@@ -18,6 +18,8 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 const props = withDefaults(
   defineProps<{
@@ -43,6 +45,8 @@ const modalOpen = ref(false)
 const editingId = ref<string | null>(null)
 const formLabel = ref('')
 
+const { uiText, localeCode } = useAppI18n()
+
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 const isEditing = computed(() => editingId.value !== null)
 
@@ -50,29 +54,36 @@ const jobTitleModalSubtitle = computed(() => {
   if (isEditing.value && editingId.value) {
     const count = itemsById.value.get(editingId.value)?.employeeCount ?? 0
     if (count > 0) {
-      return `${count} employé(s) lié(s) — le libellé sera mis à jour sur leurs fiches.`
+      return translateTemplate(
+        '{count} employé(s) lié(s) — le libellé sera mis à jour sur leurs fiches.',
+        { count },
+      )
     }
   }
-  return 'Ex. Infirmière, Comptable, Médecin généraliste…'
+  return uiText('Ex. Infirmière, Comptable, Médecin généraliste…')
 })
 
-const tableRows = computed(() =>
-  items.value.map((item) => ({
-    id: item.id,
-    label: item.label,
-    sortOrder: item.sortOrder,
-    employeeCount: item.employeeCount ?? 0,
-    employeesLabel:
-      (item.employeeCount ?? 0) === 0
-        ? 'Aucun'
-        : `${item.employeeCount} employé${(item.employeeCount ?? 0) > 1 ? 's' : ''}`,
-    statusLabel: item.active ? 'Actif' : 'Inactif',
-    statusVariant: item.active ? 'success' : 'danger',
-    toggleLabel: item.active ? 'Désactiver' : 'Activer',
-    isActive: item.active,
-    canDelete: (item.employeeCount ?? 0) === 0 && !item.id.startsWith('fallback-'),
-  })),
-)
+const tableRows = computed(() => {
+  localeCode.value
+  return items.value.map((item) => {
+    const count = item.employeeCount ?? 0
+    return {
+      id: item.id,
+      label: item.label,
+      sortOrder: item.sortOrder,
+      employeeCount: count,
+      employeesLabel:
+        count === 0
+          ? uiText('Aucun')
+          : translateTemplate(count > 1 ? '{n} employés' : '{n} employé', { n: count }),
+      statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),
+      statusVariant: item.active ? 'success' : 'danger',
+      toggleLabel: item.active ? uiText('Désactiver') : uiText('Activer'),
+      isActive: item.active,
+      canDelete: count === 0 && !item.id.startsWith('fallback-'),
+    }
+  })
+})
 
 const columns = [
   {
@@ -137,8 +148,7 @@ async function loadItems() {
       sortOrder: index,
       employeeCount: 0,
     }))
-    message.value =
-      'Catalogue API indisponible — affichage de la liste du combobox. Réessayez après reconnexion.'
+    message.value = 'Impossible de charger les postes.'
     messageType.value = 'error'
   } finally {
     loading.value = false
@@ -174,7 +184,7 @@ function closeModal() {
 async function saveItem() {
   const label = formLabel.value.trim()
   if (label.length < 2) {
-    message.value = 'Le libellé doit contenir au moins 2 caractères.'
+    message.value = 'Le libellé du poste est obligatoire.'
     messageType.value = 'error'
     return
   }
@@ -301,7 +311,7 @@ onMounted(loadItems)
       :data="tableRows"
       :columns="columns"
       :loading="loading"
-      loading-label="Chargement…"
+      loading-label="Chargement des postes…"
       @action="onTableAction"
     />
   </UiCard>

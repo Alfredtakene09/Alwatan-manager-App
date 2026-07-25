@@ -4,12 +4,13 @@ import { FileText, Filter } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
-import { DT_ICONS, statusBadge } from '@/lib/datatable-defaults'
+import { DT_ICONS } from '@/lib/datatable-defaults'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+import UiFormModal from '@/components/ui/UiFormModal.vue'
 
 type Invoice = {
   id: string
@@ -18,13 +19,21 @@ type Invoice = {
   status: string
   amountFcfa: number
   createdAt: string
-  patient: { code: string; firstName: string; lastName: string }
+  patient: { code: string; firstName: string; lastName: string } | null
 }
 
-const invoices = ref<Invoice[]>([])
-const filterType = ref('')
-const filterStatus = ref('')
-const loading = ref(false)
+type PatientInvoiceGroup = {
+  id: string
+  patientName: string
+  patientCode: string
+  invoiceCount: number
+  invoiceCountLabel: string
+  totalAmount: string
+  totalAmountSort: number
+  lastDate: string
+  lastDateSort: number
+  invoices: Invoice[]
+}
 
 const TYPE_LABELS: Record<string, string> = {
   SURGERY: 'Chirurgie',
@@ -42,6 +51,12 @@ const STATUS_LABELS: Record<string, string> = {
   CANCELLED: 'Annulée',
 }
 
+const invoices = ref<Invoice[]>([])
+const filterType = ref('')
+const filterStatus = ref('')
+const loading = ref(false)
+const selectedGroupKey = ref<string | null>(null)
+
 function statusVariant(status: string) {
   if (status === 'PAID') return 'success'
   if (status === 'PENDING') return 'warning'
@@ -49,58 +64,75 @@ function statusVariant(status: string) {
   return 'default'
 }
 
-const tableData = computed(() =>
-  sortByCreatedAtNewestFirst(invoices.value).map((inv) => ({
-    id: inv.id,
-    invoiceNumber: inv.invoiceNumber,
-    patientName: fullName(inv.patient.firstName, inv.patient.lastName),
-    patientCode: inv.patient.code,
-    typeLabel: TYPE_LABELS[inv.type] ?? inv.type,
-    amount: formatFcfa(inv.amountFcfa),
-    amountSort: inv.amountFcfa,
-    status: inv.status,
-    statusLabel: STATUS_LABELS[inv.status] ?? inv.status,
-    statusVariant: statusVariant(inv.status),
-    date: new Date(inv.createdAt).toLocaleDateString('fr-FR'),
-    dateSort: new Date(inv.createdAt).getTime(),
-  })),
+function groupKeyForInvoice(inv: Invoice) {
+  return inv.patient?.code ?? `__orphan__:${inv.id}`
+}
+
+const patientGroups = computed<PatientInvoiceGroup[]>(() => {
+  const map = new Map<string, Invoice[]>()
+
+  for (const inv of invoices.value) {
+    const key = groupKeyForInvoice(inv)
+    const list = map.get(key) ?? []
+    list.push(inv)
+    map.set(key, list)
+  }
+
+  return [...map.entries()]
+    .map(([key, groupInvoices]) => {
+      const sorted = sortByCreatedAtNewestFirst(groupInvoices)
+      const patient = sorted[0]?.patient
+      const totalAmountFcfa = sorted.reduce((sum, inv) => sum + inv.amountFcfa, 0)
+      const last = sorted[0]
+
+      return {
+        id: key,
+        patientName: patient ? fullName(patient.firstName, patient.lastName) : 'Client externe',
+        patientCode: patient?.code ?? '—',
+        invoiceCount: sorted.length,
+        invoiceCountLabel: `${sorted.length} facture${sorted.length > 1 ? 's' : ''}`,
+        totalAmount: formatFcfa(totalAmountFcfa),
+        totalAmountSort: totalAmountFcfa,
+        lastDate: last ? new Date(last.createdAt).toLocaleDateString('fr-FR') : '—',
+        lastDateSort: last ? new Date(last.createdAt).getTime() : 0,
+        invoices: sorted,
+      }
+    })
+    .sort((a, b) => b.lastDateSort - a.lastDateSort)
+})
+
+const tableData = computed(() => patientGroups.value)
+
+const selectedGroup = computed(
+  () => patientGroups.value.find((group) => group.id === selectedGroupKey.value) ?? null,
 )
 
 const columns = [
   {
-    data: 'invoiceNumber',
-    title: 'N° Facture',
-    responsivePriority: 1,
-    render: (n: string) => `<strong class="dt-name">${n}</strong>`,
-  },
-  {
     data: 'patientName',
     title: 'Patient',
-    responsivePriority: 2,
+    responsivePriority: 1,
     render: (name: string, _t: string, row: { patientCode: string }) =>
       `<span class="dt-name">${name}</span><span class="dt-sub">${row.patientCode}</span>`,
   },
-  { data: 'typeLabel', title: 'Type', responsivePriority: 4 },
   {
-    data: 'amountSort',
-    title: 'Montant',
+    data: 'invoiceCountLabel',
+    title: 'Factures',
     responsivePriority: 3,
-    render: (_d: number, _t: string, row: { amount: string }) =>
-      `<span class="dt-amount">${row.amount}</span>`,
   },
   {
-    data: 'statusLabel',
-    title: 'Statut',
-    responsivePriority: 5,
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'warning' | 'danger' | 'default'),
+    data: 'totalAmountSort',
+    title: 'Montant total',
+    responsivePriority: 2,
+    render: (_d: number, _t: string, row: { totalAmount: string }) =>
+      `<span class="dt-amount">${row.totalAmount}</span>`,
   },
   {
-    data: 'dateSort',
-    title: 'Date',
-    responsivePriority: 6,
-    render: (_d: number, _t: string, row: { date: string }) =>
-      `<span class="dt-date">${row.date}</span>`,
+    data: 'lastDateSort',
+    title: 'Dernière facture',
+    responsivePriority: 4,
+    render: (_d: number, _t: string, row: { lastDate: string }) =>
+      `<span class="dt-date">${row.lastDate}</span>`,
   },
   {
     data: null,
@@ -110,8 +142,8 @@ const columns = [
     responsivePriority: 1,
     render: (_d: unknown, _t: string, row: { id: string }) => `
       <div class="dt-row-actions" data-id="${row.id}">
-        <button type="button" class="dt-btn dt-btn--text" data-action="pdf" title="Télécharger PDF" aria-label="PDF">
-          ${DT_ICONS.download} PDF
+        <button type="button" class="dt-btn dt-btn--text" data-action="details" title="Voir les détails" aria-label="Voir les détails">
+          ${DT_ICONS.view} Détails
         </button>
       </div>
     `,
@@ -123,6 +155,7 @@ async function load() {
   try {
     const { data } = await api.get('/factures', {
       params: {
+        limit: 500,
         ...(filterType.value ? { type: filterType.value } : {}),
         ...(filterStatus.value ? { status: filterStatus.value } : {}),
       },
@@ -138,7 +171,11 @@ function downloadPdf(id: string) {
 }
 
 function onAction({ action, id }: { action: string; id: string }) {
-  if (action === 'pdf') downloadPdf(id)
+  if (action === 'details') selectedGroupKey.value = id
+}
+
+function closeDetails() {
+  selectedGroupKey.value = null
 }
 
 onMounted(load)
@@ -149,7 +186,7 @@ onMounted(load)
     <section class="page-with-table__head">
       <UiPageHeader
         title="Factures officielles"
-        subtitle="Historique des factures générées par la comptabilité — impression PDF"
+        subtitle="Factures regroupées par patient — détail et impression PDF"
         :icon="FileText"
       />
 
@@ -175,9 +212,9 @@ onMounted(load)
     </section>
 
     <section class="page-with-table__body">
-      <UiCard title="Liste des factures" class="ui-card--table-panel" :icon="FileText" icon-variant="teal">
+      <UiCard title="Factures par patient" class="ui-card--table-panel" :icon="FileText" icon-variant="teal">
         <UiDataTable
-          table-key="factures"
+          table-key="factures-by-patient"
           fill
           compact
           :data="tableData"
@@ -187,6 +224,56 @@ onMounted(load)
         />
       </UiCard>
     </section>
+
+    <UiFormModal
+      v-if="selectedGroup"
+      title="Détail des factures"
+      :subtitle="`${selectedGroup.patientCode} — ${selectedGroup.patientName}`"
+      size="large"
+      @close="closeDetails"
+    >
+      <div class="invoice-detail">
+        <p class="invoice-detail__summary">
+          <strong>{{ selectedGroup.invoiceCountLabel }}</strong>
+          · Total {{ selectedGroup.totalAmount }}
+          · Dernière facture le {{ selectedGroup.lastDate }}
+        </p>
+
+        <table class="detail-table">
+          <thead>
+            <tr>
+              <th>N° Facture</th>
+              <th>Type</th>
+              <th>Montant</th>
+              <th>Statut</th>
+              <th>Date</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="inv in selectedGroup.invoices" :key="inv.id">
+              <td><strong>{{ inv.invoiceNumber }}</strong></td>
+              <td>{{ TYPE_LABELS[inv.type] ?? inv.type }}</td>
+              <td class="detail-table__amount">{{ formatFcfa(inv.amountFcfa) }}</td>
+              <td>
+                <span
+                  class="detail-table__status"
+                  :class="`detail-table__status--${statusVariant(inv.status)}`"
+                >
+                  {{ STATUS_LABELS[inv.status] ?? inv.status }}
+                </span>
+              </td>
+              <td>{{ new Date(inv.createdAt).toLocaleDateString('fr-FR') }}</td>
+              <td class="detail-table__actions">
+                <UiButton size="sm" variant="ghost" @click="downloadPdf(inv.id)">
+                  PDF
+                </UiButton>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </UiFormModal>
   </div>
 </template>
 
@@ -198,8 +285,62 @@ onMounted(load)
   align-items: end;
 }
 
-.section {
-  margin-top: 0;
+.invoice-detail__summary {
+  margin: 0 0 0.85rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.detail-table th,
+.detail-table td {
+  padding: 0.55rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-table__amount {
+  font-weight: 700;
+  color: var(--primary-800, #1e3a5f);
+}
+
+.detail-table__actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.detail-table__status {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+.detail-table__status--success {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.detail-table__status--warning {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.detail-table__status--danger {
+  background: #ffe4e6;
+  color: #be123c;
+}
+
+.detail-table__status--default {
+  background: #f1f5f9;
+  color: #475569;
 }
 
 @media (max-width: 768px) {

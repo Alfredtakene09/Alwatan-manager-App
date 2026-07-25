@@ -28,11 +28,16 @@ export type BreakdownItem = {
 export type AdminExpenseRow = {
   id: string
   date: string
+  businessDate?: string
+  categoryCode?: 'FOURNITURES' | 'MAINTENANCE' | 'ACHAT_URGENT' | 'TRANSPORT' | 'AUTRE'
   category: string
+  label?: string
   description: string
   amountFcfa: number
   status: 'PENDING' | 'VALIDATED' | 'REJECTED'
   statusLabel: string
+  comment?: string | null
+  rejectionReason?: string | null
 }
 
 export type PayrollRow = {
@@ -63,7 +68,7 @@ export type AdminDashboardOverview = {
   }
   clinical: {
     patientsToday: number
-    appointmentsToday: number
+    openVisitsToday: number
     examsPending: number
     activeHospitalizations: number
   }

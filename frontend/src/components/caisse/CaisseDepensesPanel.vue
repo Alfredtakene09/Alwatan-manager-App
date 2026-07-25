@@ -5,6 +5,8 @@ import api from '@/api/client'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
 import { DT_ICONS } from '@/lib/datatable-defaults'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -13,41 +15,80 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import type { ExpenseIndiceOption } from '@/lib/expense-indices'
+import { fetchExpenseIndices, toActiveIndiceOptions } from '@/lib/expense-indices'
 
 const props = withDefaults(
   defineProps<{
     title?: string
     subtitle?: string
-    /** Incrémenté quand la liste des indices change (onglet gestion). */
-    indicesVersion?: number
+    /** Indices actifs partagés depuis la page parente. */
+    activeIndices?: ExpenseIndiceOption[]
+    listFilter?: 'all' | 'month' | 'range'
     showHeader?: boolean
     showDateFilter?: boolean
-    businessDate?: string
+    /** Réception : masquer la dépense au lieu de la supprimer définitivement. */
+    deactivateMode?: boolean
+    /** La synthèse est affichée par la page parente (barre d'outils). */
+    externalSummary?: boolean
+    businessDateFrom?: string
+    businessDateTo?: string
   }>(),
   {
     showHeader: true,
     showDateFilter: true,
+    listFilter: 'all',
+    deactivateMode: false,
+    externalSummary: false,
   },
 )
 
+type ExpenseSummaryPayload = {
+  countLabel: string
+  totalLabel: string
+  totalFcfa: number
+  show: boolean
+}
+
 const emit = defineEmits<{
-  'update:businessDate': [value: string]
+  'update:businessDateFrom': [value: string]
+  'update:businessDateTo': [value: string]
+  'summary-update': [payload: ExpenseSummaryPayload]
 }>()
+
+const { uiText, t, localeCode, isArabic } = useAppI18n()
+const dateLocale = computed(() => (isArabic.value ? 'ar-TD' : 'fr-FR'))
 
 const todayIso = new Date().toISOString().slice(0, 10)
 
-const internalBusinessDate = ref(todayIso)
+const internalBusinessDateFrom = ref(todayIso)
+const internalBusinessDateTo = ref(todayIso)
 
-const businessDate = computed({
-  get: () => props.businessDate ?? internalBusinessDate.value,
+const dateFrom = computed({
+  get: () => props.businessDateFrom ?? internalBusinessDateFrom.value,
   set: (value: string) => {
-    if (props.businessDate !== undefined) {
-      emit('update:businessDate', value)
+    if (props.businessDateFrom !== undefined) {
+      emit('update:businessDateFrom', value)
     } else {
-      internalBusinessDate.value = value
+      internalBusinessDateFrom.value = value
     }
   },
 })
+
+const dateTo = computed({
+  get: () => props.businessDateTo ?? internalBusinessDateTo.value,
+  set: (value: string) => {
+    if (props.businessDateTo !== undefined) {
+      emit('update:businessDateTo', value)
+    } else {
+      internalBusinessDateTo.value = value
+    }
+  },
+})
+
+const expenseBusinessDate = computed(() => dateTo.value)
 const loading = ref(false)
 const submitting = ref(false)
 const modalOpen = ref(false)
@@ -68,7 +109,9 @@ type ExpenseRow = {
 const totalFcfa = ref(0)
 const rows = ref<ExpenseRow[]>([])
 
-const indices = ref<Array<{ id: string; name: string; description: string | null }>>([])
+const internalIndices = ref<ExpenseIndiceOption[]>([])
+
+const indices = computed(() => props.activeIndices ?? internalIndices.value)
 
 const form = ref({
   indiceId: '',
@@ -78,38 +121,105 @@ const form = ref({
 })
 
 const indiceOptions = computed(() => [
-  { value: '', label: '— Choisir un indice (optionnel) —' },
+  { value: '', label: uiText('— Sélectionner un indice —') },
   ...indices.value.map((item) => ({ value: item.id, label: item.name })),
 ])
 
-const formattedBusinessDate = computed(() =>
-  new Date(`${businessDate.value}T12:00:00`).toLocaleDateString('fr-FR', {
+function formatDisplayDate(iso: string) {
+  void localeCode.value
+  return new Date(`${iso}T12:00:00`).toLocaleDateString(dateLocale.value, {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
     year: 'numeric',
+  })
+}
+
+const formattedBusinessDate = computed(() => {
+  void localeCode.value
+  if (dateFrom.value === dateTo.value) return formatDisplayDate(dateFrom.value)
+  const fromLabel = new Date(`${dateFrom.value}T12:00:00`).toLocaleDateString(dateLocale.value)
+  const toLabel = new Date(`${dateTo.value}T12:00:00`).toLocaleDateString(dateLocale.value)
+  return translateTemplate('du {from} au {to}', { from: fromLabel, to: toLabel })
+})
+
+const expenseListTitle = computed(() => {
+  void localeCode.value
+  if (props.listFilter === 'all') return uiText('Toutes les dépenses')
+  if (props.listFilter === 'month') return uiText('Dépenses du mois')
+  return dateFrom.value === dateTo.value
+    ? uiText('Dépenses du jour')
+    : uiText('Dépenses de la période')
+})
+
+const formattedPeriodLabel = computed(() => {
+  void localeCode.value
+  if (props.listFilter === 'all') return uiText('toutes les périodes')
+  if (props.listFilter === 'month') {
+    const now = new Date()
+    return now.toLocaleDateString(dateLocale.value, { month: 'long', year: 'numeric' })
+  }
+  return formattedBusinessDate.value
+})
+
+const expenseListDescription = computed(() =>
+  translateTemplate('Liste des dépenses enregistrées pour {period}', {
+    period: formattedPeriodLabel.value,
   }),
 )
 
 const expenseCountLabel = computed(() => {
+  void localeCode.value
   const n = rows.value.length
-  return n === 0 ? 'Aucune dépense' : `${n} dépense${n > 1 ? 's' : ''}`
+  if (n === 0) return uiText('Aucune dépense')
+  return n === 1
+    ? translateTemplate('{n} dépense', { n })
+    : translateTemplate('{n} dépenses', { n })
 })
+
+const totalLabel = computed(() => {
+  void localeCode.value
+  if (props.listFilter === 'all') return uiText('Total')
+  if (props.listFilter === 'month') return uiText('Total du mois')
+  if (dateFrom.value !== dateTo.value) return uiText('Total de la période')
+  return uiText('Total du jour')
+})
+
+const removeActionLabel = computed(() =>
+  props.deactivateMode ? uiText('Désactiver') : uiText('Supprimer'),
+)
+
+const removeActionIcon = computed(() => (props.deactivateMode ? DT_ICONS.ban : DT_ICONS.delete))
+
+const removeActionClass = computed(() =>
+  props.deactivateMode ? 'dt-btn--catalog-off' : 'dt-btn--catalog-delete',
+)
+
+function emitSummary() {
+  if (!props.externalSummary) return
+  emit('summary-update', {
+    countLabel: expenseCountLabel.value,
+    totalLabel: totalLabel.value,
+    totalFcfa: totalFcfa.value,
+    show: rows.value.length > 0 || loading.value,
+  })
+}
 
 const isEditing = computed(() => editingId.value !== null)
 
 const expenseFormTitle = computed(() =>
-  isEditing.value ? 'Modifier la dépense' : 'Nouvelle dépense',
+  isEditing.value ? uiText('Modifier la dépense') : uiText('Nouvelle dépense'),
 )
 
 const expenseFormSubtitle = computed(() =>
   isEditing.value
-    ? 'Corrigez le libellé, le montant ou le commentaire'
-    : "Enregistrement d'une dépense clinique payée en caisse",
+    ? uiText('Corrigez le libellé, le montant ou le commentaire')
+    : uiText("Enregistrement d'une dépense clinique payée en caisse"),
 )
 
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+  void localeCode.value
+  return new Date(iso).toLocaleTimeString(dateLocale.value, { hour: '2-digit', minute: '2-digit' })
 }
 
 const viewExpenseTime = computed(() =>
@@ -129,10 +239,15 @@ const tableRows = computed(() =>
   })),
 )
 
-const tableColumns = [
+const tableColumns = computed(() => {
+  void localeCode.value
+  const viewLabel = uiText('Voir')
+  const editLabel = uiText('Modifier')
+  const removeLabel = removeActionLabel.value
+  return [
   {
     data: 'timeSort',
-    title: 'Heure',
+    title: uiText('Heure'),
     responsivePriority: 2,
     className: 'dt-time-col',
     render: (_value: number, _type: string, row: { time: string }) =>
@@ -140,13 +255,13 @@ const tableColumns = [
   },
   {
     data: 'label',
-    title: 'Libellé',
+    title: uiText('Libellé'),
     responsivePriority: 1,
     render: (label: string) => `<span class="dt-name">${label}</span>`,
   },
   {
     data: 'comment',
-    title: 'Commentaire',
+    title: uiText('Commentaire'),
     responsivePriority: 4,
     render: (comment: string, _type: string, row: { hasComment: boolean }) =>
       row.hasComment
@@ -155,7 +270,7 @@ const tableColumns = [
   },
   {
     data: 'amountSort',
-    title: 'Montant',
+    title: uiText('Montant'),
     responsivePriority: 3,
     className: 'dt-amount-col',
     render: (_value: number, _type: string, row: { amountLabel: string }) =>
@@ -169,27 +284,52 @@ const tableColumns = [
     responsivePriority: 1,
     render: (_data: unknown, _type: string, row: { id: string }) => `
       <div class="dt-row-actions" data-id="${row.id}">
-        <button type="button" class="dt-btn dt-btn--icon dt-btn--icon-soft" data-action="view" title="Voir" aria-label="Voir">${DT_ICONS.view}</button>
-        <button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-edit" data-action="edit" title="Modifier" aria-label="Modifier">${DT_ICONS.edit}</button>
-        <button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-delete" data-action="delete" title="Supprimer" aria-label="Supprimer">${DT_ICONS.delete}</button>
+        <button type="button" class="dt-btn dt-btn--icon dt-btn--icon-soft" data-action="view" title="${viewLabel}" aria-label="${viewLabel}">${DT_ICONS.view}</button>
+        <button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-edit" data-action="edit" title="${editLabel}" aria-label="${editLabel}">${DT_ICONS.edit}</button>
+        <button type="button" class="dt-btn dt-btn--icon ${removeActionClass.value}" data-action="delete" title="${removeLabel}" aria-label="${removeLabel}">${removeActionIcon.value}</button>
       </div>
     `,
   },
 ]
+})
 
 const tableOptions = {
   ordering: true,
   order: [[0, 'desc']] as [number, 'asc' | 'desc'][],
 }
 
+type ExpenseExportRow = (typeof tableRows.value)[number]
+
+const expenseExportColumns = computed<ExportColumn<ExpenseExportRow>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Heure'), value: (r) => r.time },
+    { header: uiText('Libellé'), value: (r) => r.label },
+    { header: uiText('Commentaire'), value: (r) => r.comment },
+    { header: uiText('Montant'), value: (r) => r.amountLabel },
+  ]
+})
+
+function exportPdf() {
+  exportTablePdf(expenseListTitle.value, expenseExportColumns.value, tableRows.value, {
+    captionRows: [
+      { label: uiText('Période'), value: formattedPeriodLabel.value },
+      { label: totalLabel.value, value: formatFcfa(totalFcfa.value) },
+    ],
+  })
+}
+
+function exportExcel() {
+  exportTableExcel(expenseListTitle.value, expenseExportColumns.value, tableRows.value)
+}
+
 async function loadIndices() {
+  if (props.activeIndices) return
   try {
-    const { data } = await api.get<
-      Array<{ id: string; name: string; description: string | null; active: boolean }>
-    >('/cash-desk/expense-indices')
-    indices.value = data.filter((item) => item.active)
+    const data = await fetchExpenseIndices()
+    internalIndices.value = toActiveIndiceOptions(data)
   } catch {
-    indices.value = []
+    internalIndices.value = []
   }
 }
 
@@ -197,26 +337,36 @@ function applySelectedIndice() {
   if (!form.value.indiceId) return
   const selected = indices.value.find((item) => item.id === form.value.indiceId)
   if (!selected) return
-  form.value.comment = selected.description ?? ''
+  form.value.label = selected.name
+  if (!form.value.comment.trim()) {
+    form.value.comment = selected.description ?? ''
+  }
 }
 
 async function load() {
   loading.value = true
   message.value = ''
   try {
+    const params =
+      props.listFilter === 'all'
+        ? { filter: 'all' }
+        : props.listFilter === 'month'
+          ? { filter: 'month' }
+          : { from: dateFrom.value, to: dateTo.value }
     const { data } = await api.get<{
       totalFcfa: number
       rows: typeof rows.value
-    }>('/cash-desk/expenses', { params: { businessDate: businessDate.value } })
+    }>('/cash-desk/expenses', { params })
     rows.value = data.rows
     totalFcfa.value = data.totalFcfa
   } catch {
-    message.value = 'Impossible de charger les dépenses.'
+    message.value = uiText('Impossible de charger les dépenses.')
     messageType.value = 'error'
     rows.value = []
     totalFcfa.value = 0
   } finally {
     loading.value = false
+    emitSummary()
   }
 }
 
@@ -267,8 +417,12 @@ function closeViewModal() {
 
 async function submit() {
   const amount = Number(form.value.amountFcfa)
-  if (!form.value.label.trim() || !amount || amount <= 0) {
-    message.value = 'Renseignez le libellé et un montant valide.'
+  const selected = indices.value.find((item) => item.id === form.value.indiceId)
+  const label = isEditing.value
+    ? form.value.label.trim()
+    : (selected?.name ?? form.value.label.trim())
+  if ((!isEditing.value && !form.value.indiceId) || !label || !amount || amount <= 0) {
+    message.value = uiText('Sélectionnez un indice et renseignez un montant valide.')
     messageType.value = 'error'
     return
   }
@@ -277,27 +431,27 @@ async function submit() {
   message.value = ''
   try {
     const payload = {
-      label: form.value.label.trim(),
+      label,
       amountFcfa: amount,
       comment: form.value.comment.trim() || undefined,
     }
 
     if (isEditing.value && editingId.value) {
       const { data } = await api.put(`/cash-desk/expenses/${editingId.value}`, payload)
-      message.value = data.message ?? 'Dépense modifiée.'
+      message.value = data.message ?? uiText('Dépense modifiée.')
     } else {
       const { data } = await api.post('/cash-desk/expenses', {
-        businessDate: businessDate.value,
+        businessDate: expenseBusinessDate.value,
         ...payload,
       })
-      message.value = data.message ?? 'Dépense enregistrée.'
+      message.value = data.message ?? uiText('Dépense enregistrée.')
     }
     messageType.value = 'success'
     closeModal()
     await load()
   } catch (error: unknown) {
     const apiError = error as { response?: { data?: { error?: string } } }
-    message.value = apiError.response?.data?.error ?? 'Enregistrement impossible.'
+    message.value = apiError.response?.data?.error ?? uiText('Enregistrement impossible.')
     messageType.value = 'error'
   } finally {
     submitting.value = false
@@ -306,20 +460,33 @@ async function submit() {
 
 async function removeRow(id: string) {
   const confirmed = await confirmAppModal({
-    type: 'DELETE',
-    title: 'Supprimer la dépense',
-    message: 'Supprimer cette dépense ? Cette action est irréversible.',
-    confirmLabel: 'Supprimer',
+    type: props.deactivateMode ? 'CONFIRM' : 'DELETE',
+    title: props.deactivateMode
+      ? uiText('Désactiver la dépense')
+      : uiText('Supprimer la dépense'),
+    message: props.deactivateMode
+      ? uiText('Désactiver cette dépense ? Elle ne sera plus visible dans la liste du jour.')
+      : uiText('Supprimer cette dépense ? Cette action est irréversible.'),
+    confirmLabel: props.deactivateMode ? uiText('Désactiver') : uiText('Supprimer'),
   })
   if (!confirmed) return
   try {
-    await api.delete(`/cash-desk/expenses/${id}`)
-    message.value = 'Dépense supprimée.'
+    if (props.deactivateMode) {
+      await api.patch(`/cash-desk/expenses/${id}/deactivate`)
+      message.value = uiText('Dépense désactivée.')
+    } else {
+      await api.delete(`/cash-desk/expenses/${id}`)
+      message.value = uiText('Dépense supprimée.')
+    }
     messageType.value = 'success'
     await load()
   } catch (error: unknown) {
     const apiError = error as { response?: { data?: { error?: string } } }
-    message.value = apiError.response?.data?.error ?? 'Suppression impossible.'
+    message.value =
+      apiError.response?.data?.error ??
+      (props.deactivateMode
+        ? uiText('Désactivation impossible.')
+        : uiText('Suppression impossible.'))
     messageType.value = 'error'
   }
 }
@@ -330,8 +497,22 @@ function onTableAction({ action, id }: { action: string; id: string }) {
   if (action === 'delete') removeRow(id)
 }
 
-watch(businessDate, () => load())
-watch(() => props.indicesVersion, () => loadIndices())
+watch([dateFrom, dateTo], () => {
+  if (props.listFilter !== 'range') return
+  if (dateFrom.value > dateTo.value) {
+    dateTo.value = dateFrom.value
+  }
+  load()
+})
+
+watch(() => props.listFilter, () => {
+  load()
+})
+watch(() => props.activeIndices, () => {
+  if (!isEditing.value && form.value.indiceId) {
+    applySelectedIndice()
+  }
+})
 watch(() => form.value.indiceId, applySelectedIndice)
 
 onMounted(async () => {
@@ -352,35 +533,46 @@ onMounted(async () => {
     <UiAlert v-if="message && !modalOpen && !viewModalOpen" :type="messageType" :message="message" />
 
     <div v-if="showDateFilter" class="caisse-filters">
-      <UiInput v-model="businessDate" label="Date" type="date" />
+      <UiInput v-model="dateFrom" :label="uiText('Du')" type="date" />
+      <UiInput v-model="dateTo" :label="uiText('Au')" type="date" />
     </div>
 
     <UiCard
-      title="Dépenses du jour"
-      :description="`Liste des dépenses enregistrées pour le ${formattedBusinessDate}`"
+      v-if="!externalSummary && (rows.length || loading)"
+      class="expense-summary-card"
+      :title="uiText('Synthèse')"
+      :description="formattedPeriodLabel"
+      :icon="Receipt"
+      icon-variant="amber"
+    >
+      <div class="expense-summary-card__body">
+        <span class="expense-summary-card__count">{{ expenseCountLabel }}</span>
+        <strong class="expense-summary-card__total">{{ totalLabel }} : {{ formatFcfa(totalFcfa) }}</strong>
+      </div>
+    </UiCard>
+
+    <UiCard
+      :title="expenseListTitle"
+      :description="expenseListDescription"
       class="ui-card--table-panel expense-table-card"
       :icon="Receipt"
       icon-variant="blue"
     >
       <template #actions>
+        <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">
-          Actualiser
+          {{ t('common.refresh') }}
         </UiButton>
         <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
-          Nouvelle dépense
+          {{ uiText('Nouvelle dépense') }}
         </UiButton>
       </template>
 
       <p v-if="!rows.length && !loading" class="empty">
-        Aucune dépense pour cette date. Cliquez sur « Nouvelle dépense » pour enregistrer une sortie de caisse.
+        {{ uiText('Aucune dépense pour cette date. Cliquez sur « Nouvelle dépense » pour enregistrer une sortie de caisse.') }}
       </p>
 
       <template v-else>
-        <div class="expense-table-summary">
-          <span>{{ expenseCountLabel }}</span>
-          <strong>Total du jour : {{ formatFcfa(totalFcfa) }}</strong>
-        </div>
-
         <UiDataTable
           fill
           compact
@@ -389,7 +581,7 @@ onMounted(async () => {
           :columns="tableColumns"
           :options="tableOptions"
           :loading="loading"
-          loading-label="Chargement des dépenses…"
+          :loading-label="uiText('Chargement des dépenses…')"
           @action="onTableAction"
         />
       </template>
@@ -398,41 +590,41 @@ onMounted(async () => {
     <UiFormModal
       v-if="viewModalOpen && viewExpense"
       title-id="expense-view-modal-title"
-      title="Détail de la dépense"
+      :title="uiText('Détail de la dépense')"
       :subtitle="viewExpense.label"
       :icon="Eye"
       @close="closeViewModal"
     >
       <dl class="expense-detail">
         <div class="expense-detail__row">
-          <dt>Date</dt>
+          <dt>{{ uiText('Date') }}</dt>
           <dd>{{ formattedBusinessDate }}</dd>
         </div>
         <div class="expense-detail__row">
-          <dt>Heure</dt>
+          <dt>{{ uiText('Heure') }}</dt>
           <dd>{{ viewExpenseTime }}</dd>
         </div>
         <div class="expense-detail__row">
-          <dt>Libellé</dt>
+          <dt>{{ uiText('Libellé') }}</dt>
           <dd>{{ viewExpense.label }}</dd>
         </div>
         <div class="expense-detail__row">
-          <dt>Montant</dt>
+          <dt>{{ uiText('Montant') }}</dt>
           <dd class="expense-detail__amount">{{ formatFcfa(viewExpense.amountFcfa) }}</dd>
         </div>
         <div class="expense-detail__row">
-          <dt>Commentaire</dt>
+          <dt>{{ uiText('Commentaire') }}</dt>
           <dd>{{ viewExpense.comment?.trim() || '—' }}</dd>
         </div>
       </dl>
       <template #footer>
-        <UiButton variant="ghost" @click="closeViewModal">Fermer</UiButton>
+        <UiButton variant="ghost" @click="closeViewModal">{{ t('common.Fermer') }}</UiButton>
         <UiButton
           variant="primary"
           :icon="Pencil"
           @click="closeViewModal(); openEditModal(viewExpense.id)"
         >
-          Modifier
+          {{ t('common.Modifier') }}
         </UiButton>
       </template>
     </UiFormModal>
@@ -450,7 +642,8 @@ onMounted(async () => {
         <UiSelect
           v-if="!isEditing"
           v-model="form.indiceId"
-          label="Indice / motif"
+          :label="uiText('Indice / motif')"
+          required
           class="expense-form__full"
         >
           <option v-for="opt in indiceOptions" :key="opt.value || 'empty'" :value="opt.value">
@@ -458,15 +651,16 @@ onMounted(async () => {
           </option>
         </UiSelect>
         <UiInput
+          v-else
           v-model="form.label"
-          label="Libellé"
-          placeholder="Ex. Achat produits d'entretien"
+          :label="uiText('Libellé')"
+          :placeholder="uiText('Ex. Achat produits d\'entretien')"
           required
           class="expense-form__full"
         />
         <UiInput
           v-model="form.amountFcfa"
-          label="Montant (FCFA)"
+          :label="uiText('Montant (FCFA)')"
           type="number"
           min="1"
           required
@@ -474,20 +668,20 @@ onMounted(async () => {
         />
         <UiInput
           v-model="form.comment"
-          label="Commentaire"
-          placeholder="Détail optionnel…"
+          :label="uiText('Commentaire')"
+          :placeholder="uiText('Détail optionnel…')"
           class="expense-form__full"
         />
       </form>
       <template #footer>
-        <UiButton variant="ghost" @click="closeModal">Annuler</UiButton>
+        <UiButton variant="ghost" @click="closeModal">{{ t('common.Annuler') }}</UiButton>
         <UiButton
           variant="primary"
           :icon="isEditing ? Save : Plus"
           :disabled="submitting"
           @click="submit"
         >
-          {{ submitting ? 'Enregistrement…' : 'Enregistrer' }}
+          {{ submitting ? t('common.Enregistrement…') : t('common.Enregistrer') }}
         </UiButton>
       </template>
     </UiFormModal>
@@ -518,27 +712,27 @@ onMounted(async () => {
   grid-column: 1 / -1;
 }
 
-.expense-table-card {
-  min-height: 0;
-}
-
-.expense-table-summary {
+.expense-summary-card__body {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 0.75rem;
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, #fff8eb 0%, #fff3d6 100%);
-  border: 1px solid rgba(245, 158, 11, 0.25);
-  font-size: 0.8125rem;
-  color: var(--text-muted);
+  flex-wrap: wrap;
 }
 
-.expense-table-summary strong {
-  font-size: 0.9375rem;
+.expense-summary-card__count {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.expense-summary-card__total {
+  font-size: 1.05rem;
   color: #92400e;
+}
+
+.expense-table-card {
+  min-height: 0;
 }
 
 .expense-detail {

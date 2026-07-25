@@ -4,7 +4,7 @@ import { Eye, FlaskConical, Plus, RefreshCw, Save, Trash2 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
-import type { LabFormPanel } from '@/lib/lab-form-panels'
+import { labFieldCommentKey, type LabFormPanel } from '@/lib/lab-form-panels'
 import {
   useLabPanelsStore,
   panelDtoToFormPanel,
@@ -20,13 +20,15 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 
 type FieldForm = {
+  /** Identifiant local stable pour le v-for (évite de perdre la saisie section/libellé). */
+  uid: string
   key: string
   section: string
   label: string
   unit: string
   reference: string
   defaultValue: string
-  type: string
+  hasComment: boolean
 }
 
 const labPanels = useLabPanelsStore()
@@ -110,12 +112,41 @@ async function loadPanels() {
   }
 }
 
-function emptyField(): FieldForm {
-  return { key: '', section: '', label: '', unit: '', reference: '', defaultValue: '', type: 'text' }
+let fieldUidSeq = 0
+function nextFieldUid() {
+  fieldUidSeq += 1
+  return `field-${fieldUidSeq}`
 }
 
-function addField() {
-  form.value.fields.push(emptyField())
+function emptyField(partial?: Partial<Omit<FieldForm, 'uid'>>): FieldForm {
+  return {
+    uid: nextFieldUid(),
+    key: '',
+    section: '',
+    label: '',
+    unit: '',
+    reference: '',
+    defaultValue: '',
+    hasComment: false,
+    ...partial,
+  }
+}
+
+/** Insère un nouveau champ juste après la ligne `index` (fin de liste si index omis). */
+function insertFieldAfter(index?: number) {
+  const insertAt = index == null ? form.value.fields.length : index + 1
+  const previous =
+    index == null
+      ? form.value.fields[form.value.fields.length - 1]
+      : form.value.fields[index]
+  form.value.fields.splice(
+    insertAt,
+    0,
+    emptyField({
+      // Reprend la section de la ligne précédente pour que le titre soit conservé
+      section: previous?.section ?? '',
+    }),
+  )
 }
 
 function removeField(index: number) {
@@ -138,15 +169,17 @@ function openEdit(id: string) {
     active: panel.active,
     fields: [...panel.fields]
       .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map((field) => ({
-        key: field.key,
-        section: field.section ?? '',
-        label: field.label,
-        unit: field.unit ?? '',
-        reference: field.reference ?? '',
-        defaultValue: field.defaultValue ?? '',
-        type: field.type === 'textarea' ? 'textarea' : 'text',
-      })),
+      .map((field) =>
+        emptyField({
+          key: field.key,
+          section: field.section ?? '',
+          label: field.label,
+          unit: field.unit ?? '',
+          reference: field.reference ?? '',
+          defaultValue: field.defaultValue ?? '',
+          hasComment: field.hasComment === true,
+        }),
+      ),
   }
   if (!form.value.fields.length) form.value.fields.push(emptyField())
   showModal.value = true
@@ -166,6 +199,9 @@ function openPreview(id: string) {
   Object.keys(previewValues).forEach((key) => delete previewValues[key])
   for (const field of previewFields.value) {
     previewValues[field.key] = field.defaultValue ?? ''
+    if (field.hasComment) {
+      previewValues[labFieldCommentKey(field.key)] = ''
+    }
   }
   showPreviewModal.value = true
 }
@@ -173,6 +209,7 @@ function openPreview(id: string) {
 function removePreviewField(key: string) {
   previewFields.value = previewFields.value.filter((field) => field.key !== key)
   delete previewValues[key]
+  delete previewValues[labFieldCommentKey(key)]
   previewDirty.value = true
 }
 
@@ -193,12 +230,13 @@ async function savePreview() {
       active: previewSource.value.active,
       fields: previewFields.value.map((field) => ({
         key: field.key,
-        section: field.section ?? undefined,
+        section: field.section?.trim() ? field.section.trim() : null,
         label: field.label,
-        unit: field.unit ?? undefined,
-        reference: field.reference ?? undefined,
-        defaultValue: field.defaultValue ?? undefined,
-        type: field.type,
+        unit: field.unit ?? null,
+        reference: field.reference ?? null,
+        defaultValue: field.defaultValue ?? null,
+        hasComment: field.hasComment === true,
+        type: 'text',
       })),
     })
     message.value = 'Champs mis à jour.'
@@ -228,12 +266,14 @@ async function save() {
     .filter((field) => field.label.trim())
     .map((field) => ({
       key: field.key.trim() || undefined,
-      section: field.section.trim() || undefined,
+      // null explicite pour que la section vide efface bien l’ancienne valeur en base
+      section: field.section.trim() ? field.section.trim() : null,
       label: field.label.trim(),
-      unit: field.unit.trim() || undefined,
-      reference: field.reference.trim() || undefined,
-      defaultValue: field.defaultValue.trim() || undefined,
-      type: field.type,
+      unit: field.unit.trim() || null,
+      reference: field.reference.trim() || null,
+      defaultValue: field.defaultValue.trim() || null,
+      hasComment: field.hasComment === true,
+      type: 'text',
     }))
 
   if (label.length < 2) {
@@ -423,31 +463,45 @@ onMounted(loadPanels)
 
         <div class="fields-header">
           <h4 class="fields-title">Champs du formulaire</h4>
-          <UiButton variant="outline" size="sm" :icon="Plus" @click="addField">Ajouter un champ</UiButton>
+          <UiButton variant="outline" size="sm" :icon="Plus" @click="insertFieldAfter()">
+            Ajouter un champ
+          </UiButton>
         </div>
 
         <p v-if="!form.fields.length" class="fields-empty">Aucun champ — ajoutez-en au moins un.</p>
 
-        <div v-for="(field, index) in form.fields" :key="index" class="field-row">
-          <div class="field-row__grid">
-            <UiInput v-model="field.label" label="Libellé" placeholder="Ex. Créatinine" />
-            <UiInput v-model="field.section" label="Section (optionnel)" placeholder="Ex. Électrolytes" />
-            <UiInput v-model="field.unit" label="Unité (optionnel)" placeholder="Ex. mg/dl" />
-            <UiInput v-model="field.reference" label="Valeur de référence (optionnel)" placeholder="Ex. 0.6 - 1.1 mg/dl" />
-            <UiInput v-model="field.defaultValue" label="Texte par défaut (optionnel)" placeholder="Ex. Normal" />
-            <UiSelect v-model="field.type" label="Type">
-              <option value="text">Texte court</option>
-              <option value="textarea">Texte long</option>
-            </UiSelect>
+        <div v-for="(field, index) in form.fields" :key="field.uid" class="field-block">
+          <div class="field-row">
+            <div class="field-row__grid">
+              <UiInput v-model="field.label" label="Libellé" placeholder="Ex. Créatinine" />
+              <UiInput v-model="field.section" label="Section (optionnel)" placeholder="Ex. Électrolytes" />
+              <UiInput v-model="field.unit" label="Unité (optionnel)" placeholder="Ex. mg/dl" />
+              <UiInput v-model="field.reference" label="Valeur de référence (optionnel)" placeholder="Ex. 0.6 - 1.1 mg/dl" />
+              <UiInput v-model="field.defaultValue" label="Texte par défaut (optionnel)" placeholder="Ex. Normal" />
+              <label class="field-comment-toggle">
+                <input v-model="field.hasComment" type="checkbox" />
+                <span>Activer le commentaire (textarea) pour ce champ</span>
+              </label>
+            </div>
+            <button
+              type="button"
+              class="field-row__remove"
+              title="Supprimer le champ"
+              aria-label="Supprimer le champ"
+              @click="removeField(index)"
+            >
+              <Trash2 :size="16" />
+            </button>
           </div>
           <button
             type="button"
-            class="field-row__remove"
-            title="Supprimer le champ"
-            aria-label="Supprimer le champ"
-            @click="removeField(index)"
+            class="field-insert"
+            title="Insérer un champ ici"
+            aria-label="Insérer un champ ici"
+            @click="insertFieldAfter(index)"
           >
-            <Trash2 :size="16" />
+            <Plus :size="14" />
+            <span>Insérer un champ</span>
           </button>
         </div>
       </section>
@@ -471,7 +525,8 @@ onMounted(loadPanels)
     >
       <section class="preview-panel">
         <p class="preview-hint">
-          Aperçu de la mise en page — survolez un champ et cliquez sur la corbeille pour le retirer.
+          Aperçu de la mise en page — le commentaire n'apparaît que pour les champs où il est activé.
+          Survolez un champ et cliquez sur la corbeille pour le retirer.
         </p>
 
         <p v-if="!previewFields.length" class="fields-empty">
@@ -489,17 +544,21 @@ onMounted(loadPanels)
             :class="section.fields.length > 4 ? 'form-grid--cols-4' : 'form-grid--cols-2'"
           >
             <template v-for="field in section.fields" :key="field.key">
-              <div class="preview-field" :class="{ 'preview-field--wide': field.type === 'textarea' }">
+              <div class="preview-field">
                 <UiInput
-                  v-if="field.type !== 'textarea'"
                   v-model="previewValues[field.key]"
                   :label="field.reference ? `${field.label} (${field.reference})` : field.label"
                   :placeholder="field.unit ? `Résultat ${field.unit}` : 'Résultat'"
                   readonly
                 />
-                <label v-else class="textarea-field">
-                  <span class="textarea-field__label">{{ field.label }}</span>
-                  <textarea v-model="previewValues[field.key]" rows="3" readonly />
+                <label v-if="field.hasComment" class="field-comment">
+                  <span class="field-comment__label">Commentaire</span>
+                  <textarea
+                    v-model="previewValues[labFieldCommentKey(field.key)]"
+                    rows="2"
+                    placeholder="Commentaire sur cette ligne…"
+                    readonly
+                  />
                 </label>
                 <button
                   type="button"
@@ -594,12 +653,15 @@ onMounted(loadPanels)
   color: var(--text-muted);
 }
 
+.field-block {
+  margin-bottom: 0.35rem;
+}
+
 .field-row {
   display: flex;
   align-items: flex-start;
   gap: 0.5rem;
   padding: 0.75rem;
-  margin-bottom: 0.6rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: #f8fafc;
@@ -614,6 +676,20 @@ onMounted(loadPanels)
 
 .field-row__grid :deep(.ui-field) {
   margin-bottom: 0;
+}
+
+.field-comment-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.1rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.field-comment-toggle input[type='checkbox'] {
+  width: 0.95rem;
+  height: 0.95rem;
 }
 
 .field-row__remove {
@@ -634,6 +710,30 @@ onMounted(loadPanels)
 .field-row__remove:hover {
   background: #fef2f2;
   border-color: #fca5a5;
+}
+
+.field-insert {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  width: 100%;
+  margin: 0.15rem 0 0.45rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.field-insert:hover {
+  background: #ecfdf5;
+  border-color: var(--accent-400, #34d399);
+  color: var(--accent-700, #047857);
 }
 
 @media (max-width: 768px) {
@@ -657,10 +757,6 @@ onMounted(loadPanels)
 
 .preview-field {
   position: relative;
-}
-
-.preview-field--wide {
-  grid-column: 1 / -1;
 }
 
 .preview-field__remove {
@@ -689,6 +785,31 @@ onMounted(loadPanels)
 .preview-field__remove:hover {
   background: #fef2f2;
   border-color: #fca5a5;
+}
+
+.field-comment {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.45rem;
+}
+
+.field-comment__label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.field-comment textarea {
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 0.8125rem;
+  resize: vertical;
+  background: #f8fafc;
+  color: var(--text-muted);
 }
 
 .form-section + .form-section {
@@ -725,29 +846,6 @@ onMounted(loadPanels)
 .form-grid--cols-4 :deep(.ui-field__input) {
   padding: 0.5rem 0.6rem;
   font-size: 0.8125rem;
-}
-
-.textarea-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  grid-column: 1 / -1;
-}
-
-.textarea-field__label {
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
-
-.textarea-field textarea {
-  width: 100%;
-  padding: 0.65rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font: inherit;
-  resize: vertical;
-  background: #f8fafc;
-  color: var(--text-muted);
 }
 
 @media (max-width: 1200px) {

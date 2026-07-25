@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { FileDown, RefreshCw } from '@lucide/vue'
+import { RefreshCw } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { formatPatientTableDate } from '@/lib/patient-datatable-columns'
-import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
+import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -120,55 +121,44 @@ function onTableAction({ action, id }: { action: string; id: string }) {
   }
 }
 
-function exportPdf() {
-  if (!items.value.length) {
-    message.value = "Aucune vente à exporter."
-    return
-  }
+type ExportSaleRow = (typeof tableRows.value)[number]
 
-  const rows = items.value
-    .map((item, index) => {
-      const buyer = saleBuyerLabel(item)
-      const pharmacist = fullName(item.pharmacist.firstName, item.pharmacist.lastName)
-      const invoice = item.invoiceNumber ?? '—'
-      const total = formatFcfa(item.totalFcfa)
-      return `
-        <tr>
-          <td>${index + 1}</td>
-          <td>${formatPatientTableDate(item.createdAt)}</td>
-          <td>${buyer}</td>
-          <td>${pharmacist}</td>
-          <td>${item.lines.length}</td>
-          <td>${total}</td>
-          <td>${invoice}</td>
-        </tr>`
-    })
-    .join('')
+const exportColumns: ExportColumn<ExportSaleRow>[] = [
+  { header: 'Date', value: (r) => r.date },
+  { header: 'Acheteur', value: (r) => r.patient },
+  { header: 'Pharmacien', value: (r) => r.pharmacist },
+  { header: 'Lignes', value: (r) => r.linesCount },
+  { header: 'Total', value: (r) => r.total },
+  { header: 'Facture', value: (r) => r.invoice },
+]
 
+function exportCaption() {
   const fromLabel = filterFrom.value || 'début'
   const toLabel = filterTo.value || 'aujourd’hui'
   const totalGlobal = formatFcfa(items.value.reduce((sum, item) => sum + item.totalFcfa, 0))
-  const body = `
-${buildClinicPrintHeader('Historique des ventes pharmacie')}
-<div class="row"><span>Période</span><strong>${fromLabel} → ${toLabel}</strong></div>
-<div class="row"><span>Nombre de ventes</span><strong>${items.value.length}</strong></div>
-<table>
-  <thead>
-    <tr>
-      <th>#</th>
-      <th>Date</th>
-      <th>Acheteur</th>
-      <th>Pharmacien</th>
-      <th>Lignes</th>
-      <th>Total</th>
-      <th>Facture</th>
-    </tr>
-  </thead>
-  <tbody>${rows}</tbody>
-</table>
-<div class="row total"><span>Total cumulé</span><strong>${totalGlobal}</strong></div>
-`
-  openPrintDocument('Historique ventes pharmacie', body, { pageSize: 'A4', autoPrint: true })
+  return [
+    { label: 'Période', value: `${fromLabel} → ${toLabel}` },
+    { label: 'Nombre de ventes', value: String(items.value.length) },
+    { label: 'Total cumulé', value: totalGlobal },
+  ]
+}
+
+function exportPdf() {
+  if (!tableRows.value.length) {
+    message.value = "Aucune vente à exporter."
+    return
+  }
+  exportTablePdf('Historique des ventes pharmacie', exportColumns, tableRows.value, {
+    captionRows: exportCaption(),
+  })
+}
+
+function exportExcel() {
+  if (!tableRows.value.length) {
+    message.value = "Aucune vente à exporter."
+    return
+  }
+  exportTableExcel('Historique des ventes pharmacie', exportColumns, tableRows.value)
 }
 
 onMounted(loadItems)
@@ -179,9 +169,7 @@ defineExpose({ reload: loadItems })
 <template>
   <PageTableSection embedded>
     <template #toolbar>
-      <UiButton variant="secondary" size="sm" :icon="FileDown" :disabled="loading || !items.length" @click="exportPdf">
-        Exporter PDF
-      </UiButton>
+      <ExportButtons :disabled="loading || !items.length" @pdf="exportPdf" @excel="exportExcel" />
       <UiInput v-model="filterFrom" label="Du" type="date" class="filter-field" />
       <UiInput v-model="filterTo" label="Au" type="date" class="filter-field" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">

@@ -35,6 +35,7 @@ export const MANAGEABLE_USER_ROLES = [
   'MEDECIN',
   'COMPTABLE',
   'LABORANTIN',
+  'SOIGNANT',
   'PHARMACIEN',
   'LOGISTIQUE',
 ] as const satisfies readonly AppUserRole[]
@@ -43,13 +44,13 @@ export type ManageableUserRole = (typeof MANAGEABLE_USER_ROLES)[number]
 
 /** Direction (COMPTABLE) gère désormais les modules d’administration. */
 export const MODULE_ACCESS: Record<string, AppUserRole[]> = {
-  dashboard: ['ADMIN', 'RECEPTIONNISTE', 'MEDECIN', 'COMPTABLE', 'LABORANTIN', 'PHARMACIEN', 'GESTIONNAIRE', 'LOGISTIQUE'],
+  dashboard: ['ADMIN', 'RECEPTIONNISTE', 'MEDECIN', 'COMPTABLE', 'LABORANTIN', 'PHARMACIEN', 'GESTIONNAIRE', 'LOGISTIQUE', 'SOIGNANT'],
   reception: ['ADMIN', 'RECEPTIONNISTE', 'COMPTABLE'],
   consultation: ['ADMIN', 'MEDECIN', 'COMPTABLE'],
   comptabilite: ['ADMIN', 'COMPTABLE'],
   hospitalisation: ['ADMIN', 'RECEPTIONNISTE', 'COMPTABLE'],
-  'bloc-salles': ['ADMIN', 'COMPTABLE'],
-  pharmacie: ['ADMIN', 'PHARMACIEN', 'COMPTABLE'],
+  'bloc-salles': ['ADMIN', 'COMPTABLE', 'SOIGNANT'],
+  pharmacie: ['ADMIN', 'PHARMACIEN', 'COMPTABLE', 'GESTIONNAIRE'],
   logistique: ['ADMIN', 'LOGISTIQUE', 'COMPTABLE'],
   laboratoire: ['ADMIN', 'LABORANTIN', 'COMPTABLE'],
   'dossier-patient': ['ADMIN', 'MEDECIN', 'LABORANTIN', 'COMPTABLE'],
@@ -63,11 +64,25 @@ export function canAccessModule(role: AppUserRole, module: string) {
   return MODULE_ACCESS[module]?.includes(role) ?? false
 }
 
+export function canAccessAnyModule(role: AppUserRole, modules: string[]) {
+  return modules.some((module) => canAccessModule(role, module))
+}
+
 /** Nomenclatures, suppressions, structure — réservé admin / comptabilité. */
 export const MANAGEMENT_ROLES: AppUserRole[] = ['ADMIN', 'COMPTABLE']
 
 export function canManageResources(role: AppUserRole) {
   return MANAGEMENT_ROLES.includes(role)
+}
+
+/**
+ * Catalogue pharmacie (catégories, produits, fournisseurs, mouvements).
+ * PHARMACIEN exclu — Direction (COMPTABLE) conserve l’accès admin existant.
+ */
+export const PHARMACY_CATALOG_ROLES: AppUserRole[] = ['ADMIN', 'GESTIONNAIRE', 'COMPTABLE']
+
+export function canManagePharmacyCatalog(role: AppUserRole) {
+  return PHARMACY_CATALOG_ROLES.includes(role)
 }
 
 export function canWriteDossierDocuments(role: AppUserRole) {
@@ -101,6 +116,6 @@ export function fullName(firstName: string, lastName: string) {
   return `${firstName} ${lastName}`.trim()
 }
 
-import { formatFcfa, formatFcfaDigits } from './format-fcfa.js'
+import { formatFcfa, formatFcfaCompact, formatFcfaDigits } from './format-fcfa.js'
 
-export { formatFcfa, formatFcfaDigits }
+export { formatFcfa, formatFcfaCompact, formatFcfaDigits }

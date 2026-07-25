@@ -4,7 +4,8 @@ import { computed, onMounted, ref } from 'vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import RoleDashboardShell from '@/components/dashboard/RoleDashboardShell.vue'
-import DashboardBarChart, { type BarChartDay } from '@/components/dashboard/DashboardBarChart.vue'
+import DashboardLineChart from '@/components/dashboard/DashboardLineChart.vue'
+import DashboardSplitChart from '@/components/dashboard/DashboardSplitChart.vue'
 import DashboardPendingBars from '@/components/dashboard/DashboardPendingBars.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import type { SummaryStat } from '@/lib/dashboard-summary'
@@ -15,6 +16,8 @@ type LogistiqueDashboardStats = {
   expiring: number
   stockValueFcfa: number
   pendingRequests: number
+  requestsByStatus: { pending: number; fulfilled: number; rejected: number }
+  pendingByService: Array<{ service: string; count: number }>
   movementsLast7Days: Array<{ date: string; dayLabel: string; entries: number; exits: number }>
   topLowStock: Array<{ name: string; quantity: number; minStock: number; level: string }>
 }
@@ -64,38 +67,42 @@ const summaryStats = computed((): SummaryStat[] => {
   ]
 })
 
-const movementsChart = computed((): BarChartDay[] => {
+const movementLabels = computed(() => stats.value?.movementsLast7Days.map((day) => day.dayLabel) ?? [])
+
+const movementSeries = computed(() => {
   if (!stats.value) return []
-  return stats.value.movementsLast7Days.map((day) => ({
-    date: day.date,
-    dayLabel: day.dayLabel,
-    total: day.entries + day.exits,
-    segments:
-      day.entries > 0 || day.exits > 0
-        ? [
-            ...(day.entries > 0
-              ? [{
-                  key: 'entries',
-                  value: day.entries,
-                  colorClass: 'bar-chart__bar--a',
-                  title: `Entrées : ${day.entries}`,
-                }]
-              : []),
-            ...(day.exits > 0
-              ? [{
-                  key: 'exits',
-                  value: day.exits,
-                  colorClass: 'bar-chart__bar--c',
-                  title: `Sorties : ${day.exits}`,
-                }]
-              : []),
-          ]
-        : [{
-            key: 'empty',
-            value: 1,
-            colorClass: 'bar-chart__bar--empty',
-            title: 'Aucun mouvement',
-          }],
+  return [
+    {
+      key: 'entries',
+      label: 'Entrées',
+      color: '#2563eb',
+      values: stats.value.movementsLast7Days.map((day) => day.entries),
+    },
+    {
+      key: 'exits',
+      label: 'Sorties',
+      color: '#d97706',
+      values: stats.value.movementsLast7Days.map((day) => day.exits),
+    },
+  ]
+})
+
+const requestsSplit = computed(() => {
+  if (!stats.value) return []
+  const r = stats.value.requestsByStatus
+  return [
+    { label: 'En attente', value: r.pending, colorClass: 'split-chart__segment--c' },
+    { label: 'Livrées', value: r.fulfilled, colorClass: 'split-chart__segment--b' },
+    { label: 'Refusées', value: r.rejected, colorClass: 'split-chart__segment--d' },
+  ]
+})
+
+const pendingServiceBars = computed(() => {
+  if (!stats.value?.pendingByService.length) return []
+  return stats.value.pendingByService.map((row) => ({
+    label: row.service,
+    count: row.count,
+    color: '#d97706',
   }))
 })
 
@@ -136,22 +143,35 @@ onMounted(loadStats)
     @refresh="loadStats"
   >
     <div class="charts-grid">
-      <UiCard title="Mouvements — 7 derniers jours" description="Entrées et sorties de stock" :icon="Package" icon-variant="blue">
-        <DashboardBarChart
-          :days="movementsChart"
+      <UiCard
+        title="Mouvements — 7 derniers jours"
+        description="Entrées et sorties de stock"
+        :icon="Package"
+        icon-variant="blue"
+      >
+        <DashboardLineChart
+          :labels="movementLabels"
+          :series="movementSeries"
           :loading="loading"
-          :format-total="(v) => String(v)"
-          :legend="[
-            { key: 'entries', label: 'Entrées', colorClass: 'legend-dot--a' },
-            { key: 'exits', label: 'Sorties', colorClass: 'legend-dot--c' },
-          ]"
+          :format-value="(v) => String(v)"
         />
       </UiCard>
 
-      <UiCard title="Demandes en attente" description="Bons de sortie à traiter" :icon="ClipboardList" icon-variant="amber">
-        <div class="pending-count">
-          <span class="pending-count__value">{{ stats?.pendingRequests ?? 0 }}</span>
-          <span class="pending-count__label">demande(s) en attente</span>
+      <UiCard
+        title="Demandes — répartition"
+        description="Statut des bons de sortie internes"
+        :icon="ClipboardList"
+        icon-variant="amber"
+      >
+        <DashboardSplitChart
+          :rows="requestsSplit"
+          :format-value="(v) => String(v)"
+          empty-label="Aucune demande enregistrée"
+        />
+
+        <div v-if="pendingServiceBars.length" class="requests-by-service">
+          <p class="requests-by-service__title">En attente par service</p>
+          <DashboardPendingBars :items="pendingServiceBars" />
         </div>
       </UiCard>
     </div>
@@ -170,25 +190,18 @@ onMounted(loadStats)
   gap: 1rem;
 }
 
-.pending-count {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem 1rem;
-  text-align: center;
+.requests-by-service {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--border);
 }
 
-.pending-count__value {
-  font-size: 2.5rem;
-  font-weight: 800;
-  color: #b45309;
-  line-height: 1;
-}
-
-.pending-count__label {
-  margin-top: 0.35rem;
-  font-size: 0.875rem;
+.requests-by-service__title {
+  margin: 0 0 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--text-muted);
 }
 
@@ -204,4 +217,8 @@ onMounted(loadStats)
     grid-template-columns: 1fr;
   }
 }
+</style>
+
+<style>
+@import '@/styles/dashboard-charts.css';
 </style>

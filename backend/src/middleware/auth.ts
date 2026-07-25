@@ -1,6 +1,11 @@
 import type { NextFunction, Request, Response } from "express";
 import { COOKIE_NAME, verifySessionToken, type SessionUser } from "../lib/auth.js";
-import { canAccessModule, canManageResources, type AppUserRole } from "../lib/roles.js";
+import {
+  canAccessModule,
+  canManagePharmacyCatalog,
+  canManageResources,
+  type AppUserRole,
+} from "../lib/roles.js";
 
 declare global {
   namespace Express {
@@ -41,6 +46,16 @@ export function requireManageAccess(req: Request, res: Response, next: NextFunct
   }
   if (!canManageResources(req.user.role as AppUserRole)) {
     return res.status(403).json({ error: "Accès refusé — droits de gestion requis" });
+  }
+  next();
+}
+
+export function requirePharmacyCatalogAccess(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({ error: "Non autorisé" });
+  }
+  if (!canManagePharmacyCatalog(req.user.role as AppUserRole)) {
+    return res.status(403).json({ error: "Accès refusé — catalogue pharmacie réservé à la direction / gestion" });
   }
   next();
 }

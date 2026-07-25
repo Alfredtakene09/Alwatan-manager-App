@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { canAccessModule, getDefaultRoute } from '@/lib/roles'
+import { canAccessAnyModule, canManagePharmacyCatalog, getDefaultRoute } from '@/lib/roles'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -65,9 +65,7 @@ const router = createRouter({
         },
         {
           path: 'reception/depenses',
-          name: 'reception-depenses',
-          component: () => import('@/views/reception/ReceptionDepensesView.vue'),
-          meta: { module: 'reception' },
+          redirect: { name: 'admin-depenses' },
         },
         { path: 'reception/bloc-operatoire', redirect: '/reception/operations-attente' },
         { path: 'reception/file-attente', redirect: '/reception/etat-patients' },
@@ -245,13 +243,13 @@ const router = createRouter({
           path: 'pharmacie/categories',
           name: 'pharmacie-categories',
           component: () => import('@/views/pharmacie/PharmacieCategoriesView.vue'),
-          meta: { module: 'pharmacie' },
+          meta: { module: 'pharmacie', pharmacyCatalog: true },
         },
         {
           path: 'pharmacie/produits',
           name: 'pharmacie-produits',
           component: () => import('@/views/pharmacie/PharmacieProductsView.vue'),
-          meta: { module: 'pharmacie' },
+          meta: { module: 'pharmacie', pharmacyCatalog: true },
         },
         {
           path: 'pharmacie/ventes',
@@ -275,13 +273,13 @@ const router = createRouter({
           path: 'pharmacie/fournisseurs',
           name: 'pharmacie-fournisseurs',
           component: () => import('@/views/pharmacie/PharmacieSuppliersView.vue'),
-          meta: { module: 'pharmacie' },
+          meta: { module: 'pharmacie', pharmacyCatalog: true },
         },
         {
           path: 'pharmacie/mouvements',
           name: 'pharmacie-mouvements',
           component: () => import('@/views/pharmacie/PharmacieMovementsView.vue'),
-          meta: { module: 'pharmacie' },
+          meta: { module: 'pharmacie', pharmacyCatalog: true },
         },
         {
           path: 'pharmacie/tableau-de-bord',
@@ -356,7 +354,7 @@ const router = createRouter({
           path: 'admin/depenses',
           name: 'admin-depenses',
           component: () => import('@/views/admin/AdminDepensesView.vue'),
-          meta: { module: 'admin' },
+          meta: { modules: ['admin', 'reception'] },
         },
         {
           path: 'admin/salaires',
@@ -477,8 +475,14 @@ router.beforeEach(async (to) => {
     return true
   }
 
-  const module = (to.meta.module as string) ?? 'consultation'
-  if (!canAccessModule(auth.user.role, module)) {
+  const modules = (to.meta.modules as string[] | undefined) ?? [
+    (to.meta.module as string) ?? 'consultation',
+  ]
+  if (!canAccessAnyModule(auth.user.role, modules)) {
+    return getDefaultRoute(auth.user.role)
+  }
+
+  if (to.meta.pharmacyCatalog && !canManagePharmacyCatalog(auth.user.role)) {
     return getDefaultRoute(auth.user.role)
   }
 

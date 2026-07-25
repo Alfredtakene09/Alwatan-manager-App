@@ -1,0 +1,7 @@
+# Adresse IP du poste serveur (optionnel)
+# Laisser vide pour détection automatique (localhost, nom du PC, IP locale).
+# À renseigner sur les postes clients si la détection automatique échoue.
+#
+# Exemple :
+# SERVER_IP=192.168.1.50
+SERVER_IP=

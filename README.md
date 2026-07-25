@@ -88,3 +88,12 @@ chmod +x scripts/export-dev-data.sh scripts/import-dev-data.sh
 ```
 
 **Ne pas mettre les exports sur GitHub** (données patients sensibles).
+
+## Déploiement production (clinique, réseau local 24/7)
+
+Pour un accès permanent sans Internet, avec redémarrage automatique après coupure :
+
+1. Sur le **PC serveur**, exécuter en Administrateur :  
+   `scripts\deploy\installer-production.cmd`
+2. Accès : `http://IP-DU-SERVEUR:4000`
+3. Guide complet : [`scripts/deploy/README-DEPLOIEMENT.md`](scripts/deploy/README-DEPLOIEMENT.md)

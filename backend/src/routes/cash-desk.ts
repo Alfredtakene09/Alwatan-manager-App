@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { ClinicExpenseCategory, Prisma, UserRole } from "@prisma/client";
+import { ClinicExpenseCategory, ClinicExpenseStatus, Prisma, UserRole } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import {
   CASH_COLLECTOR_ROLES,
@@ -126,17 +126,41 @@ router.get("/cashiers", async (_req, res) => {
 
 router.get("/expenses", async (req, res) => {
   const user = req.user!;
-  const parsed = parseBusinessDateQuery(req.query.businessDate);
-  if (!parsed) return res.status(400).json({ error: "Date invalide" });
+  const filter = typeof req.query.filter === "string" ? req.query.filter : "";
+  const fromIso = typeof req.query.from === "string" ? req.query.from : "";
+  const toIso = typeof req.query.to === "string" ? req.query.to : "";
 
   const mineOnly =
     user.role === UserRole.RECEPTIONNISTE ||
     (typeof req.query.mine === "string" && req.query.mine === "1");
 
+  const baseWhere = mineOnly ? { paidById: user.id } : {};
+
+  let dateWhere: { businessDate?: { gte: Date; lt: Date } } = {};
+
+  if (filter === "month") {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    dateWhere = { businessDate: { gte: monthStart, lt: monthEnd } };
+  } else if (/^\d{4}-\d{2}-\d{2}$/.test(fromIso) && /^\d{4}-\d{2}-\d{2}$/.test(toIso)) {
+    const fromDate = parseBusinessDate(fromIso);
+    const toDate = parseBusinessDate(toIso);
+    if (fromDate.getTime() > toDate.getTime()) {
+      return res.status(400).json({ error: "La date de début doit précéder la date de fin." });
+    }
+    const endExclusive = new Date(toDate);
+    endExclusive.setDate(endExclusive.getDate() + 1);
+    dateWhere = { businessDate: { gte: fromDate, lt: endExclusive } };
+  } else if (filter !== "all") {
+    return res.status(400).json({ error: "Période invalide" });
+  }
+
   const rows = await prisma.clinicExpense.findMany({
     where: {
-      businessDate: parsed.date,
-      ...(mineOnly ? { paidById: user.id } : {}),
+      ...baseWhere,
+      ...dateWhere,
+      status: { not: ClinicExpenseStatus.REJECTED },
     },
     include: {
       paidBy: { select: userSelect },
@@ -148,7 +172,10 @@ router.get("/expenses", async (req, res) => {
   const totalFcfa = rows.reduce((sum, row) => sum + row.amountFcfa, 0);
 
   return res.json({
-    businessDate: parsed.iso,
+    from: fromIso || null,
+    to: toIso || null,
+    filter: filter || "all",
+    businessDate: toIso || formatBusinessDate(new Date()),
     totalFcfa,
     categories: EXPENSE_CATEGORY_LABELS,
     rows: rows.map((row) => ({
@@ -202,6 +229,25 @@ router.post("/expenses", async (req, res) => {
     }
     return res.status(400).json({ error: "Enregistrement impossible" });
   }
+});
+
+router.patch("/expenses/:id/deactivate", async (req, res) => {
+  const user = req.user!;
+  const row = await prisma.clinicExpense.findUnique({ where: { id: req.params.id } });
+  if (!row) return res.status(404).json({ error: "Dépense introuvable" });
+
+  if (!canManageExpense(user, row)) {
+    return res.status(403).json({ error: "Désactivation non autorisée" });
+  }
+
+  await prisma.clinicExpense.update({
+    where: { id: row.id },
+    data: {
+      status: ClinicExpenseStatus.REJECTED,
+      rejectionReason: "Désactivée",
+    },
+  });
+  return res.json({ message: "Dépense désactivée." });
 });
 
 router.delete("/expenses/:id", async (req, res) => {

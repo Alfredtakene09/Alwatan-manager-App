@@ -29,6 +29,14 @@ export function remainingPayableExamKinds(kinds: ExamKindSlug[]): ExamKindSlug[]
   return kinds.filter((kind) => !isPaymentModalExcludedKind(kind))
 }
 
+export function emptyExamsByKindBlocks(): ExamsByKindBlocks {
+  const blocks = {} as ExamsByKindBlocks
+  for (const kind of EXAM_KIND_ORDER) {
+    blocks[kind] = { lines: [], grossFcfa: 0 }
+  }
+  return blocks
+}
+
 export function emptyExamReductionsByKind(): ExamReductionsByKind {
   return {
     examen: 0,

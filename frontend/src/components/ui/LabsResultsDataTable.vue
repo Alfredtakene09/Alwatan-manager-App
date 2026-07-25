@@ -16,6 +16,7 @@ export type LabsResultsVisitRow = {
   createdAt: string
   updatedAt: string
   patient: {
+    id?: string
     firstName: string
     lastName: string
     code: string
@@ -35,6 +36,7 @@ export type LabsResultsVisitRow = {
     doctorComment?: string | null
     updatedAt?: string
     doctor?: { firstName: string; lastName: string } | null
+    labApprovedBy?: { firstName: string; lastName: string } | null
   } | null
 }
 

@@ -28,9 +28,11 @@ import {
   Building2,
   ArrowDownUp,
   Warehouse,
+  TrendingUp,
+  Eye,
 } from '@lucide/vue'
 import type { AppUserRole } from './roles'
-import { canAccessModule } from './roles'
+import { canAccessModule, canManagePharmacyCatalog } from './roles'
 import {
   EXAM_CATALOG_KIND_CONFIG,
   findExamCatalogKindFromPath,
@@ -45,6 +47,8 @@ export type NavChildItem = {
   module: string
   description?: string
   badgeKey?: 'depenses' | 'salaires'
+  /** Catégories / produits / fournisseurs / mouvements pharmacie */
+  pharmacyCatalog?: boolean
   children?: NavChildItem[]
 }
 
@@ -56,6 +60,7 @@ export type NavItem = {
   description?: string
   primary?: boolean
   badgeKey?: 'depenses' | 'salaires'
+  pharmacyCatalog?: boolean
   children?: NavChildItem[]
 }
 
@@ -94,6 +99,7 @@ const pharmacyNavChildren: NavChildItem[] = [
     label: 'Catégories',
     icon: Tags,
     module: 'pharmacie',
+    pharmacyCatalog: true,
     description: 'Organisation du catalogue',
   },
   {
@@ -101,6 +107,7 @@ const pharmacyNavChildren: NavChildItem[] = [
     label: 'Produits',
     icon: Package,
     module: 'pharmacie',
+    pharmacyCatalog: true,
     description: 'Prix, stock et références',
   },
   {
@@ -129,6 +136,7 @@ const pharmacyNavChildren: NavChildItem[] = [
     label: 'Fournisseurs',
     icon: Building2,
     module: 'pharmacie',
+    pharmacyCatalog: true,
     description: 'Contacts fournisseurs',
   },
   {
@@ -136,9 +144,14 @@ const pharmacyNavChildren: NavChildItem[] = [
     label: 'Mouvements',
     icon: ArrowDownUp,
     module: 'pharmacie',
+    pharmacyCatalog: true,
     description: 'Entrées et sorties de stock',
   },
 ]
+
+const pharmacyCatalogNavChildren: NavChildItem[] = pharmacyNavChildren.filter(
+  (item) => item.pharmacyCatalog,
+)
 
 const logisticsNavChildren: NavChildItem[] = [
   {
@@ -192,6 +205,30 @@ const logisticsNavChildren: NavChildItem[] = [
   },
 ]
 
+const laboratoireNavChildren: NavChildItem[] = [
+  {
+    to: '/laboratoire',
+    label: 'Analyses en attente',
+    icon: FlaskConical,
+    module: 'laboratoire',
+    description: "File d'attente des analyses",
+  },
+  {
+    to: '/laboratoire/termines',
+    label: 'Examens terminés',
+    icon: CheckCircle2,
+    module: 'laboratoire',
+    description: 'Patients dont les analyses sont clôturées',
+  },
+  {
+    to: '/laboratoire/formulaires',
+    label: 'Formulaires de résultats',
+    icon: ClipboardList,
+    module: 'laboratoire',
+    description: 'Créer et modifier les formulaires de résultats',
+  },
+]
+
 const logistiqueNav: NavSection[] = [
   {
     items: [
@@ -204,6 +241,27 @@ const logistiqueNav: NavSection[] = [
       },
       ...logisticsNavChildren.map((item) => ({ ...item })),
     ],
+  },
+]
+
+const examensPaiementsNavChildren: NavChildItem[] = [
+  {
+    to: '/reception/en-attente-paiement',
+    label: 'En attente de paiement',
+    icon: Clock,
+    module: 'reception',
+  },
+  {
+    to: '/reception/examens-payes',
+    label: 'Examens payés',
+    icon: CheckCircle2,
+    module: 'reception',
+  },
+  {
+    to: '/reception/examens-payes/reclamations',
+    label: 'Réclamations',
+    icon: ClipboardList,
+    module: 'reception',
   },
 ]
 
@@ -242,75 +300,14 @@ const receptionNav: NavSection[] = [
         label: 'Examens & paiements',
         icon: Wallet,
         module: 'reception',
-        children: [
-          {
-            to: '/reception/en-attente-paiement',
-            label: 'En attente de paiement',
-            icon: Clock,
-            module: 'reception',
-          },
-          {
-            to: '/reception/examens-payes',
-            label: 'Examens payés',
-            icon: CheckCircle2,
-            module: 'reception',
-          },
-          {
-            to: '/reception/examens-payes/reclamations',
-            label: 'Réclamations',
-            icon: ClipboardList,
-            module: 'reception',
-          },
-        ],
+        children: examensPaiementsNavChildren.map((item) => ({ ...item })),
       },
       {
-        label: 'Suivi hospitalier',
-        icon: BedDouble,
+        to: '/admin/depenses',
+        label: 'Gestion des dépenses',
+        icon: Receipt,
         module: 'reception',
-        children: [
-          {
-            to: '/reception/operations-attente',
-            label: 'Opérations en attente',
-            icon: Clock,
-            module: 'reception',
-            description: 'Confirmer ou programmer les interventions payées',
-          },
-          {
-            to: '/reception/operations-effectuees',
-            label: 'Opérations effectuées',
-            icon: CheckCircle2,
-            module: 'reception',
-            description: 'Interventions réalisées — suivi comptable',
-          },
-          {
-            to: '/hospitalisation',
-            label: 'Hospitalisation',
-            icon: BedDouble,
-            module: 'hospitalisation',
-            description: 'Attribution des salles et sorties',
-          },
-          {
-            to: '/reception/comptabilite',
-            label: 'Comptabilité',
-            icon: Receipt,
-            module: 'reception',
-            description: 'Consultations encaissées',
-          },
-        ],
-      },
-      {
-        label: 'Caisse',
-        icon: Banknote,
-        module: 'reception',
-        children: [
-          {
-            to: '/reception/depenses',
-            label: 'Dépenses',
-            icon: Receipt,
-            module: 'reception',
-            description: 'Dépenses clinique payées en caisse',
-          },
-        ],
+        description: 'Dépenses clinique et suivi caisse',
       },
     ],
   },
@@ -407,8 +404,21 @@ const directionOperationalNav: NavSection[] = [
         ],
       },
       {
-        label: 'Finances',
+        to: '/admin/depenses',
+        label: 'Gestion des dépenses',
+        icon: Receipt,
+        module: 'admin',
+        badgeKey: 'depenses',
+      },
+      {
+        label: 'Examens & paiements',
         icon: Wallet,
+        module: 'reception',
+        children: examensPaiementsNavChildren.map((item) => ({ ...item })),
+      },
+      {
+        label: 'Comptabilité',
+        icon: Receipt,
         module: 'comptabilite',
         children: [
           {
@@ -419,12 +429,11 @@ const directionOperationalNav: NavSection[] = [
             description: "Recettes et files d'attente",
           },
           {
-            to: '/admin/depenses',
-            label: 'Validation dépenses',
-            icon: Receipt,
-            module: 'admin',
-            badgeKey: 'depenses',
-            description: 'Validation des dépenses',
+            to: '/reception/comptabilite',
+            label: 'Encaissements clinique',
+            icon: Wallet,
+            module: 'reception',
+            description: 'Consultations, examens, chirurgie et hospitalisation',
           },
           {
             to: '/admin/salaires',
@@ -434,49 +443,23 @@ const directionOperationalNav: NavSection[] = [
             badgeKey: 'salaires',
           },
           {
-            label: 'Examens & paiements',
-            icon: Wallet,
-            module: 'reception',
-            children: [
-              {
-                to: '/reception/en-attente-paiement',
-                label: 'En attente de paiement',
-                icon: Clock,
-                module: 'reception',
-              },
-              {
-                to: '/reception/examens-payes',
-                label: 'Examens payés',
-                icon: CheckCircle2,
-                module: 'reception',
-              },
-              {
-                to: '/reception/examens-payes/reclamations',
-                label: 'Réclamations',
-                icon: ClipboardList,
-                module: 'reception',
-              },
-            ],
+            to: '/comptabilite/journal-encaissements',
+            label: 'Journal encaissements',
+            icon: FileText,
+            module: 'comptabilite',
           },
           {
-            label: 'Caisse',
+            to: '/comptabilite/compte-rendu-caisse',
+            label: 'Compte rendu caisse',
             icon: Banknote,
-            module: 'reception',
-            children: [
-              {
-                to: '/reception/depenses',
-                label: 'Dépenses',
-                icon: Receipt,
-                module: 'reception',
-              },
-              {
-                to: '/comptabilite/compte-rendu-caisse',
-                label: 'Compte rendu caisse',
-                icon: Banknote,
-                module: 'comptabilite',
-                description: 'Rapprochement des créneaux matin, soir et nuit',
-              },
-            ],
+            module: 'comptabilite',
+            description: 'Rapprochement des créneaux matin, soir et nuit',
+          },
+          {
+            to: '/factures',
+            label: 'Factures',
+            icon: FileText,
+            module: 'factures',
           },
         ],
       },
@@ -502,32 +485,6 @@ const directionOperationalNav: NavSection[] = [
             label: 'Hospitalisation',
             icon: BedDouble,
             module: 'hospitalisation',
-          },
-          {
-            to: '/reception/comptabilite',
-            label: 'Encaissements clinique',
-            icon: Receipt,
-            module: 'reception',
-            description: 'Consultations, examens, chirurgie et hospitalisation',
-          },
-        ],
-      },
-      {
-        label: 'Rapports',
-        icon: FileText,
-        module: 'comptabilite',
-        children: [
-          {
-            to: '/comptabilite/journal-encaissements',
-            label: 'Journal encaissements',
-            icon: Wallet,
-            module: 'comptabilite',
-          },
-          {
-            to: '/factures',
-            label: 'Factures',
-            icon: FileText,
-            module: 'factures',
           },
         ],
       },
@@ -556,12 +513,6 @@ const directionSettingsNav: NavSection[] = [
             label: "Types d'examen",
             icon: FlaskConical,
             module: 'comptabilite',
-          },
-          {
-            to: '/laboratoire/formulaires',
-            label: 'Formulaires labo',
-            icon: ClipboardList,
-            module: 'laboratoire',
           },
           {
             to: '/comptabilite/parametres/salles',
@@ -642,6 +593,12 @@ const directionAdminNav: NavSection[] = [
         module: 'logistique',
         children: logisticsNavChildren,
       },
+      {
+        label: 'Laboratoire',
+        icon: FlaskConical,
+        module: 'laboratoire',
+        children: laboratoireNavChildren,
+      },
     ],
   },
 ]
@@ -688,20 +645,9 @@ const laborantinNav: NavSection[] = [
         description: 'File d\'attente des analyses',
         primary: true,
       },
-      {
-        to: '/laboratoire/termines',
-        label: 'Examens terminés',
-        icon: CheckCircle2,
-        module: 'laboratoire',
-        description: 'Patients dont les analyses sont clôturées',
-      },
-      {
-        to: '/laboratoire/formulaires',
-        label: 'Formulaires de résultats',
-        icon: ClipboardList,
-        module: 'laboratoire',
-        description: 'Créer et modifier les formulaires de résultats',
-      },
+      ...laboratoireNavChildren
+        .filter((item) => item.to !== '/laboratoire')
+        .map((item) => ({ ...item })),
     ],
   },
 ]
@@ -733,6 +679,12 @@ const gestionnaireNav: NavSection[] = [
         icon: FileText,
         module: 'gestionnaire',
       },
+      {
+        to: '/gestionnaire/finances',
+        label: 'Finances',
+        icon: TrendingUp,
+        module: 'gestionnaire',
+      },
     ],
   },
   {
@@ -761,6 +713,28 @@ const gestionnaireNav: NavSection[] = [
         icon: Coins,
         module: 'gestionnaire',
         badgeKey: 'salaires',
+      },
+    ],
+  },
+  {
+    label: 'Clinique',
+    items: [
+      {
+        to: '/gestionnaire/supervision',
+        label: 'Supervision',
+        icon: Eye,
+        module: 'gestionnaire',
+      },
+    ],
+  },
+  {
+    label: 'Pharmacie',
+    items: [
+      {
+        label: 'Catalogue',
+        icon: PillBottle,
+        module: 'pharmacie',
+        children: pharmacyCatalogNavChildren,
       },
     ],
   },
@@ -796,10 +770,14 @@ function filterNavChild(child: NavChildItem, role: AppUserRole): NavChildItem | 
       .map((nested) => filterNavChild(nested, role))
       .filter((nested): nested is NavChildItem => nested !== null)
     if (!children.length) return null
+    if (!canAccessModule(role, child.module)) return null
+    if (child.pharmacyCatalog && !canManagePharmacyCatalog(role)) return null
     return { ...child, children }
   }
   if (!child.to) return null
-  return canAccessModule(role, child.module) ? child : null
+  if (!canAccessModule(role, child.module)) return null
+  if (child.pharmacyCatalog && !canManagePharmacyCatalog(role)) return null
+  return child
 }
 
 function filterNavItem(item: NavItem, role: AppUserRole): NavItem | null {
@@ -808,10 +786,14 @@ function filterNavItem(item: NavItem, role: AppUserRole): NavItem | null {
       .map((child) => filterNavChild(child, role))
       .filter((child): child is NavChildItem => child !== null)
     if (!children.length) return null
+    if (!canAccessModule(role, item.module)) return null
+    if (item.pharmacyCatalog && !canManagePharmacyCatalog(role)) return null
     return { ...item, children }
   }
   if (!item.to) return null
-  return canAccessModule(role, item.module) ? item : null
+  if (!canAccessModule(role, item.module)) return null
+  if (item.pharmacyCatalog && !canManagePharmacyCatalog(role)) return null
+  return item
 }
 
 function filterSections(sections: NavSection[], role: AppUserRole): NavSection[] {

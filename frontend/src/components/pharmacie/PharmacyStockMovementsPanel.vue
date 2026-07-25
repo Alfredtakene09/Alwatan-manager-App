@@ -5,9 +5,11 @@ import { Plus, RefreshCw, Save, ArrowDownUp } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { statusBadge } from '@/lib/datatable-defaults'
+import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { PharmacyProductRecord } from '@/components/pharmacie/PharmacyProductsPanel.vue'
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiTextarea from '@/components/ui/UiTextarea.vue'
@@ -231,6 +233,27 @@ async function saveMovement() {
 
 onMounted(reload)
 
+type MovementExportRow = (typeof tableRows.value)[number]
+
+const movementExportColumns: ExportColumn<MovementExportRow>[] = [
+  { header: 'Date', value: (r) => r.date },
+  { header: 'Produit', value: (r) => r.productName },
+  { header: 'Type', value: (r) => r.typeLabel },
+  { header: 'Qté', value: (r) => r.quantity },
+  { header: 'Stock après', value: (r) => r.stockAfter },
+  { header: 'Fournisseur', value: (r) => r.supplierName },
+  { header: 'Référence', value: (r) => r.reference },
+  { header: 'Par', value: (r) => r.userName },
+]
+
+function exportPdf() {
+  exportTablePdf('Mouvements de stock pharmacie', movementExportColumns, tableRows.value)
+}
+
+function exportExcel() {
+  exportTableExcel('Mouvements de stock pharmacie', movementExportColumns, tableRows.value)
+}
+
 defineExpose({ reload })
 </script>
 
@@ -241,6 +264,7 @@ defineExpose({ reload })
         <option value="">Tous les produits</option>
         <option v-for="p in products" :key="p.id" :value="p.id">{{ p.name }}</option>
       </select>
+      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="reload">
         Actualiser
       </UiButton>

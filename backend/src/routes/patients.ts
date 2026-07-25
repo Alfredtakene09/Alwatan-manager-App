@@ -30,6 +30,7 @@ import {
   serializePatientForDuplicate,
 } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
+import { selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -47,10 +48,18 @@ const patientSchema = z
     address: z.string().optional(),
     category: z.nativeEnum(PatientCategory).optional(),
     recommendedByName: z.string().optional(),
+    /** Médecin traitant permanent du dossier (optionnel) */
+    treatingDoctorId: z.string().nullable().optional(),
   })
   .superRefine((data, ctx) => {
     refinePatientAge(data, ctx);
   });
+
+const treatingDoctorSelect = {
+  id: true,
+  firstName: true,
+  lastName: true,
+} as const;
 
 function normalizeRecommendedByName(name?: string | null) {
   const trimmed = name?.trim();
@@ -60,6 +69,25 @@ function normalizeRecommendedByName(name?: string | null) {
 function resolvePatientCategory(category?: PatientCategory | null) {
   if (!category || category === PatientCategory.ONG) return PatientCategory.STANDARD;
   return category;
+}
+
+function normalizeTreatingDoctorId(value?: string | null) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+async function assertSelectableTreatingDoctor(treatingDoctorId: string | null | undefined) {
+  const normalized = normalizeTreatingDoctorId(treatingDoctorId);
+  if (!normalized) return normalized;
+  const doctor = await prisma.user.findFirst({
+    where: selectableDoctorByIdWhere(normalized),
+  });
+  if (!doctor) {
+    throw new Error("TREATING_DOCTOR_INVALID");
+  }
+  return normalized;
 }
 
 const receptionUpdateSchema = patientSchema.extend({
@@ -264,6 +292,7 @@ router.get("/", async (req, res) => {
           }
         : {}),
     },
+    include: { treatingDoctor: { select: treatingDoctorSelect } },
     orderBy: [{ createdAt: "desc" }, { code: "desc" }],
     take: 50,
   });
@@ -326,9 +355,16 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
     const body = registerConsultationSchema.parse(req.body);
 
     const doctor = await prisma.user.findFirst({
-      where: { id: body.doctorId, role: "MEDECIN", active: true },
+      where: selectableDoctorByIdWhere(body.doctorId),
     });
     if (!doctor) return res.status(400).json({ error: "Médecin invalide" });
+
+    let treatingDoctorId: string | null | undefined;
+    try {
+      treatingDoctorId = await assertSelectableTreatingDoctor(body.treatingDoctorId);
+    } catch {
+      return res.status(400).json({ error: "Médecin traitant invalide" });
+    }
 
     const category = resolvePatientCategory(body.category);
     const billing = resolveConsultationBilling(
@@ -376,10 +412,13 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
           category: resolvePatientCategory(category),
           ongName: null,
           recommendedByName: normalizeRecommendedByName(body.recommendedByName),
+          treatingDoctorId: treatingDoctorId ?? null,
           dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : undefined,
         },
+        include: { treatingDoctor: { select: treatingDoctorSelect } },
       });
 
+      // doctorId de visite reste celui du formulaire (requis) — pas d'auto-override depuis treatingDoctorId
       const visit = await tx.visit.create({
         data: {
           patientId: patient.id,
@@ -449,7 +488,10 @@ router.get("/:id/consultation-fee", requireModule("reception"), async (req, res)
 
 router.get("/:id", requireModule("reception"), async (req, res) => {
   const patientId = String(req.params.id);
-  const patient = await prisma.patient.findUnique({ where: { id: patientId } });
+  const patient = await prisma.patient.findUnique({
+    where: { id: patientId },
+    include: { treatingDoctor: { select: treatingDoctorSelect } },
+  });
   if (!patient) return res.status(404).json({ error: "Patient introuvable" });
 
   const printableVisit = await findPrintableConsultationVisit(patient.id);
@@ -463,6 +505,13 @@ router.get("/:id", requireModule("reception"), async (req, res) => {
 router.post("/", requireModule("reception"), async (req, res) => {
   try {
     const body = patientSchema.parse(req.body);
+
+    let treatingDoctorId: string | null | undefined;
+    try {
+      treatingDoctorId = await assertSelectableTreatingDoctor(body.treatingDoctorId);
+    } catch {
+      return res.status(400).json({ error: "Médecin traitant invalide" });
+    }
 
     const duplicatePatient = await findDuplicatePatient({
       firstName: body.firstName,
@@ -495,8 +544,10 @@ router.post("/", requireModule("reception"), async (req, res) => {
         category: resolvePatientCategory(body.category),
         ongName: null,
         recommendedByName: normalizeRecommendedByName(body.recommendedByName),
+        treatingDoctorId: treatingDoctorId ?? null,
         dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : undefined,
       },
+      include: { treatingDoctor: { select: treatingDoctorSelect } },
     });
     return res.status(201).json(patient);
   } catch {
@@ -511,6 +562,13 @@ router.patch("/:id", requireModule("reception"), async (req, res) => {
 
     const existing = await prisma.patient.findUnique({ where: { id: patientId } });
     if (!existing) return res.status(404).json({ error: "Patient introuvable" });
+
+    let treatingDoctorId: string | null | undefined;
+    try {
+      treatingDoctorId = await assertSelectableTreatingDoctor(body.treatingDoctorId);
+    } catch {
+      return res.status(400).json({ error: "Médecin traitant invalide" });
+    }
 
     const duplicatePatient = await findDuplicatePatient({
       firstName: body.firstName,
@@ -535,14 +593,14 @@ router.patch("/:id", requireModule("reception"), async (req, res) => {
 
     if (body.doctorId) {
       const doctor = await prisma.user.findFirst({
-        where: { id: body.doctorId, role: "MEDECIN", active: true },
+        where: selectableDoctorByIdWhere(body.doctorId),
       });
       if (!doctor) return res.status(400).json({ error: "Médecin invalide" });
     }
 
     const patient = await prisma.$transaction(async (tx) => {
       const updated = await tx.patient.update({
-        where: { id: req.params.id },
+        where: { id: String(req.params.id) },
         data: {
           firstName: body.firstName,
           lastName: body.lastName,
@@ -555,7 +613,9 @@ router.patch("/:id", requireModule("reception"), async (req, res) => {
           ongName: null,
           recommendedByName: normalizeRecommendedByName(body.recommendedByName),
           dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : undefined,
+          ...(treatingDoctorId !== undefined ? { treatingDoctorId } : {}),
         },
+        include: { treatingDoctor: { select: treatingDoctorSelect } },
       });
 
       await syncWaitingVisit(

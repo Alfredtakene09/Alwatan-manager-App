@@ -3,10 +3,12 @@ withDefaults(
   defineProps<{
     disabled?: boolean
     inactive?: boolean
+    label?: string
   }>(),
   {
     disabled: false,
     inactive: false,
+    label: 'Date',
   },
 )
 
@@ -18,7 +20,7 @@ const model = defineModel<string>({ required: true })
     class="caisse-compact-date"
     :class="{ 'caisse-compact-date--inactive': inactive || disabled }"
   >
-    <span class="caisse-compact-date__label">Date</span>
+    <span class="caisse-compact-date__label">{{ label }}</span>
     <input
       v-model="model"
       type="date"

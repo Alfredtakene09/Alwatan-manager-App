@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Settings, Scissors, Eye } from '@lucide/vue'
+import { RouterLink } from 'vue-router'
+import { Settings, Scissors, Eye, ExternalLink } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import { clinicPercentFromSplits } from '@/lib/intervention-splits'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+
+const { uiText, localeCode } = useAppI18n()
 
 const interventions = ref<any[]>([])
 const message = ref('')
@@ -20,28 +24,32 @@ const viewingIntervention = ref<any | null>(null)
 
 const interventionsById = computed(() => new Map(interventions.value.map((i) => [i.id, i])))
 
-const CATEGORY_LABELS: Record<string, string> = {
-  MAJEURE_A: 'Majeure (A)',
-  MOYENNE_B: 'Moyenne (B)',
-  PETITE_C: 'Petite (C)',
+function categoryLabel(category: string) {
+  const labels: Record<string, string> = {
+    MAJEURE_A: 'Majeure (A)',
+    MOYENNE_B: 'Moyenne (B)',
+    PETITE_C: 'Petite (C)',
+  }
+  return uiText(labels[category] ?? category)
 }
 
-const interventionRows = computed(() =>
-  interventions.value.map((item) => ({
+const interventionRows = computed(() => {
+  localeCode.value
+  return interventions.value.map((item) => ({
     id: item.id,
     label: item.label,
     code: item.code,
-    category: CATEGORY_LABELS[item.category] ?? item.category,
+    category: categoryLabel(item.category),
     cost: formatFcfa(item.totalCostFcfa),
     costSort: item.totalCostFcfa,
     surgeonPercent: `${item.surgeonPercent}%`,
     active: item.active,
-    statusLabel: item.active ? 'Actif' : 'Inactif',
+    statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),
     statusVariant: item.active ? 'success' : 'danger',
-    toggleLabel: item.active ? 'Désactiver' : 'Activer',
+    toggleLabel: item.active ? uiText('Désactiver') : uiText('Activer'),
     isActive: item.active,
-  })),
-)
+  }))
+})
 
 const interventionColumns = [
   { data: 'label', title: 'Libellé', render: (v: string) => `<span class="dt-name">${v}</span>` },
@@ -111,20 +119,35 @@ onMounted(load)
   <div>
     <UiPageHeader
       title="Administration"
-      subtitle="Paramétrage de la nomenclature chirurgicale"
+      subtitle="Consultation de la nomenclature chirurgicale — création et modification via Types opérations"
       :icon="Settings"
     />
 
     <UiAlert v-if="message" type="success" :message="message" />
 
+    <UiAlert
+      type="info"
+      message="Pour créer, modifier ou supprimer une opération, utilisez Paramètres → Types opérations."
+      class="admin-ops-hint"
+    />
+
+    <div class="admin-ops-actions">
+      <RouterLink to="/comptabilite/types-examen/operation" class="admin-ops-link">
+        <UiButton variant="secondary">
+          <ExternalLink :size="16" />
+          {{ uiText("Gérer les types d'opération") }}
+        </UiButton>
+      </RouterLink>
+    </div>
+
     <div class="tabs">
       <button :class="{ active: tab === 'interventions' }" @click="tab = 'interventions'">
-        <Scissors :size="16" /> Chirurgie
+        <Scissors :size="16" /> {{ uiText('Chirurgie') }}
       </button>
     </div>
 
     <template v-if="tab === 'interventions'">
-      <UiCard title="Nomenclature chirurgicale" description="Tarifs et pourcentages médecin opérateur" :icon="Scissors" icon-variant="rose" class="section">
+      <UiCard title="Nomenclature chirurgicale" description="Tarifs et pourcentages médecin opérateur — activation rapide ci-dessous" :icon="Scissors" icon-variant="rose" class="section">
         <div class="table-panel-scroll">
           <UiDataTable
             table-key="admin-interventions"
@@ -154,8 +177,8 @@ onMounted(load)
             <dd>{{ viewingIntervention.label }}</dd>
           </div>
           <div class="operation-detail__row">
-            <dt>Catégorie</dt>
-            <dd>{{ CATEGORY_LABELS[viewingIntervention.category] ?? viewingIntervention.category }}</dd>
+            <dt>{{ uiText('Catégorie') }}</dt>
+            <dd>{{ categoryLabel(viewingIntervention.category) }}</dd>
           </div>
           <div class="operation-detail__row">
             <dt>Coût total</dt>
@@ -180,8 +203,8 @@ onMounted(load)
             <dd>{{ viewingClinicPercent(viewingIntervention) }}%</dd>
           </div>
           <div class="operation-detail__row">
-            <dt>Statut</dt>
-            <dd>{{ viewingIntervention.active ? 'Actif' : 'Inactif' }}</dd>
+            <dt>{{ uiText('Statut') }}</dt>
+            <dd>{{ viewingIntervention.active ? uiText('Actif') : uiText('Inactif') }}</dd>
           </div>
         </dl>
         <template #footer>
@@ -193,6 +216,18 @@ onMounted(load)
 </template>
 
 <style scoped>
+.admin-ops-hint {
+  margin-bottom: 0.75rem;
+}
+
+.admin-ops-actions {
+  margin-bottom: 1rem;
+}
+
+.admin-ops-link {
+  text-decoration: none;
+}
+
 .tabs {
   display: flex;
   gap: 0.5rem;

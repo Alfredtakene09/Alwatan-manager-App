@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { Phone } from '@lucide/vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import { PATIENT_AGE_UNITS, type PatientAgeUnit } from '@/lib/patient-age'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 const fullName = defineModel<string>('fullName', { required: true })
 const age = defineModel<string>('age', { required: true })
@@ -10,9 +11,32 @@ const ageUnit = defineModel<PatientAgeUnit>('ageUnit', { default: 'YEARS' })
 const phone = defineModel<string>('phone', { default: '' })
 const gender = defineModel<string>('gender', { default: 'F' })
 
+const { uiText, localeCode } = useAppI18n()
+
 const activeAgeConfig = computed(
   () => PATIENT_AGE_UNITS.find((row) => row.value === ageUnit.value) ?? PATIENT_AGE_UNITS[0],
 )
+
+const ageUnits = computed(() => {
+  void localeCode.value
+  return PATIENT_AGE_UNITS.map((unit) => ({
+    ...unit,
+    label: uiText(unit.label),
+  }))
+})
+
+const labels = computed(() => {
+  void localeCode.value
+  return {
+    fullName: uiText('Nom et prénom'),
+    phone: uiText('Téléphone'),
+    age: uiText('Âge'),
+    ageUnit: uiText("Unité d'âge"),
+    gender: uiText('Genre'),
+    female: uiText('Féminin'),
+    male: uiText('Masculin'),
+  }
+})
 </script>
 
 <template>
@@ -20,13 +44,13 @@ const activeAgeConfig = computed(
     <div class="patient-identity__row patient-identity__row--name-phone">
       <UiInput
         v-model="fullName"
-        label="Nom et prénom"
+        :label="labels.fullName"
         placeholder="Ex. Fatimé Abakar"
         required
       />
       <UiInput
         v-model="phone"
-        label="Téléphone"
+        :label="labels.phone"
         placeholder="06 XX XX XX XX"
         :icon="Phone"
       />
@@ -34,7 +58,7 @@ const activeAgeConfig = computed(
 
     <div class="patient-identity__row patient-identity__row--age-gender">
       <div class="age-field">
-        <span class="field-label">Âge <span class="field-label__req">*</span></span>
+        <span class="field-label">{{ labels.age }} <span class="field-label__req">*</span></span>
         <div class="age-field__body">
           <UiInput
             v-model="age"
@@ -46,9 +70,9 @@ const activeAgeConfig = computed(
             required
             class="age-field__input"
           />
-          <div class="age-units" role="group" aria-label="Unité d'âge">
+          <div class="age-units" role="group" :aria-label="labels.ageUnit">
             <button
-              v-for="unit in PATIENT_AGE_UNITS"
+              v-for="unit in ageUnits"
               :key="unit.value"
               type="button"
               class="age-unit"
@@ -62,15 +86,15 @@ const activeAgeConfig = computed(
       </div>
 
       <div class="gender-field">
-        <span class="field-label">Genre</span>
-        <div class="gender-options" role="group" aria-label="Genre">
+        <span class="field-label">{{ labels.gender }}</span>
+        <div class="gender-options" role="group" :aria-label="labels.gender">
           <button
             type="button"
             class="gender-option"
             :class="{ 'gender-option--active': gender === 'F' }"
             @click="gender = 'F'"
           >
-            Féminin
+            {{ labels.female }}
           </button>
           <button
             type="button"
@@ -78,7 +102,7 @@ const activeAgeConfig = computed(
             :class="{ 'gender-option--active': gender === 'M' }"
             @click="gender = 'M'"
           >
-            Masculin
+            {{ labels.male }}
           </button>
         </div>
       </div>

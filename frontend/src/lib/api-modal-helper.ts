@@ -2,6 +2,12 @@ import axios from 'axios'
 import { useAppModal } from '@/composables/useAppModal'
 import { duplicateModalFromApi, isDuplicateApiBody } from '@/lib/duplicate-error'
 import type { AppModalOptions, AppModalType } from '@/lib/app-modal'
+import { translateUi } from '@/i18n/translate'
+
+/**
+ * Feedback standard (voir aussi `@/lib/ui-feedback`) :
+ * confirmAppModal · showApiErrorModal · showSuccessModal.
+ */
 
 /** Demande de confirmation via le modal global (remplace window.confirm). */
 export async function confirmAppModal(
@@ -54,6 +60,6 @@ export async function showApiErrorModal(
         : fallbackMessage
 
   const { showModal } = useAppModal()
-  await showModal({ type: 'ERROR', title: 'Erreur', message })
+  await showModal({ type: 'ERROR', title: translateUi('Erreur'), message: translateUi(message) })
   return true
 }

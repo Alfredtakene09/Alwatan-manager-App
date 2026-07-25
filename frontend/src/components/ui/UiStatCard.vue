@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Component } from 'vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
-defineProps<{
+const props = defineProps<{
   label: string
   value: number | string
   icon: Component
@@ -10,6 +12,12 @@ defineProps<{
   compact?: boolean
   mini?: boolean
 }>()
+
+const { uiText, localeCode } = useAppI18n()
+const labelText = computed(() => {
+  void localeCode.value
+  return uiText(props.label)
+})
 </script>
 
 <template>
@@ -21,7 +29,7 @@ defineProps<{
     }]"
   >
     <div class="stat-card__top">
-      <span class="stat-card__label">{{ label }}</span>
+      <span class="stat-card__label">{{ labelText }}</span>
       <div class="stat-card__icon" :class="`stat-card__icon--${variant ?? 'green'}`">
         <component :is="icon" :size="mini || compact ? 14 : 20" />
       </div>

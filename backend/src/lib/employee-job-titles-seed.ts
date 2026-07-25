@@ -1,5 +1,4 @@
 export const DEFAULT_EMPLOYEE_JOB_TITLES = [
-  "Administrateur système",
   "Réceptionniste",
   "Secrétaire médicale",
   "Direction",

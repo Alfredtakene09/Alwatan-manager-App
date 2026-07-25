@@ -12,6 +12,7 @@ import {
   Send,
 } from '@lucide/vue'
 import { fullName } from '@/lib/roles'
+import { formatAppDateTime } from '@/i18n/locale-format'
 import {
   parsePrescribedExamsByKind,
   parsePrescribedExamCommentsByKind,
@@ -61,15 +62,15 @@ const doctorLabel = computed(() => {
 const transferredAt = computed(() => {
   const raw = props.visit?.consultation?.labSentToLabAt ?? props.visit?.updatedAt
   if (!raw) return '—'
-  return new Date(raw).toLocaleString('fr-FR')
+  return formatAppDateTime(raw)
 })
 
 const completedAt = computed(() => {
   if (!props.visit) return null
   const parsed = parseLabResultsCompletedAt(props.visit.consultation?.clinicalNotes)
-  if (parsed) return parsed.toLocaleString('fr-FR')
+  if (parsed) return formatAppDateTime(parsed)
   if (props.completed && props.visit.consultation?.updatedAt) {
-    return new Date(props.visit.consultation.updatedAt).toLocaleString('fr-FR')
+    return formatAppDateTime(props.visit.consultation.updatedAt)
   }
   return null
 })

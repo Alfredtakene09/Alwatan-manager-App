@@ -13,13 +13,7 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
 
-export type ExpenseIndiceRecord = {
-  id: string
-  name: string
-  description: string | null
-  active: boolean
-  sortOrder: number
-}
+import type { ExpenseIndiceRecord } from '@/lib/expense-indices'
 
 const emit = defineEmits<{
   changed: []
@@ -283,7 +277,7 @@ onMounted(loadItems)
         v-model="formDescription"
         label="Description"
         placeholder="Détail du motif de dépense…"
-        rows="3"
+        :rows="3"
       />
     </section>
     <template #footer>

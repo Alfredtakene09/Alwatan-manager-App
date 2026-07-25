@@ -2,7 +2,7 @@ import type { Config, ConfigColumns } from 'datatables.net'
 import { translateUi } from '@/i18n/translate'
 import { DATATABLE_FR, getDatatableLanguage } from './datatable-fr'
 
-export const DEFAULT_DATATABLE_OPTIONS: Config = {
+export const DEFAULT_DATATABLE_OPTIONS = {
   paging: false,
   lengthChange: false,
   searching: false,
@@ -15,7 +15,7 @@ export const DEFAULT_DATATABLE_OPTIONS: Config = {
   stateSave: false,
   dom: 'rt',
   language: DATATABLE_FR,
-}
+} as Config
 
 export function getDefaultDatatableOptions(): Config {
   return {
@@ -76,18 +76,19 @@ export function catalogRowActionsHtml(row: {
   const isActive = row.isActive !== false
   const toggleIcon = isActive ? DT_ICONS.ban : DT_ICONS.check
   const toggleClass = isActive ? 'dt-btn--catalog-off' : 'dt-btn--catalog-on'
-  const toggleLabel = row.toggleLabel ?? (isActive ? 'Désactiver' : 'Activer')
+  const toggleLabel =
+    row.toggleLabel ?? (isActive ? translateUi('Désactiver') : translateUi('Activer'))
 
   return `
     <div class="dt-row-actions dt-catalog-actions" data-id="${row.id}">
       ${
         showView
-          ? `<button type="button" class="dt-btn dt-btn--icon dt-btn--icon-soft" data-action="view" title="Voir" aria-label="Voir">${DT_ICONS.view}</button>`
+          ? `<button type="button" class="dt-btn dt-btn--icon dt-btn--icon-soft" data-action="view" title="${translateUi('Voir')}" aria-label="${translateUi('Voir')}">${DT_ICONS.view}</button>`
           : ''
       }
       ${
         showEdit
-          ? `<button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-edit" data-action="edit" title="Modifier" aria-label="Modifier">${DT_ICONS.edit}</button>`
+          ? `<button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-edit" data-action="edit" title="${translateUi('Modifier')}" aria-label="${translateUi('Modifier')}">${DT_ICONS.edit}</button>`
           : ''
       }
       ${
@@ -97,7 +98,7 @@ export function catalogRowActionsHtml(row: {
       }
       ${
         canDelete
-          ? `<button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-delete" data-action="delete" title="Supprimer" aria-label="Supprimer">${DT_ICONS.delete}</button>`
+          ? `<button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-delete" data-action="delete" title="${translateUi('Supprimer')}" aria-label="${translateUi('Supprimer')}">${DT_ICONS.delete}</button>`
           : ''
       }
     </div>
@@ -145,7 +146,7 @@ export function statusBadge(
 }
 
 /** Colonne # — numérotation 1, 2, 3… depuis le haut (pagination incluse). */
-export const ROW_NUMBER_COLUMN: ConfigColumns = {
+export const ROW_NUMBER_COLUMN = {
   data: null,
   title: '#',
   orderable: false,
@@ -159,7 +160,7 @@ export const ROW_NUMBER_COLUMN: ConfigColumns = {
     if (type === 'sort' || type === 'type') return num
     return ''
   },
-}
+} as ConfigColumns
 
 /** columnDefs de base pour garder # toujours visible. */
 export const ROW_NUMBER_COLUMN_DEF = {

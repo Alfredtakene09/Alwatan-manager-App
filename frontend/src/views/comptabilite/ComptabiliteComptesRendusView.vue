@@ -11,59 +11,63 @@ import {
   Scissors,
   Banknote,
 } from '@lucide/vue'
-import api from '@/api/client'
 import { useComptabiliteQueue } from '@/composables/useComptabiliteQueue'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import ComptabiliteStatsGrid from '@/components/comptabilite/ComptabiliteStatsGrid.vue'
 
 const router = useRouter()
+const { uiText, localeCode } = useAppI18n()
 const { data, load } = useComptabiliteQueue()
 
-const sections = [
+const sections = computed(() => {
+  void localeCode.value
+  return [
   {
     to: '/comptabilite/en-attente-paiement',
-    label: 'En attente de paiement',
-    description: 'Examens prescrits par les médecins',
+    label: uiText('En attente de paiement'),
+    description: uiText('Examens prescrits par les médecins'),
     icon: Clock,
     countKey: 'labPending' as const,
   },
   {
     to: '/comptabilite/compte-rendu-caisse',
-    label: 'Compte rendu caisse',
-    description: 'Matin & soir — décaissement par caissier',
+    label: uiText('Compte rendu caisse'),
+    description: uiText('Matin & soir — décaissement par caissier'),
     icon: Banknote,
     countKey: null,
   },
   {
     to: '/reception/comptabilite',
-    label: 'Encaissements clinique',
-    description: 'Consultations, examens, chirurgie et hospitalisation',
+    label: uiText('Encaissements clinique'),
+    description: uiText('Consultations, examens, chirurgie et hospitalisation'),
     icon: Receipt,
     countKey: null,
   },
   {
     to: '/hospitalisation',
-    label: 'Hospitalisation',
-    description: 'Attribution des salles et hospitalisations',
+    label: uiText('Hospitalisation'),
+    description: uiText('Attribution des salles et hospitalisations'),
     icon: BedDouble,
     countKey: 'hospitalizations' as const,
   },
   {
     to: '/comptabilite/operations-attente',
-    label: 'Opérations en attente',
-    description: 'Opérations payées à planifier',
+    label: uiText('Opérations en attente'),
+    description: uiText('Opérations payées à planifier'),
     icon: Scissors,
     countKey: 'surgeries' as const,
   },
   {
     to: '/factures',
-    label: 'Factures',
-    description: 'Tous les documents comptables',
+    label: uiText('Factures'),
+    description: uiText('Tous les documents comptables'),
     icon: FileText,
     countKey: null,
   },
 ]
+})
 
 const counts = computed(() => ({
   labPending: data.value?.labExamsPending?.length ?? 0,

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { BedDouble, Printer, Save } from '@lucide/vue'
+import api from '@/api/client'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -18,6 +19,15 @@ import {
 } from '@/lib/hospitalization-admission'
 import { parsePrescribedHospitalisationDays } from '@/lib/lab-notes'
 
+export type AdmissionAvailableBed = {
+  id: string
+  code: string
+  label: string | null
+  roomId: string
+  roomName: string
+  dailyRateFcfa: number
+}
+
 export type AdmissionRoomTypeOption = {
   type: 'VIP' | 'SIMPLE'
   label: string
@@ -25,6 +35,8 @@ export type AdmissionRoomTypeOption = {
   dailyRateFcfa: number
   availableCount: number
   autoRoomId: string | null
+  autoBedId?: string | null
+  availableBeds?: AdmissionAvailableBed[]
   blockedReason?: 'VIP_OCCUPIED' | null
 }
 
@@ -38,6 +50,8 @@ export type AdmissionHospContext = {
   endDate?: string | null
   service?: string | null
   attendingDoctor?: string | null
+  attendingDoctorId?: string | null
+  bedId?: string | null
   doctorInstructions?: string | null
   visit: {
     patient: {
@@ -46,17 +60,19 @@ export type AdmissionHospContext = {
       lastName: string
     }
     consultation?: {
-      doctor?: { firstName: string; lastName: string } | null
+      doctor?: { id?: string; firstName: string; lastName: string } | null
       doctorComment?: string | null
       diagnosis?: string | null
       clinicalNotes?: string | null
     } | null
-    assignedDoctor?: { firstName: string; lastName: string } | null
+    assignedDoctor?: { id?: string; firstName: string; lastName: string } | null
   }
   room?: { id?: string; name: string; type?: string } | null
+  attendingDoctorUser?: { id: string; firstName: string; lastName: string } | null
 }
 
 type RoomTypeChoice = '' | 'VIP' | 'SIMPLE'
+type DoctorOption = { id: string; firstName: string; lastName: string }
 
 const props = withDefaults(
   defineProps<{
@@ -70,10 +86,12 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   close: []
-  confirm: [payload: HospitalizationAdmissionForm & { hospitalizationId: string; roomId?: string }]
+  confirm: [payload: HospitalizationAdmissionForm & { hospitalizationId: string; roomId?: string; bedId?: string }]
 }>()
 
 const roomTypeChoice = ref<RoomTypeChoice>('')
+const bedChoice = ref('')
+const doctors = ref<DoctorOption[]>([])
 const form = ref<HospitalizationAdmissionForm>(defaultAdmissionForm({
   patientFirstName: '',
   patientLastName: '',
@@ -83,18 +101,13 @@ const isReadonly = computed(() => props.mode === 'view')
 const isProgrammed = computed(() => props.mode === 'edit' || props.mode === 'view')
 const isVipForm = computed(() => form.value.roomType === 'VIP')
 
-const attendingDoctorLabel = computed(() => {
-  if (!props.hosp) return '—'
-  const doctor = props.hosp.visit.consultation?.doctor ?? props.hosp.visit.assignedDoctor
-  if (doctor) return `Dr ${fullName(doctor.firstName, doctor.lastName)}`
-  return form.value.attendingDoctor?.trim() || '—'
-})
-
 const serviceLabel = computed(() => 'Hospitalisation')
 
 const selectedRoomType = computed(() =>
   props.roomTypes.find((room) => room.type === roomTypeChoice.value) ?? null,
 )
+
+const availableBeds = computed(() => selectedRoomType.value?.availableBeds ?? [])
 
 const billing = computed(() =>
   computeHospitalizationBilling(
@@ -110,7 +123,9 @@ const datesValid = computed(() => form.value.stayDays >= 1 && Boolean(form.value
 const canSubmit = computed(() => {
   if (!props.hosp || !datesValid.value || isReadonly.value) return false
   if (props.mode === 'edit') return true
-  return Boolean(roomTypeChoice.value && selectedRoomType.value?.autoRoomId)
+  if (!roomTypeChoice.value || !selectedRoomType.value?.autoRoomId) return false
+  if (availableBeds.value.length > 0 && !bedChoice.value) return false
+  return true
 })
 
 const modalSubtitle = computed(() => {
@@ -119,9 +134,36 @@ const modalSubtitle = computed(() => {
   return 'Formulaire d\'admission hospitalière'
 })
 
+function prefDoctorId() {
+  if (!props.hosp) return ''
+  return (
+    props.hosp.attendingDoctorId ||
+    props.hosp.attendingDoctorUser?.id ||
+    props.hosp.visit.consultation?.doctor?.id ||
+    props.hosp.visit.assignedDoctor?.id ||
+    ''
+  )
+}
+
+async function loadDoctors() {
+  try {
+    const { data } = await api.get<DoctorOption[]>('/visits/doctors')
+    doctors.value = Array.isArray(data) ? data : []
+  } catch {
+    doctors.value = []
+  }
+}
+
 function syncStayEndDate() {
   if (!form.value.startDate || form.value.stayDays < 1) return
   form.value.endDate = endDateFromStayDays(form.value.startDate, form.value.stayDays)
+}
+
+function applySelectedDoctorLabel() {
+  const doctor = doctors.value.find((d) => d.id === form.value.attendingDoctorId)
+  if (doctor) {
+    form.value.attendingDoctor = `Dr ${fullName(doctor.firstName, doctor.lastName)}`
+  }
 }
 
 function syncFormFromContext() {
@@ -129,8 +171,10 @@ function syncFormFromContext() {
   if (isProgrammed.value) {
     form.value = admissionFormFromHospitalization(props.hosp)
     roomTypeChoice.value = (props.hosp.roomType as RoomTypeChoice) || ''
+    bedChoice.value = props.hosp.bedId ?? ''
   } else {
     roomTypeChoice.value = ''
+    bedChoice.value = ''
     const prescribedDays = parsePrescribedHospitalisationDays(props.hosp.visit.consultation?.clinicalNotes)
     const baseForm = admissionFormFromHospitalization(props.hosp)
     form.value = defaultAdmissionForm({
@@ -138,6 +182,7 @@ function syncFormFromContext() {
       patientLastName: props.hosp.visit.patient.lastName,
       patientCode: props.hosp.visit.patient.code,
       attendingDoctor: baseForm.attendingDoctor,
+      attendingDoctorId: prefDoctorId() || baseForm.attendingDoctorId,
       doctorInstructions: baseForm.doctorInstructions,
       roomType: props.hosp.roomType,
       dailyRateFcfa: props.hosp.dailyRateFcfa,
@@ -146,7 +191,10 @@ function syncFormFromContext() {
     })
   }
   form.value.service = serviceLabel.value
-  form.value.attendingDoctor = attendingDoctorLabel.value
+  if (!form.value.attendingDoctorId) {
+    form.value.attendingDoctorId = prefDoctorId()
+  }
+  applySelectedDoctorLabel()
 }
 
 watch(
@@ -163,7 +211,29 @@ watch(roomTypeChoice, () => {
   if (room?.dailyRateFcfa) {
     form.value.dailyRateFcfa = room.dailyRateFcfa
   }
+  bedChoice.value = room?.autoBedId ?? availableBeds.value[0]?.id ?? ''
+  form.value.bedId = bedChoice.value
+  const selectedBed = availableBeds.value.find((b) => b.id === bedChoice.value)
+  if (selectedBed) {
+    form.value.roomName = selectedBed.roomName
+    form.value.dailyRateFcfa = selectedBed.dailyRateFcfa
+  }
 })
+
+watch(bedChoice, () => {
+  if (isProgrammed.value) return
+  form.value.bedId = bedChoice.value
+  const selectedBed = availableBeds.value.find((b) => b.id === bedChoice.value)
+  if (selectedBed) {
+    form.value.roomName = selectedBed.roomName
+    form.value.dailyRateFcfa = selectedBed.dailyRateFcfa
+  }
+})
+
+watch(
+  () => form.value.attendingDoctorId,
+  () => applySelectedDoctorLabel(),
+)
 
 watch(
   () => [form.value.startDate, form.value.stayDays] as const,
@@ -181,41 +251,52 @@ function onStayDaysInput(value: string | number) {
 
 function onPrint() {
   syncStayEndDate()
+  applySelectedDoctorLabel()
   printHospitalizationAdmission(form.value, { autoPrint: true })
 }
 
 function onSubmit() {
   if (!props.hosp || !canSubmit.value) return
   syncStayEndDate()
-  const payload = {
+  applySelectedDoctorLabel()
+  const selectedBed = availableBeds.value.find((b) => b.id === bedChoice.value)
+  const payload: HospitalizationAdmissionForm & {
+    hospitalizationId: string
+    roomId?: string
+    bedId?: string
+  } = {
     ...form.value,
     reductionFcfa: billing.value.reductionFcfa,
     hospitalizationId: props.hosp.id,
+    attendingDoctorId: form.value.attendingDoctorId || '',
+    bedId: form.value.bedId || bedChoice.value || selectedBed?.id || '',
   }
   if (props.mode === 'create') {
-    const roomId = selectedRoomType.value?.autoRoomId
+    const roomId = selectedBed?.roomId ?? selectedRoomType.value?.autoRoomId
     if (!roomId) return
-    emit('confirm', { ...payload, roomId })
+    emit('confirm', { ...payload, roomId, bedId: selectedBed?.id ?? payload.bedId })
     return
   }
   emit('confirm', payload)
 }
+
+onMounted(loadDoctors)
 </script>
 
 <template>
   <UiFormModal
     v-if="hosp"
     size="large"
-    title="Profil d'entrée en paroisse"
+    title="Profil d'admission hospitalière"
     :subtitle="modalSubtitle"
     :icon="BedDouble"
     @close="emit('close')"
   >
     <div class="hosp-adm-form" :class="{ 'hosp-adm-form--vip': isVipForm }">
-      <ClinicLetterhead doc-title="Profil d'entrée en paroisse" />
+      <ClinicLetterhead doc-title="Profil d'admission hospitalière" />
 
       <div class="hosp-adm-form__doc-title">
-        <h2>Profil d'entrée en paroisse</h2>
+        <h2>Profil d'admission hospitalière</h2>
         <p dir="rtl">{{ isVipForm ? 'ملف دخول عنبر VIP' : 'ملف دخول عنبر' }}</p>
         <div v-if="isVipForm" class="hosp-adm-form__vip-banner" aria-hidden="true">VIP</div>
       </div>
@@ -273,6 +354,17 @@ function onSubmit() {
             <span>{{ selectedRoomType.roomName }}</span>
             <strong>{{ formatFcfa(selectedRoomType.dailyRateFcfa) }}/nuit</strong>
           </div>
+          <UiSelect
+            v-if="roomTypeChoice && availableBeds.length && !isReadonly"
+            v-model="bedChoice"
+            label="Lit"
+            required
+          >
+            <option value="" disabled>Sélectionner un lit</option>
+            <option v-for="bed in availableBeds" :key="bed.id" :value="bed.id">
+              {{ bed.roomName }} — {{ bed.label || bed.code }}
+            </option>
+          </UiSelect>
         </template>
       </section>
 
@@ -297,19 +389,29 @@ function onSubmit() {
       </section>
 
       <section class="hosp-adm-form__section">
-        <h3>Service et médecin traitant</h3>
-        <div class="hosp-adm-form__readonly-grid">
+        <h3>Service et médecin</h3>
+        <div class="hosp-adm-form__grid">
           <div class="hosp-adm-form__readonly-item">
             <span class="hosp-adm-form__readonly-label">Service</span>
             <strong class="hosp-adm-form__readonly-value">{{ serviceLabel }}</strong>
           </div>
-          <div class="hosp-adm-form__readonly-item">
-            <span class="hosp-adm-form__readonly-label">Médecin traitant</span>
-            <strong class="hosp-adm-form__readonly-value">{{ attendingDoctorLabel }}</strong>
+          <UiSelect
+            v-if="!isReadonly"
+            v-model="form.attendingDoctorId"
+            label="Médecin hospitalier"
+          >
+            <option value="">Sélectionner un médecin</option>
+            <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
+              Dr {{ fullName(doctor.firstName, doctor.lastName) }}
+            </option>
+          </UiSelect>
+          <div v-else class="hosp-adm-form__readonly-item">
+            <span class="hosp-adm-form__readonly-label">Médecin hospitalier</span>
+            <strong class="hosp-adm-form__readonly-value">{{ form.attendingDoctor || '—' }}</strong>
           </div>
         </div>
-        <p class="hosp-adm-form__hint">
-          Informations issues du dossier patient — non modifiables à l'admission.
+        <p v-if="!isReadonly" class="hosp-adm-form__hint">
+          Prérempli depuis le médecin de la visite — modifiable pour cette hospitalisation.
         </p>
       </section>
 

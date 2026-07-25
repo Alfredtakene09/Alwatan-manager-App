@@ -5,6 +5,8 @@ import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
 import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -54,29 +56,36 @@ const editForm = ref({
 
 const roomsById = computed(() => new Map(rooms.value.map((room) => [room.id, room])))
 
+const { uiText, localeCode } = useAppI18n()
+
+const roomCountLabel = computed(() =>
+  translateTemplate('{n} salle(s)', { n: rooms.value.length }),
+)
+
 const editingRoom = computed(() => (editingId.value ? roomsById.value.get(editingId.value) ?? null : null))
 
-const tableRows = computed(() =>
-  rooms.value.map((room) => {
+const tableRows = computed(() => {
+  localeCode.value
+  return rooms.value.map((room) => {
     const isFree = room.status === 'LIBRE'
     return {
       id: room.id,
       name: room.name,
-      typeLabel: room.type === 'VIP' ? 'VIP' : 'Simple',
+      typeLabel: room.type === 'VIP' ? 'VIP' : uiText('Simple'),
       typeVariant: room.type === 'VIP' ? 'primary' : 'info',
       rate: formatFcfa(room.dailyRateFcfa),
       rateSort: room.dailyRateFcfa,
-      availabilityLabel: isFree ? 'Libre' : 'Occupée',
+      availabilityLabel: isFree ? uiText('Libre') : uiText('Occupée'),
       availabilityVariant: isFree ? 'success' : 'danger',
-      occupancyLabel: isFree ? 'Disponible' : 'En hospitalisation',
-      statusLabel: room.active ? 'Active' : 'Inactive',
+      occupancyLabel: isFree ? uiText('Disponible') : uiText('En hospitalisation'),
+      statusLabel: room.active ? uiText('Active') : uiText('Inactive'),
       statusVariant: room.active ? 'success' : 'danger',
-      toggleLabel: room.active ? 'Désactiver' : 'Activer',
+      toggleLabel: room.active ? uiText('Désactiver') : uiText('Activer'),
       isActive: room.active,
       canDelete: isFree,
     }
-  }),
-)
+  })
+})
 
 const columns = [
   { data: 'name', title: 'Salle', render: (v: string) => `<span class="dt-name">${v}</span>` },
@@ -253,7 +262,10 @@ async function deleteRoom(id: string) {
   const confirmed = await confirmAppModal({
     type: 'DELETE',
     title: 'Supprimer la salle',
-    message: `Supprimer définitivement la salle « ${room.name} » ? Cette action est irréversible.`,
+    message: translateTemplate(
+      'Supprimer définitivement la salle « {name} » ? Cette action est irréversible.',
+      { name: room.name },
+    ),
     confirmLabel: 'Supprimer',
   })
   if (!confirmed) return
@@ -319,7 +331,7 @@ onMounted(load)
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">
           Actualiser
         </UiButton>
-        <span class="list-count">{{ rooms.length }} salle(s)</span>
+        <span class="list-count">{{ roomCountLabel }}</span>
       </template>
 
       <div class="table-panel-scroll">

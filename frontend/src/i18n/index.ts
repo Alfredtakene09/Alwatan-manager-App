@@ -24,14 +24,13 @@ export function getStoredLocale(): AppLocale {
 }
 
 /**
- * Ne pas mettre dir="rtl" sur <html> : le texte latin non traduit
- * (et certaines polices) se retrouve inversé caractère par caractère.
- * Le RTL est appliqué uniquement sur les zones traduites (sidebar, etc.).
+ * Applique la langue et la direction du document.
+ * Arabe → dir=rtl (layout logique) ; le sélecteur de langue reste LTR.
  */
 export function applyDocumentLocale(locale: AppLocale) {
   if (typeof document === 'undefined') return
   document.documentElement.lang = locale === 'ar' ? 'ar' : locale
-  document.documentElement.dir = 'ltr'
+  document.documentElement.dir = locale === 'ar' ? 'rtl' : 'ltr'
   document.documentElement.dataset.locale = locale
   document.documentElement.classList.toggle('locale-ar', locale === 'ar')
   document.documentElement.classList.toggle('locale-en', locale === 'en')

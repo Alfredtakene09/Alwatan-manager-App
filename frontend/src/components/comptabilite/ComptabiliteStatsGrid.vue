@@ -9,7 +9,10 @@ import {
 } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
+
+const { uiText } = useAppI18n()
 
 export type ComptabiliteRevenueDay = {
   date: string
@@ -63,7 +66,7 @@ async function loadStats() {
     const { data } = await api.get<ComptabiliteStats>('/comptabilite/stats')
     stats.value = data
   } catch {
-    loadError.value = 'Impossible de charger les statistiques comptables.'
+    loadError.value = uiText('Impossible de charger les statistiques comptables.')
   } finally {
     loading.value = false
   }
@@ -80,35 +83,35 @@ defineExpose({ reload: loadStats })
     <p v-if="loadError" class="compta-stats__error">{{ loadError }}</p>
     <UiStatCard
       mini
-      label="Examens attente"
+      :label="uiText('Examens attente')"
       :value="stats.labPendingCount"
       :icon="Clock"
       variant="amber"
     />
     <UiStatCard
       mini
-      label="Labos jour"
+      :label="uiText('Labos jour')"
       :value="formatFcfa(stats.labPaidTodayNetFcfa)"
       :icon="FlaskConical"
       variant="teal"
     />
     <UiStatCard
       mini
-      label="Consult. jour"
+      :label="uiText('Consult. jour')"
       :value="formatFcfa(stats.consultationsTodayNetFcfa)"
       :icon="Stethoscope"
       variant="blue"
     />
     <UiStatCard
       mini
-      label="Chir. attente"
+      :label="uiText('Chir. attente')"
       :value="stats.surgeriesPending"
       :icon="Scissors"
       variant="rose"
     />
     <UiStatCard
       mini
-      label="Hospitalisations"
+      :label="uiText('Hospitalisations')"
       :value="stats.hospitalizationsPending"
       :icon="BedDouble"
       variant="violet"

@@ -3,12 +3,12 @@ import {
   InvoiceStatus,
   InvoiceType,
   PatientCategory,
-  UserRole,
 } from "@prisma/client";
 import { prisma } from "./db.js";
 import {
   doctorRequiresConsultationFee,
   resolveDoctorConsultationAmount,
+  selectableDoctorByIdWhere,
   type DoctorProfile,
 } from "./doctor-compensation.js";
 import { isExemptPatient } from "./patient-billing.js";
@@ -179,7 +179,7 @@ export async function resolveConsultationFeeForPatientDoctor(input: {
       select: { id: true, category: true },
     }),
     prisma.user.findFirst({
-      where: { id: input.doctorId, role: UserRole.MEDECIN, active: true },
+      where: selectableDoctorByIdWhere(input.doctorId),
       select: {
         role: true,
         employee: {

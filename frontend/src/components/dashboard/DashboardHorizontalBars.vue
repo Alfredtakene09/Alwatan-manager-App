@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateDashboardLabel } from '@/lib/dashboard-i18n'
 
 export type HorizontalBar = {
   key: string
@@ -14,14 +16,29 @@ const props = defineProps<{
   emptyLabel?: string
 }>()
 
+const { localeCode } = useAppI18n()
+const emptyText = computed(() => {
+  void localeCode.value
+  return props.emptyLabel
+    ? translateDashboardLabel(props.emptyLabel)
+    : translateDashboardLabel('Aucune dépense ce mois')
+})
+const localizedRows = computed(() => {
+  void localeCode.value
+  return props.rows.map((row) => ({
+    ...row,
+    label: translateDashboardLabel(row.label),
+  }))
+})
+
 const max = computed(() => Math.max(1, ...props.rows.map((row) => row.amountFcfa)))
 const total = computed(() => props.rows.reduce((sum, row) => sum + row.amountFcfa, 0))
 </script>
 
 <template>
-  <div v-if="!total" class="chart-empty">{{ emptyLabel ?? 'Aucune dépense ce mois' }}</div>
+  <div v-if="!total" class="chart-empty">{{ emptyText }}</div>
   <div v-else class="h-bars">
-    <div v-for="row in rows" :key="row.key" class="h-bars__row">
+    <div v-for="row in localizedRows" :key="row.key" class="h-bars__row">
       <span class="h-bars__label">{{ row.label }}</span>
       <div class="h-bars__track">
         <div

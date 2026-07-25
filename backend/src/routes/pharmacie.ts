@@ -8,10 +8,12 @@ import { shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
 import { applyStockMovement, recordDispensationMovement } from "../lib/pharmacy-stock.js";
 import { listPharmacyStockAlerts, listPharmacyExpiryAlerts } from "../lib/pharmacy-alerts.js";
 import { buildPharmacyReport } from "../lib/pharmacy-reports.js";
-import { requireAuth, requireModule } from "../middleware/auth.js";
+import { requireAuth, requireModule, requirePharmacyCatalogAccess } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth, requireModule("pharmacie"));
+
+const catalogAccess = [requirePharmacyCatalogAccess] as const;
 
 const prescriptionSchema = z
   .object({
@@ -176,7 +178,7 @@ function mapStockError(error: unknown, res: import("express").Response) {
   return res.status(500).json({ error: "Erreur serveur" });
 }
 
-router.get("/categories", async (_req, res) => {
+router.get("/categories", ...catalogAccess, async (_req, res) => {
   const items = await prisma.productCategory.findMany({
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     include: { _count: { select: { products: true } } },
@@ -192,7 +194,7 @@ router.get("/categories", async (_req, res) => {
   );
 });
 
-router.post("/categories", async (req, res) => {
+router.post("/categories", ...catalogAccess, async (req, res) => {
   try {
     const body = categorySchema.parse(req.body);
     const item = await prisma.productCategory.create({
@@ -208,7 +210,7 @@ router.post("/categories", async (req, res) => {
   }
 });
 
-router.put("/categories/:id", async (req, res) => {
+router.put("/categories/:id", ...catalogAccess, async (req, res) => {
   try {
     const body = categorySchema.partial().parse(req.body);
     const item = await prisma.productCategory.update({
@@ -225,7 +227,7 @@ router.put("/categories/:id", async (req, res) => {
   }
 });
 
-router.delete("/categories/:id", async (req, res) => {
+router.delete("/categories/:id", ...catalogAccess, async (req, res) => {
   try {
     const linked = await prisma.product.count({ where: { categoryId: req.params.id } });
     if (linked > 0) {
@@ -339,7 +341,7 @@ router.get("/alerts", async (_req, res) => {
   });
 });
 
-router.get("/products", async (_req, res) => {
+router.get("/products", ...catalogAccess, async (_req, res) => {
   const items = await prisma.product.findMany({
     orderBy: { name: "asc" },
     include: productInclude,
@@ -347,7 +349,7 @@ router.get("/products", async (_req, res) => {
   return res.json(items);
 });
 
-router.post("/products", async (req, res) => {
+router.post("/products", ...catalogAccess, async (req, res) => {
   try {
     const body = productSchema.parse(req.body);
     const item = await prisma.product.create({
@@ -364,7 +366,7 @@ router.post("/products", async (req, res) => {
   }
 });
 
-router.put("/products/:id", async (req, res) => {
+router.put("/products/:id", ...catalogAccess, async (req, res) => {
   try {
     const body = productSchema.partial().parse(req.body);
     const data: Record<string, unknown> = {};
@@ -397,7 +399,7 @@ router.put("/products/:id", async (req, res) => {
   }
 });
 
-router.delete("/products/:id", async (req, res) => {
+router.delete("/products/:id", ...catalogAccess, async (req, res) => {
   try {
     const salesCount = await prisma.pharmacySaleLine.count({ where: { productId: req.params.id } });
     if (salesCount > 0) {
@@ -412,12 +414,12 @@ router.delete("/products/:id", async (req, res) => {
   }
 });
 
-router.get("/suppliers", async (_req, res) => {
+router.get("/suppliers", ...catalogAccess, async (_req, res) => {
   const items = await prisma.pharmacySupplier.findMany({ orderBy: { name: "asc" } });
   return res.json(items);
 });
 
-router.post("/suppliers", async (req, res) => {
+router.post("/suppliers", ...catalogAccess, async (req, res) => {
   try {
     const body = supplierSchema.parse({
       ...req.body,
@@ -439,7 +441,7 @@ router.post("/suppliers", async (req, res) => {
   }
 });
 
-router.put("/suppliers/:id", async (req, res) => {
+router.put("/suppliers/:id", ...catalogAccess, async (req, res) => {
   try {
     const body = supplierSchema.partial().parse({
       ...req.body,
@@ -452,7 +454,7 @@ router.put("/suppliers/:id", async (req, res) => {
   }
 });
 
-router.delete("/suppliers/:id", async (req, res) => {
+router.delete("/suppliers/:id", ...catalogAccess, async (req, res) => {
   try {
     const movementCount = await prisma.stockMovement.count({ where: { supplierId: req.params.id } });
     if (movementCount > 0) {
@@ -527,7 +529,7 @@ router.delete("/external-clients/:id", async (req, res) => {
   }
 });
 
-router.get("/stock-movements", async (req, res) => {
+router.get("/stock-movements", ...catalogAccess, async (req, res) => {
   const productId = typeof req.query.productId === "string" ? req.query.productId : undefined;
   const items = await prisma.stockMovement.findMany({
     where: productId ? { productId } : undefined,
@@ -542,7 +544,7 @@ router.get("/stock-movements", async (req, res) => {
   return res.json(items);
 });
 
-router.post("/stock-movements", async (req, res) => {
+router.post("/stock-movements", ...catalogAccess, async (req, res) => {
   const user = req.user!;
   try {
     const body = stockMovementSchema.parse(req.body);

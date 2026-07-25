@@ -18,7 +18,7 @@ import LabExamPaymentModal, {
 } from '@/components/comptabilite/LabExamPaymentModal.vue'
 import { EXAM_KIND_LABELS, type ExamKindSlug } from '@/lib/exam-catalog/types'
 import { remainingPayableExamKinds } from '@/lib/exam-billing'
-import { initLabExamReductionsByKind, normalizeLabExamPendingItem } from '@/lib/lab-exam-pending'
+import { normalizeLabExamPendingItem } from '@/lib/lab-exam-pending'
 import { printLabExamPaymentReceipts, printPendingLabExamInvoices } from '@/lib/lab-exam-invoice'
 import ComptabiliteStatsGrid from '@/components/comptabilite/ComptabiliteStatsGrid.vue'
 import { isAxiosError } from 'axios'
@@ -76,6 +76,8 @@ async function confirmPayment(payload: LabExamPaymentConfirmPayload) {
       kinds: payload.kinds,
       reductionsByKind: payload.reductionsByKind,
       reductionFcfa: payload.reductionFcfa,
+      installmentAmountFcfa: payload.installmentAmountFcfa,
+      installmentsByKind: payload.installmentsByKind,
     })
     const shouldClose =
       res.allKindsPaid ||
@@ -92,9 +94,10 @@ async function confirmPayment(payload: LabExamPaymentConfirmPayload) {
       )
     }
     const invoiceCount = Object.keys(res.invoicesByKind ?? {}).length
+    const invoicesByKind = (res.invoicesByKind ?? {}) as Record<string, { invoiceNumber?: string }>
     const invoiceLabel =
-      invoiceCount === 1 && res.invoicesByKind
-        ? ` — facture ${Object.values(res.invoicesByKind)[0]?.invoiceNumber}`
+      invoiceCount === 1
+        ? ` — facture ${Object.values(invoicesByKind)[0]?.invoiceNumber ?? ''}`
         : invoiceCount > 1
           ? ` — ${invoiceCount} facture(s)`
           : ''
@@ -107,7 +110,11 @@ async function confirmPayment(payload: LabExamPaymentConfirmPayload) {
       : payload.kinds[0]
         ? EXAM_KIND_LABELS[payload.kinds[0]]
         : 'Examen'
-    message.value = `${kindLabel} encaissé${invoiceLabel}.${followUp}`
+    const installmentNote =
+      Array.isArray(res.installmentKinds) && res.installmentKinds.length > 0
+        ? ' Tranche enregistrée — solde restant à payer.'
+        : ''
+    message.value = `${kindLabel} encaissé${invoiceLabel}.${installmentNote}${followUp}`
     messageType.value = 'success'
     statsRefreshKey.value += 1
     await load()

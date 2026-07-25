@@ -57,7 +57,20 @@ import {
   serializeSalaryAdvance,
   sumPendingAdvancesByEmployee,
 } from "../lib/salary-advances.js";
-import { employeeSelect, serializeEmployee, dedupeEmployeesForSelection } from "../lib/employee.js";
+import { employeeSelect, serializeEmployee, dedupeEmployeesForSelection, isHiddenPlatformAdminEmployee, hiddenPlatformAdminEmployeeWhere } from "../lib/employee.js";
+import {
+  deleteOrDeactivateEmployee,
+  doctorAvailabilitySlotsSchema,
+  normalizeAvailabilitySlots,
+  normalizeSpecialty,
+  resolveEmployeeIsMedecin,
+} from "../lib/doctor-profile.js";
+import {
+  employeePhotoUpload,
+  multerPhotoError,
+  saveEmployeePhoto,
+  sendEmployeePhoto,
+} from "../lib/employee-photo.js";
 import { generateJournalDailyPdf, generatePayslipPdf } from "../lib/pdf-gestionnaire.js";
 import { UPLOADS_ROOT } from "../lib/patient-dossier.js";
 import { ROLE_LABELS } from "../lib/roles.js";
@@ -101,6 +114,8 @@ const gestionnaireEmployeeSchema = z
     jobTitle: z.string().optional(),
     isMedecin: z.boolean().optional(),
     active: z.boolean().optional(),
+    specialty: z.string().max(120).optional().nullable(),
+    availabilitySlots: doctorAvailabilitySlotsSchema,
     service: z.string().optional(),
     address: z.string().optional(),
     birthDate: z.string().optional(),
@@ -146,6 +161,37 @@ const categorySchema = z.object({
   sortOrder: z.coerce.number().int().optional(),
 });
 
+const DEFAULT_EXPENSE_CATEGORIES = [
+  { name: "Fournitures", icon: "package", color: "#16a34a", sortOrder: 10 },
+  { name: "Maintenance", icon: "wrench", color: "#0ea5e9", sortOrder: 20 },
+  { name: "Equipement", icon: "monitor", color: "#7c3aed", sortOrder: 30 },
+  { name: "Transports", icon: "truck", color: "#f59e0b", sortOrder: 40 },
+  { name: "Materiels", icon: "boxes", color: "#64748b", sortOrder: 50 },
+  { name: "Papier hygienique", icon: "receipt", color: "#14b8a6", sortOrder: 60 },
+  { name: "Don", icon: "gift", color: "#ec4899", sortOrder: 70 },
+  { name: "Autres", icon: "circle-ellipsis", color: "#78716c", sortOrder: 80 },
+] as const;
+
+async function ensureDefaultExpenseCategories() {
+  for (const item of DEFAULT_EXPENSE_CATEGORIES) {
+    await prisma.expenseCategory.upsert({
+      where: { name: item.name },
+      update: {
+        icon: item.icon,
+        color: item.color,
+        sortOrder: item.sortOrder,
+        archived: false,
+      },
+      create: {
+        name: item.name,
+        icon: item.icon,
+        color: item.color,
+        sortOrder: item.sortOrder,
+      },
+    });
+  }
+}
+
 const paySchema = z.object({
   paymentMethod: paymentMethodSchema,
   paidAt: z.string().optional(),
@@ -160,6 +206,10 @@ const payrollPeriodSchema = z.object({
 const salaryAdvanceSchema = z.object({
   employeeId: z.string().min(1),
   amountFcfa: z.coerce.number().int().positive(),
+  installmentFcfa: z
+    .union([z.coerce.number().int().positive(), z.null(), z.literal("")])
+    .optional()
+    .transform((value) => (value === "" || value == null ? null : value)),
   businessDate: z.string().min(1),
   comment: z.string().optional(),
 });
@@ -407,6 +457,7 @@ router.get("/journal/export.pdf", async (req, res) => {
 });
 
 router.get("/expense-categories", async (_req, res) => {
+  await ensureDefaultExpenseCategories();
   const rows = await prisma.expenseCategory.findMany({
     where: { archived: false },
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -430,7 +481,7 @@ router.post("/expense-categories", async (req, res) => {
 router.put("/expense-categories/:id", async (req, res) => {
   const body = categorySchema.partial().parse(req.body);
   const row = await prisma.expenseCategory.update({
-    where: { id: req.params.id },
+    where: { id: String(req.params.id) },
     data: {
       ...(body.name ? { name: body.name.trim() } : {}),
       ...(body.icon ? { icon: body.icon } : {}),
@@ -460,7 +511,7 @@ router.delete("/expense-categories/:id", async (req, res) => {
 router.patch("/expense-categories/:id/archive", async (req, res) => {
   const archived = Boolean(req.body?.archived ?? true);
   const row = await prisma.expenseCategory.update({
-    where: { id: req.params.id },
+    where: { id: String(req.params.id) },
     data: { archived },
   });
   return res.json(row);
@@ -522,7 +573,7 @@ router.post("/expenses", expenseUpload.single("receipt"), async (req, res) => {
 router.put("/expenses/:id", expenseUpload.single("receipt"), async (req, res) => {
   const user = req.user!;
   const row = await prisma.clinicExpense.findUnique({
-    where: { id: req.params.id },
+    where: { id: String(req.params.id) },
     include: gestionnaireExpenseInclude,
   });
   if (!row) return res.status(404).json({ error: "Dépense introuvable" });
@@ -577,7 +628,7 @@ router.delete("/expenses/:id", async (req, res) => {
 router.patch("/expenses/:id/validate", async (req, res) => {
   const user = req.user!;
   const row = await prisma.clinicExpense.findUnique({
-    where: { id: req.params.id },
+    where: { id: String(req.params.id) },
     include: { expenseCategory: true },
   });
   if (!row) return res.status(404).json({ error: "Dépense introuvable" });
@@ -603,7 +654,7 @@ router.patch("/expenses/:id/reject", async (req, res) => {
     return res.status(400).json({ error: "Justification requise" });
   }
   const row = await prisma.clinicExpense.findUnique({
-    where: { id: req.params.id },
+    where: { id: String(req.params.id) },
     include: { expenseCategory: true },
   });
   if (!row) return res.status(404).json({ error: "Dépense introuvable" });
@@ -624,11 +675,16 @@ router.get("/employees", async (req, res) => {
   const activeOnly = req.query.active !== "false";
   const forSelection = req.query.forSelection === "true";
   const rows = await prisma.employee.findMany({
-    where: activeOnly ? { active: true } : {},
-    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+    where: {
+      ...(activeOnly ? { active: true } : {}),
+      ...hiddenPlatformAdminEmployeeWhere,
+    },
+    orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
     select: employeeSelect,
   });
-  const serialized = rows.map(serializeEmployee);
+  const serialized = rows
+    .filter((employee) => !isHiddenPlatformAdminEmployee(employee))
+    .map(serializeEmployee);
   return res.json(forSelection ? dedupeEmployeesForSelection(serialized) : serialized);
 });
 
@@ -729,7 +785,7 @@ router.delete("/job-titles/:id", async (req, res) => {
 
 router.get("/employees/:id", async (req, res) => {
   const employee = await prisma.employee.findUnique({
-    where: { id: req.params.id },
+    where: { id: String(req.params.id) },
     select: {
       ...employeeSelect,
       birthDate: true,
@@ -754,13 +810,15 @@ router.get("/employees/:id", async (req, res) => {
 router.post("/employees", async (req, res) => {
   try {
     const body = gestionnaireEmployeeSchema.parse(req.body);
-    const isMedecin = body.isMedecin ?? false;
+    const jobTitle = body.jobTitle?.trim() || null;
+    const isMedecin = resolveEmployeeIsMedecin(body.isMedecin, jobTitle);
+    const availabilitySlots = normalizeAvailabilitySlots(body.availabilitySlots, isMedecin);
     const row = await prisma.employee.create({
       data: {
         firstName: body.firstName.trim(),
         lastName: body.lastName.trim(),
         phone: body.phone?.trim() || null,
-        jobTitle: body.jobTitle?.trim() || null,
+        jobTitle,
         service: body.service?.trim() || null,
         address: body.address?.trim() || null,
         birthDate: body.birthDate ? parseBusinessDate(body.birthDate) : null,
@@ -769,6 +827,8 @@ router.post("/employees", async (req, res) => {
         contractStatus: body.contractStatus ?? EmployeeContractStatus.ACTIF,
         bonusFcfa: body.bonusFcfa ?? null,
         isMedecin,
+        specialty: normalizeSpecialty(body.specialty, isMedecin),
+        ...(availabilitySlots !== undefined ? { availabilitySlots } : {}),
         active: body.active ?? true,
         ...employeeCompensationData(isMedecin, body),
       },
@@ -790,7 +850,12 @@ router.put("/employees/:id", async (req, res) => {
     });
     if (!existing) return res.status(404).json({ error: "Employé introuvable" });
 
-    const nextIsMedecin = body.isMedecin ?? existing.isMedecin;
+    const nextJobTitle =
+      body.jobTitle !== undefined ? body.jobTitle?.trim() || null : existing.jobTitle;
+    const nextIsMedecin = resolveEmployeeIsMedecin(
+      body.isMedecin !== undefined ? body.isMedecin : existing.isMedecin || undefined,
+      nextJobTitle,
+    );
     if (existing.user?.role === UserRole.MEDECIN && !nextIsMedecin) {
       return res.status(409).json({
         error: "Impossible de retirer le statut médecin : un compte utilisateur médecin y est lié.",
@@ -799,6 +864,7 @@ router.put("/employees/:id", async (req, res) => {
 
     const compensationInput =
       body.isMedecin !== undefined ||
+      body.jobTitle !== undefined ||
       body.doctorCompensationType !== undefined ||
       body.consultationTotalFcfa !== undefined ||
       body.consultationQuotaPercent !== undefined ||
@@ -807,13 +873,25 @@ router.put("/employees/:id", async (req, res) => {
         ? employeeCompensationData(nextIsMedecin, body)
         : {};
 
+    const availabilitySlots =
+      body.availabilitySlots !== undefined ||
+      body.isMedecin !== undefined ||
+      body.jobTitle !== undefined
+        ? normalizeAvailabilitySlots(
+            body.availabilitySlots !== undefined
+              ? body.availabilitySlots
+              : existing.availabilitySlots,
+            nextIsMedecin,
+          )
+        : undefined;
+
     const row = await prisma.employee.update({
       where: { id: employeeId },
       data: {
         ...(body.firstName ? { firstName: body.firstName.trim() } : {}),
         ...(body.lastName ? { lastName: body.lastName.trim() } : {}),
         ...(body.phone !== undefined ? { phone: body.phone?.trim() || null } : {}),
-        ...(body.jobTitle !== undefined ? { jobTitle: body.jobTitle?.trim() || null } : {}),
+        ...(body.jobTitle !== undefined ? { jobTitle: nextJobTitle } : {}),
         ...(body.service !== undefined ? { service: body.service?.trim() || null } : {}),
         ...(body.address !== undefined ? { address: body.address?.trim() || null } : {}),
         ...(body.birthDate !== undefined
@@ -825,8 +903,19 @@ router.put("/employees/:id", async (req, res) => {
         ...(body.contractType !== undefined ? { contractType: body.contractType } : {}),
         ...(body.contractStatus !== undefined ? { contractStatus: body.contractStatus } : {}),
         ...(body.bonusFcfa !== undefined ? { bonusFcfa: body.bonusFcfa } : {}),
-        ...(body.isMedecin !== undefined ? { isMedecin: body.isMedecin } : {}),
+        isMedecin: nextIsMedecin,
         ...(body.active !== undefined ? { active: body.active } : {}),
+        ...(body.specialty !== undefined ||
+        body.isMedecin !== undefined ||
+        body.jobTitle !== undefined
+          ? {
+              specialty: normalizeSpecialty(
+                body.specialty !== undefined ? body.specialty : existing.specialty,
+                nextIsMedecin,
+              ),
+            }
+          : {}),
+        ...(availabilitySlots !== undefined ? { availabilitySlots } : {}),
         ...compensationInput,
       },
       select: employeeSelect,
@@ -848,23 +937,38 @@ router.put("/employees/:id", async (req, res) => {
   }
 });
 
-router.delete("/employees/:id", async (req, res) => {
-  const employeeId = String(req.params.id);
-  const existing = await prisma.employee.findUnique({
-    where: { id: employeeId },
-    include: { user: { select: { id: true } } },
-  });
-  if (!existing) return res.status(404).json({ error: "Employé introuvable" });
-  if (existing.user) {
-    return res.status(409).json({
-      error: "Impossible de supprimer cet employé : un compte application y est lié. Supprimez d'abord le compte.",
+router.post(
+  "/employees/:id/photo",
+  (req, res, next) => {
+    employeePhotoUpload.single("photo")(req, res, (error) => {
+      if (error) return multerPhotoError(error, req, res);
+      return next();
     });
-  }
+  },
+  async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "Aucune photo envoyée." });
+    const result = await saveEmployeePhoto(String(req.params.id), req.file);
+    if ("error" in result) return res.status(404).json({ error: result.error });
+    return res.json({ ok: true, photoPath: result.employee.photoPath, hasPhoto: true });
+  },
+);
 
-  await prisma.employee.delete({ where: { id: employeeId } });
+router.get("/employees/:id/photo", async (req, res) => {
+  return sendEmployeePhoto(String(req.params.id), res);
+});
+
+router.delete("/employees/:id", async (req, res) => {
+  const result = await deleteOrDeactivateEmployee(String(req.params.id));
+  if (result.mode === "not_found") {
+    return res.status(404).json({ error: "Employé introuvable" });
+  }
+  if (result.mode === "blocked") {
+    return res.status(result.status).json({ error: result.error });
+  }
   return res.json({
     ok: true,
-    message: `L'employé « ${existing.firstName} ${existing.lastName} » a été supprimé.`,
+    softDeleted: result.mode === "soft",
+    message: result.message,
   });
 });
 
@@ -984,7 +1088,7 @@ router.post("/payroll/:id/pay", async (req, res) => {
   const user = req.user!;
   const body = paySchema.parse(req.body);
   const row = await prisma.employeePayroll.findUnique({
-    where: { id: req.params.id },
+    where: { id: String(req.params.id) },
     include: employeePayrollInclude,
   });
   if (!row) return res.status(404).json({ error: "Fiche introuvable" });
@@ -1044,32 +1148,46 @@ router.get("/salary-advances", async (req, res) => {
 
 router.post("/salary-advances", async (req, res) => {
   const user = req.user!;
-  const body = salaryAdvanceSchema.parse(req.body);
-  const employee = await prisma.employee.findUnique({
-    where: { id: body.employeeId },
-    select: { id: true, active: true },
-  });
-  if (!employee) return res.status(404).json({ error: "Employé introuvable" });
-  if (!employee.active) {
-    return res.status(400).json({ error: "Cet employé est inactif." });
-  }
+  try {
+    const body = salaryAdvanceSchema.parse(req.body);
+    if (body.installmentFcfa != null && body.installmentFcfa > body.amountFcfa) {
+      return res.status(400).json({
+        error: "La tranche mensuelle ne peut pas dépasser le montant total de l'avance.",
+      });
+    }
+    const employee = await prisma.employee.findUnique({
+      where: { id: body.employeeId },
+      select: { id: true, active: true },
+    });
+    if (!employee) return res.status(404).json({ error: "Employé introuvable" });
+    if (!employee.active) {
+      return res.status(400).json({ error: "Cet employé est inactif." });
+    }
 
-  const row = await prisma.salaryAdvance.create({
-    data: {
-      employeeId: body.employeeId,
-      amountFcfa: body.amountFcfa,
-      businessDate: parseBusinessDate(body.businessDate),
-      comment: body.comment?.trim() || null,
-      recordedById: user.id,
-    },
-    include: salaryAdvanceInclude,
-  });
-  return res.status(201).json(serializeSalaryAdvance(row));
+    const row = await prisma.salaryAdvance.create({
+      data: {
+        employeeId: body.employeeId,
+        amountFcfa: body.amountFcfa,
+        remainingFcfa: body.amountFcfa,
+        installmentFcfa: body.installmentFcfa ?? null,
+        businessDate: parseBusinessDate(body.businessDate),
+        comment: body.comment?.trim() || null,
+        recordedById: user.id,
+      },
+      include: salaryAdvanceInclude,
+    });
+    return res.status(201).json(serializeSalaryAdvance(row));
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: "Données invalides" });
+    }
+    throw error;
+  }
 });
 
 router.patch("/salary-advances/:id/cancel", async (req, res) => {
   const row = await prisma.salaryAdvance.findUnique({
-    where: { id: req.params.id },
+    where: { id: String(req.params.id) },
     include: salaryAdvanceInclude,
   });
   if (!row) return res.status(404).json({ error: "Avance introuvable" });
@@ -1085,10 +1203,25 @@ router.patch("/salary-advances/:id/cancel", async (req, res) => {
   return res.json(serializeSalaryAdvance(updated));
 });
 
+router.delete("/salary-advances/:id", async (req, res) => {
+  const row = await prisma.salaryAdvance.findUnique({
+    where: { id: String(req.params.id) },
+  });
+  if (!row) return res.status(404).json({ error: "Avance introuvable" });
+  if (row.status === SalaryAdvanceStatus.PENDING) {
+    return res.status(409).json({
+      error: "Annulez d'abord l'avance en attente avant de la supprimer.",
+    });
+  }
+
+  await prisma.salaryAdvance.delete({ where: { id: row.id } });
+  return res.status(204).send();
+});
+
 router.get("/payroll/:id/payslip.pdf", async (req, res) => {
   const user = req.user!;
   const row = await prisma.employeePayroll.findUnique({
-    where: { id: req.params.id },
+    where: { id: String(req.params.id) },
     include: employeePayrollInclude,
   });
   if (!row) return res.status(404).json({ error: "Fiche introuvable" });

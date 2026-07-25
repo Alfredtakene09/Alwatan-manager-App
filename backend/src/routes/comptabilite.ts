@@ -1,5 +1,10 @@
 import { Router } from "express";
-import { computeSurgeryShares, resolveSurgeonPercent } from "../lib/doctor-compensation.js";
+import {
+  computeSurgeryShares,
+  resolveSurgeonPercent,
+  selectableDoctorByIdWhere,
+  selectableDoctorWhere,
+} from "../lib/doctor-compensation.js";
 import { z } from "zod";
 import {
   ExamReclamationReason,
@@ -56,6 +61,7 @@ import {
   aggregateCollectedToday,
   buildRevenueLast7Days,
 } from "../lib/revenue-stats.js";
+import { applyExamKindPayment } from "../lib/patient-invoice-payments.js";
 import { canAccessModule, type AppUserRole } from "../lib/roles.js";
 import { requireAuth, requireAnyModule } from "../middleware/auth.js";
 
@@ -73,7 +79,10 @@ const surgeryPaymentSchema = z.object({
 const hospitalizationSchema = z.object({
   hospitalizationId: z.string(),
   roomId: z.string(),
+  bedId: z.string().optional(),
   depositFcfa: z.number().int().positive(),
+  attendingDoctor: z.string().optional(),
+  attendingDoctorId: z.string().optional(),
 });
 
 const dischargeSchema = z.object({
@@ -104,6 +113,17 @@ const payLabExamsSchema = z.object({
     })
     .optional(),
   reductionFcfa: z.number().int().min(0).optional(),
+  installmentAmountFcfa: z.number().int().positive().optional(),
+  installmentsByKind: z
+    .object({
+      examen: z.number().int().positive().optional(),
+      radio: z.number().int().positive().optional(),
+      echo: z.number().int().positive().optional(),
+      odonto: z.number().int().positive().optional(),
+      operation: z.number().int().positive().optional(),
+      hospitalisation: z.number().int().positive().optional(),
+    })
+    .optional(),
 });
 
 const examReclamationReasonSchema = z.enum([
@@ -161,7 +181,19 @@ function mapLabExamPending(
   visitId: string;
   clinicalNotes: string | null;
   updatedAt: Date;
-  visit: { patient: { code: string; firstName: string; lastName: string; phone?: string | null } };
+  visit: {
+    patient: { code: string; firstName: string; lastName: string; phone?: string | null };
+    invoices?: Array<{
+      billingExamKind?: string | null;
+      amountFcfa: number;
+      paidAmountFcfa?: number;
+      status?: InvoiceStatus;
+      invoiceNumber?: string;
+      type?: InvoiceType;
+      createdAt?: Date;
+      issuedBy?: { firstName: string; lastName: string } | null;
+    }>;
+  };
   doctor: { firstName: string; lastName: string } | null;
 },
   options?: { unpaidOnly?: boolean },
@@ -179,6 +211,22 @@ function mapLabExamPending(
   const grossFcfa = examLines.reduce((sum, line) => sum + line.unitPriceFcfa, 0);
   const paidKinds = Object.keys(parsePaidExamKindsByKind(consultation.clinicalNotes)) as ExamKindSlug[];
   const unpaidKinds = getUnpaidPrescribedExamKinds(consultation.clinicalNotes);
+  const partialPaymentsByKind: Partial<
+    Record<ExamKindSlug, { totalFcfa: number; paidFcfa: number; remainingFcfa: number }>
+  > = {};
+  for (const invoice of consultation.visit.invoices ?? []) {
+    if (!invoice.billingExamKind) continue;
+    const kind = invoice.billingExamKind as ExamKindSlug;
+    if (paidKinds.includes(kind)) continue;
+    const paidAmountFcfa = invoice.paidAmountFcfa ?? 0;
+    const status = invoice.status ?? InvoiceStatus.PENDING;
+    if (paidAmountFcfa <= 0 && status !== InvoiceStatus.PARTIALLY_PAID) continue;
+    partialPaymentsByKind[kind] = {
+      totalFcfa: invoice.amountFcfa,
+      paidFcfa: paidAmountFcfa,
+      remainingFcfa: Math.max(0, invoice.amountFcfa - paidAmountFcfa),
+    };
+  }
   return {
     ...consultation,
     allExamsByKind,
@@ -187,6 +235,7 @@ function mapLabExamPending(
     grossFcfa,
     paidKinds,
     unpaidKinds,
+    partialPaymentsByKind,
     examsSummary: examLines.map((line) => line.label).join(", "),
   };
 }
@@ -361,8 +410,9 @@ router.get("/", cashierAccess, async (req, res) => {
     }),
     prisma.interventionType.findMany({ where: { active: true } }),
     prisma.user.findMany({
-      where: { role: "MEDECIN", active: true },
+      where: selectableDoctorWhere,
       select: { id: true, firstName: true, lastName: true },
+      orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
     }),
     prisma.room.findMany({
       where: { active: true },
@@ -375,6 +425,19 @@ router.get("/", cashierAccess, async (req, res) => {
           include: {
             patient: true,
             surgeryCase: { select: { status: true } },
+            invoices: {
+              where: {
+                type: InvoiceType.LAB_EXAM,
+                status: { in: [InvoiceStatus.PARTIALLY_PAID, InvoiceStatus.PENDING] },
+                billingExamKind: { not: null },
+              },
+              select: {
+                billingExamKind: true,
+                amountFcfa: true,
+                paidAmountFcfa: true,
+                status: true,
+              },
+            },
           },
         },
         doctor: { select: { id: true, firstName: true, lastName: true } },
@@ -397,8 +460,11 @@ router.get("/", cashierAccess, async (req, res) => {
         if (
           unpaidOps &&
           surgeryStatus &&
-          [SurgeryStatus.PAID, SurgeryStatus.AUTHORIZED, SurgeryStatus.IN_PROGRESS, SurgeryStatus.COMPLETED].includes(
-            surgeryStatus,
+          (
+            surgeryStatus === SurgeryStatus.PAID ||
+            surgeryStatus === SurgeryStatus.AUTHORIZED ||
+            surgeryStatus === SurgeryStatus.IN_PROGRESS ||
+            surgeryStatus === SurgeryStatus.COMPLETED
           )
         ) {
           return getUnpaidCashierQueueKinds(row.clinicalNotes).some((kind) => kind !== "operation");
@@ -514,13 +580,32 @@ router.post("/", cashierAccess, async (req, res) => {
 
     if (action === "reserve_room" || action === "reserve_bed") {
       const data = hospitalizationSchema.parse(req.body);
+
+      let attendingDoctorId: string | null = null;
+      let attendingDoctor: string | null = data.attendingDoctor?.trim() || null;
+      if (data.attendingDoctorId?.trim()) {
+        const doctor = await prisma.user.findFirst({
+          where: selectableDoctorByIdWhere(data.attendingDoctorId.trim()),
+          select: { id: true, firstName: true, lastName: true },
+        });
+        if (!doctor) return res.status(400).json({ error: "Médecin traitant invalide" });
+        attendingDoctorId = doctor.id;
+        attendingDoctor = `Dr ${doctor.firstName} ${doctor.lastName}`;
+      }
+
       const result = await prisma.$transaction(async (tx) => {
-        const room = await assertRoomAvailableForAdmission(tx, data.roomId, data.hospitalizationId);
+        const { room, bed } = await assertRoomAvailableForAdmission(
+          tx,
+          data.roomId,
+          data.hospitalizationId,
+          { bedId: data.bedId },
+        );
 
         const hospitalization = await tx.hospitalization.update({
           where: { id: data.hospitalizationId },
           data: {
-            roomId: data.roomId,
+            roomId: room.id,
+            bedId: bed?.id ?? null,
             accountantId: user.id,
             roomType: room.type,
             dailyRateFcfa: room.dailyRateFcfa,
@@ -528,8 +613,10 @@ router.post("/", cashierAccess, async (req, res) => {
             status: HospitalizationStatus.ACTIVE,
             startDate: new Date(),
             paidAt: new Date(),
+            attendingDoctor,
+            attendingDoctorId,
           },
-          include: { visit: true, room: true },
+          include: { visit: true, room: true, bed: true },
         });
         const invoice = await tx.invoice.create({
           data: {
@@ -576,6 +663,7 @@ router.post("/", cashierAccess, async (req, res) => {
             status: HospitalizationStatus.DISCHARGED,
             dischargedAt: new Date(),
             roomId: null,
+            bedId: null,
           },
         });
 
@@ -652,9 +740,6 @@ router.post("/", cashierAccess, async (req, res) => {
 
       const paysOperation = kindsToPay.includes("operation");
       const paysHospitalisation = kindsToPay.includes("hospitalisation");
-      const paysLabKind = kindsToPay.some((kind) =>
-        (LAB_BILLABLE_EXAM_KINDS as readonly ExamKindSlug[]).includes(kind),
-      );
       const surgeryCase = paysOperation
         ? await prisma.surgeryCase.findUnique({ where: { visitId: existing.visitId } })
         : null;
@@ -664,6 +749,22 @@ router.post("/", cashierAccess, async (req, res) => {
       const hospitalisationLabel = paysHospitalisation
         ? parsePrescribedExamsByKind(existing.clinicalNotes).hospitalisation?.find(Boolean)
         : null;
+
+      const installmentsByKind = data.installmentsByKind ?? {};
+      if (data.installmentAmountFcfa != null && kindsToPay.length > 1 && !data.installmentsByKind) {
+        return res.status(400).json({
+          error: "Pour un paiement en tranche sur plusieurs types, précisez le montant par type.",
+        });
+      }
+
+      const resolvePaymentAmount = (kind: ExamKindSlug, sheetNetFcfa: number) => {
+        const byKind = installmentsByKind[kind];
+        if (byKind != null) return byKind;
+        if (kindsToPay.length === 1 && data.installmentAmountFcfa != null) {
+          return data.installmentAmountFcfa;
+        }
+        return sheetNetFcfa;
+      };
 
       const result = await prisma.$transaction(async (tx) => {
         let hospRecord = hospitalization;
@@ -678,7 +779,15 @@ router.post("/", cashierAccess, async (req, res) => {
         const invoicesByKind: Partial<
           Record<
             ExamKindSlug,
-            { invoiceNumber: string; grossFcfa: number; reductionFcfa: number; netFcfa: number }
+            {
+              invoiceNumber: string;
+              grossFcfa: number;
+              reductionFcfa: number;
+              netFcfa: number;
+              paidFcfa: number;
+              remainingFcfa: number;
+              isFullyPaid: boolean;
+            }
           >
         > = {};
 
@@ -687,60 +796,90 @@ router.post("/", cashierAccess, async (req, res) => {
             ? await tx.invoice.findUnique({ where: { surgeryCaseId: surgeryCase.id } })
             : null;
 
-        const sheetsNeedingNewInvoice = sheets.filter(
-          (sheet) => !(sheet.kind === "operation" && existingSurgeryInvoice),
-        );
+        const sheetsNeedingNewInvoice = sheets.filter((sheet) => {
+          if (sheet.kind === "operation" && existingSurgeryInvoice) return false;
+          return true;
+        });
         const invoiceNumbers = await generateInvoiceNumberBatch(sheetsNeedingNewInvoice.length);
         const paidAt = new Date();
         let updatedNotes = existing.clinicalNotes ?? "";
         let numberIndex = 0;
+        const fullyPaidKinds = new Set<ExamKindSlug>();
 
         for (const sheet of sheets) {
           const reductionFcfa = reductionsByKind[sheet.kind] ?? 0;
           const sheetNetFcfa = Math.max(0, sheet.grossFcfa - reductionFcfa);
-
-          let invoice;
-          if (sheet.kind === "operation" && surgeryCase && existingSurgeryInvoice) {
-            invoice = await tx.invoice.update({
-              where: { id: existingSurgeryInvoice.id },
-              data: {
-                amountFcfa: sheetNetFcfa,
-                status: InvoiceStatus.PAID,
-                paidAt,
-                issuedById: user.id,
-                visitId: existing.visitId,
-                patientId: existing.visit.patientId,
-                type: InvoiceType.LAB_EXAM,
-              },
-            });
-          } else {
-            invoice = await tx.invoice.create({
-              data: {
-                invoiceNumber: invoiceNumbers[numberIndex++]!,
-                patientId: existing.visit.patientId,
-                visitId: existing.visitId,
-                surgeryCaseId: sheet.kind === "operation" ? surgeryCase?.id : undefined,
-                hospitalizationId:
-                  sheet.kind === "hospitalisation" ? hospRecord?.id : undefined,
-                type: InvoiceType.LAB_EXAM,
-                amountFcfa: sheetNetFcfa,
-                status: InvoiceStatus.PAID,
-                issuedById: user.id,
-                paidAt,
-              },
-            });
+          const paymentAmountFcfa = resolvePaymentAmount(sheet.kind, sheetNetFcfa);
+          if (paymentAmountFcfa > sheetNetFcfa) {
+            throw new Error("INVALID_INSTALLMENT_AMOUNT");
           }
+
+          let existingInvoice =
+            sheet.kind === "operation" && existingSurgeryInvoice
+              ? existingSurgeryInvoice
+              : await tx.invoice.findFirst({
+                  where: {
+                    visitId: existing.visitId,
+                    billingExamKind: sheet.kind,
+                    type: InvoiceType.LAB_EXAM,
+                    status: { in: [InvoiceStatus.PARTIALLY_PAID, InvoiceStatus.PENDING] },
+                  },
+                });
+
+          if (
+            existingInvoice &&
+            existingInvoice.status === InvoiceStatus.PAID
+          ) {
+            continue;
+          }
+
+          const invoiceNumber = existingInvoice ? undefined : invoiceNumbers[numberIndex++];
+          const { invoice, isFullyPaid } = await applyExamKindPayment(tx, {
+            kind: sheet.kind,
+            sheetNetFcfa: existingInvoice?.amountFcfa ?? sheetNetFcfa,
+            paymentAmountFcfa,
+            visitId: existing.visitId,
+            patientId: existing.visit.patientId,
+            recordedById: user.id,
+            surgeryCaseId: sheet.kind === "operation" ? surgeryCase?.id : undefined,
+            hospitalizationId: sheet.kind === "hospitalisation" ? hospRecord?.id : undefined,
+            existingInvoice: existingInvoice
+              ? {
+                  id: existingInvoice.id,
+                  amountFcfa: existingInvoice.amountFcfa,
+                  paidAmountFcfa: existingInvoice.paidAmountFcfa,
+                  status: existingInvoice.status,
+                }
+              : null,
+            invoiceNumber,
+          });
 
           invoicesByKind[sheet.kind] = {
             invoiceNumber: invoice.invoiceNumber,
             grossFcfa: sheet.grossFcfa,
             reductionFcfa,
-            netFcfa: sheetNetFcfa,
+            netFcfa: invoice.amountFcfa,
+            paidFcfa: invoice.paidAmountFcfa,
+            remainingFcfa: Math.max(0, invoice.amountFcfa - invoice.paidAmountFcfa),
+            isFullyPaid,
           };
-          updatedNotes = appendPaidExamKindMarker(updatedNotes, sheet.kind, paidAt);
+
+          if (isFullyPaid) {
+            fullyPaidKinds.add(sheet.kind);
+            updatedNotes = appendPaidExamKindMarker(updatedNotes, sheet.kind, paidAt);
+          }
         }
 
-        if (paysOperation && surgeryCase) {
+        const operationFullyPaid = paysOperation && fullyPaidKinds.has("operation");
+        const hospitalisationFullyPaid =
+          paysHospitalisation && fullyPaidKinds.has("hospitalisation");
+        const labKindsFullyPaid = kindsToPay.some(
+          (kind) =>
+            (LAB_BILLABLE_EXAM_KINDS as readonly ExamKindSlug[]).includes(kind) &&
+            fullyPaidKinds.has(kind),
+        );
+
+        if (operationFullyPaid && surgeryCase) {
           await tx.surgeryCase.update({
             where: { id: surgeryCase.id },
             data: {
@@ -756,7 +895,7 @@ router.post("/", cashierAccess, async (req, res) => {
           });
         }
 
-        if (paysHospitalisation && hospRecord) {
+        if (hospitalisationFullyPaid && hospRecord) {
           await tx.hospitalization.update({
             where: { id: hospRecord.id },
             data: {
@@ -771,7 +910,7 @@ router.post("/", cashierAccess, async (req, res) => {
           data: {
             clinicalNotes: updatedNotes,
             labExamReductionFcfa: existing.labExamReductionFcfa + totalReductionFcfa,
-            ...(paysLabKind
+            ...(labKindsFullyPaid
               ? {
                   labSentToLabAt: existing.labSentToLabAt ?? paidAt,
                   labApprovedById: user.id,
@@ -795,11 +934,12 @@ router.post("/", cashierAccess, async (req, res) => {
           invoice: primaryInvoice
             ? {
                 invoiceNumber: primaryInvoice.invoiceNumber,
-                amountFcfa: netFcfa,
+                amountFcfa: primaryInvoice.paidFcfa,
               }
             : null,
           invoicesByKind,
-          paidKinds: kindsToPay,
+          paidKinds: [...fullyPaidKinds],
+          installmentKinds: kindsToPay.filter((kind) => !fullyPaidKinds.has(kind)),
           remainingUnpaidKinds,
           examsByKind: buildExamsByKindPayload(updatedNotes),
           examLines: buildExamLinesFromNotes(updatedNotes).filter(
@@ -810,8 +950,8 @@ router.post("/", cashierAccess, async (req, res) => {
           reductionsByKind,
           netFcfa,
           hasOperation: paysOperation,
-          hasLabTransfer: paysLabKind,
-          surgeryAuthorized: paysOperation && !!surgeryCase,
+          hasLabTransfer: labKindsFullyPaid,
+          surgeryAuthorized: operationFullyPaid && !!surgeryCase,
           allKindsPaid: remainingUnpaidKinds.length === 0,
         };
       });
@@ -833,6 +973,14 @@ router.post("/", cashierAccess, async (req, res) => {
       }
       if (error.message === "INVALID_HOSPITALIZATION") {
         return res.status(400).json({ error: "Hospitalisation invalide" });
+      }
+      if (error.message === "INVALID_INSTALLMENT_AMOUNT") {
+        return res.status(400).json({
+          error: "Montant de tranche invalide (doit être positif et ne pas dépasser le solde restant).",
+        });
+      }
+      if (error.message === "INVOICE_NOT_PAYABLE") {
+        return res.status(409).json({ error: "Cette facture n'accepte plus de paiement." });
       }
     }
     if (

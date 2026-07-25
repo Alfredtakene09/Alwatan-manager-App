@@ -45,11 +45,13 @@ import {
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import CompletedOperationsDataTable from '@/components/ui/CompletedOperationsDataTable.vue'
+import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 
 const DATE_MODES: { id: DateFilterMode; label: string; icon: typeof CalendarDays }[] = [
   { id: 'day', label: 'Jour', icon: CalendarDays },
@@ -400,6 +402,35 @@ function resetCustomRange() {
   filterTo.value = ''
 }
 
+const completedExportColumns: ExportColumn<SurgeryCaseRow>[] = [
+  {
+    header: 'Patient',
+    value: (r) => fullName(r.visit.patient.firstName, r.visit.patient.lastName),
+  },
+  { header: 'Code', value: (r) => r.visit.patient.code },
+  { header: 'Intervention', value: (r) => r.interventionType.label },
+  {
+    header: 'Chirurgien',
+    value: (r) => `Dr ${fullName(r.surgeon.firstName, r.surgeon.lastName)}`,
+  },
+  { header: 'Montant', value: (r) => formatFcfa(r.totalCostFcfa) },
+  { header: 'Part médecin', value: (r) => formatFcfa(r.surgeonShareFcfa) },
+  { header: 'Part clinique', value: (r) => formatFcfa(r.clinicShareFcfa) },
+  { header: 'Effectuée le', value: (r) => formatSurgeryDate(r.completedAt) },
+  {
+    header: 'Programmée le',
+    value: (r) => formatSurgeryDate(r.operationScheduledAt),
+  },
+]
+
+function exportPdf() {
+  exportTablePdf('Opérations effectuées', completedExportColumns, displayedSurgeries.value)
+}
+
+function exportExcel() {
+  exportTableExcel('Opérations effectuées', completedExportColumns, displayedSurgeries.value)
+}
+
 onMounted(load)
 </script>
 
@@ -551,6 +582,11 @@ onMounted(load)
               aria-label="Rechercher une opération"
             />
           </div>
+          <ExportButtons
+            :disabled="loading || !displayedSurgeries.length"
+            @pdf="exportPdf"
+            @excel="exportExcel"
+          />
           <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">
             Actualiser
           </UiButton>

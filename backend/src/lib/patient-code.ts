@@ -1,47 +1,54 @@
 import { prisma } from "./db.js";
 
+const PATIENT_CODE_PREFIX = "PAT-";
+const INVOICE_NUMBER_PREFIX = "FAC-";
+
+function parsePatientCodeSequence(code: string) {
+  const match = /^PAT-(\d+)$/.exec(code);
+  return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+function parseInvoiceSequence(invoiceNumber: string) {
+  const match = /^FAC-(\d{3})$/.exec(invoiceNumber);
+  return match ? Number.parseInt(match[1], 10) : 0;
+}
+
 export async function generatePatientCode() {
-  const year = new Date().getFullYear();
-  const prefix = `PAT-${year}-`;
-  const lastPatient = await prisma.patient.findFirst({
-    where: { code: { startsWith: prefix } },
-    orderBy: { code: "desc" },
+  const patients = await prisma.patient.findMany({
+    where: { code: { startsWith: PATIENT_CODE_PREFIX } },
     select: { code: true },
   });
-  const lastSequence = lastPatient
-    ? Number.parseInt(lastPatient.code.split("-")[2] ?? "0", 10)
-    : 0;
-  return `${prefix}${String(lastSequence + 1).padStart(5, "0")}`;
+  const lastSequence = patients.reduce(
+    (max, row) => Math.max(max, parsePatientCodeSequence(row.code)),
+    0,
+  );
+  return `${PATIENT_CODE_PREFIX}${String(lastSequence + 1).padStart(3, "0")}`;
 }
 
 export async function generateInvoiceNumber() {
-  const year = new Date().getFullYear();
-  const prefix = `FAC-${year}-`;
-  const lastInvoice = await prisma.invoice.findFirst({
-    where: { invoiceNumber: { startsWith: prefix } },
-    orderBy: { invoiceNumber: "desc" },
+  const invoices = await prisma.invoice.findMany({
+    where: { invoiceNumber: { startsWith: INVOICE_NUMBER_PREFIX } },
     select: { invoiceNumber: true },
   });
-  const lastSequence = lastInvoice
-    ? Number.parseInt(lastInvoice.invoiceNumber.split("-")[2] ?? "0", 10)
-    : 0;
-  return `${prefix}${String(lastSequence + 1).padStart(5, "0")}`;
+  const lastSequence = invoices.reduce(
+    (max, row) => Math.max(max, parseInvoiceSequence(row.invoiceNumber)),
+    0,
+  );
+  return `${INVOICE_NUMBER_PREFIX}${String(lastSequence + 1).padStart(3, "0")}`;
 }
 
 /** Numéros séquentiels uniques pour plusieurs factures créées en une seule opération. */
 export async function generateInvoiceNumberBatch(count: number): Promise<string[]> {
   if (count <= 0) return [];
-  const year = new Date().getFullYear();
-  const prefix = `FAC-${year}-`;
-  const lastInvoice = await prisma.invoice.findFirst({
-    where: { invoiceNumber: { startsWith: prefix } },
-    orderBy: { invoiceNumber: "desc" },
+  const invoices = await prisma.invoice.findMany({
+    where: { invoiceNumber: { startsWith: INVOICE_NUMBER_PREFIX } },
     select: { invoiceNumber: true },
   });
-  const lastSequence = lastInvoice
-    ? Number.parseInt(lastInvoice.invoiceNumber.split("-")[2] ?? "0", 10)
-    : 0;
+  const lastSequence = invoices.reduce(
+    (max, row) => Math.max(max, parseInvoiceSequence(row.invoiceNumber)),
+    0,
+  );
   return Array.from({ length: count }, (_, index) =>
-    `${prefix}${String(lastSequence + 1 + index).padStart(5, "0")}`,
+    `${INVOICE_NUMBER_PREFIX}${String(lastSequence + 1 + index).padStart(3, "0")}`,
   );
 }

@@ -3,7 +3,19 @@ import { computed, onMounted, ref } from 'vue'
 import { RefreshCw } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
+import {
+  buildClinicPrintHeader,
+  openPrintDocument,
+} from '@/lib/print-document'
+import {
+  escapeHtml,
+  exportBasename,
+  exportWorkbook,
+  rowsToHtmlTable,
+  type ExportColumn,
+} from '@/lib/table-export'
 import UiButton from '@/components/ui/UiButton.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
@@ -50,10 +62,10 @@ const categoryColumns = [
     responsivePriority: 1,
     render: (name: string) => `<span class="dt-name">${name}</span>`,
   },
-  { data: 'itemsCount', title: 'Articles', responsivePriority: 2 },
+  { data: 'itemsCount', title: 'Art.', responsivePriority: 2 },
   {
     data: 'stockValueSort',
-    title: 'Valeur stock',
+    title: 'Valeur',
     responsivePriority: 1,
     render: (_d: number, _t: string, row: { stockValue: string }) => `<span class="dt-amount">${row.stockValue}</span>`,
   },
@@ -66,7 +78,7 @@ const topExitColumns = [
     responsivePriority: 1,
     render: (name: string) => `<span class="dt-name">${name}</span>`,
   },
-  { data: 'quantity', title: 'Sorties (qté)', responsivePriority: 1 },
+  { data: 'quantity', title: 'Sorties', responsivePriority: 1 },
 ]
 
 async function loadReport() {
@@ -83,6 +95,61 @@ async function loadReport() {
   }
 }
 
+const periodLabel = computed(() => {
+  if (period.value === '7d') return '7 derniers jours'
+  if (period.value === '90d') return '90 derniers jours'
+  return '30 derniers jours'
+})
+
+const kpiRows = computed(() => {
+  if (!data.value) return []
+  return [
+    { label: 'Articles actifs', value: data.value.itemsCount },
+    { label: 'Valeur du stock', value: formatFcfa(data.value.stockValueFcfa) },
+    { label: 'Entrées (qté)', value: data.value.entriesQty },
+    { label: 'Sorties (qté)', value: data.value.exitsQty },
+    { label: 'Valeur entrées', value: formatFcfa(data.value.entriesValueFcfa) },
+    { label: 'Mouvements', value: data.value.movementsCount },
+  ]
+})
+
+const kpiExportColumns: ExportColumn<(typeof kpiRows.value)[number]>[] = [
+  { header: 'Indicateur', value: (r) => r.label },
+  { header: 'Valeur', value: (r) => r.value },
+]
+
+const categoryExportColumns: ExportColumn<(typeof categoryRows.value)[number]>[] = [
+  { header: 'Catégorie', value: (r) => r.name },
+  { header: 'Articles', value: (r) => r.itemsCount },
+  { header: 'Valeur', value: (r) => r.stockValue },
+]
+
+const topExitExportColumns: ExportColumn<(typeof topExitRows.value)[number]>[] = [
+  { header: 'Article', value: (r) => r.name },
+  { header: 'Sorties', value: (r) => r.quantity },
+]
+
+function exportPdf() {
+  if (!data.value) return
+  const body = `${buildClinicPrintHeader('Rapport logistique')}
+<div class="row"><span>Période</span><strong>${escapeHtml(periodLabel.value)}</strong></div>
+${rowsToHtmlTable(kpiExportColumns, kpiRows.value)}
+<h3>Valeur par catégorie</h3>
+${rowsToHtmlTable(categoryExportColumns, categoryRows.value)}
+<h3>Top sorties</h3>
+${rowsToHtmlTable(topExitExportColumns, topExitRows.value)}`
+  openPrintDocument('Rapport logistique', body, { pageSize: 'A4', autoPrint: true })
+}
+
+function exportExcel() {
+  if (!data.value) return
+  exportWorkbook(exportBasename('rapport-logistique'), [
+    { name: 'KPI', columns: kpiExportColumns, rows: kpiRows.value },
+    { name: 'Catégories', columns: categoryExportColumns, rows: categoryRows.value },
+    { name: 'Top sorties', columns: topExitExportColumns, rows: topExitRows.value },
+  ])
+}
+
 onMounted(loadReport)
 
 defineExpose({ reload: loadReport })
@@ -96,6 +163,7 @@ defineExpose({ reload: loadReport })
         <option value="30d">30 derniers jours</option>
         <option value="90d">90 derniers jours</option>
       </select>
+      <ExportButtons :disabled="loading || !data" @pdf="exportPdf" @excel="exportExcel" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadReport">
         Actualiser
       </UiButton>

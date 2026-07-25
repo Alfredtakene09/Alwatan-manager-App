@@ -164,10 +164,11 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
                       <template v-for="field in section.fields" :key="field.key">
                         <dt>{{ field.label }}</dt>
                         <dd>
-                          {{ panel.values[field.key]?.trim() || '—' }}
-                          <span v-if="field.unit && panel.values[field.key]?.trim()" class="unit">
+                          {{ field.value || '—' }}
+                          <span v-if="field.unit && field.value" class="unit">
                             {{ field.unit }}
                           </span>
+                          <p v-if="field.comment" class="result-comment">{{ field.comment }}</p>
                         </dd>
                       </template>
                     </dl>
@@ -410,5 +411,14 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
   font-weight: 500;
   color: var(--text-muted);
   font-size: 0.75rem;
+}
+
+.result-comment {
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  line-height: 1.35;
 }
 </style>

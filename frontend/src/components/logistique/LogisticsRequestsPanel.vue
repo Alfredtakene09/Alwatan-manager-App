@@ -5,8 +5,10 @@ import { ClipboardList, Plus, RefreshCw, Save, X } from '@lucide/vue'
 import api from '@/api/client'
 import { fullName } from '@/lib/roles'
 import { statusBadge, DT_ICONS } from '@/lib/datatable-defaults'
+import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { LogisticsItemRecord } from '@/components/logistique/LogisticsItemsPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiTextarea from '@/components/ui/UiTextarea.vue'
@@ -14,6 +16,7 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+import { confirmAppModal } from '@/lib/api-modal-helper'
 
 type RequestStatus = 'PENDING' | 'FULFILLED' | 'REJECTED'
 
@@ -98,7 +101,7 @@ const tableRows = computed(() =>
 const columns = [
   {
     data: 'code',
-    title: 'N° bon',
+    title: 'N°',
     responsivePriority: 1,
     render: (code: string) => `<span class="dt-name">${code}</span>`,
   },
@@ -109,18 +112,17 @@ const columns = [
     responsivePriority: 2,
     render: (_d: number, _t: string, row: { date: string }) => row.date,
   },
-  { data: 'requestedBy', title: 'Demandeur', responsivePriority: 3 },
-  { data: 'linesLabel', title: 'Articles', responsivePriority: 3 },
+  { data: 'linesLabel', title: 'Art.', responsivePriority: 3 },
   {
     data: 'statusLabel',
-    title: 'Statut',
+    title: 'État',
     responsivePriority: 2,
     render: (label: string, _t: string, row: { statusVariant: string }) =>
       statusBadge(label, row.statusVariant as 'warning' | 'success' | 'danger'),
   },
   {
     data: null,
-    title: 'Actions',
+    title: '',
     orderable: false,
     className: 'dt-actions-col all',
     responsivePriority: 1,
@@ -232,7 +234,13 @@ async function saveRequest() {
 }
 
 async function fulfillRequest(id: string) {
-  if (!window.confirm('Confirmer la livraison de cette demande ? Le stock sera déduit.')) return
+  const confirmed = await confirmAppModal({
+    type: 'CONFIRM',
+    title: 'Confirmer la livraison',
+    message: 'Confirmer la livraison de cette demande ? Le stock sera déduit.',
+    confirmLabel: 'Livrer',
+  })
+  if (!confirmed) return
   try {
     await api.post(`/logistique/requests/${id}/fulfill`)
     message.value = 'Demande livrée — stock mis à jour.'
@@ -246,7 +254,13 @@ async function fulfillRequest(id: string) {
 }
 
 async function rejectRequest(id: string) {
-  if (!window.confirm('Refuser cette demande ?')) return
+  const confirmed = await confirmAppModal({
+    type: 'WARNING',
+    title: 'Refuser la demande',
+    message: 'Refuser cette demande ?',
+    confirmLabel: 'Refuser',
+  })
+  if (!confirmed) return
   try {
     await api.post(`/logistique/requests/${id}/reject`)
     message.value = 'Demande refusée.'
@@ -266,6 +280,25 @@ function onTableAction({ action, id }: { action: string; id: string }) {
 
 onMounted(reload)
 
+type RequestExportRow = (typeof tableRows.value)[number]
+
+const requestExportColumns: ExportColumn<RequestExportRow>[] = [
+  { header: 'N°', value: (r) => r.code },
+  { header: 'Service', value: (r) => r.service },
+  { header: 'Date', value: (r) => r.date },
+  { header: 'Demandé par', value: (r) => r.requestedBy },
+  { header: 'Articles', value: (r) => r.linesCount },
+  { header: 'État', value: (r) => r.statusLabel },
+]
+
+function exportPdf() {
+  exportTablePdf('Demandes logistique', requestExportColumns, tableRows.value)
+}
+
+function exportExcel() {
+  exportTableExcel('Demandes logistique', requestExportColumns, tableRows.value)
+}
+
 defineExpose({ reload })
 </script>
 
@@ -278,6 +311,7 @@ defineExpose({ reload })
         <option value="FULFILLED">Livrées</option>
         <option value="REJECTED">Refusées</option>
       </select>
+      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="reload">
         Actualiser
       </UiButton>

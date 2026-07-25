@@ -15,6 +15,7 @@ import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
 import { fullName } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import MedecinStatsGrid from '@/components/MedecinStatsGrid.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -46,6 +47,7 @@ const modalVisit = computed(() => visits.value.find((v) => v.id === modalVisitId
 const transferVisit = computed(() => visits.value.find((v) => v.id === transferVisitId.value) ?? null)
 const route = useRoute()
 const auth = useAuthStore()
+const { uiText, dateTimeText } = useAppI18n()
 const isAdminSupervision = computed(
   () => auth.user?.role === 'ADMIN' || auth.user?.role === 'COMPTABLE',
 )
@@ -66,14 +68,24 @@ const canSubmitConsultation = computed(() => {
   return true
 })
 const submitConsultationLabel = computed(() => {
-  if (submitting.value) return 'Enregistrement…'
-  if (selectedExamsCount.value > 0) return 'Prescrire et enregistrer'
-  return 'Enregistrer le commentaire'
+  if (submitting.value) return uiText('Enregistrement…')
+  if (selectedExamsCount.value > 0) return uiText('Prescrire et enregistrer')
+  return uiText('Enregistrer le commentaire')
 })
 
 async function loadDoctors() {
-  const { data } = await api.get<{ id: string; firstName: string; lastName: string }[]>('/visits/doctors')
-  doctors.value = data
+  try {
+    const { data } = await api.get<{ id: string; firstName: string; lastName: string }[]>('/visits/doctors')
+    doctors.value = Array.isArray(data)
+      ? [...data].sort((a, b) => {
+          const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
+          if (byLast !== 0) return byLast
+          return a.firstName.localeCompare(b.firstName, 'fr', { sensitivity: 'base' })
+        })
+      : []
+  } catch {
+    doctors.value = []
+  }
 }
 
 async function loadVisits() {
@@ -119,7 +131,7 @@ async function openConsultModal(id: string) {
       const index = visits.value.findIndex((v) => v.id === id)
       if (index >= 0) visits.value[index] = data
     } catch {
-      message.value = 'Impossible de démarrer la consultation.'
+      message.value = uiText('Impossible de démarrer la consultation.')
       messageType.value = 'error'
       closeModal()
     }
@@ -144,16 +156,16 @@ function closeTransferModal() {
 
 async function submitTransfer() {
   if (!transferVisitId.value || !selectedDoctorId.value) {
-    message.value = 'Sélectionnez un médecin destinataire.'
+    message.value = uiText('Sélectionnez un médecin destinataire.')
     messageType.value = 'error'
     return
   }
 
   const ok = await confirmAppModal({
-    title: 'Transférer le patient',
-    message: 'Confirmer le transfert de ce patient vers le médecin sélectionné ?',
-    confirmLabel: 'Transférer',
-    variant: 'primary',
+    title: uiText('Transférer le patient'),
+    message: uiText('Confirmer le transfert de ce patient vers le médecin sélectionné ?'),
+    confirmLabel: uiText('Transférer'),
+    type: 'CONFIRM',
   })
   if (!ok) return
 
@@ -163,14 +175,14 @@ async function submitTransfer() {
     await api.patch(`/visits/${transferVisitId.value}/transfer`, {
       doctorId: selectedDoctorId.value,
     })
-    message.value = 'Patient transféré au médecin sélectionné.'
+    message.value = uiText('Patient transféré au médecin sélectionné.')
     messageType.value = 'success'
     closeTransferModal()
     await loadVisits()
   } catch (error: unknown) {
     const shown = await showApiErrorModal(error, 'Impossible de transférer ce patient.')
     if (!shown) {
-      message.value = 'Impossible de transférer ce patient.'
+      message.value = uiText('Impossible de transférer ce patient.')
       messageType.value = 'error'
     }
   } finally {
@@ -181,7 +193,9 @@ async function submitTransfer() {
 async function submitExams() {
   if (!modalVisitId.value) return
   if (!canSubmitConsultation.value) {
-    message.value = 'Sélectionnez au moins un examen ou saisissez un commentaire (2 caractères min.).'
+    message.value = uiText(
+      'Sélectionnez au moins un examen ou saisissez un commentaire (2 caractères min.).',
+    )
     messageType.value = 'error'
     return
   }
@@ -202,19 +216,20 @@ async function submitExams() {
     }
     await api.post('/consultations/prescribe-exams', payload)
     const hasComment = !!doctorComment.value.trim()
-    message.value =
+    message.value = uiText(
       selectedExamsCount.value && hasComment
         ? 'Examens prescrits — commentaire enregistré pour les résultats de labos.'
         : selectedExamsCount.value
           ? 'Examens prescrits — en attente de paiement à la réception.'
-          : 'Commentaire enregistré pour les résultats de labos.'
+          : 'Commentaire enregistré pour les résultats de labos.',
+    )
     messageType.value = 'success'
     closeModal()
     await loadVisits()
   } catch (error: unknown) {
-    const shown = await showApiErrorModal(error, 'Erreur lors de l\'enregistrement de la consultation.')
+    const shown = await showApiErrorModal(error, "Erreur lors de l'enregistrement de la consultation.")
     if (!shown) {
-      message.value = 'Erreur lors de l\'enregistrement de la consultation.'
+      message.value = uiText("Erreur lors de l'enregistrement de la consultation.")
       messageType.value = 'error'
     }
   } finally {
@@ -236,11 +251,17 @@ onMounted(async () => {
   <div class="page-with-table page-with-table--medecin">
     <section class="page-with-table__head">
       <UiPageHeader
-        :title="isAdminSupervision ? 'Supervision — file de consultation' : 'Consultation médicale'"
+        :title="
+          uiText(
+            isAdminSupervision ? 'Supervision — file de consultation' : 'Consultation médicale',
+          )
+        "
         :subtitle="
-          isAdminSupervision
-            ? 'Vue lecture seule — tous les patients en attente ou en cours de consultation'
-            : 'Patients assignés à votre compte ou transférés vers vous'
+          uiText(
+            isAdminSupervision
+              ? 'Vue lecture seule — tous les patients en attente ou en cours de consultation'
+              : 'Patients assignés à votre compte ou transférés vers vous',
+          )
         "
         :icon="Stethoscope"
       />
@@ -252,11 +273,13 @@ onMounted(async () => {
 
     <section class="page-with-table__body">
       <UiCard
-        :title="isAdminSupervision ? 'Patients en file d\'attente' : 'Patients à consulter'"
+        :title="uiText(isAdminSupervision ? 'Patients en file d\'attente' : 'Patients à consulter')"
         :description="
-          isAdminSupervision
-            ? 'Supervision clinique — aucune action médicale depuis ce compte Direction'
-            : 'Cliquez sur Consulter pour voir le dossier et prescrire les examens'
+          uiText(
+            isAdminSupervision
+              ? 'Supervision clinique — aucune action médicale depuis ce compte Direction'
+              : 'Cliquez sur Consulter pour voir le dossier et prescrire les examens',
+          )
         "
         class="ui-card--table-panel consultation-queue-panel"
         :icon="ClipboardList"
@@ -270,9 +293,11 @@ onMounted(async () => {
 
         <p v-if="!loading && !visits.length" class="empty">
           {{
-            isAdminSupervision
-              ? 'Aucun patient en file de consultation pour le moment.'
-              : 'Aucun patient en attente'
+            uiText(
+              isAdminSupervision
+                ? 'Aucun patient en file de consultation pour le moment.'
+                : 'Aucun patient en attente',
+            )
           }}
         </p>
         <ConsultationQueueDataTable
@@ -321,7 +346,7 @@ onMounted(async () => {
                 </div>
                 <div>
                   <dt>Arrivée</dt>
-                  <dd>{{ new Date(modalVisit.createdAt).toLocaleString('fr-FR') }}</dd>
+                  <dd>{{ dateTimeText(modalVisit.createdAt) }}</dd>
                 </div>
               </dl>
             </section>
@@ -428,7 +453,7 @@ onMounted(async () => {
               :disabled="transferring || !selectedDoctorId"
               @click="submitTransfer"
             >
-              {{ transferring ? 'Transfert…' : 'Confirmer le transfert' }}
+              {{ uiText(transferring ? 'Transfert…' : 'Confirmer le transfert') }}
             </UiButton>
           </footer>
         </div>

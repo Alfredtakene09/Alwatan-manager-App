@@ -5,6 +5,8 @@ import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { formatShortDate } from '@/lib/admin-dashboard'
 import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
+import { exportTableExcel, type ExportColumn } from '@/lib/table-export'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
@@ -222,6 +224,24 @@ function exportHistoryPdf() {
   })
 }
 
+const historyExportColumns: ExportColumn<HistoryRow>[] = [
+  { header: 'Date de paiement', value: (r) => (r.paidAt ? formatShortDate(r.paidAt) : '—') },
+  { header: 'Période', value: (r) => periodLabel(r.year, r.month) },
+  { header: 'Employé', value: (r) => r.employee.fullName },
+  { header: 'Poste', value: (r) => r.employee.jobTitle ?? '—' },
+  { header: 'Service', value: (r) => r.employee.service },
+  { header: 'Net payé', value: (r) => formatFcfa(r.netFcfa) },
+  {
+    header: 'Mode',
+    value: (r) => (r.paymentMethod ? PAYMENT_LABELS[r.paymentMethod] ?? r.paymentMethod : '—'),
+  },
+]
+
+function exportHistoryExcel() {
+  if (!exportRows.value.length) return
+  exportTableExcel('Historique des paiements', historyExportColumns, exportRows.value)
+}
+
 watch([periodFilter, serviceFilter], () => {
   void loadHistory()
 })
@@ -305,6 +325,11 @@ defineExpose({ reload: loadHistory })
       <UiButton :icon="Download" variant="secondary" :disabled="!exportRows.length" @click="exportHistoryPdf">
         PDF
       </UiButton>
+      <ExportButtons
+        :show-pdf="false"
+        :disabled="!exportRows.length"
+        @excel="exportHistoryExcel"
+      />
     </div>
 
     <CaisseToolbar v-if="periodFilter !== 'all'" class="history-period-chip" aria-label="Période active">

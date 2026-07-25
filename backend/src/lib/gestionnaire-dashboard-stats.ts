@@ -36,6 +36,276 @@ const EXPENSE_DONUT_COLORS: Record<string, string> = {
   autres: "#64748b",
 };
 
+const CARD_SHARE_COLORS: Record<string, string> = {
+  revenue: "#16a34a",
+  expenses: "#e11d48",
+  net: "#2563eb",
+  payroll: "#7c3aed",
+};
+
+export type CardPeriodKey = "week" | "month" | "year";
+
+function percentChange(current: number, previous: number) {
+  if (previous === 0) return current > 0 ? 100 : current < 0 ? -100 : 0;
+  return Math.round(((current - previous) / previous) * 100);
+}
+
+function shiftCalendarDays(from: Date, deltaDays: number) {
+  const date = startOfDay(from);
+  date.setDate(date.getDate() + deltaDays);
+  return date;
+}
+
+function yearBounds(now: Date) {
+  const year = now.getFullYear();
+  return {
+    start: new Date(year, 0, 1),
+    end: new Date(year + 1, 0, 1),
+  };
+}
+
+function previousYearBounds(now: Date) {
+  const year = now.getFullYear() - 1;
+  return {
+    start: new Date(year, 0, 1),
+    end: new Date(year + 1, 0, 1),
+  };
+}
+
+async function sumPeriodCardTotals(from: Date, to: Date) {
+  const [revenue, expenses, payrollPaid] = await Promise.all([
+    aggregateCollectedBetween(from, to),
+    sumValidatedExpensesBetween(from, to),
+    sumPayrollPaidBetween(from, to),
+  ]);
+  const expensesTotal = expenses.totalFcfa + payrollPaid;
+  return {
+    revenueFcfa: revenue.totalFcfa,
+    expensesFcfa: expensesTotal,
+    chargesFcfa: expenses.totalFcfa,
+    payrollFcfa: payrollPaid,
+    netFcfa: revenue.totalFcfa - expensesTotal,
+    expenseRows: expenses.rows,
+  };
+}
+
+function mapCardShares(totals: {
+  revenueFcfa: number;
+  chargesFcfa: number;
+  payrollFcfa: number;
+  netFcfa: number;
+}) {
+  const items = [
+    {
+      key: "revenue",
+      label: "Recettes",
+      amountFcfa: totals.revenueFcfa,
+      color: CARD_SHARE_COLORS.revenue,
+    },
+    {
+      key: "expenses",
+      label: "Dépenses",
+      amountFcfa: totals.chargesFcfa,
+      color: CARD_SHARE_COLORS.expenses,
+    },
+    {
+      key: "payroll",
+      label: "Masse salariale",
+      amountFcfa: totals.payrollFcfa,
+      color: CARD_SHARE_COLORS.payroll,
+    },
+  ];
+  const total = items.reduce((sum, row) => sum + row.amountFcfa, 0);
+  const shares = items.map((row) => ({
+    ...row,
+    percent: total > 0 ? Math.round((row.amountFcfa / total) * 100) : 0,
+  }));
+  const absNet = Math.abs(totals.netFcfa);
+  const netBase = totals.revenueFcfa > 0 ? totals.revenueFcfa : total;
+  return {
+    shares,
+    netShare: {
+      key: "net",
+      label: "Bénéfice net",
+      amountFcfa: totals.netFcfa,
+      color: CARD_SHARE_COLORS.net,
+      percent: netBase > 0 ? Math.round((absNet / netBase) * 100) * (totals.netFcfa < 0 ? -1 : 1) : 0,
+    },
+  };
+}
+
+function mapSeriesPercents(
+  points: Array<{
+    label: string;
+    revenueFcfa: number;
+    expensesFcfa: number;
+    netFcfa: number;
+    payrollFcfa: number;
+  }>,
+) {
+  const maxRevenue = Math.max(1, ...points.map((row) => row.revenueFcfa));
+  const maxExpenses = Math.max(1, ...points.map((row) => row.expensesFcfa));
+  const maxAbsNet = Math.max(1, ...points.map((row) => Math.abs(row.netFcfa)));
+  const maxPayroll = Math.max(1, ...points.map((row) => row.payrollFcfa));
+  return points.map((row) => ({
+    ...row,
+    revenuePercent: Math.round((row.revenueFcfa / maxRevenue) * 100),
+    expensesPercent: Math.round((row.expensesFcfa / maxExpenses) * 100),
+    netPercent: Math.round((Math.abs(row.netFcfa) / maxAbsNet) * 100) * (row.netFcfa < 0 ? -1 : 1),
+    payrollPercent: Math.round((row.payrollFcfa / maxPayroll) * 100),
+  }));
+}
+
+async function buildCardPeriodStats(now = new Date(), dailyFlow: Awaited<ReturnType<typeof buildDailyFlow>>) {
+  const { year, month } = currentPayrollPeriod(now);
+  const monthBounds = payrollPeriodBounds(year, month);
+  const prevMonth = (() => {
+    const date = new Date(year, month - 2, 1);
+    return payrollPeriodBounds(date.getFullYear(), date.getMonth() + 1);
+  })();
+  const todayStart = startOfDay(now);
+  const tomorrowStart = shiftCalendarDays(todayStart, 1);
+  const weekStart = shiftCalendarDays(todayStart, -6);
+  const prevWeekStart = shiftCalendarDays(todayStart, -13);
+  const prevWeekEnd = weekStart;
+  const yearRange = yearBounds(now);
+  const prevYearRange = previousYearBounds(now);
+
+  const [
+    weekTotals,
+    prevWeekTotals,
+    monthTotals,
+    prevMonthTotals,
+    yearTotals,
+    prevYearTotals,
+  ] = await Promise.all([
+    sumPeriodCardTotals(weekStart, tomorrowStart),
+    sumPeriodCardTotals(prevWeekStart, prevWeekEnd),
+    sumPeriodCardTotals(monthBounds.start, monthBounds.end),
+    sumPeriodCardTotals(prevMonth.start, prevMonth.end),
+    sumPeriodCardTotals(yearRange.start, yearRange.end),
+    sumPeriodCardTotals(prevYearRange.start, prevYearRange.end),
+  ]);
+
+  const weekSeriesRaw = dailyFlow.slice(-7).map((row) => ({
+    label: row.label,
+    revenueFcfa: row.inflowsFcfa,
+    expensesFcfa: row.outflowsFcfa,
+    netFcfa: row.balanceFcfa,
+    payrollFcfa: row.payrollFcfa,
+  }));
+
+  const monthSeriesRaw = dailyFlow.slice(-30).map((row) => ({
+    label: row.label,
+    revenueFcfa: row.inflowsFcfa,
+    expensesFcfa: row.outflowsFcfa,
+    netFcfa: row.balanceFcfa,
+    payrollFcfa: row.payrollFcfa,
+  }));
+
+  const yearMonths = Array.from({ length: 12 }, (_, index) => {
+    const date = new Date(now.getFullYear(), index, 1);
+    return {
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      label: date.toLocaleDateString("fr-FR", { month: "short" }),
+      start: new Date(date.getFullYear(), date.getMonth(), 1),
+      end: new Date(date.getFullYear(), date.getMonth() + 1, 1),
+    };
+  });
+
+  const yearSeriesRaw = await Promise.all(
+    yearMonths.map(async (period) => {
+      if (period.start > now) {
+        return {
+          label: period.label,
+          revenueFcfa: 0,
+          expensesFcfa: 0,
+          netFcfa: 0,
+          payrollFcfa: 0,
+        };
+      }
+      const end = period.end > tomorrowStart ? tomorrowStart : period.end;
+      const totals = await sumPeriodCardTotals(period.start, end);
+      return {
+        label: period.label,
+        revenueFcfa: totals.revenueFcfa,
+        expensesFcfa: totals.expensesFcfa,
+        netFcfa: totals.netFcfa,
+        payrollFcfa: totals.payrollFcfa,
+      };
+    }),
+  );
+
+  function pack(
+    key: CardPeriodKey,
+    label: string,
+    current: Awaited<ReturnType<typeof sumPeriodCardTotals>>,
+    previous: Awaited<ReturnType<typeof sumPeriodCardTotals>>,
+    seriesRaw: Array<{
+      label: string;
+      revenueFcfa: number;
+      expensesFcfa: number;
+      netFcfa: number;
+      payrollFcfa: number;
+    }>,
+  ) {
+    const { shares, netShare } = mapCardShares(current);
+    return {
+      key,
+      label,
+      revenueFcfa: current.revenueFcfa,
+      expensesFcfa: current.expensesFcfa,
+      netFcfa: current.netFcfa,
+      payrollFcfa: current.payrollFcfa,
+      revenueChangePercent: percentChange(current.revenueFcfa, previous.revenueFcfa),
+      expensesChangePercent: percentChange(current.expensesFcfa, previous.expensesFcfa),
+      netChangePercent: percentChange(current.netFcfa, previous.netFcfa),
+      payrollChangePercent: percentChange(current.payrollFcfa, previous.payrollFcfa),
+      shares,
+      netShare,
+      changeBars: [
+        {
+          key: "revenue",
+          label: "Recettes",
+          amountFcfa: current.revenueFcfa,
+          percent: percentChange(current.revenueFcfa, previous.revenueFcfa),
+          color: CARD_SHARE_COLORS.revenue,
+        },
+        {
+          key: "expenses",
+          label: "Dépenses",
+          amountFcfa: current.expensesFcfa,
+          percent: percentChange(current.expensesFcfa, previous.expensesFcfa),
+          color: CARD_SHARE_COLORS.expenses,
+        },
+        {
+          key: "net",
+          label: "Bénéfice net",
+          amountFcfa: current.netFcfa,
+          percent: percentChange(current.netFcfa, previous.netFcfa),
+          color: CARD_SHARE_COLORS.net,
+        },
+        {
+          key: "payroll",
+          label: "Masse salariale",
+          amountFcfa: current.payrollFcfa,
+          percent: percentChange(current.payrollFcfa, previous.payrollFcfa),
+          color: CARD_SHARE_COLORS.payroll,
+        },
+      ],
+      series: mapSeriesPercents(seriesRaw),
+      expenseBreakdown: mapExpenseBreakdown(current.expenseRows, current.payrollFcfa),
+    };
+  }
+
+  return {
+    week: pack("week", "Semaine", weekTotals, prevWeekTotals, weekSeriesRaw),
+    month: pack("month", "Mois", monthTotals, prevMonthTotals, monthSeriesRaw),
+    year: pack("year", "Année", yearTotals, prevYearTotals, yearSeriesRaw),
+  };
+}
+
 function mapExpenseBreakdown(
   rows: Array<{ amountFcfa: number; category: ClinicExpenseCategory }>,
   payrollSalariesFcfa: number,
@@ -133,6 +403,7 @@ async function buildDailyFlow(days: number) {
         label: dayStart.toLocaleDateString("fr-FR", { day: "numeric", month: "short" }),
         inflowsFcfa: revenue.totalFcfa,
         outflowsFcfa,
+        payrollFcfa: payrollPaid,
         balanceFcfa: revenue.totalFcfa - outflowsFcfa,
       };
     }),
@@ -349,6 +620,7 @@ export async function buildGestionnaireDashboardOverview() {
   const monthOutflowsFcfa = monthExpenses.totalFcfa + monthPayrollPaid;
   const journalBalanceFcfa = monthRevenue.totalFcfa - monthOutflowsFcfa;
   const expenseBreakdown = mapExpenseBreakdown(monthExpenseRows.rows, monthPayrollPaid);
+  const cardPeriodStats = await buildCardPeriodStats(now, dailyFlow90);
 
   const ROLE_GROUP_LABELS: Record<string, string> = {
     RECEPTIONNISTE: "Réception",
@@ -369,6 +641,7 @@ export async function buildGestionnaireDashboardOverview() {
       journalOutflowsFcfa: monthOutflowsFcfa,
     },
     dailyFlow: dailyFlow90,
+    cardPeriodStats,
     expenseBreakdown,
     alerts: {
       cashRegisters: cashAlerts,

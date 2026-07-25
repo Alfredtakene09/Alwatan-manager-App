@@ -11,12 +11,26 @@ import {
   ConsultationQuotaMode,
   ConsultationRenewalPolicy,
   ReceptionShiftSlot,
+  SalaryAdvanceStatus,
 } from "@prisma/client";
 import { parseShiftSlot } from "../lib/cash-shift.js";
 import { prisma } from "../lib/db.js";
 import { MANAGEABLE_USER_ROLES } from "../lib/roles.js";
 import { employeeCompensationData } from "../lib/doctor-compensation.js";
-import { employeeSelect, serializeEmployee } from "../lib/employee.js";
+import {
+  deleteOrDeactivateEmployee,
+  doctorAvailabilitySlotsSchema,
+  normalizeAvailabilitySlots,
+  normalizeSpecialty,
+  resolveEmployeeIsMedecin,
+} from "../lib/doctor-profile.js";
+import {
+  employeePhotoUpload,
+  multerPhotoError,
+  saveEmployeePhoto,
+  sendEmployeePhoto,
+} from "../lib/employee-photo.js";
+import { employeeSelect, serializeEmployee, isHiddenPlatformAdminEmployee, hiddenPlatformAdminEmployeeWhere } from "../lib/employee.js";
 import {
   countEmployeesForJobTitle,
   serializeJobTitlesWithUsage,
@@ -38,6 +52,8 @@ import {
 } from "../lib/admin-payroll.js";
 import {
   deductPendingAdvancesForPayroll,
+  salaryAdvanceInclude,
+  serializeSalaryAdvance,
   sumPendingAdvancesByEmployee,
 } from "../lib/salary-advances.js";
 import { parseBusinessDate, formatBusinessDate } from "../lib/cash-shift.js";
@@ -118,12 +134,27 @@ const createEmployeeSchema = z
     jobTitle: z.string().optional(),
     isMedecin: z.boolean().optional(),
     active: z.boolean().optional(),
+    specialty: z.string().max(120).optional().nullable(),
+    availabilitySlots: doctorAvailabilitySlotsSchema,
   })
   .merge(employeeCompensationSchema);
 
 const updateEmployeeSchema = createEmployeeSchema.partial();
 
 const cashShiftSlotSchema = z.enum(["MORNING", "EVENING", "NIGHT"]);
+
+/** E-mail optionnel : ignore chaîne vide / espaces (évite l’échec Zod sur ""). */
+const optionalEmailSchema = z.preprocess(
+  (val) => (typeof val === "string" && val.trim() === "" ? undefined : val),
+  z.string().trim().email("Adresse e-mail invalide.").optional(),
+);
+
+function zodErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof z.ZodError) {
+    return error.issues[0]?.message ?? fallback;
+  }
+  return fallback;
+}
 
 const createUserSchema = z.object({
   username: z
@@ -132,10 +163,10 @@ const createUserSchema = z.object({
     .min(2, "Le nom d'utilisateur doit contenir au moins 2 caractères.")
     .max(50)
     .regex(/^[a-zA-Z0-9._-]+$/, "Caractères autorisés : lettres, chiffres, . _ -"),
-  email: z.string().email().optional(),
-  password: z.string().min(6),
+  email: optionalEmailSchema,
+  password: z.string().min(6, "Le mot de passe doit contenir au moins 6 caractères."),
   role: manageableRoleSchema,
-  employeeId: z.string().min(1),
+  employeeId: z.string().min(1, "Sélectionnez un employé à lier au compte."),
   cashShiftSlot: cashShiftSlotSchema.optional().nullable(),
 });
 
@@ -143,12 +174,12 @@ const updateUserSchema = z.object({
   username: z
     .string()
     .trim()
-    .min(2)
+    .min(2, "Le nom d'utilisateur doit contenir au moins 2 caractères.")
     .max(50)
-    .regex(/^[a-zA-Z0-9._-]+$/)
+    .regex(/^[a-zA-Z0-9._-]+$/, "Caractères autorisés : lettres, chiffres, . _ -")
     .optional(),
-  email: z.string().email().optional(),
-  password: z.string().min(6).optional(),
+  email: optionalEmailSchema,
+  password: z.string().min(6, "Le mot de passe doit contenir au moins 6 caractères.").optional(),
   role: manageableRoleSchema.optional(),
   active: z.boolean().optional(),
   employeeId: z.string().min(1).optional(),
@@ -265,12 +296,17 @@ router.get("/employees", requireModule("utilisateurs"), async (req, res) => {
     where: {
       ...(activeOnly ? { active: true } : {}),
       ...(unlinkedOnly ? { user: { is: null } } : {}),
+      ...hiddenPlatformAdminEmployeeWhere,
     },
-    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+    orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
     select: employeeSelect,
   });
 
-  return res.json(employees.map(serializeEmployee));
+  return res.json(
+    employees
+      .filter((employee) => !isHiddenPlatformAdminEmployee(employee))
+      .map(serializeEmployee),
+  );
 });
 
 router.get("/job-titles", requireModule("utilisateurs"), async (req, res) => {
@@ -371,14 +407,18 @@ router.delete("/job-titles/:id", requireModule("utilisateurs"), async (req, res)
 router.post("/employees", requireModule("utilisateurs"), async (req, res) => {
   try {
     const body = createEmployeeSchema.parse(req.body);
-    const isMedecin = body.isMedecin ?? false;
+    const jobTitle = body.jobTitle?.trim() || null;
+    const isMedecin = resolveEmployeeIsMedecin(body.isMedecin, jobTitle);
+    const availabilitySlots = normalizeAvailabilitySlots(body.availabilitySlots, isMedecin);
     const employee = await prisma.employee.create({
       data: {
         firstName: body.firstName,
         lastName: body.lastName,
         phone: body.phone?.trim() || null,
-        jobTitle: body.jobTitle?.trim() || null,
+        jobTitle,
         isMedecin,
+        specialty: normalizeSpecialty(body.specialty, isMedecin),
+        ...(availabilitySlots !== undefined ? { availabilitySlots } : {}),
         active: body.active ?? true,
         ...employeeCompensationData(isMedecin, body),
       },
@@ -400,7 +440,12 @@ router.put("/employees/:id", requireModule("utilisateurs"), async (req, res) => 
     });
     if (!existing) return res.status(404).json({ error: "Employé introuvable" });
 
-    const nextIsMedecin = body.isMedecin ?? existing.isMedecin;
+    const nextJobTitle =
+      body.jobTitle === undefined ? existing.jobTitle : body.jobTitle.trim() || null;
+    const nextIsMedecin = resolveEmployeeIsMedecin(
+      body.isMedecin !== undefined ? body.isMedecin : existing.isMedecin || undefined,
+      nextJobTitle,
+    );
     if (existing.user?.role === UserRole.MEDECIN && !nextIsMedecin) {
       return res.status(409).json({
         error: "Impossible de retirer le statut médecin : un compte utilisateur médecin y est lié.",
@@ -409,6 +454,7 @@ router.put("/employees/:id", requireModule("utilisateurs"), async (req, res) => 
 
     const compensationInput =
       body.isMedecin !== undefined ||
+      body.jobTitle !== undefined ||
       body.doctorCompensationType !== undefined ||
       body.consultationTotalFcfa !== undefined ||
       body.consultationQuotaPercent !== undefined ||
@@ -417,15 +463,38 @@ router.put("/employees/:id", requireModule("utilisateurs"), async (req, res) => 
         ? employeeCompensationData(nextIsMedecin, body)
         : {};
 
+    const availabilitySlots =
+      body.availabilitySlots !== undefined ||
+      body.isMedecin !== undefined ||
+      body.jobTitle !== undefined
+        ? normalizeAvailabilitySlots(
+            body.availabilitySlots !== undefined
+              ? body.availabilitySlots
+              : existing.availabilitySlots,
+            nextIsMedecin,
+          )
+        : undefined;
+
     const employee = await prisma.employee.update({
       where: { id: employeeId },
       data: {
         firstName: body.firstName,
         lastName: body.lastName,
         phone: body.phone === undefined ? undefined : body.phone.trim() || null,
-        jobTitle: body.jobTitle === undefined ? undefined : body.jobTitle.trim() || null,
-        isMedecin: body.isMedecin,
+        jobTitle: body.jobTitle === undefined ? undefined : nextJobTitle,
+        isMedecin: nextIsMedecin,
         active: body.active,
+        ...(body.specialty !== undefined ||
+        body.isMedecin !== undefined ||
+        body.jobTitle !== undefined
+          ? {
+              specialty: normalizeSpecialty(
+                body.specialty !== undefined ? body.specialty : existing.specialty,
+                nextIsMedecin,
+              ),
+            }
+          : {}),
+        ...(availabilitySlots !== undefined ? { availabilitySlots } : {}),
         ...compensationInput,
       },
       select: employeeSelect,
@@ -447,23 +516,39 @@ router.put("/employees/:id", requireModule("utilisateurs"), async (req, res) => 
   }
 });
 
-router.delete("/employees/:id", requireModule("utilisateurs"), async (req, res) => {
-  const employeeId = String(req.params.id);
-  const existing = await prisma.employee.findUnique({
-    where: { id: employeeId },
-    include: { user: { select: { id: true } } },
-  });
-  if (!existing) return res.status(404).json({ error: "Employé introuvable" });
-  if (existing.user) {
-    return res.status(409).json({
-      error: "Impossible de supprimer cet employé : un compte application y est lié. Supprimez d'abord le compte.",
+router.post(
+  "/employees/:id/photo",
+  requireModule("utilisateurs"),
+  (req, res, next) => {
+    employeePhotoUpload.single("photo")(req, res, (error) => {
+      if (error) return multerPhotoError(error, req, res);
+      return next();
     });
-  }
+  },
+  async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "Aucune photo envoyée." });
+    const result = await saveEmployeePhoto(String(req.params.id), req.file);
+    if ("error" in result) return res.status(404).json({ error: result.error });
+    return res.json({ ok: true, photoPath: result.employee.photoPath, hasPhoto: true });
+  },
+);
 
-  await prisma.employee.delete({ where: { id: employeeId } });
+router.get("/employees/:id/photo", requireModule("utilisateurs"), async (req, res) => {
+  return sendEmployeePhoto(String(req.params.id), res);
+});
+
+router.delete("/employees/:id", requireModule("utilisateurs"), async (req, res) => {
+  const result = await deleteOrDeactivateEmployee(String(req.params.id));
+  if (result.mode === "not_found") {
+    return res.status(404).json({ error: "Employé introuvable" });
+  }
+  if (result.mode === "blocked") {
+    return res.status(result.status).json({ error: result.error });
+  }
   return res.json({
     ok: true,
-    message: `L'employé « ${existing.firstName} ${existing.lastName} » a été supprimé.`,
+    softDeleted: result.mode === "soft",
+    message: result.message,
   });
 });
 
@@ -475,7 +560,8 @@ router.get("/users", requireModule("utilisateurs"), async (req, res) => {
 
   const users = await prisma.user.findMany({
     where: {
-      role: roleFilter ?? { in: [...MANAGEABLE_USER_ROLES] },
+      role: { not: UserRole.ADMIN },
+      ...(roleFilter ? { role: roleFilter } : {}),
     },
     orderBy: [{ role: "asc" }, { lastName: "asc" }, { firstName: "asc" }],
     select: userSelect,
@@ -535,8 +621,8 @@ router.post("/users", requireModule("utilisateurs"), async (req, res) => {
     });
 
     return res.status(201).json(serializeUser(user));
-  } catch {
-    return res.status(400).json({ error: "Données invalides" });
+  } catch (error) {
+    return res.status(400).json({ error: zodErrorMessage(error, "Données invalides") });
   }
 });
 
@@ -609,8 +695,8 @@ router.put("/users/:id", requireModule("utilisateurs"), async (req, res) => {
     });
 
     return res.json(serializeUser(user));
-  } catch {
-    return res.status(400).json({ error: "Mise à jour impossible" });
+  } catch (error) {
+    return res.status(400).json({ error: zodErrorMessage(error, "Mise à jour impossible") });
   }
 });
 
@@ -768,6 +854,19 @@ const adminExpenseSchema = z.object({
   amountFcfa: z.number().int().positive(),
   label: z.string().min(2),
   category: z.nativeEnum(ClinicExpenseCategory).optional(),
+  status: z.nativeEnum(ClinicExpenseStatus).optional(),
+  comment: z.string().optional(),
+  rejectionReason: z.string().optional(),
+});
+
+const salaryAdvanceSchema = z.object({
+  employeeId: z.string().min(1),
+  amountFcfa: z.coerce.number().int().positive(),
+  installmentFcfa: z
+    .union([z.coerce.number().int().positive(), z.null(), z.literal("")])
+    .optional()
+    .transform((value) => (value === "" || value == null ? null : value)),
+  businessDate: z.string().min(1),
   comment: z.string().optional(),
 });
 
@@ -779,12 +878,14 @@ function serializeAdminExpense(row: {
   category: ClinicExpenseCategory;
   status: ClinicExpenseStatus;
   comment: string | null;
+  rejectionReason: string | null;
   createdAt: Date;
 }) {
   return {
     id: row.id,
     date: row.businessDate.toISOString().slice(0, 10),
     businessDate: formatBusinessDate(row.businessDate),
+    categoryCode: row.category,
     amountFcfa: row.amountFcfa,
     label: row.label,
     description: row.label,
@@ -792,27 +893,44 @@ function serializeAdminExpense(row: {
     status: row.status,
     statusLabel: EXPENSE_STATUS_LABELS[row.status],
     comment: row.comment,
+    rejectionReason: row.rejectionReason,
     createdAt: row.createdAt.toISOString(),
   };
 }
 
 router.get("/expenses", async (req, res) => {
-  const filter = typeof req.query.filter === "string" ? req.query.filter : "all";
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const fromIso = typeof req.query.from === "string" ? req.query.from : "";
+  const toIso = typeof req.query.to === "string" ? req.query.to : "";
 
-  const where =
-    filter === "pending"
-      ? { status: ClinicExpenseStatus.PENDING }
-      : filter === "month"
-        ? { businessDate: { gte: monthStart, lt: monthEnd } }
-        : {};
+  let where: { businessDate?: { gte: Date; lt: Date }; status?: ClinicExpenseStatus } = {};
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fromIso) && /^\d{4}-\d{2}-\d{2}$/.test(toIso)) {
+    const fromDate = parseBusinessDate(fromIso);
+    const toDate = parseBusinessDate(toIso);
+    if (fromDate.getTime() > toDate.getTime()) {
+      return res.status(400).json({ error: "La date de début doit précéder la date de fin." });
+    }
+    const endExclusive = new Date(toDate);
+    endExclusive.setDate(endExclusive.getDate() + 1);
+    where = { businessDate: { gte: fromDate, lt: endExclusive } };
+  } else {
+    const filter = typeof req.query.filter === "string" ? req.query.filter : "all";
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    where =
+      filter === "pending"
+        ? { status: ClinicExpenseStatus.PENDING }
+        : filter === "month"
+          ? { businessDate: { gte: monthStart, lt: monthEnd } }
+          : {};
+  }
 
   const rows = await prisma.clinicExpense.findMany({
     where,
     orderBy: { createdAt: "desc" },
-    take: 100,
+    take: 500,
   });
 
   return res.json(rows.map(serializeAdminExpense));
@@ -823,6 +941,9 @@ router.post("/expenses", async (req, res) => {
   try {
     const body = adminExpenseSchema.parse(req.body);
     const businessDate = parseBusinessDate(body.businessDate);
+    const status = body.status ?? ClinicExpenseStatus.VALIDATED;
+    const rejectionReason =
+      status === ClinicExpenseStatus.REJECTED ? body.rejectionReason?.trim() || "Rejet manuel" : null;
     const row = await prisma.clinicExpense.create({
       data: {
         businessDate,
@@ -830,9 +951,12 @@ router.post("/expenses", async (req, res) => {
         label: body.label.trim(),
         category: body.category ?? ClinicExpenseCategory.AUTRE,
         comment: body.comment?.trim() || null,
-        status: ClinicExpenseStatus.PENDING,
+        status,
+        rejectionReason,
         paidById: user.id,
         recordedById: user.id,
+        validatedById: status !== ClinicExpenseStatus.PENDING ? user.id : null,
+        validatedAt: status !== ClinicExpenseStatus.PENDING ? new Date() : null,
       },
     });
 
@@ -853,6 +977,47 @@ router.post("/expenses", async (req, res) => {
     }
     return res.status(400).json({ error: "Enregistrement impossible" });
   }
+});
+
+router.put("/expenses/:id", async (req, res) => {
+  const user = req.user!;
+  try {
+    const body = adminExpenseSchema.parse(req.body);
+    const existing = await prisma.clinicExpense.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: "Dépense introuvable" });
+    const businessDate = parseBusinessDate(body.businessDate);
+    const status = body.status ?? existing.status;
+    const rejectionReason =
+      status === ClinicExpenseStatus.REJECTED ? body.rejectionReason?.trim() || "Rejet manuel" : null;
+
+    const updated = await prisma.clinicExpense.update({
+      where: { id: existing.id },
+      data: {
+        businessDate,
+        amountFcfa: body.amountFcfa,
+        label: body.label.trim(),
+        category: body.category ?? existing.category,
+        comment: body.comment?.trim() || null,
+        status,
+        rejectionReason,
+        validatedById: status !== ClinicExpenseStatus.PENDING ? user.id : null,
+        validatedAt: status !== ClinicExpenseStatus.PENDING ? new Date() : null,
+      },
+    });
+    return res.json(serializeAdminExpense(updated));
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: "Données invalides", details: error.issues });
+    }
+    return res.status(400).json({ error: "Mise à jour impossible" });
+  }
+});
+
+router.delete("/expenses/:id", async (req, res) => {
+  const row = await prisma.clinicExpense.findUnique({ where: { id: req.params.id } });
+  if (!row) return res.status(404).json({ error: "Dépense introuvable" });
+  await prisma.clinicExpense.delete({ where: { id: row.id } });
+  return res.status(204).send();
 });
 
 router.patch("/expenses/:id/validate", async (req, res) => {
@@ -964,6 +1129,100 @@ router.get("/payroll", async (req, res) => {
       }),
     ),
   });
+});
+
+router.get("/salary-advances", async (req, res) => {
+  const statusParam = req.query.status;
+  const employeeId = typeof req.query.employeeId === "string" ? req.query.employeeId : undefined;
+  const status =
+    statusParam === "PENDING" ||
+    statusParam === "DEDUCTED" ||
+    statusParam === "CANCELLED"
+      ? statusParam
+      : undefined;
+
+  const rows = await prisma.salaryAdvance.findMany({
+    where: {
+      ...(status ? { status } : {}),
+      ...(employeeId ? { employeeId } : {}),
+    },
+    include: salaryAdvanceInclude,
+    orderBy: [{ businessDate: "desc" }, { createdAt: "desc" }],
+    take: 300,
+  });
+  return res.json(rows.map(serializeSalaryAdvance));
+});
+
+router.post("/salary-advances", async (req, res) => {
+  const user = req.user!;
+  try {
+    const body = salaryAdvanceSchema.parse(req.body);
+    if (body.installmentFcfa != null && body.installmentFcfa > body.amountFcfa) {
+      return res.status(400).json({
+        error: "La tranche mensuelle ne peut pas dépasser le montant total de l'avance.",
+      });
+    }
+    const employee = await prisma.employee.findUnique({
+      where: { id: body.employeeId },
+      select: { id: true, active: true },
+    });
+    if (!employee) return res.status(404).json({ error: "Employé introuvable" });
+    if (!employee.active) {
+      return res.status(400).json({ error: "Cet employé est inactif." });
+    }
+
+    const row = await prisma.salaryAdvance.create({
+      data: {
+        employeeId: body.employeeId,
+        amountFcfa: body.amountFcfa,
+        remainingFcfa: body.amountFcfa,
+        installmentFcfa: body.installmentFcfa ?? null,
+        businessDate: parseBusinessDate(body.businessDate),
+        comment: body.comment?.trim() || null,
+        recordedById: user.id,
+      },
+      include: salaryAdvanceInclude,
+    });
+    return res.status(201).json(serializeSalaryAdvance(row));
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: "Données invalides" });
+    }
+    throw error;
+  }
+});
+
+router.patch("/salary-advances/:id/cancel", async (req, res) => {
+  const row = await prisma.salaryAdvance.findUnique({
+    where: { id: req.params.id },
+    include: salaryAdvanceInclude,
+  });
+  if (!row) return res.status(404).json({ error: "Avance introuvable" });
+  if (row.status !== SalaryAdvanceStatus.PENDING) {
+    return res.status(409).json({ error: "Seules les avances en attente peuvent être annulées." });
+  }
+
+  const updated = await prisma.salaryAdvance.update({
+    where: { id: row.id },
+    data: { status: SalaryAdvanceStatus.CANCELLED },
+    include: salaryAdvanceInclude,
+  });
+  return res.json(serializeSalaryAdvance(updated));
+});
+
+router.delete("/salary-advances/:id", async (req, res) => {
+  const row = await prisma.salaryAdvance.findUnique({
+    where: { id: req.params.id },
+  });
+  if (!row) return res.status(404).json({ error: "Avance introuvable" });
+  if (row.status === SalaryAdvanceStatus.PENDING) {
+    return res.status(409).json({
+      error: "Annulez d'abord l'avance en attente avant de la supprimer.",
+    });
+  }
+
+  await prisma.salaryAdvance.delete({ where: { id: row.id } });
+  return res.status(204).send();
 });
 
 router.post("/payroll/:id/pay", async (req, res) => {

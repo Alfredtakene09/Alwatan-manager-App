@@ -574,6 +574,137 @@ export const CLINIC_PRINT_STYLES = `
     background: #e65100 !important;
     border-color: #e65100;
   }
+
+  /* Ticket thermique 80 mm (Xprinter) */
+  @page print-thermal {
+    size: 80mm auto;
+    margin: 0;
+  }
+  body.print-thermal {
+    page: print-thermal;
+    max-width: 72mm;
+    width: 72mm;
+    margin: 0 auto;
+    padding: 3mm 2mm;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 11px;
+    line-height: 1.35;
+    color: #000;
+  }
+  body.print-thermal .thermal-receipt {
+    width: 100%;
+  }
+  body.print-thermal .thermal-receipt__head {
+    text-align: center;
+    margin-bottom: 4px;
+  }
+  body.print-thermal .thermal-receipt__logo {
+    display: block;
+    width: 42px;
+    height: 42px;
+    object-fit: contain;
+    margin: 0 auto 4px;
+  }
+  body.print-thermal .thermal-receipt__name-ar {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 700;
+    font-family: 'Noto Naskh Arabic', 'Amiri', Tahoma, Arial, sans-serif;
+  }
+  body.print-thermal .thermal-receipt__name {
+    margin: 2px 0 0;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  body.print-thermal .thermal-receipt__contact {
+    margin: 1px 0 0;
+    font-size: 9px;
+    line-height: 1.3;
+  }
+  body.print-thermal .thermal-receipt__rule {
+    border: 0;
+    border-top: 1px dashed #000;
+    margin: 6px 0;
+  }
+  body.print-thermal .thermal-receipt__title {
+    margin: 0;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
+    text-transform: uppercase;
+  }
+  body.print-thermal .thermal-receipt__subtitle {
+    margin: 2px 0 0;
+    font-size: 10px;
+    text-align: center;
+  }
+  body.print-thermal .thermal-receipt table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 4px 0;
+    font-size: 10px;
+  }
+  body.print-thermal .thermal-receipt th,
+  body.print-thermal .thermal-receipt td {
+    border: 1px solid #000;
+    padding: 3px 4px;
+    vertical-align: top;
+    word-break: break-word;
+  }
+  body.print-thermal .thermal-receipt th {
+    background: #fff;
+    font-weight: 700;
+    text-align: left;
+  }
+  body.print-thermal .thermal-receipt td {
+    text-align: left;
+  }
+  body.print-thermal .thermal-receipt__meta th {
+    width: 34%;
+  }
+  body.print-thermal .thermal-receipt__items th:nth-child(2),
+  body.print-thermal .thermal-receipt__items td:nth-child(2) {
+    width: 14%;
+    text-align: center;
+  }
+  body.print-thermal .thermal-receipt__items th:nth-child(3),
+  body.print-thermal .thermal-receipt__items td:nth-child(3),
+  body.print-thermal .thermal-receipt__totals td:last-child {
+    text-align: right;
+    white-space: nowrap;
+  }
+  body.print-thermal .thermal-receipt__totals th {
+    width: 50%;
+  }
+  body.print-thermal .thermal-receipt__thanks {
+    margin: 8px 0 2px;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 700;
+  }
+  body.print-thermal .thermal-receipt__note {
+    margin: 4px 0 0;
+    font-size: 9px;
+  }
+  body.print-thermal .thermal-receipt__fields {
+    margin: 4px 0;
+  }
+  body.print-thermal .thermal-receipt__row {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    margin: 2px 0;
+    font-size: 10px;
+  }
+  body.print-thermal .thermal-receipt__row--stack {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  body.print-thermal .thermal-receipt__row strong {
+    font-weight: 700;
+    text-align: right;
+  }
 `
 
 import { EXAM_KIND_LABELS, EXAM_KIND_ORDER, type ExamKindSlug } from '@/lib/exam-catalog/types'
@@ -651,6 +782,7 @@ export type ConsultationReceiptData = {
   ageUnit?: PatientAgeUnit | null
   gender?: string | null
   phone?: string | null
+  processedBy?: string
 }
 
 function patientAgeLabel(age?: number | null, ageUnit?: PatientAgeUnit | null) {
@@ -709,88 +841,61 @@ function receiptField(label: string, value: string) {
 export function buildConsultationReceiptHtml(data: ConsultationReceiptData): string {
   const { date, time } = parseReceiptDateTime(data.date)
   const genderLabel = formatGender(data.gender)
-  const hasReduction = data.reduction > 0
   const consultNo = data.invoiceNumber ?? '—'
+  const ageLabel = data.age != null ? patientAgeLabel(data.age, data.ageUnit) : null
 
-  const patientFields = [
-    receiptField('Patient', data.patientName),
-    receiptField('Matricule', data.patientCode),
-    ...(genderLabel ? [receiptField('Sexe', genderLabel)] : []),
-    ...(data.age != null ? [receiptField('Âge', patientAgeLabel(data.age, data.ageUnit) ?? '')] : []),
-    ...(data.phone ? [receiptField('Tél.', data.phone)] : []),
-  ].join('')
-
-  const consultFields = [
-    receiptField('Date', date),
-    receiptField('Heure', time),
-    receiptField('N° Consult', consultNo),
-    receiptField('Statut', 'Payé'),
-    receiptField('Nom de Médecin', data.doctorName),
-  ].join('')
-
-  const reductionRow = hasReduction
-    ? `<tr class="receipt-invoice__summary receipt-invoice__summary--discount">
-        <td colspan="3">Réduction</td>
-        <td>- ${formatFcfaPrint(data.reduction)}</td>
-      </tr>`
-    : ''
-
-  const serviceDescription = `Consultation médicale — ${data.doctorName}`
+  const metaRows = [
+    ['Patient', data.patientName],
+    ['Matricule', data.patientCode],
+    ...(genderLabel ? [['Sexe', genderLabel] as const] : []),
+    ...(ageLabel ? [['Âge', ageLabel] as const] : []),
+    ...(data.phone ? [['Tél.', data.phone] as const] : []),
+    ['Date', date],
+    ['Heure', time],
+    ['N° consult.', consultNo],
+    ['Médecin', data.doctorName],
+    ['Statut', 'Payé'],
+    ...(data.processedBy ? [['Encaissé par', data.processedBy] as const] : []),
+  ]
+    .map(
+      ([label, value]) => `
+      <tr>
+        <th>${escapeHtml(label)}</th>
+        <td>${escapeHtml(value)}</td>
+      </tr>`,
+    )
+    .join('')
 
   return `
-<div class="receipt-invoice">
-  <header class="receipt-invoice__head">
-    <div class="receipt-invoice__head-top">
-      <img src="${CLINIC.logo}" alt="${escapeHtml(CLINIC.nameFr)}" class="receipt-invoice__logo" />
-      <div class="receipt-invoice__titles">
-        <p class="receipt-invoice__clinic-ar" dir="rtl" lang="ar">${escapeHtml(CLINIC.nameAr)}</p>
-        <p class="receipt-invoice__clinic-name">${escapeHtml(CLINIC.nameFr)}</p>
-      </div>
-    </div>
-    <div class="receipt-invoice__brand">
-      <div class="receipt-invoice__contact-box">
-        <p class="receipt-invoice__contact">${escapeHtml(CLINIC.fullAddress)}</p>
-        <p class="receipt-invoice__contact">${escapeHtml(CLINIC.phones)}</p>
-        <p class="receipt-invoice__contact">Email : ${escapeHtml(CLINIC.email)}</p>
-      </div>
-    </div>
+<div class="thermal-receipt">
+  <header class="thermal-receipt__head">
+    <img src="${CLINIC.logo}" alt="${escapeHtml(CLINIC.nameFr)}" class="thermal-receipt__logo" />
+    <p class="thermal-receipt__name-ar" dir="rtl" lang="ar">${escapeHtml(CLINIC.nameAr)}</p>
+    <p class="thermal-receipt__name">${escapeHtml(CLINIC.shortName)}</p>
+    <p class="thermal-receipt__contact">${escapeHtml(CLINIC.city)}</p>
+    <p class="thermal-receipt__contact">${escapeHtml(CLINIC.phones)}</p>
   </header>
 
-  <hr class="receipt-invoice__dash" />
+  <hr class="thermal-receipt__rule" />
+  <h1 class="thermal-receipt__title">Reçu de consultation</h1>
+  <p class="thermal-receipt__subtitle">${escapeHtml(consultNo)}</p>
+  <hr class="thermal-receipt__rule" />
 
-  <div class="receipt-invoice__cols">
-    <div class="receipt-invoice__box">${patientFields}</div>
-    <div class="receipt-invoice__box">${consultFields}</div>
-  </div>
+  <table class="thermal-receipt__meta">
+    <tbody>${metaRows}</tbody>
+  </table>
 
-  <h2 class="receipt-invoice__doc-title">Reçu de consultation</h2>
-
-  <table class="receipt-invoice__table">
-    <thead>
-      <tr>
-        <th>Description du service</th>
-        <th>Qté</th>
-        <th>Prix unitaire</th>
-        <th>Total</th>
-      </tr>
-    </thead>
+  <table class="thermal-receipt__totals">
     <tbody>
-      <tr class="receipt-invoice__service">
-        <td>${escapeHtml(serviceDescription)}</td>
-        <td>1</td>
-        <td>${formatFcfaPrint(data.amount)}</td>
-        <td>${formatFcfaPrint(data.amount)}</td>
+      <tr>
+        <th>Total payé</th>
+        <td>${formatFcfaPrint(data.total)}</td>
       </tr>
-      ${reductionRow}
     </tbody>
   </table>
 
-  <div class="receipt-invoice__total-bar">
-    <span>Total payé</span>
-    <strong>${formatFcfaPrint(data.total)}</strong>
-  </div>
-
-  <p class="receipt-invoice__thanks">Merci de votre confiance</p>
+  <hr class="thermal-receipt__rule" />
+  <p class="thermal-receipt__thanks">Merci de votre confiance</p>
 </div>`
 }
 
@@ -945,7 +1050,7 @@ export function buildClinicPrintHeader(docTitle?: string): string {
 
 export type OpenPrintOptions = {
   autoPrint?: boolean
-  pageSize?: 'A5' | 'A4'
+  pageSize?: 'A5' | 'A4' | '80mm'
 }
 
 export function openPrintDocument(
@@ -960,8 +1065,21 @@ export function openPrintDocument(
 
   const isA5 = options.pageSize === 'A5'
   const isA4 = options.pageSize === 'A4'
-  const bodyClass = isA5 ? ' class="print-a5"' : isA4 ? ' class="print-a4"' : ''
-  const windowSize = isA5 ? 'width=520,height=740' : isA4 ? 'width=850,height=1100' : 'width=820,height=900'
+  const isThermal = options.pageSize === '80mm'
+  const bodyClass = isA5
+    ? ' class="print-a5"'
+    : isA4
+      ? ' class="print-a4"'
+      : isThermal
+        ? ' class="print-thermal"'
+        : ''
+  const windowSize = isA5
+    ? 'width=520,height=740'
+    : isA4
+      ? 'width=850,height=1100'
+      : isThermal
+        ? 'width=360,height=720'
+        : 'width=820,height=900'
   const printWindow = window.open('', '_blank', windowSize)
   if (!printWindow) return
 

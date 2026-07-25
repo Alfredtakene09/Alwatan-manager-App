@@ -1,4 +1,7 @@
 import "dotenv/config";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
@@ -30,6 +33,11 @@ import logistiqueRoutes from "./routes/logistique.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
+const host = process.env.HOST ?? "0.0.0.0";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const frontendDist =
+  process.env.FRONTEND_DIST?.trim() ||
+  path.resolve(__dirname, "../../frontend/dist");
 
 app.use(
   cors({
@@ -95,6 +103,22 @@ backfillLegacyConsultationInvoices()
     console.error("Synchronisation factures consultation:", error);
   });
 
-app.listen(port, () => {
-  console.log(`API Al-Watan Manager sur http://localhost:${port}`);
+const serveFrontend = process.env.SERVE_FRONTEND !== "0" && fs.existsSync(frontendDist);
+if (serveFrontend) {
+  app.use(express.static(frontendDist, { index: false }));
+  app.use((req, res, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") return next();
+    if (req.path.startsWith("/api")) return next();
+    res.sendFile(path.join(frontendDist, "index.html"), (error) => {
+      if (error) next(error);
+    });
+  });
+  console.log(`Interface servie depuis ${frontendDist}`);
+}
+
+app.listen(port, host, () => {
+  console.log(`API Al-Watan Manager sur http://${host === "0.0.0.0" ? "localhost" : host}:${port}`);
+  if (serveFrontend) {
+    console.log(`Application clinique : http://localhost:${port}`);
+  }
 });

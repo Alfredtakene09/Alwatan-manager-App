@@ -56,6 +56,7 @@ enum HospitalizationStatus {
 enum DoctorCompensationType {
   QUOTA
   FIXED_SALARY
+  COMBINED
 }
 
 enum ConsultationRenewalPolicy {
@@ -71,6 +72,7 @@ enum ConsultationQuotaMode {
 enum InvoiceStatus {
   DRAFT
   PENDING
+  PARTIALLY_PAID
   PAID
   CANCELLED
 }
@@ -166,6 +168,10 @@ model Employee {
   contractStatus           EmployeeContractStatus @default(ACTIF)
   bonusFcfa                Int?
   photoPath                String?
+  /// Spécialité médicale (médecins uniquement)
+  specialty                String?
+  /// Créneaux hebdomadaires : [{ dayOfWeek: 1-7 (lun–dim), startTime, endTime }]
+  availabilitySlots        Json?
   active                   Boolean                @default(true)
   createdAt                DateTime               @default(now())
   updatedAt                DateTime               @updatedAt
@@ -202,6 +208,7 @@ model User {
   interventionsAsAnesthesiologist InterventionType[] @relation("InterventionAnesthesiologist")
   hospitalizations      Hospitalization[]   @relation("HospitalizationAccountant")
   invoices              Invoice[]
+  invoicePaymentsRecorded InvoicePayment[] @relation("InvoicePaymentRecordedBy")
   prescriptions         Prescription[]
   auditLogs             AuditLog[]
   assignedVisits        Visit[]             @relation("VisitAssignedDoctor")
@@ -224,6 +231,8 @@ model User {
   logisticsStockMovements                LogisticsStockMovement[]
   logisticsRequestsCreated               LogisticsRequest[]        @relation("LogisticsRequestRequestedBy")
   logisticsRequestsHandled               LogisticsRequest[]        @relation("LogisticsRequestHandledBy")
+  treatingDoctorPatients                 Patient[]                 @relation("TreatingDoctorPatients")
+  attendingHospitalizations              Hospitalization[]         @relation("HospitalizationAttendingDoctor")
 }
 
 enum AgeUnit {
@@ -246,9 +255,12 @@ model Patient {
   category    PatientCategory  @default(STANDARD)
   ongName     String?
   recommendedByName String?
+  /// Médecin traitant permanent du dossier (optionnel) — distinct du médecin de la visite
+  treatingDoctorId String?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
+  treatingDoctor User? @relation("TreatingDoctorPatients", fields: [treatingDoctorId], references: [id])
   visits        Visit[]
   prescriptions Prescription[]
   invoices      Invoice[]
@@ -417,6 +429,7 @@ model LabPanelField {
   unit         String?
   reference    String?
   defaultValue String?
+  hasComment   Boolean  @default(false)
   type         String   @default("text")
   sortOrder    Int      @default(0)
 
@@ -466,13 +479,28 @@ model Room {
   dailyRateFcfa Int
   active        Boolean  @default(true)
 
+  beds             Bed[]
   hospitalizations Hospitalization[]
+}
+
+model Bed {
+  id     String  @id @default(cuid())
+  roomId String
+  code   String
+  label  String?
+  active Boolean @default(true)
+
+  room             Room              @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  hospitalizations Hospitalization[]
+
+  @@unique([roomId, code])
 }
 
 model Hospitalization {
   id            String                @id @default(cuid())
   visitId       String                @unique
   roomId        String?
+  bedId         String?
   accountantId  String?
   roomType      RoomType
   dailyRateFcfa Int
@@ -484,17 +512,21 @@ model Hospitalization {
   startDate     DateTime?
   endDate       DateTime?
   service              String?
+  /// Affichage / impression legacy — synchronisé depuis attendingDoctorId quand possible
   attendingDoctor      String?
+  attendingDoctorId    String?
   doctorInstructions   String?
   paidAt        DateTime?
   dischargedAt  DateTime?
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
 
-  visit      Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
-  room       Room? @relation(fields: [roomId], references: [id])
-  accountant User? @relation("HospitalizationAccountant", fields: [accountantId], references: [id])
-  invoices   Invoice[]
+  visit           Visit  @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  room            Room?  @relation(fields: [roomId], references: [id])
+  bed             Bed?   @relation(fields: [bedId], references: [id])
+  accountant      User?  @relation("HospitalizationAccountant", fields: [accountantId], references: [id])
+  attendingDoctorUser User? @relation("HospitalizationAttendingDoctor", fields: [attendingDoctorId], references: [id])
+  invoices        Invoice[]
 }
 
 model Invoice {
@@ -507,6 +539,8 @@ model Invoice {
   hospitalizationId String?
   type              InvoiceType
   amountFcfa        Int
+  paidAmountFcfa    Int           @default(0)
+  billingExamKind   String?
   status            InvoiceStatus @default(PENDING)
   issuedById        String
   paidAt            DateTime?
@@ -520,9 +554,27 @@ model Invoice {
   issuedBy           User                    @relation(fields: [issuedById], references: [id])
   pharmacyLines      PharmacySaleLine[]
   cashSettlementLine ReceptionCashSettlementLine?
+  payments           InvoicePayment[]
 
   @@index([patientId])
   @@index([externalClientId])
+  @@index([visitId, billingExamKind])
+}
+
+model InvoicePayment {
+  id            String         @id @default(cuid())
+  invoiceId     String
+  amountFcfa    Int
+  paymentMethod PaymentMethod?
+  paidAt        DateTime       @default(now())
+  recordedById  String
+  note          String?
+
+  invoice    Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  recordedBy User    @relation("InvoicePaymentRecordedBy", fields: [recordedById], references: [id])
+
+  @@index([invoiceId])
+  @@index([paidAt])
 }
 
 enum StockMovementType {
@@ -825,17 +877,21 @@ model EmployeePayroll {
 
 /** Avance sur salaire — déduite à la prochaine paie. */
 model SalaryAdvance {
-  id           String              @id @default(cuid())
-  employeeId   String
-  amountFcfa   Int
-  businessDate DateTime            @db.Date
-  comment      String?
-  status       SalaryAdvanceStatus @default(PENDING)
-  payrollYear  Int?
-  payrollMonth Int?
-  recordedById String
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  id              String              @id @default(cuid())
+  employeeId      String
+  amountFcfa      Int
+  /// Solde restant à déduire (démarre égal à amountFcfa).
+  remainingFcfa   Int
+  /// Montant déduit à chaque paie ; null = tout le solde d'un coup.
+  installmentFcfa Int?
+  businessDate    DateTime            @db.Date
+  comment         String?
+  status          SalaryAdvanceStatus @default(PENDING)
+  payrollYear     Int?
+  payrollMonth    Int?
+  recordedById    String
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 
   employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   recordedBy User     @relation("SalaryAdvanceRecordedBy", fields: [recordedById], references: [id])
@@ -963,21 +1019,26 @@ model LogisticsSupplier {
 }
 
 model LogisticsItem {
-  id           String    @id @default(cuid())
-  name         String
-  sku          String    @unique
-  reference    String?
-  unit         String    @default("unité")
-  categoryId   String?
-  supplierId   String?
-  quantity     Int       @default(0)
-  unitCostFcfa Int       @default(0)
-  minStock     Int       @default(5)
-  expiryDate   DateTime? @db.Date
-  noExpiry     Boolean   @default(true)
-  active       Boolean   @default(true)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id                String    @id @default(cuid())
+  name              String
+  sku               String    @unique
+  reference         String?
+  unit              String    @default("unité")
+  /** Nombre d'unités de base dans un paquet (1 = pas de paquet). */
+  unitsPerPackage   Int       @default(1)
+  /** Nombre de paquets dans un carton (1 = pas de carton). */
+  packagesPerCarton Int       @default(1)
+  categoryId        String?
+  supplierId        String?
+  /** Stock toujours stocké en unités de base. */
+  quantity          Int       @default(0)
+  unitCostFcfa      Int       @default(0)
+  minStock          Int       @default(5)
+  expiryDate        DateTime? @db.Date
+  noExpiry          Boolean   @default(true)
+  active            Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   category     LogisticsCategory?       @relation(fields: [categoryId], references: [id])
   supplier     LogisticsSupplier?       @relation(fields: [supplierId], references: [id])

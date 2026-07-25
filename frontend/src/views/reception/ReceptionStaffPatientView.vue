@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import {
   UserRound,
   UserPlus,
@@ -53,6 +54,7 @@ const form = ref({
   gender: 'F',
   recommendedByName: '',
   doctorId: '',
+  treatingDoctorId: '',
 })
 
 const parsedName = computed(() => splitPatientFullName(form.value.fullName))
@@ -78,6 +80,7 @@ function resetForm() {
     gender: 'F',
     recommendedByName: '',
     doctorId: doctors.value[0]?.id ?? '',
+    treatingDoctorId: '',
   }
 }
 
@@ -97,9 +100,19 @@ function closeFormModal() {
 }
 
 async function loadDoctors() {
-  const { data } = await api.get<DoctorOption[]>('/visits/doctors')
-  doctors.value = data
-  if (!form.value.doctorId) form.value.doctorId = data[0]?.id ?? ''
+  try {
+    const { data } = await api.get<DoctorOption[]>('/visits/doctors')
+    doctors.value = Array.isArray(data)
+      ? [...data].sort((a, b) => {
+          const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
+          if (byLast !== 0) return byLast
+          return a.firstName.localeCompare(b.firstName, 'fr', { sensitivity: 'base' })
+        })
+      : []
+    if (!form.value.doctorId) form.value.doctorId = doctors.value[0]?.id ?? ''
+  } catch {
+    doctors.value = []
+  }
 }
 
 async function loadQueue() {
@@ -132,6 +145,7 @@ async function registerStaffPatient() {
         category: 'PERSONNEL',
         recommendedByName: form.value.recommendedByName.trim(),
         doctorId: form.value.doctorId,
+        treatingDoctorId: form.value.treatingDoctorId || null,
         consultationAmountFcfa: 0,
         reductionFcfa: 0,
       },
@@ -267,12 +281,30 @@ onMounted(() => {
             required
           />
           <UiSelect v-model="form.doctorId" label="Médecin" required>
-            <option value="" disabled>Sélectionner</option>
+            <option value="" disabled>{{ doctors.length ? 'Sélectionner' : 'Aucun médecin disponible' }}</option>
             <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
               Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ doctorSelectSuffix(doctor) }}
             </option>
           </UiSelect>
         </div>
+
+        <UiSelect v-model="form.treatingDoctorId" label="Médecin traitant (dossier)">
+          <option value="">Aucun (optionnel)</option>
+          <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
+            Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ doctorSelectSuffix(doctor) }}
+          </option>
+        </UiSelect>
+
+        <UiAlert
+          v-if="!doctors.length"
+          type="warning"
+          message="Aucun médecin sélectionnable. Les médecins du personnel doivent être en profil Médecin et avoir un compte utilisateur (rôle Médecin)."
+        />
+        <p v-if="!doctors.length" class="doctors-empty-alert__links">
+          <RouterLink to="/admin/utilisateurs">Utilisateurs</RouterLink>
+          <span aria-hidden="true"> · </span>
+          <RouterLink to="/admin/employes">Employés</RouterLink>
+        </p>
       </form>
 
       <template #footer>
@@ -303,6 +335,16 @@ onMounted(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.75rem;
+}
+
+.doctors-empty-alert__links {
+  margin: -0.15rem 0 0;
+  font-size: 0.8125rem;
+}
+
+.doctors-empty-alert__links a {
+  color: var(--primary-700, #4b5d2a);
+  font-weight: 600;
 }
 
 .queue-table-wrap {

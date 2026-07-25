@@ -1,4 +1,6 @@
-export type DoctorCompensationType = 'QUOTA' | 'FIXED_SALARY'
+import { formatFcfa } from '@/lib/format-fcfa'
+
+export type DoctorCompensationType = 'QUOTA' | 'FIXED_SALARY' | 'COMBINED'
 export type ConsultationQuotaMode = 'PERCENT' | 'FIXED_AMOUNT'
 export type ConsultationRenewalPolicy = 'FULL' | 'HALF'
 
@@ -66,7 +68,20 @@ export const DOCTOR_COMPENSATION_OPTIONS: {
     label: 'Salaire fixe',
     hint: 'Montant consultation saisi à la réception',
   },
+  {
+    value: 'COMBINED',
+    label: 'Salaire + quota',
+    hint: 'Salaire mensuel et part sur les consultations',
+  },
 ]
+
+export function doctorUsesQuotaCompensationType(type?: DoctorCompensationType | null) {
+  return type === 'QUOTA' || type === 'COMBINED'
+}
+
+export function doctorUsesSalaryCompensationType(type?: DoctorCompensationType | null) {
+  return type === 'FIXED_SALARY' || type === 'COMBINED'
+}
 
 export const CONSULTATION_QUOTA_MODE_OPTIONS: {
   value: ConsultationQuotaMode
@@ -77,11 +92,15 @@ export const CONSULTATION_QUOTA_MODE_OPTIONS: {
 ]
 
 export function doctorUsesQuotaCompensation(doctor?: DoctorOption | null) {
-  return doctor?.doctorCompensationType === 'QUOTA'
+  return doctorUsesQuotaCompensationType(doctor?.doctorCompensationType)
 }
 
 export function doctorIsFixedSalary(doctor?: DoctorOption | null) {
   return doctor?.doctorCompensationType === 'FIXED_SALARY'
+}
+
+export function doctorUsesSalaryCompensation(doctor?: DoctorOption | null) {
+  return doctorUsesSalaryCompensationType(doctor?.doctorCompensationType)
 }
 
 export function doctorRequiresConsultationFee(doctor?: DoctorOption | null) {
@@ -164,7 +183,7 @@ export function computeDoctorConsultationShares(
 
 export function formatDoctorQuotaShare(doctor: DoctorOption) {
   if (doctor.consultationQuotaMode === 'FIXED_AMOUNT' && doctor.consultationQuotaFcfa != null) {
-    return `${doctor.consultationQuotaFcfa.toLocaleString('fr-FR')} FCFA`
+    return formatFcfa(doctor.consultationQuotaFcfa)
   }
   if (doctor.consultationQuotaPercent != null) {
     return `${doctor.consultationQuotaPercent}%`
@@ -174,6 +193,7 @@ export function formatDoctorQuotaShare(doctor: DoctorOption) {
 
 export function doctorSelectSuffix(doctor: DoctorOption) {
   if (doctorIsFixedSalary(doctor)) return ' — salaire fixe'
+  const combinedPrefix = doctor.doctorCompensationType === 'COMBINED' ? 'salaire + ' : ''
   const total = doctor.consultationTotalFcfa
   const validity =
     doctor.consultationValidityDays != null
@@ -184,9 +204,9 @@ export function doctorSelectSuffix(doctor: DoctorOption) {
       doctor.doctorConsultationShareFcfa ??
       computeDoctorConsultationShares(total, doctor).doctorShareFcfa
     const quotaLabel = formatDoctorQuotaShare(doctor)
-    return ` — ${total.toLocaleString('fr-FR')} FCFA (part ${quotaLabel} · ${share.toLocaleString('fr-FR')} FCFA)${validity}`
+    return ` — ${combinedPrefix}${formatFcfa(total)} (part ${quotaLabel} · ${formatFcfa(share)})${validity}`
   }
-  return ` — quota${validity}`
+  return ` — ${combinedPrefix}quota${validity}`
 }
 
 export function defaultConsultationAmountForDoctor(doctor?: DoctorOption | null) {
@@ -200,5 +220,5 @@ export function doctorQuotaHint(doctor?: DoctorOption | null, amount?: number) {
   if (!total) return null
   const { doctorShareFcfa, clinicShareFcfa } = computeDoctorConsultationShares(total, doctor)
   const quotaLabel = formatDoctorQuotaShare(doctor)
-  return `Total ${total.toLocaleString('fr-FR')} FCFA — part médecin ${quotaLabel} (${doctorShareFcfa.toLocaleString('fr-FR')} FCFA), clinique ${clinicShareFcfa.toLocaleString('fr-FR')} FCFA`
+  return `Total ${formatFcfa(total)} — part médecin ${quotaLabel} (${formatFcfa(doctorShareFcfa)}), clinique ${formatFcfa(clinicShareFcfa)}`
 }

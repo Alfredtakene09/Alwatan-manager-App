@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/db.js";
+import { packagingToUnits } from "../lib/logistics-packaging.js";
 import { applyLogisticsMovement } from "../lib/logistics-stock.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
@@ -194,9 +195,15 @@ const itemSchema = z.object({
   sku: z.string().min(2).optional(),
   reference: z.string().optional(),
   unit: z.string().optional(),
+  unitsPerPackage: z.number().int().min(1).optional(),
+  packagesPerCarton: z.number().int().min(1).optional(),
   categoryId: z.string().optional().nullable(),
   supplierId: z.string().optional().nullable(),
   quantity: z.number().int().min(0).optional(),
+  /** Saisie optionnelle en cartons / paquets / unités (convertie en quantity). */
+  cartons: z.number().int().min(0).optional(),
+  packages: z.number().int().min(0).optional(),
+  units: z.number().int().min(0).optional(),
   unitCostFcfa: z.number().int().min(0).optional(),
   minStock: z.number().int().min(0).optional(),
   expiryDate: z.string().optional().nullable(),
@@ -209,6 +216,32 @@ const itemInclude = {
   supplier: { select: { id: true, name: true } },
 } as const;
 
+function resolveItemQuantity(
+  body: {
+    quantity?: number;
+    cartons?: number;
+    packages?: number;
+    units?: number;
+    unitsPerPackage?: number;
+    packagesPerCarton?: number;
+  },
+  fallback = 0,
+) {
+  const packaging = {
+    unitsPerPackage: body.unitsPerPackage ?? 1,
+    packagesPerCarton: body.packagesPerCarton ?? 1,
+  };
+  const hasPackagingInput =
+    body.cartons !== undefined || body.packages !== undefined || body.units !== undefined;
+  if (hasPackagingInput) {
+    return packagingToUnits(
+      { cartons: body.cartons, packages: body.packages, units: body.units },
+      packaging,
+    );
+  }
+  return body.quantity ?? fallback;
+}
+
 router.get("/items", async (_req, res) => {
   const items = await prisma.logisticsItem.findMany({ orderBy: { name: "asc" }, include: itemInclude });
   return res.json(items);
@@ -217,15 +250,23 @@ router.get("/items", async (_req, res) => {
 router.post("/items", async (req, res) => {
   try {
     const body = itemSchema.parse(req.body);
+    const unitsPerPackage = body.unitsPerPackage ?? 1;
+    const packagesPerCarton = body.packagesPerCarton ?? 1;
+    const quantity = resolveItemQuantity(
+      { ...body, unitsPerPackage, packagesPerCarton },
+      0,
+    );
     const item = await prisma.logisticsItem.create({
       data: {
         name: body.name.trim(),
         sku: resolveItemSku(body),
         reference: body.reference?.trim() || null,
         unit: body.unit?.trim() || "unité",
+        unitsPerPackage,
+        packagesPerCarton,
         categoryId: body.categoryId || null,
         supplierId: body.supplierId || null,
-        quantity: body.quantity ?? 0,
+        quantity,
         unitCostFcfa: body.unitCostFcfa ?? 0,
         minStock: body.minStock ?? 5,
         expiryDate: body.noExpiry ? null : parseExpiryDate(body.expiryDate),
@@ -244,20 +285,34 @@ router.post("/items", async (req, res) => {
 router.put("/items/:id", async (req, res) => {
   try {
     const body = itemSchema.partial().parse(req.body);
+    const existing = await prisma.logisticsItem.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: "Article introuvable" });
+
     const data: Record<string, unknown> = {};
     if (body.name !== undefined) data.name = body.name.trim();
     if (body.sku !== undefined) data.sku = body.sku.trim();
     if (body.reference !== undefined) data.reference = body.reference?.trim() || null;
     if (body.unit !== undefined) data.unit = body.unit?.trim() || "unité";
+    if (body.unitsPerPackage !== undefined) data.unitsPerPackage = body.unitsPerPackage;
+    if (body.packagesPerCarton !== undefined) data.packagesPerCarton = body.packagesPerCarton;
     if (body.categoryId !== undefined) data.categoryId = body.categoryId || null;
     if (body.supplierId !== undefined) data.supplierId = body.supplierId || null;
-    if (body.quantity !== undefined) data.quantity = body.quantity;
     if (body.unitCostFcfa !== undefined) data.unitCostFcfa = body.unitCostFcfa;
     if (body.minStock !== undefined) data.minStock = body.minStock;
     if (body.noExpiry !== undefined) data.noExpiry = body.noExpiry;
     if (body.noExpiry === true) data.expiryDate = null;
     else if (body.expiryDate !== undefined) data.expiryDate = parseExpiryDate(body.expiryDate);
     if (body.active !== undefined) data.active = body.active;
+
+    const packaging = {
+      unitsPerPackage: body.unitsPerPackage ?? existing.unitsPerPackage,
+      packagesPerCarton: body.packagesPerCarton ?? existing.packagesPerCarton,
+    };
+    const hasPackagingInput =
+      body.cartons !== undefined || body.packages !== undefined || body.units !== undefined;
+    if (hasPackagingInput || body.quantity !== undefined) {
+      data.quantity = resolveItemQuantity({ ...body, ...packaging }, existing.quantity);
+    }
 
     const item = await prisma.logisticsItem.update({ where: { id: req.params.id }, data, include: itemInclude });
     return res.json(item);
@@ -290,7 +345,13 @@ const movementSchema = z
     itemId: z.string(),
     type: z.enum(["ENTRY", "EXIT", "ADJUSTMENT"]),
     quantity: z.number().int().positive().optional(),
+    cartons: z.number().int().min(0).optional(),
+    packages: z.number().int().min(0).optional(),
+    units: z.number().int().min(0).optional(),
     targetQuantity: z.number().int().min(0).optional(),
+    targetCartons: z.number().int().min(0).optional(),
+    targetPackages: z.number().int().min(0).optional(),
+    targetUnits: z.number().int().min(0).optional(),
     unitCostFcfa: z.number().int().min(0).optional(),
     supplierId: z.string().optional(),
     reference: z.string().optional(),
@@ -298,12 +359,18 @@ const movementSchema = z
   })
   .superRefine((body, ctx) => {
     if (body.type === "ADJUSTMENT") {
-      if (body.targetQuantity === undefined) {
+      const hasTargetPackaging =
+        body.targetCartons !== undefined ||
+        body.targetPackages !== undefined ||
+        body.targetUnits !== undefined;
+      if (body.targetQuantity === undefined && !hasTargetPackaging) {
         ctx.addIssue({ code: "custom", message: "targetQuantity requis pour un ajustement" });
       }
       return;
     }
-    if (!body.quantity) {
+    const hasPackaging =
+      body.cartons !== undefined || body.packages !== undefined || body.units !== undefined;
+    if (!body.quantity && !hasPackaging) {
       ctx.addIssue({ code: "custom", message: "quantity requise" });
     }
     if (body.type === "ENTRY" && !body.supplierId) {
@@ -318,7 +385,16 @@ router.get("/stock-movements", async (req, res) => {
     orderBy: { createdAt: "desc" },
     take: 200,
     include: {
-      item: { select: { id: true, name: true, sku: true, unit: true } },
+      item: {
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          unit: true,
+          unitsPerPackage: true,
+          packagesPerCarton: true,
+        },
+      },
       supplier: { select: { id: true, name: true } },
       user: { select: { id: true, firstName: true, lastName: true } },
     },
@@ -330,12 +406,54 @@ router.post("/stock-movements", async (req, res) => {
   const user = req.user!;
   try {
     const body = movementSchema.parse(req.body);
+    const item = await prisma.logisticsItem.findUnique({
+      where: { id: body.itemId },
+      select: { unitsPerPackage: true, packagesPerCarton: true },
+    });
+    if (!item) return res.status(404).json({ error: "Article introuvable" });
+
+    const packaging = {
+      unitsPerPackage: item.unitsPerPackage,
+      packagesPerCarton: item.packagesPerCarton,
+    };
+
+    let quantity = body.quantity;
+    let targetQuantity = body.targetQuantity;
+
+    const hasPackaging =
+      body.cartons !== undefined || body.packages !== undefined || body.units !== undefined;
+    if (hasPackaging) {
+      quantity = packagingToUnits(
+        { cartons: body.cartons, packages: body.packages, units: body.units },
+        packaging,
+      );
+    }
+
+    const hasTargetPackaging =
+      body.targetCartons !== undefined ||
+      body.targetPackages !== undefined ||
+      body.targetUnits !== undefined;
+    if (hasTargetPackaging) {
+      targetQuantity = packagingToUnits(
+        {
+          cartons: body.targetCartons,
+          packages: body.targetPackages,
+          units: body.targetUnits,
+        },
+        packaging,
+      );
+    }
+
+    if (body.type !== "ADJUSTMENT" && (!quantity || quantity <= 0)) {
+      return res.status(400).json({ error: "Quantité invalide" });
+    }
+
     const movement = await prisma.$transaction((tx) =>
       applyLogisticsMovement(tx, {
         itemId: body.itemId,
         type: body.type,
-        quantity: body.quantity,
-        targetQuantity: body.targetQuantity,
+        quantity,
+        targetQuantity,
         unitCostFcfa: body.unitCostFcfa,
         supplierId: body.supplierId,
         reference: body.reference,
@@ -594,9 +712,13 @@ router.get("/dashboard", async (_req, res) => {
   from.setDate(from.getDate() - 6);
   from.setHours(0, 0, 0, 0);
 
-  const [items, pendingRequests, movements] = await Promise.all([
+  const [items, pendingRequests, requestGroups, movements] = await Promise.all([
     prisma.logisticsItem.findMany({ where: { active: true } }),
     prisma.logisticsRequest.count({ where: { status: "PENDING" } }),
+    prisma.logisticsRequest.groupBy({
+      by: ["status"],
+      _count: { _all: true },
+    }),
     prisma.logisticsStockMovement.findMany({
       where: { createdAt: { gte: from } },
       include: { item: { select: { name: true } } },
@@ -634,12 +756,32 @@ router.get("/dashboard", async (_req, res) => {
       level: item.quantity <= 0 ? "out" : item.quantity <= Math.max(1, Math.floor(item.minStock / 2)) ? "critical" : "low",
     }));
 
+  const requestsByStatus = {
+    pending: requestGroups.find((row) => row.status === "PENDING")?._count._all ?? 0,
+    fulfilled: requestGroups.find((row) => row.status === "FULFILLED")?._count._all ?? 0,
+    rejected: requestGroups.find((row) => row.status === "REJECTED")?._count._all ?? 0,
+  };
+
+  const pendingByServiceRows = await prisma.logisticsRequest.groupBy({
+    by: ["service"],
+    where: { status: "PENDING" },
+    _count: { _all: true },
+  });
+  const pendingByService = pendingByServiceRows
+    .sort((a, b) => b._count._all - a._count._all)
+    .slice(0, 5);
+
   return res.json({
     itemsCount: items.length,
     lowStock: lowStock.length,
     expiring: expiring.length,
     stockValueFcfa,
     pendingRequests,
+    requestsByStatus,
+    pendingByService: pendingByService.map((row) => ({
+      service: row.service,
+      count: row._count._all,
+    })),
     movementsLast7Days,
     topLowStock,
   });

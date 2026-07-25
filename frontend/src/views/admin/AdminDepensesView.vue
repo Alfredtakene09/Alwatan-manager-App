@@ -1,74 +1,175 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Wallet, Plus } from '@lucide/vue'
+import { ArrowLeft, Wallet, Plus, Pencil, Trash2, ListOrdered } from '@lucide/vue'
 import api from '@/api/client'
-import { formatFcfa } from '@/lib/roles'
+import { canAccessModule, formatFcfa } from '@/lib/roles'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import type { AdminExpenseRow } from '@/lib/admin-dashboard'
 import { EXPENSE_STATUS_VARIANT, formatShortDate } from '@/lib/admin-dashboard'
 import AdminExpenseFormModal, {
+  type AdminExpenseEdit,
   type AdminExpenseFormPayload,
 } from '@/components/admin/AdminExpenseFormModal.vue'
+import CaisseToolbar from '@/components/caisse/CaisseToolbar.vue'
+import CaisseCompactDateField from '@/components/caisse/CaisseCompactDateField.vue'
+import CaisseDepensesPanel from '@/components/caisse/CaisseDepensesPanel.vue'
+import ExpenseIndicesPanel from '@/components/caisse/ExpenseIndicesPanel.vue'
+import { useExpenseIndices } from '@/composables/useExpenseIndices'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
-import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiTextarea from '@/components/ui/UiTextarea.vue'
+import { useAuthStore } from '@/stores/auth'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
+
+type SectionId = 'liste' | 'indices'
+type ListFilter = 'range' | 'all' | 'month'
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10)
+}
 
 const router = useRouter()
+const auth = useAuthStore()
+const { uiText, t } = useAppI18n()
+
+const canManageExpenses = computed(() =>
+  auth.user ? canAccessModule(auth.user.role, 'admin') : false,
+)
+
+const activeSection = ref<SectionId>('liste')
+const listFilter = ref<ListFilter>('all')
+const dateFrom = ref(todayIso())
+const dateTo = ref(todayIso())
+const { activeIndices, loadIndices } = useExpenseIndices()
+
 const rows = ref<AdminExpenseRow[]>([])
-const filter = ref<'all' | 'month' | 'pending'>('all')
 const loading = ref(false)
 const showExpenseModal = ref(false)
-const showRejectModal = ref(false)
-const rejectTarget = ref<AdminExpenseRow | null>(null)
-const rejectReason = ref('')
+const editingExpense = ref<AdminExpenseEdit | null>(null)
 const expenseSaving = ref(false)
 
+const expenseSummary = ref({
+  countLabel: 'Aucune dépense',
+  totalLabel: 'Total',
+  totalFcfa: 0,
+  show: false,
+})
+
+function onExpenseSummaryUpdate(payload: {
+  countLabel: string
+  totalLabel: string
+  totalFcfa: number
+  show: boolean
+}) {
+  expenseSummary.value = payload
+}
+
+const expenseBusinessDate = computed(() =>
+  listFilter.value === 'range' ? dateTo.value : todayIso(),
+)
+
+const pageSubtitle = computed(() => {
+  if (activeSection.value === 'indices') {
+    return 'Motifs prédéfinis proposés dans le formulaire de dépense'
+  }
+  if (canManageExpenses.value) {
+    return 'Suivi et validation des dépenses de la clinique'
+  }
+  return 'Dépenses de la clinique payées en caisse (réception ou comptabilité)'
+})
+
+function selectSection(section: SectionId) {
+  activeSection.value = section
+}
+
+function onIndicesChanged() {
+  loadIndices()
+}
+
 async function loadRows() {
+  if (listFilter.value === 'range' && dateFrom.value > dateTo.value) {
+    dateTo.value = dateFrom.value
+  }
   loading.value = true
   try {
-    const { data } = await api.get<AdminExpenseRow[]>(`/admin/expenses?filter=${filter.value}`)
+    const params =
+      listFilter.value === 'all'
+        ? { filter: 'all' }
+        : listFilter.value === 'month'
+          ? { filter: 'month' }
+          : { from: dateFrom.value, to: dateTo.value }
+    const { data } = await api.get<AdminExpenseRow[]>('/admin/expenses', { params })
     rows.value = data
   } finally {
     loading.value = false
   }
 }
 
-async function validateExpense(row: AdminExpenseRow) {
+function setListFilter(next: ListFilter) {
+  listFilter.value = next
+  selectSection('liste')
+  if (canManageExpenses.value) {
+    loadRows()
+  }
+}
+
+function onDateRangeChange() {
+  if (dateFrom.value > dateTo.value) {
+    dateTo.value = dateFrom.value
+  }
+  listFilter.value = 'range'
+  selectSection('liste')
+  if (canManageExpenses.value) {
+    loadRows()
+  }
+}
+
+function openCreateExpense() {
+  loadIndices()
+  editingExpense.value = null
+  showExpenseModal.value = true
+}
+
+function openEditExpense(row: AdminExpenseRow) {
+  editingExpense.value = {
+    id: row.id,
+    businessDate: row.date,
+    label: row.label ?? row.description,
+    amountFcfa: row.amountFcfa,
+    categoryCode: row.categoryCode,
+    status: row.status,
+    comment: row.comment ?? '',
+    rejectionReason: row.rejectionReason ?? '',
+  }
+  showExpenseModal.value = true
+}
+
+async function deleteExpense(row: AdminExpenseRow) {
   const ok = await confirmAppModal({
-    type: 'CONFIRM',
-    title: 'Valider la dépense',
-    message: `Confirmer la validation de « ${row.description} » ?`,
-    confirmLabel: 'Valider',
+    type: 'DELETE',
+    title: uiText('Supprimer la dépense'),
+    message: translateTemplate('Supprimer définitivement « {name} » ?', {
+      name: row.description,
+    }),
+    confirmLabel: uiText('Supprimer'),
   })
   if (!ok) return
-  await api.patch(`/admin/expenses/${row.id}/validate`)
-  await loadRows()
-}
-
-function openReject(row: AdminExpenseRow) {
-  rejectTarget.value = row
-  rejectReason.value = ''
-  showRejectModal.value = true
-}
-
-async function submitReject() {
-  if (!rejectTarget.value || rejectReason.value.trim().length < 3) return
-  await api.patch(`/admin/expenses/${rejectTarget.value.id}/reject`, {
-    reason: rejectReason.value.trim(),
-  })
-  showRejectModal.value = false
-  rejectTarget.value = null
+  await api.delete(`/admin/expenses/${row.id}`)
   await loadRows()
 }
 
 async function submitExpense(payload: AdminExpenseFormPayload) {
   expenseSaving.value = true
   try {
-    await api.post('/admin/expenses', payload)
+    if (editingExpense.value?.id) {
+      await api.put(`/admin/expenses/${editingExpense.value.id}`, payload)
+    } else {
+      await api.post('/admin/expenses', payload)
+    }
     showExpenseModal.value = false
+    editingExpense.value = null
     await loadRows()
   } finally {
     expenseSaving.value = false
@@ -80,98 +181,158 @@ function goBack() {
     router.back()
     return
   }
-  router.push('/dashboard')
+  router.push(canManageExpenses.value ? '/dashboard' : '/reception')
 }
 
-onMounted(loadRows)
+watch(activeSection, (section) => {
+  if (section === 'liste' && canManageExpenses.value) {
+    loadRows()
+  }
+})
+
+onMounted(() => {
+  loadIndices()
+  if (canManageExpenses.value) {
+    loadRows()
+  }
+})
 </script>
 
 <template>
-  <div class="admin-page">
-    <UiPageHeader title="Dépenses récentes" subtitle="Suivi et validation des dépenses clinique" :icon="Wallet">
+  <div class="admin-page depenses-page">
+    <UiPageHeader title="Gestion des dépenses" :subtitle="pageSubtitle" :icon="Wallet">
       <template #actions>
         <UiButton variant="ghost" size="sm" :icon="ArrowLeft" @click="goBack">
-          Retour
+          {{ t('common.Retour') }}
         </UiButton>
-        <UiButton :icon="Plus" @click="showExpenseModal = true">Nouvelle dépense</UiButton>
+        <UiButton
+          v-if="canManageExpenses && activeSection === 'liste'"
+          :icon="Plus"
+          @click="openCreateExpense"
+        >
+          {{ uiText('Nouvelle dépense') }}
+        </UiButton>
       </template>
     </UiPageHeader>
 
-    <UiCard title="Liste des dépenses" description="Filtres et actions de validation">
-      <div class="filters">
-        <UiButton size="sm" :variant="filter === 'all' ? 'primary' : 'ghost'" @click="filter = 'all'; loadRows()">
-          Toutes
-        </UiButton>
-        <UiButton size="sm" :variant="filter === 'month' ? 'primary' : 'ghost'" @click="filter = 'month'; loadRows()">
-          Ce mois
-        </UiButton>
-        <UiButton
-          size="sm"
-          :variant="filter === 'pending' ? 'primary' : 'ghost'"
-          @click="filter = 'pending'; loadRows()"
-        >
-          En attente
-        </UiButton>
-      </div>
+    <div class="depenses-toolbar-row">
+      <CaisseToolbar role="toolbar" :aria-label="uiText('Filtres dépenses')" class="depenses-toolbar-row__filters">
+        <template v-if="canManageExpenses">
+          <button
+            type="button"
+            class="depenses-toolbar__tab"
+            :class="{ 'depenses-toolbar__tab--active': activeSection === 'liste' && listFilter === 'month' }"
+            :aria-selected="activeSection === 'liste' && listFilter === 'month'"
+            @click="setListFilter('month')"
+          >
+            {{ uiText('Ce mois') }}
+          </button>
+        </template>
 
-      <div v-if="loading" class="chart-empty">Chargement…</div>
-      <div v-else-if="!rows.length" class="chart-empty">Aucune dépense</div>
-      <table v-else class="admin-table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Catégorie</th>
-            <th>Description</th>
-            <th>Montant</th>
-            <th>Statut</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in rows" :key="row.id">
-            <td>{{ formatShortDate(row.date) }}</td>
-            <td>{{ row.category }}</td>
-            <td>{{ row.description }}</td>
-            <td>{{ formatFcfa(row.amountFcfa) }}</td>
-            <td>
-              <span class="status-badge" :class="`status-badge--${EXPENSE_STATUS_VARIANT[row.status]}`">
-                {{ row.statusLabel }}
-              </span>
-            </td>
-            <td class="actions">
-              <UiButton v-if="row.status === 'PENDING'" size="sm" variant="ghost" @click="validateExpense(row)">
-                Valider
-              </UiButton>
-              <UiButton v-if="row.status === 'PENDING'" size="sm" variant="ghost" @click="openReject(row)">
-                Rejeter
-              </UiButton>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </UiCard>
+        <CaisseCompactDateField
+          v-model="dateFrom"
+          :label="uiText('Du')"
+          :disabled="activeSection === 'indices'"
+          :inactive="activeSection === 'indices' || listFilter !== 'range'"
+          @update:model-value="onDateRangeChange"
+        />
+        <CaisseCompactDateField
+          v-model="dateTo"
+          :label="uiText('Au')"
+          :disabled="activeSection === 'indices'"
+          :inactive="activeSection === 'indices' || listFilter !== 'range'"
+          @update:model-value="onDateRangeChange"
+        />
+
+        <button
+          type="button"
+          class="depenses-toolbar__tab"
+          :class="{ 'depenses-toolbar__tab--active': activeSection === 'indices' }"
+          :aria-selected="activeSection === 'indices'"
+          @click="selectSection('indices')"
+        >
+          <ListOrdered :size="16" />
+          {{ uiText('Indices') }}
+        </button>
+      </CaisseToolbar>
+
+      <div
+        v-if="!canManageExpenses && activeSection === 'liste' && expenseSummary.show"
+        class="depenses-toolbar-row__summary"
+        :aria-label="uiText('Synthèse des dépenses')"
+      >
+        <span class="depenses-toolbar-row__summary-count">{{ expenseSummary.countLabel }}</span>
+        <strong class="depenses-toolbar-row__summary-total">
+          {{ expenseSummary.totalLabel }} : {{ formatFcfa(expenseSummary.totalFcfa) }}
+        </strong>
+      </div>
+    </div>
+
+    <template v-if="activeSection === 'liste'">
+      <UiCard v-if="canManageExpenses" title="Liste des dépenses">
+        <div v-if="loading" class="chart-empty">{{ t('common.Chargement…') }}</div>
+        <div v-else-if="!rows.length" class="chart-empty">{{ uiText('Aucune dépense') }}</div>
+        <table v-else class="admin-table">
+          <thead>
+            <tr>
+              <th>{{ uiText('Date') }}</th>
+              <th>{{ uiText('Catégorie') }}</th>
+              <th>{{ uiText('Description') }}</th>
+              <th>{{ uiText('Montant') }}</th>
+              <th>{{ uiText('Statut') }}</th>
+              <th>{{ t('common.Actions') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in rows" :key="row.id">
+              <td>{{ formatShortDate(row.date) }}</td>
+              <td>{{ row.category }}</td>
+              <td>{{ row.description }}</td>
+              <td>{{ formatFcfa(row.amountFcfa) }}</td>
+              <td>
+                <span class="status-badge" :class="`status-badge--${EXPENSE_STATUS_VARIANT[row.status]}`">
+                  {{ row.statusLabel }}
+                </span>
+              </td>
+              <td class="actions">
+                <UiButton size="sm" variant="ghost" :icon="Pencil" @click="openEditExpense(row)">
+                  {{ t('common.Modifier') }}
+                </UiButton>
+                <UiButton size="sm" variant="danger" :icon="Trash2" @click="deleteExpense(row)">
+                  {{ t('common.Supprimer') }}
+                </UiButton>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </UiCard>
+
+      <CaisseDepensesPanel
+        v-else
+        :show-header="false"
+        :show-date-filter="false"
+        external-summary
+        deactivate-mode
+        v-model:business-date-from="dateFrom"
+        v-model:business-date-to="dateTo"
+        :list-filter="listFilter"
+        :active-indices="activeIndices"
+        @summary-update="onExpenseSummaryUpdate"
+      />
+    </template>
+
+    <ExpenseIndicesPanel v-else @changed="onIndicesChanged" />
 
     <AdminExpenseFormModal
       :open="showExpenseModal"
       :saving="expenseSaving"
-      @close="showExpenseModal = false"
+      :editing="editingExpense"
+      :indices="activeIndices"
+      :default-business-date="expenseBusinessDate"
+      @go-to-indices="showExpenseModal = false; selectSection('indices')"
+      @close="showExpenseModal = false; editingExpense = null"
       @submit="submitExpense"
     />
-
-    <UiFormModal
-      v-if="showRejectModal"
-      title="Rejeter la dépense"
-      subtitle="Justification obligatoire"
-      @close="showRejectModal = false"
-    >
-      <UiTextarea v-model="rejectReason" label="Motif du rejet" />
-      <template #footer>
-        <UiButton variant="ghost" @click="showRejectModal = false">Annuler</UiButton>
-        <UiButton variant="danger" :disabled="rejectReason.trim().length < 3" @click="submitReject">
-          Confirmer le rejet
-        </UiButton>
-      </template>
-    </UiFormModal>
   </div>
 </template>
 
@@ -179,13 +340,7 @@ onMounted(loadRows)
 .admin-page {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-}
-
-.filters {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
+  gap: 0.75rem;
 }
 
 .admin-table {
@@ -217,4 +372,97 @@ onMounted(loadRows)
 .status-badge--green { background: #dcfce7; color: #166534; }
 .status-badge--amber { background: #fef3c7; color: #b45309; }
 .status-badge--rose { background: #ffe4e6; color: #be123c; }
+
+.depenses-toolbar-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.3rem;
+  border-radius: 12px;
+  background: var(--surface-muted, #eef2e6);
+  border: 1px solid var(--border);
+}
+
+.depenses-toolbar-row__filters {
+  flex: 0 0 auto;
+}
+
+.depenses-toolbar-row__filters:deep(.caisse-toolbar) {
+  width: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.depenses-toolbar-row__summary {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.85rem;
+  min-width: 0;
+  margin-left: auto;
+  padding: 0.45rem 0.85rem;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #fff8eb 0%, #fff3d6 100%);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  white-space: nowrap;
+}
+
+.depenses-toolbar-row__summary-count {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.depenses-toolbar-row__summary-total {
+  font-size: 0.9rem;
+  color: #92400e;
+}
+
+.depenses-toolbar__tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  min-height: 2.25rem;
+  padding: 0.45rem 0.9rem;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.depenses-toolbar__tab--active {
+  background: #fff;
+  color: var(--primary-800);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+}
+
+@media (max-width: 960px) {
+  .depenses-toolbar-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .depenses-toolbar-row__summary {
+    justify-content: space-between;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 720px) {
+  .depenses-toolbar__tab {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
 </style>

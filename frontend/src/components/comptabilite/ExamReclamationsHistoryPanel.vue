@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch, computed } from 'vue'
 import { ClipboardList, RefreshCw } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
@@ -12,6 +12,10 @@ import {
 } from '@/lib/exam-reclamation'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
+import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 
 const props = withDefaults(
   defineProps<{
@@ -22,6 +26,9 @@ const props = withDefaults(
 
 const rows = ref<ExamReclamationRow[]>([])
 const loading = ref(false)
+
+const { uiText, t, localeCode, isArabic } = useAppI18n()
+const dateLocale = computed(() => (isArabic.value ? 'ar-TD' : 'fr-FR'))
 
 const STATUS_CLASS: Record<ExamReclamationStatus, string> = {
   PENDING: 'status--pending',
@@ -43,8 +50,27 @@ async function load() {
 }
 
 function formatDate(value: string) {
+  void localeCode.value
   const date = new Date(value)
-  return `${date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })} à ${date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+  const datePart = date.toLocaleDateString(dateLocale.value, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+  const timePart = date.toLocaleTimeString(dateLocale.value, { hour: '2-digit', minute: '2-digit' })
+  return `${datePart} · ${timePart}`
+}
+
+function examKindLabel(kind: string) {
+  return uiText(EXAM_KIND_LABELS[kind as ExamKindSlug] ?? kind)
+}
+
+function reasonLabel(reason: ExamReclamationRow['reason']) {
+  return uiText(EXAM_RECLAMATION_REASON_LABELS[reason])
+}
+
+function statusLabel(status: ExamReclamationStatus) {
+  return uiText(EXAM_RECLAMATION_STATUS_LABELS[status])
 }
 
 function examsSummary(row: ExamReclamationRow) {
@@ -52,6 +78,29 @@ function examsSummary(row: ExamReclamationRow) {
     return row.examLines.map((line) => line.examLabel).join(', ')
   }
   return row.examLabel ?? '—'
+}
+
+const reclamationExportColumns: ExportColumn<ExamReclamationRow>[] = [
+  { header: 'Date', value: (r) => formatDate(r.createdAt) },
+  {
+    header: 'Patient',
+    value: (r) =>
+      r.patient
+        ? `${r.patient.code} — ${fullName(r.patient.firstName, r.patient.lastName)}`
+        : '—',
+  },
+  { header: 'Examens', value: (r) => examsSummary(r) },
+  { header: 'Montant', value: (r) => formatFcfa(r.totalFcfa) },
+  { header: 'Motif', value: (r) => reasonLabel(r.reason) },
+  { header: 'Statut', value: (r) => statusLabel(r.status) },
+]
+
+function exportPdf() {
+  exportTablePdf('Historique des réclamations examens', reclamationExportColumns, rows.value)
+}
+
+function exportExcel() {
+  exportTableExcel('Historique des réclamations examens', reclamationExportColumns, rows.value)
 }
 
 onMounted(load)
@@ -70,24 +119,25 @@ watch(() => props.refreshKey, () => {
     icon-variant="amber"
   >
     <template #actions>
+      <ExportButtons :disabled="loading || !rows.length" @pdf="exportPdf" @excel="exportExcel" />
       <UiButton variant="ghost" size="sm" :disabled="loading" :icon="RefreshCw" @click="load">
-        Actualiser
+        {{ t('common.refresh') }}
       </UiButton>
     </template>
 
-    <p v-if="loading" class="hint">Chargement…</p>
-    <p v-else-if="!rows.length" class="hint">Aucune réclamation enregistrée.</p>
+    <p v-if="loading" class="hint">{{ t('common.Chargement…') }}</p>
+    <p v-else-if="!rows.length" class="hint">{{ uiText('Aucune réclamation enregistrée.') }}</p>
 
     <div v-else class="table-wrap">
       <table class="recl-table">
         <thead>
           <tr>
-            <th>Date</th>
-            <th>Patient</th>
-            <th>Examens</th>
-            <th>Montant</th>
-            <th>Motif</th>
-            <th>Statut</th>
+            <th>{{ uiText('Date') }}</th>
+            <th>{{ uiText('Patient') }}</th>
+            <th>{{ uiText('Examens') }}</th>
+            <th>{{ uiText('Montant') }}</th>
+            <th>{{ uiText('Motif') }}</th>
+            <th>{{ uiText('Statut') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -99,16 +149,16 @@ watch(() => props.refreshKey, () => {
             </td>
             <td>
               <span class="sub" v-if="row.examLines?.length > 1">
-                {{ row.examLines.length }} examens
+                {{ translateTemplate('{n} examens', { n: row.examLines.length }) }}
               </span>
-              <span v-else-if="row.examKind" class="sub">{{ EXAM_KIND_LABELS[row.examKind as ExamKindSlug] ?? row.examKind }}</span>
+              <span v-else-if="row.examKind" class="sub">{{ examKindLabel(row.examKind) }}</span>
               {{ examsSummary(row) }}
             </td>
             <td class="amount">{{ formatFcfa(row.totalFcfa ?? 0) }}</td>
-            <td>{{ EXAM_RECLAMATION_REASON_LABELS[row.reason] }}</td>
+            <td>{{ reasonLabel(row.reason) }}</td>
             <td>
               <span class="status" :class="STATUS_CLASS[row.status]">
-                {{ EXAM_RECLAMATION_STATUS_LABELS[row.status] }}
+                {{ statusLabel(row.status) }}
               </span>
             </td>
           </tr>

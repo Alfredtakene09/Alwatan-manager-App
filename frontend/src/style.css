@@ -13,15 +13,30 @@
 @import './assets/form-modal.css';
 
 /*
- * Ne jamais appliquer dir=rtl ni une police arabe sur tout le document :
- * le texte latin non traduit serait inversé caractère par caractère.
- * L’arabe Unicode s’affiche correctement en LTR grâce au bidi du navigateur.
+ * Locale arabe : dir=rtl sur <html> + police Noto pour le contenu traduit (.lang-ar).
+ * Les libellés non traduits (latin) restent lisibles grâce au bidi Unicode.
  */
 html.locale-ar {
   --font-ar: 'Noto Naskh Arabic', 'Plus Jakarta Sans', system-ui, sans-serif;
 }
 
+html.locale-ar,
+html.locale-ar body {
+  font-family: var(--font-ar);
+}
+
 html.locale-ar .lang-ar,
 html.locale-ar .lang-ar * {
   font-family: var(--font-ar);
+}
+
+/* Icônes directionnelles à retourner en RTL */
+html[dir='rtl'] .rtl-flip {
+  transform: scaleX(-1);
+}
+
+/* Préférer les propriétés logiques dans les nouveaux styles */
+html[dir='rtl'] .force-ltr {
+  direction: ltr;
+  unicode-bidi: isolate;
 }

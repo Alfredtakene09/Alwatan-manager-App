@@ -25,13 +25,17 @@ import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import '@/assets/comptabilite-section.css'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
+import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import {
-  shiftCardLabel,
   shiftHoursLabel as formatShiftHours,
+  SHIFT_WINDOWS,
   type ShiftSlot,
 } from '@/lib/cash-shift'
 
@@ -216,6 +220,38 @@ const windowLabel = ref('')
 const currentUserId = ref('')
 const commentsByCashier = ref<Record<string, string>>({})
 
+const { uiText, t, localeCode, isArabic } = useAppI18n()
+const dateLocale = computed(() => (isArabic.value ? 'ar-TD' : 'fr-FR'))
+
+function shiftCardLabelLocalized(slot: ShiftSlot) {
+  void localeCode.value
+  const w = SHIFT_WINDOWS[slot]
+  const template =
+    slot === 'MORNING'
+      ? 'Matin ({start}h – {end}h)'
+      : slot === 'EVENING'
+        ? 'Soir ({start}h – {end}h)'
+        : 'Nuit ({start}h – {end}h)'
+  return translateTemplate(template, { start: w.startHour, end: w.endHour })
+}
+
+function shiftWindowLabel(slot: ShiftSlot) {
+  void localeCode.value
+  const hours = formatShiftHours(slot)
+  const template =
+    slot === 'MORNING' ? 'Matin ({hours})' : slot === 'EVENING' ? 'Soir ({hours})' : 'Nuit ({hours})'
+  return translateTemplate(template, { hours })
+}
+
+function translateBreakdownLabel(label: string) {
+  return uiText(label)
+}
+
+function formatSettledAt(iso: string) {
+  void localeCode.value
+  return new Date(iso).toLocaleString(dateLocale.value)
+}
+
 const cashierPanels = computed<CashierPanel[]>(() => {
   const panels = new Map<string, CashierPanel>()
 
@@ -349,37 +385,95 @@ function panelDisburseAmount(panel: CashierPanel) {
   return panel.pending?.netTotalFcfa ?? panel.netTotalFcfa ?? panel.systemTotalFcfa
 }
 
+const exportPanels = computed(() =>
+  roleSections.value.flatMap((section) =>
+    section.panels.map((panel) => ({
+      role: section.group.label,
+      cashier: panel.isMe
+        ? uiText('Moi')
+        : fullName(panel.cashier.firstName, panel.cashier.lastName),
+      roleLabel: panel.roleLabel,
+      transactions: panel.transactionCount,
+      brut: formatFcfa(panel.systemTotalFcfa),
+      depenses: formatFcfa(panel.expensesTotalFcfa),
+      net: formatFcfa(panelDisburseAmount(panel)),
+      statut: panel.pending
+        ? uiText('À décaisser')
+        : panel.isSettled
+          ? uiText('Soldé')
+          : '—',
+    })),
+  ),
+)
+
+type CashExportRow = (typeof exportPanels.value)[number]
+
+const cashExportColumns: ExportColumn<CashExportRow>[] = [
+  { header: 'Rôle', value: (r) => r.role },
+  { header: 'Caissier', value: (r) => r.cashier },
+  { header: 'Poste', value: (r) => r.roleLabel },
+  { header: 'Transactions', value: (r) => r.transactions },
+  { header: 'Brut', value: (r) => r.brut },
+  { header: 'Dépenses', value: (r) => r.depenses },
+  { header: 'Net', value: (r) => r.net },
+  { header: 'Statut', value: (r) => r.statut },
+]
+
+function exportPdf() {
+  exportTablePdf(`Compte rendu caisse — ${businessDate.value}`, cashExportColumns, exportPanels.value, {
+    captionRows: [
+      { label: 'Créneau', value: shiftSlotLabelShort.value },
+      { label: 'À décaisser', value: formatFcfa(shiftTotals.value?.pendingFcfa ?? 0) },
+    ],
+  })
+}
+
+function exportExcel() {
+  exportTableExcel(`Compte rendu caisse — ${businessDate.value}`, cashExportColumns, exportPanels.value)
+}
+
 function offShiftDisplayName(panel: OffShiftPanel) {
-  if (panel.isMe) return 'Moi'
+  if (panel.isMe) return uiText('Moi')
   return fullName(panel.cashier.firstName, panel.cashier.lastName)
 }
 
-const shiftHoursLabel = computed(() => formatShiftHours(shiftSlot.value))
-
 function shiftLabelFor(slot: ShiftSlot) {
-  return shiftCardLabel(slot)
+  return shiftCardLabelLocalized(slot)
 }
 
 const shiftSlotLabelShort = computed(() => {
-  if (shiftSlot.value === 'MORNING') return 'matin'
-  if (shiftSlot.value === 'EVENING') return 'soir'
-  return 'nuit'
+  void localeCode.value
+  if (shiftSlot.value === 'MORNING') return uiText('matin')
+  if (shiftSlot.value === 'EVENING') return uiText('soir')
+  return uiText('nuit')
 })
 
-const currentWindowDayTotalFcfa = computed(() => {
-  if (!dayReconciliation.value) return 0
-  if (shiftSlot.value === 'MORNING') return dayReconciliation.value.morningWindow.totalFcfa
-  if (shiftSlot.value === 'EVENING') return dayReconciliation.value.eveningWindow.totalFcfa
-  return dayReconciliation.value.nightWindow?.totalFcfa ?? 0
-})
+const shiftStatLabel = computed(() =>
+  translateTemplate('Créneau {slot}', { slot: shiftSlotLabelShort.value }),
+)
 
 function breakdownIcon(label: string) {
   return BREAKDOWN_ICONS[label] ?? Banknote
 }
 
 function cashierDisplayName(panel: CashierPanel) {
-  if (panel.isMe) return 'Moi'
+  if (panel.isMe) return uiText('Moi')
   return fullName(panel.cashier.firstName, panel.cashier.lastName)
+}
+
+function roleSectionSubtitle(group: RoleGroup) {
+  return translateTemplate(
+    '{cashiers} caissier(s) · {collections} encaissement(s) sur le créneau',
+    { cashiers: group.cashierCount, collections: group.transactionCount },
+  )
+}
+
+function disburseButtonLabel(panel: CashierPanel) {
+  const amount = formatFcfa(panelDisburseAmount(panel))
+  if (submittingCashierId.value === panel.id) return uiText('Décaissement…')
+  return panel.needsSupplement
+    ? translateTemplate('Complément — {amount}', { amount })
+    : translateTemplate('Décaissement — {amount}', { amount })
 }
 
 function getComment(cashierId: string) {
@@ -432,7 +526,7 @@ async function load() {
     dayReconciliation.value = data.dayReconciliation
     pruneComments()
   } catch {
-    message.value = 'Impossible de charger les comptes caisse.'
+    message.value = uiText('Impossible de charger les comptes caisse.')
     messageType.value = 'error'
     cashiers.value = []
     settlements.value = []
@@ -452,10 +546,12 @@ async function submitDisbursement(panel: CashierPanel) {
   if (!panel.pending) return
 
   const ok = await confirmAppModal({
-    title: 'Valider le décaissement',
-    message: `Confirmer le décaissement pour ${fullName(panel.cashier.firstName, panel.cashier.lastName)} ?`,
-    confirmLabel: 'Valider',
-    variant: 'primary',
+    title: uiText('Valider le décaissement'),
+    message: translateTemplate('Confirmer le décaissement pour {name} ?', {
+      name: fullName(panel.cashier.firstName, panel.cashier.lastName),
+    }),
+    confirmLabel: uiText('Valider'),
+    type: 'CONFIRM',
   })
   if (!ok) return
 
@@ -468,13 +564,13 @@ async function submitDisbursement(panel: CashierPanel) {
       shiftSlot: shiftSlot.value,
       comment: getComment(panel.id).trim() || undefined,
     })
-    message.value = data.message ?? 'Décaissement validé.'
+    message.value = data.message ?? uiText('Décaissement validé.')
     messageType.value = 'success'
     delete commentsByCashier.value[panel.id]
     await load()
   } catch (error: unknown) {
     const apiError = error as { response?: { data?: { error?: string } } }
-    message.value = apiError.response?.data?.error ?? 'Décaissement impossible.'
+    message.value = apiError.response?.data?.error ?? uiText('Décaissement impossible.')
     messageType.value = 'error'
   } finally {
     submittingCashierId.value = null
@@ -500,14 +596,14 @@ load()
       />
       <UiStatCard
         mini
-        :label="`Créneau ${shiftSlotLabelShort}`"
+        :label="shiftStatLabel"
         :value="formatFcfa(shiftTotals?.totalFcfa ?? 0)"
         :icon="Clock"
         variant="blue"
       />
       <UiStatCard
         mini
-        label="À décaisser"
+        :label="uiText('À décaisser')"
         :value="formatFcfa(shiftTotals?.pendingFcfa ?? 0)"
         :icon="HandCoins"
         variant="amber"
@@ -525,7 +621,7 @@ load()
 
       <div class="cash-settlement-toolbar">
         <div class="toolbar-field toolbar-field--date">
-          <label for="cash-business-date">Date</label>
+          <label for="cash-business-date">{{ uiText('Date') }}</label>
           <input
             id="cash-business-date"
             v-model="businessDate"
@@ -535,8 +631,8 @@ load()
         </div>
 
         <div class="toolbar-field toolbar-field--shifts">
-          <span class="toolbar-field__label">Créneau</span>
-          <div class="cash-settlement-shifts" role="tablist" aria-label="Créneau">
+          <span class="toolbar-field__label">{{ uiText('Créneau') }}</span>
+          <div class="cash-settlement-shifts" role="tablist" :aria-label="uiText('Créneau')">
             <button
               type="button"
               role="tab"
@@ -576,6 +672,11 @@ load()
           </div>
         </div>
 
+        <ExportButtons
+          :disabled="loading || !exportPanels.length"
+          @pdf="exportPdf"
+          @excel="exportExcel"
+        />
         <UiButton
           class="toolbar-refresh"
           variant="ghost"
@@ -584,7 +685,7 @@ load()
           :disabled="loading"
           @click="load"
         >
-          Actualiser
+          {{ t('common.refresh') }}
         </UiButton>
       </div>
 
@@ -592,34 +693,34 @@ load()
         <header class="reconciliation-panel__head">
           <Info :size="18" />
           <div>
-            <strong>Réconciliation journalière</strong>
+            <strong>{{ uiText('Réconciliation journalière') }}</strong>
             <p>{{ dayReconciliation.timezoneNote }}</p>
           </div>
         </header>
 
         <div class="reconciliation-panel__grid">
           <div class="reconciliation-line">
-            <span>Matin ({{ formatShiftHours('MORNING') }})</span>
+            <span>{{ shiftWindowLabel('MORNING') }}</span>
             <strong>{{ formatFcfa(dayReconciliation.morningWindow.totalFcfa) }}</strong>
-            <em>{{ dayReconciliation.morningWindow.transactionCount }} enc.</em>
+            <em>{{ translateTemplate('{n} enc.', { n: dayReconciliation.morningWindow.transactionCount }) }}</em>
           </div>
           <div class="reconciliation-line">
-            <span>Soir ({{ formatShiftHours('EVENING') }})</span>
+            <span>{{ shiftWindowLabel('EVENING') }}</span>
             <strong>{{ formatFcfa(dayReconciliation.eveningWindow.totalFcfa) }}</strong>
-            <em>{{ dayReconciliation.eveningWindow.transactionCount }} enc.</em>
+            <em>{{ translateTemplate('{n} enc.', { n: dayReconciliation.eveningWindow.transactionCount }) }}</em>
           </div>
           <div class="reconciliation-line">
-            <span>Nuit ({{ formatShiftHours('NIGHT') }})</span>
+            <span>{{ shiftWindowLabel('NIGHT') }}</span>
             <strong>{{ formatFcfa(dayReconciliation.nightWindow?.totalFcfa ?? 0) }}</strong>
-            <em>{{ dayReconciliation.nightWindow?.transactionCount ?? 0 }} enc.</em>
+            <em>{{ translateTemplate('{n} enc.', { n: dayReconciliation.nightWindow?.transactionCount ?? 0 }) }}</em>
           </div>
           <div class="reconciliation-line reconciliation-line--warn">
-            <span>Hors créneau</span>
+            <span>{{ uiText('Hors créneau') }}</span>
             <strong>{{ formatFcfa(dayReconciliation.offShift.totalFcfa) }}</strong>
-            <em>{{ dayReconciliation.offShift.transactionCount }} enc.</em>
+            <em>{{ translateTemplate('{n} enc.', { n: dayReconciliation.offShift.transactionCount }) }}</em>
           </div>
           <div class="reconciliation-line reconciliation-line--total">
-            <span>= Recettes du jour</span>
+            <span>{{ uiText('= Recettes du jour') }}</span>
             <strong>{{ formatFcfa(dayReconciliation.dayTotalFcfa) }}</strong>
           </div>
         </div>
@@ -634,7 +735,7 @@ load()
               <strong>
                 {{
                   row.cashier.id === currentUserId
-                    ? 'Votre compte'
+                    ? uiText('Votre compte')
                     : fullName(row.cashier.firstName, row.cashier.lastName)
                 }}
               </strong>
@@ -681,24 +782,21 @@ load()
             :size="22"
           />
           <div>
-            <h2>{{ section.group.label }}</h2>
-            <p>
-              {{ section.group.cashierCount }} caissier(s) ·
-              {{ section.group.transactionCount }} encaissement(s) sur le créneau
-            </p>
+            <h2>{{ uiText(section.group.label) }}</h2>
+            <p>{{ roleSectionSubtitle(section.group) }}</p>
           </div>
         </div>
 
         <div class="role-section__stats role-section__stats--compact">
           <div class="role-stat role-stat--pending">
-            <span>À décaisser</span>
+            <span>{{ uiText('À décaisser') }}</span>
             <strong>{{ formatFcfa(section.group.shiftPendingFcfa) }}</strong>
-            <em>{{ section.group.pendingCashierCount }} caissier(s)</em>
+            <em>{{ translateTemplate('{n} caissier(s)', { n: section.group.pendingCashierCount }) }}</em>
           </div>
           <div class="role-stat role-stat--settled">
-            <span>Décaissé</span>
+            <span>{{ uiText('Décaissé') }}</span>
             <strong>{{ formatFcfa(section.group.shiftSettledFcfa) }}</strong>
-            <em>{{ section.group.settledCount }} soldé(s)</em>
+            <em>{{ translateTemplate('{n} soldé(s)', { n: section.group.settledCount }) }}</em>
           </div>
         </div>
 
@@ -740,12 +838,19 @@ load()
               </div>
             </div>
             <div class="cashier-panel__total">
-              <span>{{ panel.pending ? 'Net à décaisser' : 'Décaissé' }}</span>
+              <span>{{ panel.pending ? uiText('Net à décaisser') : uiText('Décaissé') }}</span>
               <strong>{{ formatFcfa(panel.pending ? panelDisburseAmount(panel) : panel.systemTotalFcfa) }}</strong>
               <em v-if="panel.pending && panel.expensesTotalFcfa">
-                Brut {{ formatFcfa(panel.systemTotalFcfa) }} − dép. {{ formatFcfa(panel.expensesTotalFcfa) }}
+                {{
+                  translateTemplate('Brut {gross} − dép. {expenses}', {
+                    gross: formatFcfa(panel.systemTotalFcfa),
+                    expenses: formatFcfa(panel.expensesTotalFcfa),
+                  })
+                }}
               </em>
-              <em v-else-if="panel.transactionCount">{{ panel.transactionCount }} encaissement(s)</em>
+              <em v-else-if="panel.transactionCount">
+                {{ translateTemplate('{n} encaissement(s)', { n: panel.transactionCount }) }}
+              </em>
             </div>
             <CheckCircle2
               v-if="panel.isSettled && !panel.pending"
@@ -755,12 +860,16 @@ load()
           </header>
 
           <p v-if="panel.needsSupplement && panel.settlement" class="cashier-panel__supplement-note">
-            Décaissement initial de {{ formatFcfa(panel.settlement.disbursementFcfa) }} déjà validé.
-            Encaissements complémentaires du créneau (ex. après extension horaire ou encaissements tardifs).
+            {{
+              translateTemplate(
+                'Décaissement initial de {amount} déjà validé. Encaissements complémentaires du créneau (ex. après extension horaire ou encaissements tardifs).',
+                { amount: formatFcfa(panel.settlement.disbursementFcfa) },
+              )
+            }}
           </p>
 
           <div v-if="panel.pending && panel.expenses.length" class="cashier-expenses">
-            <p class="cashier-expenses__title">Dépenses du créneau</p>
+            <p class="cashier-expenses__title">{{ uiText('Dépenses du créneau') }}</p>
             <ul>
               <li v-for="exp in panel.expenses" :key="exp.id">
                 <span>{{ exp.label }}</span>
@@ -777,7 +886,7 @@ load()
             >
               <div class="type-breakdown__label">
                 <component :is="breakdownIcon(line.label)" :size="16" />
-                <span>{{ line.label }}</span>
+                <span>{{ translateBreakdownLabel(line.label) }}</span>
                 <em>{{ line.count }}</em>
               </div>
               <strong>{{ formatFcfa(line.totalFcfa) }}</strong>
@@ -785,14 +894,14 @@ load()
           </div>
 
           <p v-else-if="panel.pending" class="type-breakdown-empty">
-            Aucun détail par type pour ce créneau.
+            {{ uiText('Aucun détail par type pour ce créneau.') }}
           </p>
 
           <div v-if="panel.pending" class="cashier-panel__disburse">
             <UiInput
               :model-value="getComment(panel.id)"
-              label="Commentaire"
-              :placeholder="`Commentaire pour ${cashierDisplayName(panel)}…`"
+              :label="uiText('Commentaire')"
+              :placeholder="translateTemplate('Commentaire pour {name}…', { name: cashierDisplayName(panel) })"
               @update:model-value="setComment(panel.id, $event)"
             />
             <UiButton
@@ -801,24 +910,28 @@ load()
               :disabled="submittingCashierId === panel.id"
               @click="submitDisbursement(panel)"
             >
-              {{
-                submittingCashierId === panel.id
-                  ? 'Décaissement…'
-                  : panel.needsSupplement
-                    ? `Complément — ${formatFcfa(panelDisburseAmount(panel))}`
-                    : `Décaissement — ${formatFcfa(panelDisburseAmount(panel))}`
-              }}
+              {{ disburseButtonLabel(panel) }}
             </UiButton>
           </div>
 
           <div v-else-if="panel.settlement" class="cashier-panel__settled">
             <p class="settled-summary">
-              Décaissement validé le
-              {{ new Date(panel.settlement.settledAt).toLocaleString('fr-FR') }}
+              {{
+                translateTemplate('Décaissement validé le {date}', {
+                  date: formatSettledAt(panel.settlement.settledAt),
+                })
+              }}
             </p>
             <p v-if="panel.settlement.comment" class="settled-comment">{{ panel.settlement.comment }}</p>
             <p class="settled-meta">
-              Par {{ fullName(panel.settlement.accountant.firstName, panel.settlement.accountant.lastName) }}
+              {{
+                translateTemplate('Par {name}', {
+                  name: fullName(
+                    panel.settlement.accountant.firstName,
+                    panel.settlement.accountant.lastName,
+                  ),
+                })
+              }}
             </p>
           </div>
         </article>
@@ -828,9 +941,18 @@ load()
         <header class="off-shift-group__head">
           <AlertTriangle :size="18" />
           <div>
-            <h3>Hors créneau — imputé au caissier</h3>
+            <h3>{{ uiText('Hors créneau — imputé au caissier') }}</h3>
             <p>
-              Encaissements hors matin ({{ formatShiftHours('MORNING') }}), soir ({{ formatShiftHours('EVENING') }}) et nuit ({{ formatShiftHours('NIGHT') }}), rattachés à la personne qui a encaissé.
+              {{
+                translateTemplate(
+                  'Encaissements hors matin ({morning}), soir ({evening}) et nuit ({night}), rattachés à la personne qui a encaissé.',
+                  {
+                    morning: formatShiftHours('MORNING'),
+                    evening: formatShiftHours('EVENING'),
+                    night: formatShiftHours('NIGHT'),
+                  },
+                )
+              }}
             </p>
           </div>
         </header>
@@ -848,13 +970,13 @@ load()
               </div>
               <div>
                 <strong>{{ offShiftDisplayName(panel) }}</strong>
-                <span class="cashier-panel__role">{{ panel.roleLabel }} · hors créneau</span>
+                <span class="cashier-panel__role">{{ panel.roleLabel }} · {{ uiText('hors créneau') }}</span>
               </div>
             </div>
             <div class="cashier-panel__total">
-              <span>Imputé au compte</span>
+              <span>{{ uiText('Imputé au compte') }}</span>
               <strong>{{ formatFcfa(panel.totalFcfa) }}</strong>
-              <em>{{ panel.transactionCount }} encaissement(s)</em>
+              <em>{{ translateTemplate('{n} encaissement(s)', { n: panel.transactionCount }) }}</em>
             </div>
           </header>
 
@@ -879,7 +1001,7 @@ load()
             >
               <div class="type-breakdown__label">
                 <component :is="breakdownIcon(line.label)" :size="16" />
-                <span>{{ line.label }}</span>
+                <span>{{ translateBreakdownLabel(line.label) }}</span>
                 <em>{{ line.count }}</em>
               </div>
               <strong>{{ formatFcfa(line.totalFcfa) }}</strong>
@@ -892,7 +1014,11 @@ load()
         v-if="!section.panels.length && !section.offShiftPanels.length"
         class="role-section__empty"
       >
-        Aucun encaissement {{ section.group.id === 'reception' ? 'réception' : 'comptabilité' }} pour ce créneau.
+        {{
+          section.group.id === 'reception'
+            ? uiText('Aucun encaissement réception pour ce créneau.')
+            : uiText('Aucun encaissement comptabilité pour ce créneau.')
+        }}
       </p>
     </section>
   </div>

@@ -45,5 +45,6 @@ const total = computed(() => props.rows.reduce((sum, row) => sum + row.value, 0)
 .split-chart__segment--a { background: linear-gradient(90deg, #3b82f6, #2563eb); }
 .split-chart__segment--b { background: linear-gradient(90deg, #2dd4bf, #0d9488); }
 .split-chart__segment--c { background: linear-gradient(90deg, #fcd34d, #d97706); }
+.split-chart__segment--d { background: linear-gradient(90deg, #fda4af, #e11d48); }
 .split-chart__segment--d { background: linear-gradient(90deg, #c4b5fd, #7c3aed); }
 </style>

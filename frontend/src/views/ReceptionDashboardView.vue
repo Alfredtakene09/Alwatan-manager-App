@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import axios from 'axios'
 import {
   LayoutDashboard,
@@ -17,7 +18,7 @@ import {
 } from '@lucide/vue'
 import api from '@/api/client'
 import { showDuplicateModalFromError, confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
-import { fullName } from '@/lib/roles'
+import { fullName, formatFcfa, formatFcfaCompact } from '@/lib/roles'
 import {
   joinPatientFullName,
   parsePatientAge,
@@ -45,6 +46,7 @@ import {
   type DoctorOption,
 } from '@/lib/doctor-compensation'
 import { buildConsultationReceiptHtml, openPrintDocument } from '@/lib/print-document'
+import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -80,6 +82,8 @@ type Patient = {
   phone?: string
   gender?: string
   category?: PatientCategory
+  treatingDoctorId?: string | null
+  treatingDoctor?: Doctor | null
   createdAt?: string
 }
 
@@ -91,6 +95,8 @@ function findDoctor(doctorId: string) {
 
 type PatientDetail = Patient & {
   category?: PatientCategory
+  treatingDoctorId?: string | null
+  treatingDoctor?: Doctor | null
   waitingVisit?: {
     doctorId?: string | null
     doctor?: Doctor | null
@@ -115,12 +121,25 @@ type ReceiptData = {
   ageUnit?: PatientAgeUnit | null
   gender?: string | null
   phone?: string | null
+  processedBy?: string
 }
 
 const { uiText } = useAppI18n()
+const auth = useAuthStore()
+
+function currentReceptionistName() {
+  return auth.user ? fullName(auth.user.firstName, auth.user.lastName) : undefined
+}
 
 const patients = ref<Patient[]>([])
 const doctors = ref<Doctor[]>([])
+const sortedDoctors = computed(() =>
+  [...doctors.value].sort((a, b) => {
+    const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
+    if (byLast !== 0) return byLast
+    return a.firstName.localeCompare(b.firstName, 'fr', { sensitivity: 'base' })
+  }),
+)
 const stats = ref<ReceptionStats>({
   registeredToday: 0,
   femalePatients: 0,
@@ -177,6 +196,7 @@ const editForm = ref({
   gender: 'F',
   category: 'STANDARD' as PatientCategory,
   doctorId: '',
+  treatingDoctorId: '',
   consultationAmount: '',
   reduction: '0',
 })
@@ -189,6 +209,7 @@ const form = ref({
   gender: 'F',
   category: 'STANDARD' as PatientCategory,
   doctorId: '',
+  treatingDoctorId: '',
   consultationAmount: '',
   reduction: '0',
 })
@@ -332,11 +353,6 @@ const dashboardStats = computed(() => [
   },
 ])
 
-function formatFcfaCompact(amount: number) {
-  if (amount === 0) return '0'
-  return amount.toLocaleString('fr-FR')
-}
-
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
 async function loadReceptionStats() {
@@ -360,16 +376,16 @@ async function loadPatients() {
 }
 
 async function loadDoctors() {
-  const { data } = await api.get('/visits/doctors')
-  doctors.value = data
+  try {
+    const { data } = await api.get('/visits/doctors')
+    doctors.value = Array.isArray(data) ? data : []
+  } catch {
+    doctors.value = []
+  }
 }
 
 async function refreshAll() {
   await Promise.all([loadPatients(), loadReceptionStats(), loadDoctors()])
-}
-
-function formatFcfa(amount: number) {
-  return `${amount.toLocaleString('fr-FR')} FCFA`
 }
 
 function resetForm() {
@@ -381,6 +397,7 @@ function resetForm() {
     gender: 'F',
     category: 'STANDARD',
     doctorId: doctors.value[0]?.id ?? '',
+    treatingDoctorId: '',
     consultationAmount: '',
     reduction: '0',
   }
@@ -490,7 +507,10 @@ function getDoctorName(doctorId: string) {
 }
 
 function printReceipt(r: ReceiptData) {
-  openPrintDocument(`Reçu ${r.patientCode}`, buildConsultationReceiptHtml(r))
+  openPrintDocument(`Reçu ${r.patientCode}`, buildConsultationReceiptHtml(r), {
+    pageSize: '80mm',
+    autoPrint: true,
+  })
 }
 
 function printDetailReceipt(detail: PatientDetail) {
@@ -531,6 +551,7 @@ function printDetailReceipt(detail: PatientDetail) {
     ageUnit: normalizePatientAgeUnit(detail.ageUnit),
     gender: detail.gender,
     phone: detail.phone,
+    processedBy: currentReceptionistName(),
   })
 }
 
@@ -558,6 +579,7 @@ async function createPatientAndVisit() {
       gender: form.value.gender,
       category: form.value.category,
       doctorId: form.value.doctorId,
+      treatingDoctorId: form.value.treatingDoctorId || null,
       consultationAmountFcfa: formBillingExempt.value ? 0 : amount,
       reductionFcfa: reduction,
     })
@@ -581,6 +603,7 @@ async function createPatientAndVisit() {
       ageUnit: form.value.ageUnit,
       gender: form.value.gender,
       phone: form.value.phone.trim() || undefined,
+      processedBy: currentReceptionistName(),
     })
     showAlert(`Dossier ${patient.code} enregistré — ${fullName(patient.firstName, patient.lastName)} est en attente de consultation.`)
     closeModal()
@@ -652,6 +675,7 @@ async function openEditModal(patient: Patient) {
       gender: detail.gender ?? 'F',
       category: detail.category === 'ONG' ? 'STANDARD' : (detail.category ?? 'STANDARD'),
       doctorId: detail.waitingVisit?.doctorId ?? doctors.value[0]?.id ?? '',
+      treatingDoctorId: detail.treatingDoctorId ?? '',
       consultationAmount: detail.waitingVisit?.consultationAmountFcfa
         ? String(detail.waitingVisit.consultationAmountFcfa)
         : '',
@@ -681,6 +705,7 @@ function resetEditForm() {
         ? 'STANDARD'
         : (selectedPatient.value.category ?? 'STANDARD'),
     doctorId: selectedPatient.value.waitingVisit?.doctorId ?? doctors.value[0]?.id ?? '',
+    treatingDoctorId: selectedPatient.value.treatingDoctorId ?? '',
     consultationAmount: selectedPatient.value.waitingVisit?.consultationAmountFcfa
       ? String(selectedPatient.value.waitingVisit.consultationAmountFcfa)
       : '',
@@ -777,6 +802,7 @@ async function saveEdit() {
       gender: editForm.value.gender,
       category: editForm.value.category,
       doctorId: editForm.value.doctorId,
+      treatingDoctorId: editForm.value.treatingDoctorId || null,
       consultationAmountFcfa: amount || undefined,
       reductionFcfa: reduction,
     })
@@ -928,17 +954,25 @@ onUnmounted(clearAlert)
           @update:model-value="applyCategoryBillingDefaults('form')"
         >
           <option v-for="cat in PATIENT_CATEGORIES" :key="cat.value" :value="cat.value">
-            {{ cat.label }}
+            {{ uiText(cat.label) }}
           </option>
         </UiSelect>
 
+        <UiSelect v-model="form.doctorId" label="Médecin" required>
+          <option value="" disabled>{{ sortedDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin disponible') }}</option>
+          <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
+            Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
+          </option>
+        </UiSelect>
+
+        <UiAlert v-if="!sortedDoctors.length" type="warning" message="Aucun médecin sélectionnable. Les médecins du personnel doivent être en profil Médecin et avoir un compte utilisateur (rôle Médecin)." />
+        <p v-if="!sortedDoctors.length" class="doctors-empty-alert__links">
+          <RouterLink to="/admin/utilisateurs">Utilisateurs</RouterLink>
+          <span aria-hidden="true"> · </span>
+          <RouterLink to="/admin/employes">Employés</RouterLink>
+        </p>
+
         <div class="form-grid-2">
-          <UiSelect v-model="form.doctorId" label="Médecin" required>
-            <option value="" disabled>Sélectionner</option>
-            <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
-              Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ doctorSelectSuffix(doctor) }}
-            </option>
-          </UiSelect>
           <UiInput
             v-if="!formBillingExempt && doctorNeedsConsultationAmountInput(formDoctor)"
             v-model="form.consultationAmount"
@@ -953,14 +987,14 @@ onUnmounted(clearAlert)
             v-else-if="!formBillingExempt && doctorShowsFixedConsultationPrice(formDoctor)"
             class="total-preview total-preview--compact"
           >
-            <span>Prix consultation</span>
+            <span>{{ uiText('Prix consultation') }}</span>
             <strong>{{ formatFcfa(formEffectiveAmount) }}</strong>
           </div>
         </div>
 
         <p v-if="formDoctorQuotaHint" class="doctor-hint doctor-hint--compact">{{ formDoctorQuotaHint }}</p>
         <p v-else-if="doctorIsFixedSalary(formDoctor)" class="doctor-hint doctor-hint--compact">
-          Médecin salarié — saisissez le montant de la consultation.
+          {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
         </p>
 
         <div v-if="showFormConsultationBilling" class="form-grid-2">
@@ -1024,17 +1058,41 @@ onUnmounted(clearAlert)
           @update:model-value="applyCategoryBillingDefaults('edit')"
         >
           <option v-for="cat in PATIENT_CATEGORIES" :key="cat.value" :value="cat.value">
-            {{ cat.label }}
+            {{ uiText(cat.label) }}
           </option>
         </UiSelect>
 
         <div class="form-grid-2">
           <UiSelect v-model="editForm.doctorId" label="Médecin" required>
-            <option value="" disabled>Sélectionner</option>
-            <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
-              Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ doctorSelectSuffix(doctor) }}
+            <option value="" disabled>{{ sortedDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin disponible') }}</option>
+            <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
+              Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
             </option>
           </UiSelect>
+          <UiSelect v-model="editForm.treatingDoctorId" label="Médecin traitant (dossier)">
+            <option value="">{{ uiText('Aucun (optionnel)') }}</option>
+            <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
+              Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
+            </option>
+          </UiSelect>
+        </div>
+
+        <p
+          v-if="selectedPatient.treatingDoctor"
+          class="doctor-hint doctor-hint--compact"
+        >
+          {{ uiText('Médecin traitant actuel :') }}
+          Dr {{ fullName(selectedPatient.treatingDoctor.firstName, selectedPatient.treatingDoctor.lastName) }}
+        </p>
+
+        <UiAlert v-if="!sortedDoctors.length" type="warning" message="Aucun médecin sélectionnable. Les médecins du personnel doivent être en profil Médecin et avoir un compte utilisateur (rôle Médecin)." />
+        <p v-if="!sortedDoctors.length" class="doctors-empty-alert__links">
+          <RouterLink to="/admin/utilisateurs">Utilisateurs</RouterLink>
+          <span aria-hidden="true"> · </span>
+          <RouterLink to="/admin/employes">Employés</RouterLink>
+        </p>
+
+        <div class="form-grid-2">
           <UiInput
             v-if="!editBillingExempt && doctorNeedsConsultationAmountInput(editDoctor)"
             v-model="editForm.consultationAmount"
@@ -1049,14 +1107,14 @@ onUnmounted(clearAlert)
             v-else-if="!editBillingExempt && doctorShowsFixedConsultationPrice(editDoctor)"
             class="total-preview total-preview--compact"
           >
-            <span>Prix consultation</span>
+            <span>{{ uiText('Prix consultation') }}</span>
             <strong>{{ formatFcfa(editEffectiveAmount) }}</strong>
           </div>
         </div>
 
         <p v-if="editDoctorQuotaHint" class="doctor-hint doctor-hint--compact">{{ editDoctorQuotaHint }}</p>
         <p v-else-if="doctorIsFixedSalary(editDoctor)" class="doctor-hint doctor-hint--compact">
-          Médecin salarié — saisissez le montant de la consultation.
+          {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
         </p>
 
         <div v-if="showEditConsultationBilling" class="form-grid-2">
@@ -1069,7 +1127,7 @@ onUnmounted(clearAlert)
             :icon="Percent"
           />
           <div class="total-preview total-preview--compact">
-            <span>Total à payer</span>
+            <span>{{ uiText('Total à payer') }}</span>
             <strong>{{ formatFcfa(editTotal) }}</strong>
           </div>
         </div>
@@ -1129,9 +1187,9 @@ onUnmounted(clearAlert)
           </h3>
           <div class="form-grid-2">
             <UiSelect v-model="reconsultForm.doctorId" label="Médecin" required>
-              <option value="" disabled>Sélectionner un médecin</option>
-              <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
-                Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ doctorSelectSuffix(doctor) }}
+              <option value="" disabled>{{ sortedDoctors.length ? uiText('Sélectionner un médecin') : uiText('Aucun médecin disponible') }}</option>
+              <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
+                Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
               </option>
             </UiSelect>
             <UiInput
@@ -1154,7 +1212,7 @@ onUnmounted(clearAlert)
               "
               class="total-preview total-preview--compact"
             >
-              <span>Prix consultation</span>
+              <span>{{ uiText('Prix consultation') }}</span>
               <strong>{{
                 formatFcfa(renewalPreview?.amountFcfa ?? resolveConsultationAmountForDoctor(
                   reconsultDoctor,
@@ -1165,7 +1223,7 @@ onUnmounted(clearAlert)
           </div>
           <p v-if="reconsultDoctorQuotaHint" class="doctor-hint">{{ reconsultDoctorQuotaHint }}</p>
           <p v-else-if="doctorIsFixedSalary(reconsultDoctor)" class="doctor-hint">
-            Médecin salarié — saisissez le montant de la consultation.
+            {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
           </p>
         </section>
       </form>
@@ -1659,6 +1717,16 @@ onUnmounted(clearAlert)
   margin: 0;
   font-size: 0.75rem;
   line-height: 1.35;
+}
+
+.doctors-empty-alert__links {
+  margin: -0.25rem 0 0;
+  font-size: 0.8125rem;
+}
+
+.doctors-empty-alert__links a {
+  color: var(--primary-700, #4b5d2a);
+  font-weight: 600;
 }
 
 .total-preview--compact {

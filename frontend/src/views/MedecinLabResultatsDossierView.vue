@@ -364,15 +364,19 @@ onUnmounted(() => {
               v-for="field in section.fields"
               :key="field.key"
               class="result-item"
-              :class="{ 'result-item--wide': field.type === 'textarea' }"
+              :class="{ 'result-item--wide': !!field.comment }"
             >
               <dt>
                 {{ field.label }}
                 <span v-if="field.reference" class="result-item__ref">({{ field.reference }})</span>
               </dt>
               <dd>
-                {{ field.value }}
-                <span v-if="field.unit" class="result-item__unit">{{ field.unit }}</span>
+                <template v-if="field.value">
+                  {{ field.value }}
+                  <span v-if="field.unit" class="result-item__unit">{{ field.unit }}</span>
+                </template>
+                <span v-else class="result-item__empty">—</span>
+                <p v-if="field.comment" class="result-item__comment">{{ field.comment }}</p>
               </dd>
             </div>
           </dl>
@@ -587,6 +591,20 @@ onUnmounted(() => {
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text-muted);
+}
+
+.result-item__empty {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.result-item__comment {
+  margin: 0.35rem 0 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  line-height: 1.35;
 }
 
 .doctor-comment-block {

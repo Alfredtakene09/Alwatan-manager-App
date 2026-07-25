@@ -21,6 +21,9 @@ export type EmployeeRecord = {
   contractType?: ContractType | null;
   contractStatus?: EmployeeContractStatus;
   bonusFcfa?: number | null;
+  specialty?: string | null;
+  availabilitySlots?: unknown;
+  photoPath?: string | null;
   active: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -53,6 +56,10 @@ export function serializeEmployee(employee: EmployeeRecord) {
     contractType: employee.contractType ?? null,
     contractStatus: employee.contractStatus ?? "ACTIF",
     bonusFcfa: employee.bonusFcfa ?? null,
+    specialty: employee.isMedecin ? (employee.specialty ?? null) : null,
+    availabilitySlots: employee.isMedecin ? (employee.availabilitySlots ?? null) : null,
+    photoPath: employee.photoPath ?? null,
+    hasPhoto: Boolean(employee.photoPath),
     compensationLabel: employee.isMedecin
       ? DOCTOR_COMPENSATION_LABELS[employee.doctorCompensationType]
       : null,
@@ -112,9 +119,10 @@ export function dedupeEmployeesForSelection<
   }
 
   return [...byName.values()].sort((a, b) =>
-    employeeNameKey(a.lastName, a.firstName).localeCompare(
-      employeeNameKey(b.lastName, b.firstName),
+    employeeNameKey(a.firstName, a.lastName).localeCompare(
+      employeeNameKey(b.firstName, b.lastName),
       "fr",
+      { sensitivity: "base", numeric: true },
     ),
   );
 }
@@ -139,6 +147,9 @@ export const employeeSelect = {
   contractType: true,
   contractStatus: true,
   bonusFcfa: true,
+  specialty: true,
+  availabilitySlots: true,
+  photoPath: true,
   active: true,
   createdAt: true,
   updatedAt: true,
@@ -151,3 +162,68 @@ export const employeeSelect = {
     },
   },
 } as const;
+
+/** Comptes / fiches admin & superadmin à masquer des listes métier. */
+export function isHiddenPlatformAdminEmployee(employee: {
+  firstName?: string | null;
+  lastName?: string | null;
+  jobTitle?: string | null;
+  user?: { role?: string | null } | null;
+}): boolean {
+  if (employee.user?.role === "ADMIN") return true;
+
+  const title = normalizeAdminText(employee.jobTitle);
+  const firstName = normalizeAdminText(employee.firstName);
+  const lastName = normalizeAdminText(employee.lastName);
+  const fullName = `${firstName} ${lastName}`.trim();
+
+  if (
+    lastName.includes("superadmin") ||
+    firstName.includes("superadmin") ||
+    fullName.includes("superadmin") ||
+    fullName === "root superadmin" ||
+    (firstName === "root" && lastName.length > 0 && lastName.includes("admin"))
+  ) {
+    return true;
+  }
+
+  if (!title) return false;
+  return (
+    title.includes("superadmin") ||
+    title.includes("super-admin") ||
+    title.includes("super administrateur") ||
+    title.includes("superadministrateur") ||
+    title === "administrateur" ||
+    title.includes("administrateur systeme") ||
+    title.includes("admin systeme") ||
+    title === "admin"
+  );
+}
+
+function normalizeAdminText(value?: string | null) {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+/** Clause Prisma pour exclure admin système / superadmin des listes employés. */
+export const hiddenPlatformAdminEmployeeWhere = {
+  NOT: {
+    OR: [
+      { user: { is: { role: "ADMIN" as const } } },
+      { lastName: { contains: "Superadmin", mode: "insensitive" as const } },
+      { firstName: { contains: "Superadmin", mode: "insensitive" as const } },
+      { jobTitle: { contains: "Superadmin", mode: "insensitive" as const } },
+      { jobTitle: { contains: "Superadministrateur", mode: "insensitive" as const } },
+      { jobTitle: { contains: "Super administrateur", mode: "insensitive" as const } },
+      { jobTitle: { contains: "Administrateur système", mode: "insensitive" as const } },
+      { jobTitle: { contains: "Administrateur systeme", mode: "insensitive" as const } },
+      { jobTitle: { contains: "Admin système", mode: "insensitive" as const } },
+      { jobTitle: { contains: "Admin systeme", mode: "insensitive" as const } },
+      { jobTitle: { equals: "Administrateur", mode: "insensitive" as const } },
+      { jobTitle: { equals: "Admin", mode: "insensitive" as const } },
+    ],
+  },
+};

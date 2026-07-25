@@ -59,7 +59,14 @@ export type LabFormField = {
   unit?: string
   reference?: string
   defaultValue?: string
+  hasComment?: boolean
+  /** Conservé pour rétro-compat ; tous les champs sont traités comme texte court. */
   type?: 'text' | 'textarea'
+}
+
+/** Clé de stockage du commentaire associé à une ligne de résultat. */
+export function labFieldCommentKey(fieldKey: string) {
+  return `${fieldKey}__comment`
 }
 
 export type LabFormSection = {
@@ -439,6 +446,9 @@ export function emptyPanelValues(panel: LabFormPanel): Record<string, string> {
   for (const section of panel.sections) {
     for (const field of section.fields) {
       values[field.key] = field.defaultValue ?? ''
+      if (field.hasComment) {
+        values[labFieldCommentKey(field.key)] = ''
+      }
     }
   }
   return values
@@ -448,7 +458,7 @@ export function isLabPanelFieldFilled(value: string | null | undefined) {
   return value != null && String(value).trim().length > 0
 }
 
-export type LabFormFieldWithValue = LabFormField & { value: string }
+export type LabFormFieldWithValue = LabFormField & { value: string; comment?: string }
 
 export function getFilledLabPanelSections(
   panel: LabFormPanel,
@@ -458,8 +468,22 @@ export function getFilledLabPanelSections(
     .map((section) => ({
       title: section.title,
       fields: section.fields
-        .filter((field) => isLabPanelFieldFilled(saved?.[field.key]))
-        .map((field) => ({ ...field, value: String(saved![field.key]).trim() })),
+        .filter(
+          (field) =>
+            isLabPanelFieldFilled(saved?.[field.key]) ||
+            (field.hasComment && isLabPanelFieldFilled(saved?.[labFieldCommentKey(field.key)])),
+        )
+        .map((field) => {
+          const comment = field.hasComment
+            ? String(saved?.[labFieldCommentKey(field.key)] ?? '').trim()
+            : ''
+          return {
+            ...field,
+            type: 'text' as const,
+            value: String(saved?.[field.key] ?? '').trim(),
+            comment: field.hasComment ? comment || undefined : undefined,
+          }
+        }),
     }))
     .filter((section) => section.fields.length > 0)
 }

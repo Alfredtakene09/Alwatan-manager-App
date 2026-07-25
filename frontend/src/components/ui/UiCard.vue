@@ -4,7 +4,7 @@ import type { Component } from 'vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 
 const props = defineProps<{
-  title: string
+  title?: string
   description?: string
   icon?: Component
   iconVariant?: 'green' | 'teal' | 'blue' | 'amber' | 'rose' | 'violet' | 'cyan'
@@ -14,7 +14,7 @@ const props = defineProps<{
 const { uiText, localeCode, isArabic } = useAppI18n()
 const titleText = computed(() => {
   void localeCode.value
-  return uiText(props.title)
+  return props.title ? uiText(props.title) : ''
 })
 const descriptionText = computed(() => {
   void localeCode.value

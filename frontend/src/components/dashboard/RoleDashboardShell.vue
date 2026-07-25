@@ -1,11 +1,13 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Component } from 'vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import type { SummaryStat } from '@/lib/dashboard-summary'
 
-defineProps<{
+const props = defineProps<{
   title?: string
   subtitle: string
   icon: Component
@@ -15,6 +17,12 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{ refresh: [] }>()
+
+const { uiText, localeCode } = useAppI18n()
+const errorText = computed(() => {
+  void localeCode.value
+  return props.loadError ? uiText(props.loadError) : ''
+})
 </script>
 
 <template>
@@ -33,7 +41,7 @@ const emit = defineEmits<{ refresh: [] }>()
       </template>
     </UiPageHeader>
 
-    <p v-if="loadError" class="dashboard-error">{{ loadError }}</p>
+    <p v-if="loadError" class="dashboard-error">{{ errorText }}</p>
 
     <div v-if="loading && !stats.length" class="dashboard-cards-skeleton">
       <div v-for="n in 4" :key="n" class="dashboard-cards-skeleton__cell" />

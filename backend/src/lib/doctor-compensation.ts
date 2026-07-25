@@ -1,4 +1,4 @@
-import { ConsultationQuotaMode, ConsultationRenewalPolicy, DoctorCompensationType, UserRole } from "@prisma/client";
+import { ConsultationQuotaMode, ConsultationRenewalPolicy, DoctorCompensationType, UserRole, type Prisma } from "@prisma/client";
 
 export type EmployeeCompensation = {
   isMedecin?: boolean;
@@ -18,7 +18,7 @@ export type DoctorProfile = {
 };
 
 function readCompensation(profile: DoctorProfile) {
-  if (profile.role !== UserRole.MEDECIN || !profile.employee?.isMedecin) {
+  if (!profile.employee?.isMedecin) {
     return {
       doctorCompensationType: DoctorCompensationType.FIXED_SALARY,
       consultationTotalFcfa: null as number | null,
@@ -40,13 +40,39 @@ function readCompensation(profile: DoctorProfile) {
 }
 
 export function isMedecin(user: DoctorProfile) {
-  return user.role === UserRole.MEDECIN;
+  return user.role === UserRole.MEDECIN || Boolean(user.employee?.isMedecin);
+}
+
+/** Filtre Prisma : tous les comptes médecins sélectionnables (réception / consultation). */
+export const selectableDoctorWhere: Prisma.UserWhereInput = {
+  active: true,
+  role: { not: UserRole.ADMIN },
+  employee: { is: { active: true } },
+  OR: [{ role: UserRole.MEDECIN }, { employee: { isMedecin: true } }],
+};
+
+export function selectableDoctorByIdWhere(doctorId: string) {
+  return {
+    id: doctorId,
+    ...selectableDoctorWhere,
+  };
 }
 
 export function doctorUsesQuota(user: DoctorProfile) {
   if (!isMedecin(user)) return false;
-  const comp = readCompensation(user);
-  return comp.doctorCompensationType !== DoctorCompensationType.FIXED_SALARY;
+  const type = readCompensation(user).doctorCompensationType;
+  return (
+    type === DoctorCompensationType.QUOTA || type === DoctorCompensationType.COMBINED
+  );
+}
+
+export function doctorUsesFixedSalary(user: DoctorProfile) {
+  if (!isMedecin(user)) return false;
+  const type = readCompensation(user).doctorCompensationType;
+  return (
+    type === DoctorCompensationType.FIXED_SALARY ||
+    type === DoctorCompensationType.COMBINED
+  );
 }
 
 export function doctorRequiresConsultationFee(user: DoctorProfile) {
@@ -117,6 +143,7 @@ export function resolveSurgeonPercent(
 export const DOCTOR_COMPENSATION_LABELS: Record<DoctorCompensationType, string> = {
   [DoctorCompensationType.QUOTA]: "Quota (consultations & chirurgies)",
   [DoctorCompensationType.FIXED_SALARY]: "Salaire fixe",
+  [DoctorCompensationType.COMBINED]: "Salaire + quota",
 };
 
 export function serializeDoctorFields(user: DoctorProfile) {
@@ -175,25 +202,29 @@ export function employeeCompensationData(
     };
   }
   const type = body.doctorCompensationType ?? DoctorCompensationType.QUOTA;
-  const isSalary = type === DoctorCompensationType.FIXED_SALARY;
+  const usesQuota =
+    type === DoctorCompensationType.QUOTA || type === DoctorCompensationType.COMBINED;
+  const usesSalary =
+    type === DoctorCompensationType.FIXED_SALARY ||
+    type === DoctorCompensationType.COMBINED;
   const quotaMode = body.consultationQuotaMode ?? ConsultationQuotaMode.PERCENT;
   return {
     doctorCompensationType: type,
-    consultationTotalFcfa: isSalary ? null : body.consultationTotalFcfa ?? null,
-    consultationQuotaMode: isSalary ? ConsultationQuotaMode.PERCENT : quotaMode,
+    consultationTotalFcfa: usesQuota ? body.consultationTotalFcfa ?? null : null,
+    consultationQuotaMode: usesQuota ? quotaMode : ConsultationQuotaMode.PERCENT,
     consultationQuotaPercent:
-      isSalary || quotaMode !== ConsultationQuotaMode.PERCENT
+      !usesQuota || quotaMode !== ConsultationQuotaMode.PERCENT
         ? null
         : body.consultationQuotaPercent ?? null,
     consultationQuotaFcfa:
-      isSalary || quotaMode !== ConsultationQuotaMode.FIXED_AMOUNT
+      !usesQuota || quotaMode !== ConsultationQuotaMode.FIXED_AMOUNT
         ? null
         : body.consultationQuotaFcfa ?? null,
-    consultationValidityDays: isSalary ? null : body.consultationValidityDays ?? null,
-    consultationRenewalPolicy: isSalary
-      ? ConsultationRenewalPolicy.FULL
-      : body.consultationRenewalPolicy ?? ConsultationRenewalPolicy.FULL,
-    surgeryQuotaPercent: isSalary ? null : body.surgeryQuotaPercent ?? null,
-    fixedSalaryFcfa: isSalary ? body.fixedSalaryFcfa ?? null : null,
+    consultationValidityDays: usesQuota ? body.consultationValidityDays ?? null : null,
+    consultationRenewalPolicy: usesQuota
+      ? body.consultationRenewalPolicy ?? ConsultationRenewalPolicy.FULL
+      : ConsultationRenewalPolicy.FULL,
+    surgeryQuotaPercent: usesQuota ? body.surgeryQuotaPercent ?? null : null,
+    fixedSalaryFcfa: usesSalary ? body.fixedSalaryFcfa ?? null : null,
   };
 }

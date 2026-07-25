@@ -9,6 +9,11 @@ export function formatFcfa(amount: number): string {
   return `${formatFcfaDigits(amount)} FCFA`
 }
 
+/** Montant sans suffixe (cartes KPI, prévisualisations compactes). */
+export function formatFcfaCompact(amount: number): string {
+  return formatFcfaDigits(amount)
+}
+
 /** Normalise une chaîne déjà formatée (Intl, CSV, etc.). */
 export function normalizeFcfaString(value: string): string {
   return value.replace(/[\u202f\u00a0]/g, ' ')

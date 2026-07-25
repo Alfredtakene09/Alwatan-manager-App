@@ -1,16 +1,25 @@
 <script setup lang="ts">
-defineProps<{
+import { computed } from 'vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+
+const props = defineProps<{
   label: string
-  modelValue: string | number
+  modelValue: string | number | boolean
   required?: boolean
 }>()
 
 defineEmits<{ 'update:modelValue': [value: string] }>()
+
+const { uiText, localeCode } = useAppI18n()
+const labelText = computed(() => {
+  void localeCode.value
+  return uiText(props.label)
+})
 </script>
 
 <template>
   <label class="ui-field">
-    <span class="ui-field__label">{{ label }}</span>
+    <span class="ui-field__label">{{ labelText }}</span>
     <select
       class="ui-select"
       :value="modelValue"
@@ -38,18 +47,18 @@ defineEmits<{ 'update:modelValue': [value: string] }>()
 
 .ui-select {
   width: 100%;
-  padding: 0.65rem 0.9rem;
-  border: 1.5px solid var(--border);
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--ui-input-bg);
+  font-family: inherit;
+  font-size: 0.875rem;
   color: var(--text);
-  cursor: pointer;
+  background: #fff;
 }
 
 .ui-select:focus {
   outline: none;
-  border-color: var(--accent-500);
-  box-shadow: 0 0 0 3px var(--focus-ring);
-  background: #fff;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.15);
 }
 </style>

@@ -10,6 +10,7 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+import { confirmAppModal } from '@/lib/api-modal-helper'
 
 export type LogisticsCategoryRecord = {
   id: string
@@ -55,18 +56,17 @@ const columns = [
     responsivePriority: 1,
     render: (name: string) => `<span class="dt-name">${name}</span>`,
   },
-  { data: 'sortOrder', title: 'Ordre', responsivePriority: 3 },
-  { data: 'itemsLabel', title: 'Articles', responsivePriority: 2 },
+  { data: 'itemsLabel', title: 'Art.', responsivePriority: 2 },
   {
     data: 'statusLabel',
-    title: 'Statut',
-    responsivePriority: 3,
+    title: 'État',
+    responsivePriority: 2,
     render: (label: string, _t: string, row: { statusVariant: string }) =>
       statusBadge(label, row.statusVariant as 'success' | 'danger'),
   },
   {
     data: null,
-    title: 'Actions',
+    title: '',
     orderable: false,
     className: 'dt-actions-col dt-actions-col--catalog all',
     responsivePriority: 1,
@@ -182,7 +182,13 @@ async function toggleItem(id: string) {
 async function deleteItem(id: string) {
   const item = itemsById.value.get(id)
   if (!item) return
-  if (!window.confirm(`Supprimer la catégorie « ${item.name} » ?`)) return
+  const confirmed = await confirmAppModal({
+    type: 'DELETE',
+    title: 'Supprimer la catégorie',
+    message: `Supprimer la catégorie « ${item.name} » ?`,
+    confirmLabel: 'Supprimer',
+  })
+  if (!confirmed) return
   try {
     const { data } = await api.delete<{ message?: string }>(`/logistique/categories/${id}`)
     message.value = data.message ?? 'Catégorie supprimée.'

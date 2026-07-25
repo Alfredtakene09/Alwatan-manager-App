@@ -4,10 +4,21 @@ import { TrendingUp, Wallet } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import type { BreakdownItem, FinancialKpis, MonthlyTrendPoint, TrendFilter } from '@/lib/admin-dashboard'
-import { filterTrend, formatTrendPercent } from '@/lib/admin-dashboard'
+import { filterTrend } from '@/lib/admin-dashboard'
+import {
+  buildClinicPrintHeader,
+  openPrintDocument,
+} from '@/lib/print-document'
+import {
+  exportBasename,
+  exportWorkbook,
+  rowsToHtmlTable,
+  type ExportColumn,
+} from '@/lib/table-export'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import DashboardLineChart from '@/components/dashboard/DashboardLineChart.vue'
 import DashboardDonutChart from '@/components/dashboard/DashboardDonutChart.vue'
 import { Banknote, TrendingDown, Users } from '@lucide/vue'
@@ -98,16 +109,70 @@ const expenseDonut = computed(() =>
 
 const k = computed(() => data.value?.financialKpis)
 
+const kpiRows = computed(() => {
+  if (!k.value) return []
+  return [
+    { label: 'Recettes', value: formatFcfa(k.value.revenueMonthFcfa) },
+    { label: 'Dépenses', value: formatFcfa(k.value.expensesMonthFcfa) },
+    { label: 'Bénéfice net', value: formatFcfa(k.value.netMonthFcfa) },
+    { label: 'Masse salariale', value: formatFcfa(k.value.payrollMonthFcfa) },
+  ]
+})
+
+const kpiColumns: ExportColumn<(typeof kpiRows.value)[number]>[] = [
+  { header: 'Indicateur', value: (r) => r.label },
+  { header: 'Valeur', value: (r) => r.value },
+]
+
+const trendColumns: ExportColumn<MonthlyTrendPoint>[] = [
+  { header: 'Période', value: (r) => r.label },
+  { header: 'Recettes', value: (r) => formatFcfa(r.revenueFcfa) },
+  { header: 'Dépenses', value: (r) => formatFcfa(r.expensesFcfa) },
+  { header: 'Bénéfice net', value: (r) => formatFcfa(r.netFcfa) },
+]
+
+const breakdownColumns: ExportColumn<BreakdownItem>[] = [
+  { header: 'Libellé', value: (r) => r.label },
+  { header: 'Montant', value: (r) => formatFcfa(r.amountFcfa) },
+  { header: 'Part', value: (r) => (r.percent != null ? `${r.percent} %` : '—') },
+]
+
+function exportPdf() {
+  if (!data.value || !k.value) return
+  const body = `${buildClinicPrintHeader('Finances clinique')}
+${rowsToHtmlTable(kpiColumns, kpiRows.value)}
+<h3>Évolution mensuelle</h3>
+${rowsToHtmlTable(trendColumns, filteredTrend.value)}
+<h3>Répartition des recettes</h3>
+${rowsToHtmlTable(breakdownColumns, data.value.revenueBreakdown)}
+<h3>Répartition des dépenses</h3>
+${rowsToHtmlTable(breakdownColumns, data.value.expenseBreakdown)}`
+  openPrintDocument('Finances clinique', body, { pageSize: 'A4', autoPrint: true })
+}
+
+function exportExcel() {
+  if (!data.value || !k.value) return
+  exportWorkbook(exportBasename('finances-clinique'), [
+    { name: 'KPI', columns: kpiColumns, rows: kpiRows.value },
+    { name: 'Tendance', columns: trendColumns, rows: filteredTrend.value },
+    { name: 'Recettes', columns: breakdownColumns, rows: data.value.revenueBreakdown },
+    { name: 'Dépenses', columns: breakdownColumns, rows: data.value.expenseBreakdown },
+  ])
+}
+
 onMounted(loadFinances)
 </script>
 
 <template>
   <div class="gestionnaire-page">
-    <UiPageHeader
-      title="Finances"
-      subtitle="Recettes, dépenses et tendances"
-      :icon="TrendingUp"
-    />
+    <div class="finances-head">
+      <UiPageHeader
+        title="Finances"
+        subtitle="Recettes, dépenses et tendances"
+        :icon="TrendingUp"
+      />
+      <ExportButtons :disabled="loading || !k" @pdf="exportPdf" @excel="exportExcel" />
+    </div>
 
     <div v-if="loading" class="chart-empty">Chargement…</div>
     <template v-else-if="k">
@@ -190,6 +255,15 @@ onMounted(loadFinances)
 </template>
 
 <style scoped>
+.finances-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
 .charts-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

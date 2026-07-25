@@ -9,6 +9,7 @@ router.use(requireAuth, requireModule("bloc-salles"));
 router.get("/", async (_req, res) => {
   const [rooms, surgeries, hospitalizations] = await Promise.all([
     prisma.room.findMany({
+      include: { beds: { orderBy: { code: "asc" } } },
       orderBy: [{ type: "asc" }, { name: "asc" }],
     }),
     prisma.surgeryCase.findMany({
@@ -25,6 +26,7 @@ router.get("/", async (_req, res) => {
       include: {
         visit: { include: { patient: true } },
         room: true,
+        bed: true,
       },
     }),
   ]);

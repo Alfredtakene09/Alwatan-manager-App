@@ -289,18 +289,19 @@ async function logout() {
         <div class="topbar__right">
           <LanguageSwitcher />
 
-          <div class="topbar__status">
-            <span class="status-dot" />
-            <span class="topbar__status-text">{{ t('common.dbConnected') }}</span>
-          </div>
-
-          <div v-if="auth.user" class="topbar__user">
+          <RouterLink
+            v-if="auth.user"
+            to="/mon-compte"
+            class="topbar__user"
+            :aria-label="t('common.myAccount')"
+            :title="t('common.myAccount')"
+          >
             <div class="topbar__user-avatar">{{ initials }}</div>
             <div class="topbar__user-info">
               <strong>{{ fullName(auth.user.firstName, auth.user.lastName) }}</strong>
               <span :class="{ 'lang-ar': isArabic }" :lang="isArabic ? 'ar' : undefined">{{ roleLabel(auth.user.role) }}</span>
             </div>
-          </div>
+          </RouterLink>
         </div>
       </header>
 
@@ -322,7 +323,7 @@ async function logout() {
 .sidebar {
   position: fixed;
   top: 0;
-  left: 0;
+  inset-inline-start: 0;
   z-index: 200;
   width: var(--sidebar-width);
   height: 100%;
@@ -331,7 +332,7 @@ async function logout() {
   color: var(--sidebar-text-strong);
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--sidebar-border);
+  border-inline-end: 1px solid var(--sidebar-border);
   box-shadow: 2px 0 20px rgba(20, 26, 14, 0.25);
   overflow: hidden;
   transition: transform 0.28s ease;
@@ -467,9 +468,9 @@ async function logout() {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
-  margin-left: 0.65rem;
-  padding-left: 0.55rem;
-  border-left: 2px solid rgba(255, 255, 255, 0.2);
+  margin-inline-start: 0.65rem;
+  padding-inline-start: 0.55rem;
+  border-inline-start: 2px solid rgba(255, 255, 255, 0.2);
 }
 
 .nav-submenu--nested {
@@ -477,8 +478,8 @@ async function logout() {
 }
 
 .nav-submenu__children--nested {
-  margin-left: 0.45rem;
-  padding-left: 0.45rem;
+  margin-inline-start: 0.45rem;
+  padding-inline-start: 0.45rem;
 }
 
 .nav-item--nested {
@@ -495,7 +496,7 @@ async function logout() {
   font-size: 0.875rem;
   font-weight: 700;
   width: 100%;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
   text-decoration: none;
   margin-bottom: 0.35rem;
@@ -644,47 +645,15 @@ async function logout() {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  margin-left: var(--sidebar-width);
+  margin-inline-start: var(--sidebar-width);
   height: 100%;
   height: 100dvh;
   overflow: hidden;
 }
 
-/* Sidebar à droite en arabe (sans dir=rtl global) */
+/* Affinages arabe (dir=rtl gère déjà le placement via propriétés logiques) */
 .app-shell--ar .sidebar {
-  left: auto;
-  right: 0;
-  border-right: none;
-  border-left: 1px solid var(--sidebar-border);
   box-shadow: -2px 0 20px rgba(20, 26, 14, 0.25);
-}
-
-.app-shell--ar .main-area {
-  margin-left: 0;
-  margin-right: var(--sidebar-width);
-}
-
-.app-shell--ar .sidebar__brand {
-  flex-direction: row-reverse;
-}
-
-.app-shell--ar .nav-item {
-  flex-direction: row-reverse;
-  text-align: right;
-}
-
-.app-shell--ar .nav-submenu__children {
-  margin-left: 0;
-  margin-right: 0.65rem;
-  padding-left: 0;
-  padding-right: 0.55rem;
-  border-left: none;
-  border-right: 2px solid rgba(255, 255, 255, 0.2);
-}
-
-.app-shell--ar .nav-submenu__children--nested {
-  margin-right: 0.45rem;
-  padding-right: 0.45rem;
 }
 
 .app-shell--ar .nav-item__chevron {
@@ -764,6 +733,22 @@ async function logout() {
   border: 2px solid var(--menu-btn-border);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-sm);
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+.topbar__user:hover {
+  border-color: var(--primary-500, #1b4f9c);
+  background: var(--primary-50, #e8f1fb);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(15, 40, 80, 0.12));
+}
+
+.topbar__user:focus-visible {
+  outline: none;
+  border-color: var(--primary-500, #1b4f9c);
+  box-shadow: 0 0 0 3px rgba(27, 79, 156, 0.25);
 }
 
 .topbar__user-avatar {
@@ -815,32 +800,6 @@ async function logout() {
   flex-shrink: 0;
 }
 
-.topbar__status {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.85rem;
-  background: var(--success-bg);
-  color: var(--success);
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.status-dot {
-  width: 7px;
-  height: 7px;
-  background: var(--success);
-  border-radius: 50%;
-  animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
 .page-content {
   flex: 1;
   min-height: 0;
@@ -858,15 +817,12 @@ async function logout() {
     transform: translateX(-100%);
   }
 
-  .sidebar--open {
-    transform: translateX(0);
-  }
-
-  .app-shell--ar .sidebar {
+  html[dir='rtl'] .sidebar {
     transform: translateX(100%);
   }
 
-  .app-shell--ar .sidebar--open {
+  .sidebar--open,
+  html[dir='rtl'] .sidebar--open {
     transform: translateX(0);
   }
 
@@ -875,11 +831,7 @@ async function logout() {
   }
 
   .main-area {
-    margin-left: 0;
-  }
-
-  .app-shell--ar .main-area {
-    margin-right: 0;
+    margin-inline-start: 0;
   }
 
   .topbar__menu-btn {
@@ -923,14 +875,6 @@ async function logout() {
     width: 100%;
     justify-content: space-between;
     gap: 0.5rem;
-  }
-
-  .topbar__status-text {
-    display: none;
-  }
-
-  .topbar__status {
-    padding: 0.35rem 0.65rem;
   }
 
   .topbar__user-info span {

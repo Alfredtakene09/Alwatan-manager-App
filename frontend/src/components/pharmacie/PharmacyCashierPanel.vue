@@ -90,9 +90,11 @@ const highlightedProductId = ref<string | null>(null)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const submitting = ref(false)
+const REDUCTION_PERCENT_OPTIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50] as const
+
 const checkoutModalOpen = ref(false)
 const adjustmentMode = ref<CheckoutAdjustmentMode>('none')
-const reductionFcfaInput = ref('')
+const reductionPercent = ref<string>('5')
 const coveredByName = ref('')
 
 const productsById = computed(() => new Map(props.products.map((p) => [p.id, p])))
@@ -129,6 +131,20 @@ const cartRows = computed(() =>
 
 const cartTotalFcfa = computed(() => cartRows.value.reduce((sum, row) => sum + row.lineTotal, 0))
 const cartArticlesCount = computed(() => cart.value.reduce((sum, line) => sum + line.quantity, 0))
+
+const selectedReductionPercent = computed(() => {
+  const pct = Number.parseInt(reductionPercent.value || '0', 10)
+  return Number.isFinite(pct) ? pct : 0
+})
+
+const selectedReductionFcfa = computed(() =>
+  Math.round((cartTotalFcfa.value * selectedReductionPercent.value) / 100),
+)
+
+const reductionPercentLabel = computed(() => {
+  if (cartTotalFcfa.value <= 0 || selectedReductionPercent.value <= 0) return 'Réduction (%)'
+  return `Réduction (%) — −${formatFcfa(selectedReductionFcfa.value)}`
+})
 
 const selectedCartRow = computed(() =>
   selectedCartIndex.value == null ? null : cartRows.value[selectedCartIndex.value] ?? null,
@@ -265,6 +281,7 @@ function printReceipt(data: {
   isExternal?: boolean
   grossTotal?: number
   reductionFcfa?: number
+  reductionPercent?: number
   coveredByName?: string | null
   isFree?: boolean
 }) {
@@ -282,13 +299,21 @@ function printReceipt(data: {
 
   const grossTotal = data.grossTotal ?? data.total
   const reductionFcfa = data.reductionFcfa ?? 0
+  const reductionPercent = data.reductionPercent
   let paymentModeLabel = 'Paiement normal'
   if (data.isFree) paymentModeLabel = 'Prise en charge gratuite'
-  else if (reductionFcfa > 0) paymentModeLabel = 'Réduction accordée'
+  else if (reductionFcfa > 0) {
+    paymentModeLabel = reductionPercent
+      ? `Réduction ${reductionPercent} %`
+      : 'Réduction accordée'
+  }
   const coveredByBlock =
     data.coveredByName && (data.isFree || reductionFcfa > 0)
       ? `<div class="thermal-receipt__row thermal-receipt__row--stack"><span>Responsable</span><strong>${data.coveredByName}</strong></div>`
       : ''
+  const reductionLabel = reductionPercent
+    ? `Réduction (${reductionPercent} %)`
+    : 'Réduction'
 
   openPrintDocument(
     `${data.isExternal ? 'Vente' : 'Ordonnance'} ${data.buyerCode}`,
@@ -322,7 +347,7 @@ function printReceipt(data: {
   </table>
   <div class="thermal-receipt__fields">
     <div class="thermal-receipt__row"><span>Sous-total</span><strong>${formatFcfa(grossTotal)}</strong></div>
-    ${reductionFcfa > 0 ? `<div class="thermal-receipt__row"><span>Réduction</span><strong>- ${formatFcfa(reductionFcfa)}</strong></div>` : ''}
+    ${reductionFcfa > 0 ? `<div class="thermal-receipt__row"><span>${reductionLabel}</span><strong>- ${formatFcfa(reductionFcfa)}</strong></div>` : ''}
     <div class="thermal-receipt__row"><span>Total payé</span><strong>${formatFcfa(data.total)}</strong></div>
   </div>
   ${data.notes ? `<p class="thermal-receipt__note"><strong>Notes:</strong> ${data.notes}</p>` : ''}
@@ -340,29 +365,30 @@ function resetBuyerFields() {
   externalClientName.value = ''
   externalClientPhone.value = ''
   adjustmentMode.value = 'none'
-  reductionFcfaInput.value = ''
+  reductionPercent.value = '5'
   coveredByName.value = ''
 }
 
 function resolveCheckoutAdjustment(): CheckoutAdjustment | null {
-  const reductionFcfaRaw = Number.parseInt(reductionFcfaInput.value || '0', 10)
-  const reductionFcfa = Number.isFinite(reductionFcfaRaw) ? Math.max(0, reductionFcfaRaw) : 0
+  const percent = selectedReductionPercent.value
   const isFree = adjustmentMode.value === 'free'
   const hasReduction = adjustmentMode.value === 'reduction'
   const responsible = coveredByName.value.trim()
+  const allowedPercent = (REDUCTION_PERCENT_OPTIONS as readonly number[]).includes(percent)
+  const reductionFcfa = hasReduction && allowedPercent ? selectedReductionFcfa.value : 0
 
   if ((isFree || hasReduction) && responsible.length < 2) {
     message.value = 'Indiquez le nom de la personne responsable.'
     messageType.value = 'error'
     return null
   }
-  if (hasReduction && reductionFcfa <= 0) {
-    message.value = 'Indiquez un montant de réduction valide.'
+  if (hasReduction && !allowedPercent) {
+    message.value = 'Choisissez un pourcentage de réduction valide (5 % à 50 %).'
     messageType.value = 'error'
     return null
   }
-  if (hasReduction && reductionFcfa > cartTotalFcfa.value) {
-    message.value = 'La réduction ne peut pas dépasser le total du panier.'
+  if (hasReduction && reductionFcfa <= 0) {
+    message.value = 'Le panier est trop faible pour appliquer cette réduction.'
     messageType.value = 'error'
     return null
   }
@@ -443,6 +469,7 @@ async function submitSale() {
         total: data.total,
         grossTotal: data.grossTotal,
         reductionFcfa: data.reductionFcfa,
+        reductionPercent: adjustment.hasReduction ? selectedReductionPercent.value : undefined,
         coveredByName: data.coveredByName,
         isFree: data.isFree,
         date: new Date().toLocaleString('fr-FR'),
@@ -730,15 +757,15 @@ watch(
           <option value="reduction">Réduction</option>
           <option value="free">Prise en charge gratuite</option>
         </UiSelect>
-        <UiInput
+        <UiSelect
           v-if="adjustmentMode === 'reduction'"
-          v-model="reductionFcfaInput"
-          type="number"
-          min="0"
-          step="1"
-          label="Montant réduction (FCFA)"
-          placeholder="Ex. 5000"
-        />
+          v-model="reductionPercent"
+          :label="reductionPercentLabel"
+        >
+          <option v-for="pct in REDUCTION_PERCENT_OPTIONS" :key="pct" :value="String(pct)">
+            {{ pct }} %
+          </option>
+        </UiSelect>
         <UiInput
           v-if="adjustmentMode !== 'none'"
           v-model="coveredByName"

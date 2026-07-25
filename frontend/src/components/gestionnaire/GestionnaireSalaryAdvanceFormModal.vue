@@ -18,6 +18,7 @@ export type SalaryAdvanceEmployeeOption = {
 export type SalaryAdvanceFormPayload = {
   employeeId: string
   amountFcfa: number
+  installmentFcfa?: number | null
   businessDate: string
   comment?: string
 }
@@ -42,6 +43,8 @@ function emptyForm() {
   return {
     employeeId: '',
     amountFcfa: '',
+    installmentMode: 'full' as 'full' | 'installment',
+    installmentFcfa: '',
     businessDate: todayIso(),
     comment: '',
   }
@@ -70,6 +73,21 @@ const modalSubtitle = computed(() => {
 
 const alertMessage = computed(() => props.errorMessage || localError.value)
 
+const estimatedPayments = computed(() => {
+  const total = Number(form.value.amountFcfa)
+  const tranche = Number(form.value.installmentFcfa)
+  if (
+    form.value.installmentMode !== 'installment' ||
+    !Number.isFinite(total) ||
+    total <= 0 ||
+    !Number.isFinite(tranche) ||
+    tranche <= 0
+  ) {
+    return null
+  }
+  return Math.ceil(total / tranche)
+})
+
 function submit() {
   const amount = Number(form.value.amountFcfa)
   if (!form.value.employeeId) {
@@ -84,10 +102,26 @@ function submit() {
     localError.value = 'Indiquez la date de l\'avance.'
     return
   }
+
+  let installmentFcfa: number | null = null
+  if (form.value.installmentMode === 'installment') {
+    const tranche = Number(form.value.installmentFcfa)
+    if (!Number.isFinite(tranche) || tranche <= 0) {
+      localError.value = 'Indiquez une tranche mensuelle valide.'
+      return
+    }
+    if (tranche > amount) {
+      localError.value = 'La tranche ne peut pas dépasser le montant total.'
+      return
+    }
+    installmentFcfa = Math.round(tranche)
+  }
+
   localError.value = ''
   emit('submit', {
     employeeId: form.value.employeeId,
     amountFcfa: Math.round(amount),
+    installmentFcfa,
     businessDate: form.value.businessDate,
     comment: form.value.comment.trim() || undefined,
   })
@@ -125,7 +159,7 @@ function submit() {
         Détails de l'avance
       </h3>
       <p class="form-panel__intro">
-        L'avance sera déduite automatiquement lors du prochain paiement de salaire.
+        Choisissez une déduction totale à la prochaine paie, ou une tranche fixe déduite automatiquement à chaque paiement.
       </p>
 
       <UiSelect v-model="form.employeeId" label="Employé" required>
@@ -138,7 +172,7 @@ function submit() {
       <div class="gestionnaire-form-grid">
         <UiInput
           v-model="form.amountFcfa"
-          label="Montant (FCFA)"
+          label="Montant total (FCFA)"
           type="number"
           min="1"
           step="1"
@@ -152,6 +186,43 @@ function submit() {
           required
           :icon="CalendarDays"
         />
+      </div>
+
+      <div class="installment-mode" role="radiogroup" aria-label="Mode de déduction">
+        <button
+          type="button"
+          class="installment-mode__btn"
+          :class="{ 'installment-mode__btn--active': form.installmentMode === 'full' }"
+          @click="form.installmentMode = 'full'"
+        >
+          Tout déduire à la prochaine paie
+        </button>
+        <button
+          type="button"
+          class="installment-mode__btn"
+          :class="{ 'installment-mode__btn--active': form.installmentMode === 'installment' }"
+          @click="form.installmentMode = 'installment'"
+        >
+          Déduire par tranches
+        </button>
+      </div>
+
+      <div v-if="form.installmentMode === 'installment'" class="installment-fields">
+        <UiInput
+          v-model="form.installmentFcfa"
+          label="Tranche à chaque paie (FCFA)"
+          type="number"
+          min="1"
+          step="1"
+          required
+          placeholder="Ex. 10000"
+        />
+        <p v-if="estimatedPayments" class="installment-hint">
+          Environ {{ estimatedPayments }} paiement(s) de salaire pour solder l'avance
+          <template v-if="form.installmentFcfa">
+            ({{ formatFcfa(Number(form.installmentFcfa) || 0) }} / paie).
+          </template>
+        </p>
       </div>
 
       <UiTextarea
@@ -177,8 +248,50 @@ function submit() {
   gap: 0.75rem;
 }
 
+.installment-mode {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin-top: 0.15rem;
+}
+
+.installment-mode__btn {
+  min-height: 2.4rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  color: #64748b;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.25;
+  cursor: pointer;
+  text-align: center;
+}
+
+.installment-mode__btn--active {
+  border-color: #fcd34d;
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.installment-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.installment-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
 @media (max-width: 560px) {
-  .gestionnaire-form-grid {
+  .gestionnaire-form-grid,
+  .installment-mode {
     grid-template-columns: 1fr;
   }
 }

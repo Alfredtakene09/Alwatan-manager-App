@@ -5,14 +5,17 @@ import {
   examCatalogKindRoute,
   type ExamCatalogKindSlug,
 } from '@/lib/exam-catalog-kinds'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 defineProps<{
   activeKind: ExamCatalogKindSlug
 }>()
+
+const { uiText } = useAppI18n()
 </script>
 
 <template>
-  <nav class="exam-kind-tabs" aria-label="Types d'examen">
+  <nav class="exam-kind-tabs" :aria-label="uiText('Types d\'examen')">
     <RouterLink
       v-for="slug in EXAM_CATALOG_KIND_SLUGS"
       :key="slug"
@@ -21,7 +24,7 @@ defineProps<{
       :class="{ 'exam-kind-tab--active': activeKind === slug }"
     >
       <component :is="EXAM_CATALOG_KIND_CONFIG[slug].icon" :size="16" />
-      {{ EXAM_CATALOG_KIND_CONFIG[slug].label }}
+      {{ uiText(EXAM_CATALOG_KIND_CONFIG[slug].label) }}
     </RouterLink>
   </nav>
 </template>

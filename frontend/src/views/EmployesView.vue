@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, RouterLink } from 'vue-router'
 import axios from 'axios'
-import { UserRound, Plus, RefreshCw, Save, Briefcase, Stethoscope, Banknote, Info, Phone, Users, UserCheck, Building2, Palmtree, UserX } from '@lucide/vue'
+import { UserRound, Plus, RefreshCw, Save, Briefcase, Stethoscope, Banknote, Info, Phone, Users, UserCheck, Building2, Palmtree, UserX, Search, Camera } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import {
@@ -13,25 +13,41 @@ import {
   computeDoctorConsultationShares,
   doctorCompensationLabel,
   doctorQuotaHint,
+  doctorUsesQuotaCompensationType,
+  doctorUsesSalaryCompensationType,
   formatDoctorQuotaShare,
   type ConsultationQuotaMode,
   type ConsultationRenewalPolicy,
   type DoctorCompensationType,
 } from '@/lib/doctor-compensation'
+import {
+  DOCTOR_SPECIALTY_SUGGESTIONS,
+  DOCTOR_WEEKDAY_OPTIONS,
+  emptyWeekAvailability,
+  parseDoctorAvailabilitySlots,
+  toggleDayAvailability,
+  updateDayTimes,
+  type DoctorAvailabilitySlot,
+} from '@/lib/doctor-availability'
 import { employeeJobTitleOptions, loadEmployeeJobTitleLabels } from '@/lib/employee-job-titles'
-import { employeeNeedsAppAccount } from '@/lib/employee-app-account'
+import { employeeNeedsAppAccount, isHiddenPlatformAdminEmployee, isHiddenPlatformAdminJobTitle } from '@/lib/employee-app-account'
+import { inferIsMedecinFromJobTitle } from '@/lib/doctor-job-title'
 import { catalogRowActionsHtml, statusBadge } from '@/lib/datatable-defaults'
+import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import EmployeeJobTitlesPanel from '@/components/admin/EmployeeJobTitlesPanel.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 type EmployeeUser = {
   id: string
@@ -47,6 +63,10 @@ type Employee = {
   phone?: string | null
   jobTitle?: string | null
   isMedecin: boolean
+  specialty?: string | null
+  availabilitySlots?: DoctorAvailabilitySlot[] | null
+  hasPhoto?: boolean
+  photoPath?: string | null
   doctorCompensationType?: DoctorCompensationType
   consultationTotalFcfa?: number | null
   consultationQuotaMode?: ConsultationQuotaMode
@@ -90,6 +110,7 @@ const SERVICE_SUGGESTIONS = [
 ]
 
 const route = useRoute()
+const { uiText, localeCode } = useAppI18n()
 const isGestionnaireRegistry = computed(() => route.meta.employeeRegistry === 'gestionnaire')
 const apiBase = computed(() => (isGestionnaireRegistry.value ? '/gestionnaire' : '/admin'))
 const showPayrollSection = computed(() => isGestionnaireRegistry.value)
@@ -103,18 +124,27 @@ const jobTitlesTableKey = computed(() =>
 const employees = ref<Employee[]>([])
 const jobTitleLabels = ref<string[]>([])
 const activeTab = ref<'employees' | 'job-titles'>('employees')
+const searchQuery = ref('')
+const filterJobTitle = ref('')
+const filterProfile = ref<'ALL' | 'MEDECIN' | 'STAFF'>('ALL')
 const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const modalOpen = ref(false)
 const editingId = ref<string | null>(null)
+const photoFile = ref<File | null>(null)
+const photoPreviewUrl = ref<string | null>(null)
+const photoCacheBust = ref(0)
 
 const form = ref({
   displayName: '',
   phone: '',
   jobTitle: '',
   profile: 'STAFF' as 'STAFF' | 'MEDECIN',
+  specialty: '',
+  availabilitySlots: [] as DoctorAvailabilitySlot[],
+  hasPhoto: false,
   doctorCompensationType: 'QUOTA' as DoctorCompensationType,
   consultationTotalFcfa: '',
   consultationQuotaMode: 'PERCENT' as ConsultationQuotaMode,
@@ -148,12 +178,19 @@ const parsedEmployeeName = computed(() => parseEmployeeDisplayName(form.value.di
 
 const isMedecinProfile = computed(() => form.value.profile === 'MEDECIN')
 
-/** Médecin rémunéré au quota : pas de salaire fixe mensuel. */
+/** Médecin avec part quota (quota seul ou salaire + quota). */
 const isQuotaDoctor = computed(
-  () => isMedecinProfile.value && form.value.doctorCompensationType === 'QUOTA',
+  () =>
+    isMedecinProfile.value &&
+    doctorUsesQuotaCompensationType(form.value.doctorCompensationType),
 )
 
-const showSalaryField = computed(() => !isQuotaDoctor.value)
+/** Salaire mensuel : personnel, médecin salarié, ou mode combiné. */
+const showSalaryField = computed(
+  () =>
+    !isMedecinProfile.value ||
+    doctorUsesSalaryCompensationType(form.value.doctorCompensationType),
+)
 
 const modalEmployeeName = computed(() => {
   const trimmed = form.value.displayName.trim()
@@ -170,15 +207,20 @@ const employeeInitials = computed(() => {
 })
 
 const employeeProfileLabel = computed(() =>
-  isMedecinProfile.value ? 'Profil médecin' : 'Profil personnel',
+  isMedecinProfile.value ? uiText('Profil médecin') : uiText('Profil personnel'),
 )
 
 const employeeModalSubtitle = computed(() => {
   if (modalEmployeeName.value) return modalEmployeeName.value
-  return 'Fiche personnelle — configurez le poste et, pour un médecin, la rémunération des consultations'
+  return uiText(
+    'Fiche personnelle — configurez le poste et, pour un médecin, la rémunération des consultations',
+  )
 })
 
 const previewDoctor = computed(() => ({
+  id: '',
+  firstName: '',
+  lastName: '',
   doctorCompensationType: form.value.doctorCompensationType,
   consultationTotalFcfa: Number(form.value.consultationTotalFcfa) || 0,
   consultationQuotaMode: form.value.consultationQuotaMode,
@@ -189,14 +231,14 @@ const previewDoctor = computed(() => ({
 }))
 
 const compensationSplit = computed(() => {
-  if (!isMedecinProfile.value || form.value.doctorCompensationType !== 'QUOTA') return null
+  if (!isQuotaDoctor.value) return null
   const total = Number(form.value.consultationTotalFcfa)
   if (!Number.isFinite(total) || total <= 0) return null
   return computeDoctorConsultationShares(total, previewDoctor.value)
 })
 
 const quotaPreviewHint = computed(() => {
-  if (!isMedecinProfile.value || form.value.doctorCompensationType !== 'QUOTA') return null
+  if (!isQuotaDoctor.value) return null
   return doctorQuotaHint(previewDoctor.value, Number(form.value.consultationTotalFcfa) || undefined)
 })
 
@@ -206,11 +248,11 @@ const renewalPolicyHint = computed(
       ?.hint ?? '',
 )
 
-const payrollStepNumber = computed(() => (isMedecinProfile.value ? 4 : 3))
+const payrollStepNumber = computed(() => (isMedecinProfile.value ? 5 : 3))
 
 const salaryStepNumber = computed(() => {
   if (showPayrollSection.value) return payrollStepNumber.value
-  return isMedecinProfile.value ? 4 : 3
+  return isMedecinProfile.value ? 5 : 3
 })
 
 const salaryPreview = computed(() => {
@@ -230,8 +272,7 @@ const canSaveEmployee = computed(() => {
   if (!parsedEmployeeName.value) return false
   if (!form.value.jobTitle.trim()) return false
   if (
-    isMedecinProfile.value &&
-    form.value.doctorCompensationType === 'QUOTA' &&
+    isQuotaDoctor.value &&
     (!form.value.consultationTotalFcfa.trim() || !form.value.consultationValidityDays.trim())
   ) {
     return false
@@ -239,9 +280,55 @@ const canSaveEmployee = computed(() => {
   return true
 })
 
-const jobTitleOptions = computed(() => employeeJobTitleOptions(form.value.jobTitle, jobTitleLabels.value))
+const jobTitleOptions = computed(() =>
+  employeeJobTitleOptions(form.value.jobTitle, jobTitleLabels.value).filter(
+    (title) => !isHiddenPlatformAdminJobTitle(title) || title === form.value.jobTitle,
+  ),
+)
+
+const filterJobTitleOptions = computed(() => {
+  const fromEmployees = employees.value
+    .map((employee) => employee.jobTitle?.trim())
+    .filter((title): title is string => Boolean(title))
+  return [...new Set([...jobTitleLabels.value, ...fromEmployees])]
+    .filter((title) => !isHiddenPlatformAdminJobTitle(title))
+    .sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' }))
+})
 
 const employeesById = computed(() => new Map(employees.value.map((e) => [e.id, e])))
+
+const filteredEmployees = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  const jobTitle = filterJobTitle.value.trim().toLowerCase()
+  return employees.value
+    .filter((employee) => {
+      if (filterProfile.value === 'MEDECIN' && !employee.isMedecin) return false
+      if (filterProfile.value === 'STAFF' && employee.isMedecin) return false
+      if (jobTitle && (employee.jobTitle?.trim().toLowerCase() ?? '') !== jobTitle) return false
+      if (!q) return true
+      const haystack = [
+        employee.firstName,
+        employee.lastName,
+        fullName(employee.firstName, employee.lastName),
+        employee.phone,
+        employee.jobTitle,
+        employee.specialty,
+        employee.service,
+        employee.user?.email,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(q)
+    })
+    .slice()
+    .sort((a, b) =>
+      fullName(a.firstName, a.lastName).localeCompare(fullName(b.firstName, b.lastName), 'fr', {
+        sensitivity: 'base',
+        numeric: true,
+      }),
+    )
+})
 
 const employeeStats = computed(() => {
   const list = employees.value
@@ -282,8 +369,9 @@ function employeeCompensationLabel(employee: Employee): string {
   return (
     [
       doctorCompensationLabel(employee.doctorCompensationType),
+      employee.doctorCompensationType === 'COMBINED' ? salaryLabel : null,
       employee.consultationTotalFcfa != null
-        ? `${employee.consultationTotalFcfa.toLocaleString('fr-FR')} FCFA`
+        ? formatFcfa(employee.consultationTotalFcfa)
         : null,
       employee.consultationValidityDays ? `Val. ${employee.consultationValidityDays}j` : null,
       employee.consultationRenewalPolicy === 'HALF' ? 'Renouv. 50%' : null,
@@ -294,16 +382,19 @@ function employeeCompensationLabel(employee: Employee): string {
   )
 }
 
-const tableRows = computed(() =>
-  employees.value.map((employee) => ({
+const tableRows = computed(() => {
+  localeCode.value
+  return filteredEmployees.value.map((employee) => ({
     id: employee.id,
     name: fullName(employee.firstName, employee.lastName),
     jobTitle: employee.jobTitle || '—',
+    specialty: employee.isMedecin ? employee.specialty || '—' : '—',
+    profileLabel: employee.isMedecin ? uiText('Médecin') : uiText('Personnel'),
     compensationLabel: employeeCompensationLabel(employee),
-    statusLabel: employee.active ? 'Actif' : 'Inactif',
+    statusLabel: employee.active ? uiText('Actif') : uiText('Inactif'),
     statusVariant: employee.active ? 'success' : 'danger',
-  })),
-)
+  }))
+})
 
 const columns = [
   {
@@ -312,11 +403,19 @@ const columns = [
     responsivePriority: 1,
     render: (name: string) => `<span class="dt-name">${name}</span>`,
   },
-  { data: 'jobTitle', title: 'Poste', responsivePriority: 3 },
+  { data: 'profileLabel', title: 'Profil', responsivePriority: 3 },
+  { data: 'jobTitle', title: 'Poste', responsivePriority: 4 },
+  {
+    data: 'specialty',
+    title: 'Spécialité',
+    responsivePriority: 5,
+    render: (label: string) =>
+      label === '—' ? '<span class="dt-muted">—</span>' : `<span class="dt-date">${label}</span>`,
+  },
   {
     data: 'compensationLabel',
     title: 'Rémunération',
-    responsivePriority: 4,
+    responsivePriority: 6,
     render: (label: string) =>
       label === '—' ? '<span class="dt-muted">—</span>' : `<span class="dt-date">${label}</span>`,
   },
@@ -338,12 +437,43 @@ const columns = [
   },
 ]
 
+type EmployeeExportRow = (typeof tableRows.value)[number]
+
+const employeeExportColumns: ExportColumn<EmployeeExportRow>[] = [
+  { header: 'Nom', value: (r) => r.name },
+  { header: 'Profil', value: (r) => r.profileLabel },
+  { header: 'Poste', value: (r) => r.jobTitle },
+  { header: 'Spécialité', value: (r) => r.specialty },
+  { header: 'Rémunération', value: (r) => r.compensationLabel },
+  { header: 'Statut', value: (r) => r.statusLabel },
+]
+
+function exportPdf() {
+  exportTablePdf('Employés', employeeExportColumns, tableRows.value)
+}
+
+function exportExcel() {
+  exportTableExcel('Employés', employeeExportColumns, tableRows.value)
+}
+
+function clearPhotoSelection() {
+  if (photoPreviewUrl.value?.startsWith('blob:')) {
+    URL.revokeObjectURL(photoPreviewUrl.value)
+  }
+  photoFile.value = null
+  photoPreviewUrl.value = null
+}
+
 function resetForm() {
+  clearPhotoSelection()
   form.value = {
     displayName: '',
     phone: '',
     jobTitle: '',
     profile: 'STAFF',
+    specialty: '',
+    availabilitySlots: [],
+    hasPhoto: false,
     doctorCompensationType: 'QUOTA',
     consultationTotalFcfa: '',
     consultationQuotaMode: 'PERCENT',
@@ -369,7 +499,7 @@ async function loadEmployees() {
   message.value = ''
   try {
     const { data } = await api.get<Employee[]>(`${apiBase.value}/employees`, { params: { active: false } })
-    employees.value = data
+    employees.value = data.filter((employee) => !isHiddenPlatformAdminEmployee(employee))
   } catch {
     employees.value = []
     message.value = 'Impossible de charger les employés.'
@@ -389,12 +519,16 @@ function openCreateModal() {
 function openEditModal(id: string) {
   const employee = employeesById.value.get(id)
   if (!employee) return
+  clearPhotoSelection()
   editingId.value = id
   form.value = {
     displayName: fullName(employee.firstName, employee.lastName),
     phone: employee.phone ?? '',
     jobTitle: employee.jobTitle ?? '',
     profile: employee.isMedecin ? 'MEDECIN' : 'STAFF',
+    specialty: employee.specialty ?? '',
+    availabilitySlots: parseDoctorAvailabilitySlots(employee.availabilitySlots),
+    hasPhoto: Boolean(employee.hasPhoto || employee.photoPath),
     doctorCompensationType: employee.doctorCompensationType ?? 'QUOTA',
     consultationTotalFcfa:
       employee.consultationTotalFcfa != null ? String(employee.consultationTotalFcfa) : '',
@@ -416,6 +550,7 @@ function openEditModal(id: string) {
     contractStatus: employee.contractStatus ?? 'ACTIF',
     active: employee.active,
   }
+  photoCacheBust.value = Date.now()
   modalOpen.value = true
   message.value = ''
 }
@@ -428,35 +563,32 @@ function closeModal() {
 
 function compensationPayload() {
   if (!isMedecinProfile.value) return { isMedecin: false as const }
+  const usesQuota = doctorUsesQuotaCompensationType(form.value.doctorCompensationType)
   return {
     isMedecin: true as const,
     doctorCompensationType: form.value.doctorCompensationType,
     consultationTotalFcfa:
-      form.value.doctorCompensationType === 'QUOTA' && form.value.consultationTotalFcfa.trim()
+      usesQuota && form.value.consultationTotalFcfa.trim()
         ? Number(form.value.consultationTotalFcfa)
         : undefined,
-    consultationQuotaMode:
-      form.value.doctorCompensationType === 'QUOTA' ? form.value.consultationQuotaMode : undefined,
+    consultationQuotaMode: usesQuota ? form.value.consultationQuotaMode : undefined,
     consultationQuotaPercent:
-      form.value.doctorCompensationType === 'QUOTA' &&
+      usesQuota &&
       form.value.consultationQuotaMode === 'PERCENT' &&
       form.value.consultationQuotaPercent.trim()
         ? Number(form.value.consultationQuotaPercent)
         : undefined,
     consultationQuotaFcfa:
-      form.value.doctorCompensationType === 'QUOTA' &&
+      usesQuota &&
       form.value.consultationQuotaMode === 'FIXED_AMOUNT' &&
       form.value.consultationQuotaFcfa.trim()
         ? Number(form.value.consultationQuotaFcfa)
         : undefined,
     consultationValidityDays:
-      form.value.doctorCompensationType === 'QUOTA' && form.value.consultationValidityDays.trim()
+      usesQuota && form.value.consultationValidityDays.trim()
         ? Number(form.value.consultationValidityDays)
         : undefined,
-    consultationRenewalPolicy:
-      form.value.doctorCompensationType === 'QUOTA'
-        ? form.value.consultationRenewalPolicy
-        : undefined,
+    consultationRenewalPolicy: usesQuota ? form.value.consultationRenewalPolicy : undefined,
   }
 }
 
@@ -479,16 +611,95 @@ function payrollPayload() {
 
 function onDoctorCompensationTypeChange(type: DoctorCompensationType) {
   form.value.doctorCompensationType = type
-  if (type === 'QUOTA') {
+  if (!doctorUsesSalaryCompensationType(type)) {
     form.value.fixedSalaryFcfa = ''
   }
 }
 
 function onProfileChange(profile: 'STAFF' | 'MEDECIN') {
   form.value.profile = profile
-  if (profile === 'MEDECIN' && form.value.doctorCompensationType === 'QUOTA') {
+  if (profile === 'MEDECIN') {
+    if (!form.value.availabilitySlots.length) {
+      form.value.availabilitySlots = emptyWeekAvailability()
+    }
+  } else {
+    form.value.specialty = ''
+    form.value.availabilitySlots = []
+  }
+  if (
+    profile === 'MEDECIN' &&
+    !doctorUsesSalaryCompensationType(form.value.doctorCompensationType)
+  ) {
     form.value.fixedSalaryFcfa = ''
   }
+}
+
+watch(
+  () => form.value.jobTitle,
+  (title) => {
+    if (inferIsMedecinFromJobTitle(title) && form.value.profile !== 'MEDECIN') {
+      onProfileChange('MEDECIN')
+    }
+  },
+)
+
+function onPhotoSelected(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (!file.type.startsWith('image/')) {
+    message.value = 'Sélectionnez une image (JPEG, PNG, WebP ou GIF).'
+    messageType.value = 'error'
+    input.value = ''
+    return
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    message.value = 'La photo ne doit pas dépasser 5 Mo.'
+    messageType.value = 'error'
+    input.value = ''
+    return
+  }
+  clearPhotoSelection()
+  photoFile.value = file
+  photoPreviewUrl.value = URL.createObjectURL(file)
+  form.value.hasPhoto = true
+}
+
+function daySlot(dayOfWeek: number) {
+  return form.value.availabilitySlots.find((slot) => slot.dayOfWeek === dayOfWeek) ?? null
+}
+
+function onToggleAvailabilityDay(dayOfWeek: number, enabled: boolean) {
+  form.value.availabilitySlots = toggleDayAvailability(
+    form.value.availabilitySlots,
+    dayOfWeek,
+    enabled,
+  )
+}
+
+function onAvailabilityTimeChange(
+  dayOfWeek: number,
+  field: 'startTime' | 'endTime',
+  value: string,
+) {
+  form.value.availabilitySlots = updateDayTimes(form.value.availabilitySlots, dayOfWeek, {
+    [field]: value,
+  })
+}
+
+const employeePhotoDisplayUrl = computed(() => {
+  if (photoPreviewUrl.value) return photoPreviewUrl.value
+  if (editingId.value && form.value.hasPhoto) {
+    return `/api${apiBase.value}/employees/${editingId.value}/photo?t=${photoCacheBust.value}`
+  }
+  return null
+})
+
+async function uploadEmployeePhoto(employeeId: string) {
+  if (!photoFile.value) return
+  const body = new FormData()
+  body.append('photo', photoFile.value)
+  await api.post(`${apiBase.value}/employees/${employeeId}/photo`, body)
 }
 
 function apiErrorMessage(error: unknown, fallback: string) {
@@ -512,13 +723,21 @@ async function saveEmployee() {
     return
   }
   if (
-    isMedecinProfile.value &&
-    form.value.doctorCompensationType === 'QUOTA' &&
+    isQuotaDoctor.value &&
     (!form.value.consultationTotalFcfa.trim() || !form.value.consultationValidityDays.trim())
   ) {
     message.value = 'Renseignez le prix de consultation et la durée de validité.'
     messageType.value = 'error'
     return
+  }
+  if (isMedecinProfile.value) {
+    for (const slot of form.value.availabilitySlots) {
+      if (slot.startTime >= slot.endTime) {
+        message.value = 'Vérifiez les horaires de disponibilité (fin après début).'
+        messageType.value = 'error'
+        return
+      }
+    }
   }
 
   saving.value = true
@@ -530,15 +749,24 @@ async function saveEmployee() {
       phone: form.value.phone.trim() || undefined,
       jobTitle: form.value.jobTitle.trim() || undefined,
       active: form.value.active,
+      specialty: isMedecinProfile.value ? form.value.specialty.trim() || null : null,
+      availabilitySlots: isMedecinProfile.value ? form.value.availabilitySlots : null,
       ...compensationPayload(),
       ...payrollPayload(),
     }
+    let employeeId = editingId.value
     if (editingId.value) {
       await api.put(`${apiBase.value}/employees/${editingId.value}`, payload)
       message.value = 'Employé mis à jour.'
     } else {
-      await api.post(`${apiBase.value}/employees`, payload)
-      message.value = 'Employé créé avec succès.'
+      const { data } = await api.post<Employee>(`${apiBase.value}/employees`, payload)
+      employeeId = data.id
+      message.value = isMedecinProfile.value
+        ? 'Médecin créé. Créez ensuite son compte utilisateur dans Utilisateurs pour qu’il soit sélectionnable à la réception.'
+        : 'Employé créé avec succès.'
+    }
+    if (employeeId && photoFile.value) {
+      await uploadEmployeePhoto(employeeId)
     }
     messageType.value = 'success'
     closeModal()
@@ -561,25 +789,39 @@ async function deleteEmployee(id: string) {
   if (!employee) return
 
   const name = fullName(employee.firstName, employee.lastName)
-  if (employee.hasUserAccount) {
-    message.value = `Impossible de supprimer « ${name} » : un compte application y est lié. Supprimez d'abord le compte.`
+
+  if (!employee.isMedecin && employee.hasUserAccount) {
+    message.value = translateTemplate(
+      'Impossible de supprimer « {name} » : un compte application y est lié. Supprimez d\'abord le compte.',
+      { name },
+    )
     messageType.value = 'error'
     return
   }
 
   const confirmed = await confirmAppModal({
-    type: 'DELETE',
-    title: 'Supprimer l\'employé',
-    message: `Supprimer définitivement « ${name} » ? Cette action est irréversible.`,
-    confirmLabel: 'Supprimer',
+    type: employee.isMedecin ? 'WARNING' : 'DELETE',
+    title: employee.isMedecin ? 'Désactiver le médecin' : "Supprimer l'employé",
+    message: employee.isMedecin
+      ? translateTemplate(
+          'Désactiver « {name} » ? L’historique clinique (visites, consultations, opérations) sera conservé. Le compte application sera désactivé s’il existe.',
+          { name },
+        )
+      : translateTemplate(
+          'Supprimer définitivement « {name} » ? Cette action est irréversible.',
+          { name },
+        ),
+    confirmLabel: employee.isMedecin ? 'Désactiver' : 'Supprimer',
   })
   if (!confirmed) return
 
   try {
-    const { data } = await api.delete<{ ok: boolean; message?: string }>(
+    const { data } = await api.delete<{ ok: boolean; message?: string; softDeleted?: boolean }>(
       `${apiBase.value}/employees/${id}`,
     )
-    message.value = data.message ?? 'Employé supprimé.'
+    message.value =
+      data.message ??
+      (data.softDeleted ? 'Médecin désactivé.' : 'Employé supprimé.')
     messageType.value = 'success'
     await loadEmployees()
   } catch (error) {
@@ -604,25 +846,59 @@ onMounted(async () => {
       <UiPageHeader title="Personnel" :icon="UserRound" />
       <UiAlert v-if="message && !modalOpen && activeTab === 'employees'" :type="messageType" :message="message" />
 
-      <div class="page-tabs" role="tablist" aria-label="Sections employés">
-        <button
-          type="button"
-          class="page-tab"
-          :class="{ 'page-tab--active': activeTab === 'employees' }"
-          @click="activeTab = 'employees'"
-        >
-          <UserRound :size="14" />
-          Employés
-        </button>
-        <button
-          type="button"
-          class="page-tab"
-          :class="{ 'page-tab--active': activeTab === 'job-titles' }"
-          @click="activeTab = 'job-titles'"
-        >
-          <Briefcase :size="14" />
-          Postes
-        </button>
+      <div class="personnel-toolbar">
+        <div class="page-tabs" role="tablist" :aria-label="uiText('Sections employés')">
+          <button
+            type="button"
+            class="page-tab"
+            :class="{ 'page-tab--active': activeTab === 'employees' }"
+            @click="activeTab = 'employees'"
+          >
+            <UserRound :size="14" />
+            {{ uiText('Employés') }}
+          </button>
+          <button
+            type="button"
+            class="page-tab"
+            :class="{ 'page-tab--active': activeTab === 'job-titles' }"
+            @click="activeTab = 'job-titles'"
+          >
+            <Briefcase :size="14" />
+            {{ uiText('Postes') }}
+          </button>
+        </div>
+
+        <div v-if="activeTab === 'employees'" class="personnel-filters">
+          <label class="personnel-search">
+            <Search :size="16" class="personnel-search__icon" aria-hidden="true" />
+            <input
+              v-model="searchQuery"
+              type="search"
+              class="personnel-search__input"
+              placeholder="Rechercher un employé…"
+              aria-label="Rechercher un employé"
+            />
+          </label>
+          <select
+            v-model="filterProfile"
+            class="personnel-job-filter"
+            aria-label="Filtrer par profil"
+          >
+            <option value="ALL">Tous les profils</option>
+            <option value="MEDECIN">Médecins</option>
+            <option value="STAFF">Personnel</option>
+          </select>
+          <select
+            v-model="filterJobTitle"
+            class="personnel-job-filter"
+            aria-label="Filtrer par poste"
+          >
+            <option value="">Tous les postes</option>
+            <option v-for="title in filterJobTitleOptions" :key="title" :value="title">
+              {{ title }}
+            </option>
+          </select>
+        </div>
       </div>
     </section>
 
@@ -665,6 +941,7 @@ onMounted(async () => {
         icon-variant="violet"
       >
         <template #actions>
+          <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
           <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadEmployees">
             Actualiser
           </UiButton>
@@ -673,7 +950,10 @@ onMounted(async () => {
           </UiButton>
         </template>
 
-        <p v-if="!loading && !employees.length" class="empty">Aucun employé enregistré</p>
+        <p v-if="!loading && !employees.length" class="empty">{{ uiText('Aucun employé enregistré') }}</p>
+        <p v-else-if="!loading && employees.length && !tableRows.length" class="empty">
+          Aucun employé ne correspond aux critères
+        </p>
         <UiDataTable
           v-else
           fill
@@ -710,16 +990,31 @@ onMounted(async () => {
         class="employee-hero"
         :class="{ 'employee-hero--doctor': isMedecinProfile }"
       >
-        <div class="employee-hero__avatar" aria-hidden="true">{{ employeeInitials }}</div>
+        <div class="employee-hero__avatar-wrap">
+          <img
+            v-if="employeePhotoDisplayUrl"
+            :src="employeePhotoDisplayUrl"
+            alt=""
+            class="employee-hero__photo"
+          />
+          <div v-else class="employee-hero__avatar" aria-hidden="true">{{ employeeInitials }}</div>
+          <label class="employee-hero__photo-btn" :title="uiText('Photo')">
+            <Camera :size="14" />
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" class="sr-only" @change="onPhotoSelected" />
+          </label>
+        </div>
         <div class="employee-hero__content">
           <p class="employee-hero__eyebrow">
-            {{ editingId ? 'Mise à jour fiche' : 'Nouvelle fiche personnel' }}
+            {{ editingId ? uiText('Mise à jour fiche') : uiText('Nouvelle fiche personnel') }}
           </p>
-          <strong class="employee-hero__name">{{ modalEmployeeName ?? 'Nom à renseigner' }}</strong>
+          <strong class="employee-hero__name">{{ modalEmployeeName ?? uiText('Nom à renseigner') }}</strong>
           <div class="employee-hero__badges">
             <span class="employee-hero__badge">{{ employeeProfileLabel }}</span>
             <span v-if="form.jobTitle.trim()" class="employee-hero__badge employee-hero__badge--muted">
               {{ form.jobTitle.trim() }}
+            </span>
+            <span v-if="isMedecinProfile && form.specialty.trim()" class="employee-hero__badge employee-hero__badge--muted">
+              {{ form.specialty.trim() }}
             </span>
           </div>
         </div>
@@ -733,7 +1028,7 @@ onMounted(async () => {
           <UserRound :size="15" />
           Identité
         </h3>
-        <p class="form-panel__intro">Prénom et nom séparés par un espace dans le champ nom complet.</p>
+        <p class="form-panel__intro">{{ uiText('Prénom et nom séparés par un espace dans le champ nom complet.') }}</p>
         <div class="form-grid-2">
           <UiInput v-model="form.displayName" label="Nom complet" required placeholder="Ex. Hassan Mahamat" />
           <UiInput
@@ -752,13 +1047,13 @@ onMounted(async () => {
           Poste &amp; profil
         </h3>
         <UiSelect v-model="form.jobTitle" label="Poste / fonction" required>
-          <option value="" disabled>Sélectionnez un poste</option>
+          <option value="" disabled>{{ uiText('Sélectionnez un poste') }}</option>
           <option v-for="title in jobTitleOptions" :key="title" :value="title">
             {{ title }}
           </option>
         </UiSelect>
 
-        <div class="profile-picker" role="radiogroup" aria-label="Profil employé">
+        <div class="profile-picker" role="radiogroup" :aria-label="uiText('Profil employé')">
           <button
             type="button"
             class="profile-picker__option"
@@ -766,8 +1061,8 @@ onMounted(async () => {
             @click="onProfileChange('STAFF')"
           >
             <Briefcase :size="18" />
-            <span class="profile-picker__label">Personnel</span>
-            <span class="profile-picker__hint">Administration, technique, accueil…</span>
+            <span class="profile-picker__label">{{ uiText('Personnel') }}</span>
+            <span class="profile-picker__hint">{{ uiText('Administration, technique, accueil…') }}</span>
           </button>
           <button
             type="button"
@@ -776,8 +1071,8 @@ onMounted(async () => {
             @click="onProfileChange('MEDECIN')"
           >
             <Stethoscope :size="18" />
-            <span class="profile-picker__label">Médecin</span>
-            <span class="profile-picker__hint">Consultations et rémunération</span>
+            <span class="profile-picker__label">{{ uiText('Médecin') }}</span>
+            <span class="profile-picker__hint">{{ uiText('Consultations et rémunération') }}</span>
           </button>
         </div>
 
@@ -785,8 +1080,8 @@ onMounted(async () => {
           <input v-model="form.active" type="checkbox" class="status-toggle__input" />
           <span class="status-toggle__box" aria-hidden="true" />
           <span class="status-toggle__text">
-            <strong>Employé actif</strong>
-            <small>Les employés inactifs restent dans le registre mais ne sont plus proposés</small>
+            <strong>{{ uiText('Employé actif') }}</strong>
+            <small>{{ uiText('Les employés inactifs restent dans le registre mais ne sont plus proposés') }}</small>
           </span>
         </label>
       </section>
@@ -794,6 +1089,72 @@ onMounted(async () => {
       <section v-if="isMedecinProfile" class="form-panel form-panel--accent">
         <h3 class="form-panel__title">
           <span class="form-panel__step">3</span>
+          <Stethoscope :size="15" />
+          Spécialité &amp; disponibilités
+        </h3>
+        <p class="form-panel__intro">
+          {{ uiText('Spécialité affichée à la réception et créneaux hebdomadaires du médecin.') }}
+        </p>
+        <UiAlert
+          type="info"
+          message="Pour apparaître dans les listes Médecin à la réception, ce médecin doit aussi avoir un compte utilisateur (rôle Médecin) dans Utilisateurs."
+        />
+        <p v-if="!editingId || (editingId && !employeesById.get(editingId)?.hasUserAccount)" class="form-panel__hint">
+          Après enregistrement,
+          <RouterLink to="/admin/utilisateurs">créez le compte utilisateur</RouterLink>
+          lié à cet employé.
+        </p>
+        <div class="specialty-field">
+          <label class="specialty-field__label" for="employee-specialty">{{ uiText('Spécialité') }}</label>
+          <input
+            id="employee-specialty"
+            v-model="form.specialty"
+            class="specialty-field__input"
+            list="doctor-specialty-suggestions"
+            placeholder="Ex. Médecine générale"
+          />
+          <datalist id="doctor-specialty-suggestions">
+            <option v-for="item in DOCTOR_SPECIALTY_SUGGESTIONS" :key="item" :value="item" />
+          </datalist>
+        </div>
+
+        <div class="availability-grid" role="group" :aria-label="uiText('Disponibilités')">
+          <div
+            v-for="day in DOCTOR_WEEKDAY_OPTIONS"
+            :key="day.value"
+            class="availability-day"
+            :class="{ 'availability-day--on': Boolean(daySlot(day.value)) }"
+          >
+            <label class="availability-day__toggle">
+              <input
+                type="checkbox"
+                :checked="Boolean(daySlot(day.value))"
+                @change="onToggleAvailabilityDay(day.value, ($event.target as HTMLInputElement).checked)"
+              />
+              <span>{{ day.label }}</span>
+            </label>
+            <div v-if="daySlot(day.value)" class="availability-day__times">
+              <input
+                type="time"
+                class="availability-day__time"
+                :value="daySlot(day.value)?.startTime"
+                @change="onAvailabilityTimeChange(day.value, 'startTime', ($event.target as HTMLInputElement).value)"
+              />
+              <span aria-hidden="true">–</span>
+              <input
+                type="time"
+                class="availability-day__time"
+                :value="daySlot(day.value)?.endTime"
+                @change="onAvailabilityTimeChange(day.value, 'endTime', ($event.target as HTMLInputElement).value)"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="isMedecinProfile" class="form-panel form-panel--accent">
+        <h3 class="form-panel__title">
+          <span class="form-panel__step">4</span>
           <Banknote :size="15" />
           Rémunération consultations
         </h3>
@@ -823,6 +1184,14 @@ onMounted(async () => {
           </p>
         </div>
 
+        <div v-else-if="form.doctorCompensationType === 'COMBINED'" class="info-callout">
+          <Info :size="16" />
+          <p>
+            Salaire mensuel fixe + part sur les consultations (tarif et validité configurés
+            ci-dessous). Les deux modes de rémunération s'appliquent en parallèle.
+          </p>
+        </div>
+
         <div v-else class="info-callout">
           <Info :size="16" />
           <p>
@@ -830,7 +1199,7 @@ onMounted(async () => {
           </p>
         </div>
 
-        <template v-if="form.doctorCompensationType === 'QUOTA'">
+        <template v-if="isQuotaDoctor">
           <div class="form-grid-compact">
             <UiInput
               v-model="form.consultationTotalFcfa"
@@ -923,7 +1292,13 @@ onMounted(async () => {
         </h3>
         <p class="form-panel__intro">
           Salaire fixe mensuel — utilisé pour la paie
-          {{ isMedecinProfile ? ' (médecin en rémunération fixe)' : '' }}.
+          {{
+            form.doctorCompensationType === 'COMBINED'
+              ? ' (en plus de la part quota)'
+              : isMedecinProfile
+                ? ' (médecin en rémunération fixe)'
+                : ''
+          }}.
         </p>
         <UiInput
           v-model="form.fixedSalaryFcfa"
@@ -950,7 +1325,10 @@ onMounted(async () => {
           {{ showSalaryField ? 'Salaire & contrat' : 'Contrat' }}
         </h3>
         <p class="form-panel__intro">
-          <template v-if="showSalaryField">
+          <template v-if="form.doctorCompensationType === 'COMBINED'">
+            Salaire mensuel, part quota sur les consultations, prime et situation contractuelle.
+          </template>
+          <template v-else-if="showSalaryField">
             Salaire fixe mensuel, prime et situation contractuelle — utilisés pour la paie.
           </template>
           <template v-else>
@@ -1048,6 +1426,76 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.personnel-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 0.85rem;
+  margin-top: 0.25rem;
+}
+
+.personnel-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 16rem;
+  min-width: 12rem;
+}
+
+.personnel-search {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1 1 12rem;
+  min-width: 10rem;
+  max-width: 26rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid rgba(27, 79, 156, 0.18);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.personnel-search__icon {
+  flex-shrink: 0;
+  color: #1b4f9c;
+  opacity: 0.75;
+}
+
+.personnel-search__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--text);
+}
+
+.personnel-search__input::placeholder {
+  color: var(--text-light, #94a3b8);
+}
+
+.personnel-job-filter {
+  flex: 0 1 13rem;
+  min-width: 10rem;
+  max-width: 16rem;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid rgba(27, 79, 156, 0.18);
+  border-radius: 10px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.personnel-job-filter:focus {
+  outline: 2px solid rgba(27, 79, 156, 0.35);
+  outline-offset: 1px;
+}
+
 .employee-hero {
   display: flex;
   align-items: center;
@@ -1064,6 +1512,11 @@ onMounted(async () => {
   border-color: rgba(13, 148, 136, 0.25);
 }
 
+.employee-hero__avatar-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
 .employee-hero__avatar {
   display: flex;
   align-items: center;
@@ -1078,6 +1531,118 @@ onMounted(async () => {
   font-weight: 800;
   letter-spacing: 0.04em;
   box-shadow: 0 6px 18px rgba(90, 104, 51, 0.3);
+}
+
+.employee-hero__photo {
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 14px;
+  object-fit: cover;
+  display: block;
+  box-shadow: 0 6px 18px rgba(90, 104, 51, 0.25);
+}
+
+.employee-hero__photo-btn {
+  position: absolute;
+  right: -0.2rem;
+  bottom: -0.2rem;
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12);
+}
+
+.employee-hero__photo-btn:hover {
+  color: var(--primary-700);
+  border-color: var(--primary-400);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.specialty-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.specialty-field__label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.specialty-field__input {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-card, #fff);
+}
+
+.availability-grid {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.availability-day {
+  display: grid;
+  grid-template-columns: minmax(7rem, 9rem) 1fr;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card, #fff);
+}
+
+.availability-day--on {
+  border-color: rgba(13, 148, 136, 0.35);
+  background: rgba(13, 148, 136, 0.04);
+}
+
+.availability-day__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.availability-day__times {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.availability-day__time {
+  min-width: 0;
+  flex: 1;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg, #fff);
+  font-size: 0.8125rem;
+  color: var(--text);
 }
 
 .employee-hero--doctor .employee-hero__avatar {
@@ -1272,7 +1837,7 @@ onMounted(async () => {
 
 .comp-type-picker {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.65rem;
 }
 

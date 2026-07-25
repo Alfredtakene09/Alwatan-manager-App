@@ -1,8 +1,8 @@
 import api from '@/api/client'
+import { isHiddenPlatformAdminJobTitle } from '@/lib/employee-app-account'
 
 /** Valeurs par défaut si l'API est indisponible. */
 export const EMPLOYEE_JOB_TITLES = [
-  'Administrateur système',
   'Réceptionniste',
   'Secrétaire médicale',
   'Direction',
@@ -52,7 +52,9 @@ export async function loadEmployeeJobTitleLabels(
 ): Promise<string[]> {
   try {
     const items = await fetchEmployeeJobTitles(activeOnly, apiBase)
-    const labels = items.map((item) => item.label)
+    const labels = items
+      .map((item) => item.label)
+      .filter((label) => !isHiddenPlatformAdminJobTitle(label))
     cachedJobTitleLabels = labels.length > 0 ? labels : [...EMPLOYEE_JOB_TITLES]
     return cachedJobTitleLabels
   } catch {
@@ -63,7 +65,7 @@ export async function loadEmployeeJobTitleLabels(
 
 export function employeeJobTitleOptions(current?: string | null, loaded?: string[] | null): string[] {
   const base = loaded ?? cachedJobTitleLabels ?? [...EMPLOYEE_JOB_TITLES]
-  const titles = [...base]
+  const titles = base.filter((title) => !isHiddenPlatformAdminJobTitle(title))
   const trimmed = current?.trim()
   if (trimmed && !titles.includes(trimmed)) {
     titles.unshift(trimmed)

@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { FlaskConical, HeartPulse, Save, Plus, X } from '@lucide/vue'
 import api from '@/api/client'
 import { fullName } from '@/lib/roles'
+import { formatAppDateTime } from '@/i18n/locale-format'
 import {
   countNewExamsInAppend,
   parsePrescribedExamsByKind,
@@ -237,7 +238,7 @@ async function submit() {
               </div>
               <div>
                 <dt>Arrivée</dt>
-                <dd>{{ new Date(sessionVisit.createdAt).toLocaleString('fr-FR') }}</dd>
+                <dd>{{ formatAppDateTime(sessionVisit.createdAt) }}</dd>
               </div>
             </dl>
           </section>

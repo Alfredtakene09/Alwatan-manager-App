@@ -8,6 +8,8 @@ export type HospitalizationAdmissionForm = {
   patientCode?: string
   service: string
   attendingDoctor: string
+  attendingDoctorId: string
+  bedId: string
   startDate: string
   stayDays: number
   endDate: string
@@ -75,6 +77,8 @@ export function defaultAdmissionForm(partial: {
   patientLastName: string
   patientCode?: string
   attendingDoctor?: string | null
+  attendingDoctorId?: string | null
+  bedId?: string | null
   doctorInstructions?: string | null
   service?: string | null
   roomType?: string
@@ -95,6 +99,8 @@ export function defaultAdmissionForm(partial: {
     patientCode: partial.patientCode,
     service: partial.service?.trim() || 'Hospitalisation',
     attendingDoctor: partial.attendingDoctor ?? '',
+    attendingDoctorId: partial.attendingDoctorId ?? '',
+    bedId: partial.bedId ?? '',
     startDate,
     stayDays: normalizedStayDays,
     endDate: partial.endDate ?? endDateFromStayDays(startDate, normalizedStayDays),
@@ -114,21 +120,33 @@ export function admissionFormFromHospitalization(hosp: {
   endDate?: string | Date | null
   service?: string | null
   attendingDoctor?: string | null
+  attendingDoctorId?: string | null
+  bedId?: string | null
   doctorInstructions?: string | null
   visit: {
     patient: { code: string; firstName: string; lastName: string }
     consultation?: {
-      doctor?: { firstName: string; lastName: string } | null
+      doctor?: { id?: string; firstName: string; lastName: string } | null
       doctorComment?: string | null
       diagnosis?: string | null
       clinicalNotes?: string | null
     } | null
-    assignedDoctor?: { firstName: string; lastName: string } | null
+    assignedDoctor?: { id?: string; firstName: string; lastName: string } | null
   }
   room?: { name: string; type?: string } | null
+  attendingDoctorUser?: { id: string; firstName: string; lastName: string } | null
 }): HospitalizationAdmissionForm {
-  const doctor = hosp.visit.consultation?.doctor ?? hosp.visit.assignedDoctor
+  const doctor =
+    hosp.attendingDoctorUser ??
+    hosp.visit.consultation?.doctor ??
+    hosp.visit.assignedDoctor
   const fallbackDoctor = doctor ? `Dr ${doctor.firstName} ${doctor.lastName}` : ''
+  const fallbackDoctorId =
+    hosp.attendingDoctorId ??
+    hosp.attendingDoctorUser?.id ??
+    hosp.visit.consultation?.doctor?.id ??
+    hosp.visit.assignedDoctor?.id ??
+    ''
   const fallbackInstructions = [hosp.visit.consultation?.diagnosis, hosp.visit.consultation?.doctorComment]
     .filter(Boolean)
     .join('\n')
@@ -145,7 +163,9 @@ export function admissionFormFromHospitalization(hosp: {
     patientLastName: hosp.visit.patient.lastName,
     patientCode: hosp.visit.patient.code,
     service: 'Hospitalisation',
-    attendingDoctor: fallbackDoctor || hosp.attendingDoctor || '—',
+    attendingDoctor: fallbackDoctor || hosp.attendingDoctor || '',
+    attendingDoctorId: fallbackDoctorId,
+    bedId: hosp.bedId ?? '',
     doctorInstructions: hosp.doctorInstructions ?? fallbackInstructions,
     roomType: hosp.roomType,
     roomName: hosp.room?.name ?? '',
@@ -387,7 +407,7 @@ function buildHospitalizationProfileBodyHtml(form: HospitalizationAdmissionForm)
 
     <div class="hosp-adm-profile-head">
     <div class="hosp-adm-title-block">
-      <h2>Profil d'entrée en paroisse</h2>
+      <h2>Profil d'admission hospitalière</h2>
       <p dir="rtl">${titleAr}</p>
       ${isVip ? '<div class="hosp-adm-vip">VIP</div>' : ''}
     </div>

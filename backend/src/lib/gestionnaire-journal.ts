@@ -190,7 +190,7 @@ export function parseJournalFiltersFromQuery(query: Record<string, unknown>) {
   const customFrom = typeof query.from === "string" ? query.from : undefined;
   const customTo = typeof query.to === "string" ? query.to : undefined;
   const { from, to } = parseJournalPeriod(preset, customFrom, customTo);
-  const type =
+  const type: JournalFilters["type"] =
     query.type === "ENTREE" || query.type === "SORTIE" ? query.type : "all";
   const category = (typeof query.category === "string"
     ? query.category

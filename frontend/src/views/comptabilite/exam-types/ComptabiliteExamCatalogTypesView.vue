@@ -12,6 +12,8 @@ import {
   type ExamCatalogKindSlug,
 } from '@/lib/exam-catalog-kinds'
 import ExamCatalogKindTabs from '@/components/comptabilite/ExamCatalogKindTabs.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -34,9 +36,22 @@ const props = defineProps<{
   kind: ExamCatalogKindSlug
 }>()
 
+const { uiText, localeCode } = useAppI18n()
+
 const config = computed(() => EXAM_CATALOG_KIND_CONFIG[props.kind])
 const addButtonLabel = computed(() => EXAM_CATALOG_ADD_LABELS[props.kind])
 const formPlaceholders = computed(() => EXAM_CATALOG_FORM_PLACEHOLDERS[props.kind])
+const catalogCardTitle = computed(() =>
+  translateTemplate('Nomenclature — {label}', { label: uiText(config.value.label) }),
+)
+const addModalSubtitle = computed(() =>
+  translateTemplate('Ajouter un élément à la nomenclature {kind}', {
+    kind: uiText(config.value.label),
+  }),
+)
+const elementCountLabel = computed(() =>
+  translateTemplate('{n} élément(s)', { n: items.value.length }),
+)
 const items = ref<CatalogItem[]>([])
 const loading = ref(false)
 const saving = ref(false)
@@ -61,20 +76,21 @@ const editForm = ref({
 
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 
-const tableRows = computed(() =>
-  items.value.map((item) => ({
+const tableRows = computed(() => {
+  localeCode.value
+  return items.value.map((item) => ({
     id: item.id,
     label: item.label,
     code: item.code,
     category: item.category || '—',
     price: formatFcfa(item.priceFcfa),
     priceSort: item.priceFcfa,
-    statusLabel: item.active ? 'Actif' : 'Inactif',
+    statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),
     statusVariant: item.active ? 'success' : 'danger',
-    toggleLabel: item.active ? 'Désactiver' : 'Activer',
+    toggleLabel: item.active ? uiText('Désactiver') : uiText('Activer'),
     isActive: item.active,
-  })),
-)
+  }))
+})
 
 const columns = [
   { data: 'label', title: 'Libellé', render: (v: string) => `<span class="dt-name">${v}</span>` },
@@ -224,8 +240,11 @@ async function deleteItem(id: string) {
 
   const confirmed = await confirmAppModal({
     type: 'DELETE',
-    title: 'Supprimer l\'élément',
-    message: `Supprimer définitivement « ${item.label} » ? Cette action est irréversible.`,
+    title: "Supprimer l'élément",
+    message: translateTemplate(
+      'Supprimer définitivement « {name} » ? Cette action est irréversible.',
+      { name: item.label },
+    ),
     confirmLabel: 'Supprimer',
   })
   if (!confirmed) return
@@ -270,7 +289,7 @@ onMounted(loadItems)
     <UiAlert v-if="message" :type="messageType" :message="message" />
 
     <UiCard
-      :title="`Nomenclature — ${config.label}`"
+      :title="catalogCardTitle"
       description="Tarifs utilisés pour la facturation des examens"
       :icon="config.icon"
       :icon-variant="config.iconVariant"
@@ -278,12 +297,12 @@ onMounted(loadItems)
     >
       <template #actions>
         <UiButton variant="primary" size="sm" :icon="Plus" @click="openAddModal">
-          {{ addButtonLabel }}
+          {{ uiText(addButtonLabel) }}
         </UiButton>
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">
           Actualiser
         </UiButton>
-        <span class="list-count">{{ items.length }} élément(s)</span>
+        <span class="list-count">{{ elementCountLabel }}</span>
       </template>
 
       <div class="table-panel-scroll">
@@ -302,8 +321,8 @@ onMounted(loadItems)
     <UiFormModal
       v-if="showAddModal"
       title-id="add-catalog-title"
-      :title="addButtonLabel"
-      :subtitle="`Ajouter un élément à la nomenclature ${config.label.toLowerCase()}`"
+      :title="uiText(addButtonLabel)"
+      :subtitle="addModalSubtitle"
       :icon="config.icon"
       @close="closeAddModal"
     >

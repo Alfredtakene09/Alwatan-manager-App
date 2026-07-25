@@ -11,35 +11,13 @@ import UiInput from '@/components/ui/UiInput.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 
-const DEMO_PASSWORD = 'Clinique2026!'
-
-const DEMO_ACCOUNTS = [
-  { id: 'reception', roleKey: 'reception', username: 'reception' },
-  { id: 'medecin', roleKey: 'medecin', username: 'medecin' },
-  { id: 'direction', roleKey: 'direction', username: 'direction' },
-  { id: 'pharmacie', roleKey: 'pharmacie', username: 'pharmacie' },
-  { id: 'laboratoire', roleKey: 'laboratoire', username: 'laborantin' },
-  { id: 'logistique', roleKey: 'logistique', username: 'logistique' },
-] as const
-
 const auth = useAuthStore()
 const router = useRouter()
 const { t, isArabic } = useAppI18n()
 const username = ref('')
 const password = ref('')
 const error = ref('')
-const selectedDemoId = ref<string | null>(null)
-const passwordInputRef = ref<{ focus: () => void } | null>(null)
-
-function selectDemoAccount(id: string) {
-  const account = DEMO_ACCOUNTS.find((item) => item.id === id)
-  if (!account) return
-  selectedDemoId.value = id
-  username.value = account.username
-  password.value = DEMO_PASSWORD
-  error.value = ''
-  passwordInputRef.value?.focus()
-}
+const usernameInputRef = ref<{ focus: () => void } | null>(null)
 
 async function submit() {
   error.value = ''
@@ -62,9 +40,8 @@ async function submit() {
 }
 
 onMounted(async () => {
-  selectDemoAccount(DEMO_ACCOUNTS[0].id)
   await nextTick()
-  passwordInputRef.value?.focus()
+  usernameInputRef.value?.focus()
 })
 </script>
 
@@ -85,39 +62,23 @@ onMounted(async () => {
         <img class="login__logo" :src="CLINIC.logo" :alt="CLINIC.nameFr" />
       </header>
 
-      <div class="login__demo">
-        <p class="login__demo-label">{{ t('login.demoLabel') }} <code>Clinique2026!</code></p>
-        <div class="demo-buttons">
-          <button
-            v-for="account in DEMO_ACCOUNTS"
-            :key="account.id"
-            type="button"
-            class="demo-btn"
-            :class="{ 'demo-btn--active': selectedDemoId === account.id }"
-            @click="selectDemoAccount(account.id)"
-          >
-            {{ t(`login.roles.${account.roleKey}`) }}
-          </button>
-        </div>
-      </div>
-
       <UiInput
+        ref="usernameInputRef"
         v-model="username"
         :label="t('login.username')"
         type="text"
-        placeholder="reception"
+        :placeholder="t('login.username')"
         :icon="User"
         autocomplete="username"
         required
-        @update:model-value="selectedDemoId = null"
       />
       <UiInput
-        ref="passwordInputRef"
         v-model="password"
         :label="t('login.password')"
         type="password"
         placeholder="••••••••"
         :icon="Lock"
+        revealable
         required
       />
 
@@ -206,58 +167,6 @@ onMounted(async () => {
   margin-top: 1.25rem;
 }
 
-.login__demo {
-  margin-bottom: 1.15rem;
-  padding-bottom: 1.15rem;
-  border-bottom: 1px dashed rgba(27, 79, 156, 0.15);
-}
-
-.login__demo-label {
-  margin: 0 0 0.65rem;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  text-align: center;
-}
-
-.login__demo code {
-  background: #e8f1fb;
-  color: #1b4f9c;
-  padding: 0.1rem 0.4rem;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  border: 1px solid rgba(27, 79, 156, 0.18);
-}
-
-.demo-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0.4rem;
-}
-
-.demo-btn {
-  padding: 0.4rem 0.75rem;
-  border: 1.5px solid rgba(27, 79, 156, 0.18);
-  border-radius: 999px;
-  background: #fff;
-  color: var(--text-muted);
-  font-size: 0.75rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
-}
-
-.demo-btn:hover {
-  border-color: #2e6bb5;
-  color: #1b4f9c;
-}
-
-.demo-btn--active {
-  background: #e8f1fb;
-  border-color: #1b4f9c;
-  color: #1b4f9c;
-}
-
 @media (max-width: 639px) {
   .login {
     padding: 1rem;
@@ -277,11 +186,6 @@ onMounted(async () => {
 
   .login__title {
     font-size: 1.65rem;
-  }
-
-  .demo-btn {
-    font-size: 0.6875rem;
-    padding: 0.35rem 0.6rem;
   }
 }
 </style>

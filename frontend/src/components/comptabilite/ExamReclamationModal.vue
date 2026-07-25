@@ -16,6 +16,8 @@ import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 const props = defineProps<{
   item: LabExamPendingItem | null
@@ -27,6 +29,9 @@ const emit = defineEmits<{
 }>()
 
 const open = defineModel<boolean>('open', { default: false })
+
+const { uiText, t, localeCode, isArabic } = useAppI18n()
+const dateLocale = computed(() => (isArabic.value ? 'ar-TD' : 'fr-FR'))
 
 const selectedKeys = ref<Set<string>>(new Set())
 const reason = ref<ExamReclamationReason>('EXAM_MISSING')
@@ -89,9 +94,40 @@ const patientLabel = computed(() => {
 
 const reasonOptions = computed(() =>
   (Object.entries(EXAM_RECLAMATION_REASON_LABELS) as [ExamReclamationReason, string][]).map(
-    ([value, label]) => ({ value, label }),
+    ([value, label]) => ({ value, label: uiText(label) }),
   ),
 )
+
+function examKindLabel(kind: ExamKindSlug) {
+  return uiText(EXAM_KIND_LABELS[kind])
+}
+
+const successMeta = computed(() => {
+  if (!createdReclamation.value) return ''
+  const row = createdReclamation.value
+  return translateTemplate('{n} examen(s) · {amount} déduit(s) · {status}', {
+    n: row.examLines.length,
+    amount: formatFcfa(row.totalFcfa),
+    status: uiText(EXAM_RECLAMATION_STATUS_LABELS[row.status]),
+  })
+})
+
+const selectedTotalLabel = computed(() => {
+  void localeCode.value
+  const n = selectedExams.value.length
+  return n === 1
+    ? translateTemplate('Total sélectionné ({n} examen)', { n })
+    : translateTemplate('Total sélectionné ({n} examens)', { n })
+})
+
+const submitLabel = computed(() => {
+  void localeCode.value
+  if (submitting.value) return uiText('Envoi…')
+  return translateTemplate('Envoyer ({n} — {amount})', {
+    n: selectedExams.value.length,
+    amount: formatFcfa(selectedTotalFcfa.value),
+  })
+})
 
 function resetForm() {
   selectedKeys.value = new Set()
@@ -128,7 +164,7 @@ function toggleSelectAll() {
 async function submit() {
   if (!props.item || submitting.value || success.value) return
   if (!selectedExams.value.length) {
-    error.value = 'Sélectionnez au moins un examen concerné.'
+    error.value = uiText('Sélectionnez au moins un examen concerné.')
     return
   }
 
@@ -141,7 +177,7 @@ async function submit() {
       unitPriceFcfa: Math.floor(Number(exam.unitPriceFcfa) || 0),
     }))
     if (exams.some((exam) => !exam.examLabel || exam.unitPriceFcfa < 0)) {
-      error.value = 'Montant ou libellé manquant pour un examen sélectionné.'
+      error.value = uiText('Montant ou libellé manquant pour un examen sélectionné.')
       return
     }
 
@@ -157,25 +193,33 @@ async function submit() {
   } catch (e) {
     if (axios.isAxiosError(e)) {
       if (!e.response) {
-        error.value =
-          'Serveur inaccessible. Vérifiez que le backend est démarré (port 4000).'
+        error.value = uiText(
+          'Serveur inaccessible. Vérifiez que le backend est démarré (port 4000).',
+        )
         return
       }
       error.value =
         typeof e.response.data?.error === 'string'
           ? e.response.data.error
-          : `Envoi impossible (erreur ${e.response.status}).`
+          : translateTemplate('Envoi impossible (erreur {code}).', { code: e.response.status })
       return
     }
-    error.value = 'Envoi impossible. Vérifiez les champs et réessayez.'
+    error.value = uiText('Envoi impossible. Vérifiez les champs et réessayez.')
   } finally {
     submitting.value = false
   }
 }
 
 function formatDate(value: string) {
+  void localeCode.value
   const date = new Date(value)
-  return `${date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })} à ${date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+  const datePart = date.toLocaleDateString(dateLocale.value, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+  const timePart = date.toLocaleTimeString(dateLocale.value, { hour: '2-digit', minute: '2-digit' })
+  return `${datePart} · ${timePart}`
 }
 
 function closeModal() {
@@ -186,7 +230,7 @@ function closeModal() {
 <template>
   <UiFormModal
     v-if="open && item"
-    title="Réclamation"
+    :title="uiText('Réclamation')"
     :subtitle="patientLabel"
     :icon="AlertCircle"
     size="wide"
@@ -195,16 +239,11 @@ function closeModal() {
     <template v-if="success && createdReclamation">
       <div class="success-block">
         <CheckCircle2 :size="36" class="success-block__icon" />
-        <p class="success-block__title">Remboursement appliqué</p>
-        <p class="success-block__meta">
-          {{ createdReclamation.examLines.length }} examen(s)
-          · {{ formatFcfa(createdReclamation.totalFcfa) }} déduit(s)
-          · {{ EXAM_RECLAMATION_STATUS_LABELS[createdReclamation.status] }}
-        </p>
+        <p class="success-block__title">{{ uiText('Remboursement appliqué') }}</p>
+        <p class="success-block__meta">{{ successMeta }}</p>
         <p class="success-block__meta">{{ formatDate(createdReclamation.createdAt) }}</p>
         <p class="success-block__hint">
-          Les montants ont été soustraits des factures et les examens retirés du dossier payé.
-          Consultez l'historique pour le détail.
+          {{ uiText('Les montants ont été soustraits des factures et les examens retirés du dossier payé. Consultez l\'historique pour le détail.') }}
         </p>
       </div>
     </template>
@@ -215,27 +254,29 @@ function closeModal() {
       <form class="reclamation-form" @submit.prevent="submit">
         <section class="exam-picker">
           <div class="exam-picker__head">
-            <span class="exam-picker__title">Examens concernés</span>
+            <span class="exam-picker__title">{{ uiText('Examens concernés') }}</span>
             <button
               v-if="examOptions.length > 1"
               type="button"
               class="exam-picker__select-all"
               @click="toggleSelectAll"
             >
-              {{ allSelected ? 'Tout désélectionner' : 'Tout sélectionner' }}
+              {{ allSelected ? uiText('Tout désélectionner') : uiText('Tout sélectionner') }}
             </button>
           </div>
 
-          <p v-if="!examOptions.length" class="exam-picker__empty">Aucun examen payé disponible.</p>
+          <p v-if="!examOptions.length" class="exam-picker__empty">
+            {{ uiText('Aucun examen payé disponible.') }}
+          </p>
 
           <div v-else class="exam-picker__table-wrap">
             <table class="exam-picker__table">
               <thead>
                 <tr>
                   <th class="exam-picker__col-check" />
-                  <th>Examen</th>
-                  <th>Type</th>
-                  <th class="exam-picker__col-amount">Montant unitaire</th>
+                  <th>{{ uiText('Examen') }}</th>
+                  <th>{{ uiText('Type') }}</th>
+                  <th class="exam-picker__col-amount">{{ uiText('Montant unitaire') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -250,21 +291,19 @@ function closeModal() {
                     <input
                       type="checkbox"
                       :checked="selectedKeys.has(option.key)"
-                      :aria-label="`Sélectionner ${option.label}`"
+                      :aria-label="translateTemplate('Sélectionner {label}', { label: option.label })"
                       @click.stop
                       @change="toggleExam(option.key)"
                     />
                   </td>
                   <td>{{ option.label }}</td>
-                  <td class="exam-picker__kind">{{ EXAM_KIND_LABELS[option.kind] }}</td>
+                  <td class="exam-picker__kind">{{ examKindLabel(option.kind) }}</td>
                   <td class="exam-picker__col-amount">{{ formatFcfa(option.unitPriceFcfa) }}</td>
                 </tr>
               </tbody>
               <tfoot v-if="selectedExams.length">
                 <tr class="exam-picker__total-row">
-                  <td colspan="3">
-                    Total sélectionné ({{ selectedExams.length }} examen{{ selectedExams.length > 1 ? 's' : '' }})
-                  </td>
+                  <td colspan="3">{{ selectedTotalLabel }}</td>
                   <td class="exam-picker__col-amount exam-picker__total">
                     {{ formatFcfa(selectedTotalFcfa) }}
                   </td>
@@ -275,7 +314,7 @@ function closeModal() {
         </section>
 
         <fieldset class="reason-fieldset">
-          <legend>Motif</legend>
+          <legend>{{ uiText('Motif') }}</legend>
           <div class="reason-chips">
             <button
               v-for="option in reasonOptions"
@@ -292,15 +331,15 @@ function closeModal() {
 
         <UiInput
           v-model="reasonDetail"
-          label="Commentaire (optionnel)"
-          placeholder="Précisez le problème rencontré…"
+          :label="uiText('Commentaire (optionnel)')"
+          :placeholder="uiText('Précisez le problème rencontré…')"
         />
       </form>
     </template>
 
     <template #footer>
       <UiButton variant="ghost" @click="closeModal">
-        {{ success ? 'Fermer' : 'Annuler' }}
+        {{ success ? t('common.Fermer') : t('common.Annuler') }}
       </UiButton>
       <UiButton
         v-if="!success"
@@ -308,11 +347,7 @@ function closeModal() {
         :disabled="submitting || !selectedExams.length"
         @click="submit"
       >
-        {{
-          submitting
-            ? 'Envoi…'
-            : `Envoyer (${selectedExams.length} — ${formatFcfa(selectedTotalFcfa)})`
-        }}
+        {{ submitLabel }}
       </UiButton>
     </template>
   </UiFormModal>

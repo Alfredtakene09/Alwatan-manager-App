@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { Component } from 'vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 export type QueueRowAction = {
   key: string
@@ -11,7 +13,7 @@ export type QueueRowAction = {
   showLabel?: boolean
 }
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     actions: QueueRowAction[]
     ariaLabel?: string
@@ -22,10 +24,28 @@ withDefaults(
 const emit = defineEmits<{
   action: [key: string]
 }>()
+
+const { uiText, localeCode } = useAppI18n()
+
+const groupLabel = computed(() => {
+  void localeCode.value
+  return uiText(props.ariaLabel)
+})
+
+function actionLabel(label: string) {
+  void localeCode.value
+  return uiText(label)
+}
+
+function actionTitle(item: QueueRowAction) {
+  void localeCode.value
+  if (item.disabled && item.disabledReason) return uiText(item.disabledReason)
+  return uiText(item.label)
+}
 </script>
 
 <template>
-  <div class="queue-row-actions" role="group" :aria-label="ariaLabel">
+  <div class="queue-row-actions" role="group" :aria-label="groupLabel">
     <button
       v-for="item in actions"
       :key="item.key"
@@ -36,13 +56,13 @@ const emit = defineEmits<{
         'queue-row-actions__btn--danger': item.variant === 'danger',
         'queue-row-actions__btn--labeled': item.showLabel,
       }"
-      :title="item.disabled && item.disabledReason ? item.disabledReason : item.label"
-      :aria-label="item.label"
+      :title="actionTitle(item)"
+      :aria-label="actionLabel(item.label)"
       :disabled="item.disabled"
       @click="emit('action', item.key)"
     >
       <component :is="item.icon" :size="16" class="queue-row-actions__icon" />
-      <span v-if="item.showLabel" class="queue-row-actions__label">{{ item.label }}</span>
+      <span v-if="item.showLabel" class="queue-row-actions__label">{{ actionLabel(item.label) }}</span>
     </button>
   </div>
 </template>

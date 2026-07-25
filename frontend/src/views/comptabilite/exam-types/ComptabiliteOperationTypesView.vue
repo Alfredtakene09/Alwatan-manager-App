@@ -7,6 +7,8 @@ import { formatFcfa, fullName } from '@/lib/roles'
 import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import { clinicPercentFromSplits, validateInterventionPercents } from '@/lib/intervention-splits'
 import { OPERATION_KIND_CONFIG } from '@/lib/exam-catalog-kinds'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -42,6 +44,7 @@ type InterventionItem = {
 
 const config = OPERATION_KIND_CONFIG
 const addButtonLabel = 'Ajout'
+const { uiText, localeCode } = useAppI18n()
 const items = ref<InterventionItem[]>([])
 const doctors = ref<DoctorOption[]>([])
 const loading = ref(false)
@@ -70,11 +73,19 @@ const newItem = ref({
   anesthesiologistPercent: '',
 })
 
-const CATEGORY_LABELS: Record<string, string> = {
+const CATEGORY_KEYS: Record<string, string> = {
   MAJEURE_A: 'Majeure (A)',
   MOYENNE_B: 'Moyenne (B)',
   PETITE_C: 'Petite (C)',
 }
+
+function categoryLabel(category: string) {
+  return uiText(CATEGORY_KEYS[category] ?? category)
+}
+
+const operationCountLabel = computed(() =>
+  translateTemplate('{n} opération(s)', { n: items.value.length }),
+)
 
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 
@@ -91,12 +102,13 @@ const splitPreviewValid = computed(() => {
   return validateInterventionPercents(surgeonPercentValue.value, anesthesiologistPercentValue.value) === null
 })
 
-const tableRows = computed(() =>
-  items.value.map((item) => ({
+const tableRows = computed(() => {
+  localeCode.value
+  return items.value.map((item) => ({
     id: item.id,
     label: item.label,
     code: item.code,
-    category: CATEGORY_LABELS[item.category] ?? item.category,
+    category: categoryLabel(item.category),
     cost: formatFcfa(item.totalCostFcfa),
     costSort: item.totalCostFcfa,
     surgeonPercent: `${item.surgeonPercent}%`,
@@ -117,12 +129,12 @@ const tableRows = computed(() =>
     ]
       .filter(Boolean)
       .join(' · ') || '—',
-    statusLabel: item.active ? 'Actif' : 'Inactif',
+    statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),
     statusVariant: item.active ? 'success' : 'danger',
-    toggleLabel: item.active ? 'Désactiver' : 'Activer',
+    toggleLabel: item.active ? uiText('Désactiver') : uiText('Activer'),
     isActive: item.active,
-  })),
-)
+  }))
+})
 
 const viewingSurgeonLabel = computed(() => {
   const item = viewingItem.value
@@ -177,11 +189,13 @@ const columns = [
 ]
 
 const isEditing = computed(() => Boolean(editingId.value))
-const formModalTitle = computed(() => (isEditing.value ? 'Modifier l\'opération' : addButtonLabel))
+const formModalTitle = computed(() =>
+  isEditing.value ? uiText("Modifier l'opération") : uiText(addButtonLabel),
+)
 const formModalSubtitle = computed(() =>
   isEditing.value
-    ? 'Mettre à jour les tarifs, médecins et répartitions'
-    : 'Nouvelle opération avec répartition des honoraires',
+    ? uiText('Mettre à jour les tarifs, médecins et répartitions')
+    : uiText('Nouvelle opération avec répartition des honoraires'),
 )
 
 function resetNewItemForm() {
@@ -427,8 +441,11 @@ async function deleteItem(id: string) {
 
   const confirmed = await confirmAppModal({
     type: 'DELETE',
-    title: 'Supprimer l\'opération',
-    message: `Supprimer définitivement l'opération « ${item.label} » ? Cette action est irréversible.`,
+    title: "Supprimer l'opération",
+    message: translateTemplate(
+      "Supprimer définitivement l'opération « {name} » ? Cette action est irréversible.",
+      { name: item.label },
+    ),
     confirmLabel: 'Supprimer',
   })
   if (!confirmed) return
@@ -495,12 +512,12 @@ onMounted(async () => {
     >
       <template #actions>
         <UiButton variant="primary" size="sm" :icon="Plus" @click="openAddModal">
-          {{ addButtonLabel }}
+          {{ uiText(addButtonLabel) }}
         </UiButton>
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">
           Actualiser
         </UiButton>
-        <span class="list-count">{{ items.length }} opération(s)</span>
+        <span class="list-count">{{ operationCountLabel }}</span>
       </template>
 
       <div class="table-panel-scroll">
@@ -535,7 +552,7 @@ onMounted(async () => {
         </div>
         <div class="operation-detail__row">
           <dt>Catégorie</dt>
-          <dd>{{ CATEGORY_LABELS[viewingItem.category] ?? viewingItem.category }}</dd>
+          <dd>{{ categoryLabel(viewingItem.category) }}</dd>
         </div>
         <div class="operation-detail__row">
           <dt>Coût total</dt>
@@ -563,7 +580,7 @@ onMounted(async () => {
         </div>
         <div class="operation-detail__row">
           <dt>Statut</dt>
-          <dd>{{ viewingItem.active ? 'Actif' : 'Inactif' }}</dd>
+          <dd>{{ viewingItem.active ? uiText('Actif') : uiText('Inactif') }}</dd>
         </div>
       </dl>
       <template #footer>

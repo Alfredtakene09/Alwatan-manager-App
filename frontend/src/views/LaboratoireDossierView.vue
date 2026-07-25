@@ -10,6 +10,7 @@ import { patientCategoryLabel, type PatientCategory } from '@/lib/patient-catego
 import {
   emptyPanelValues,
   getLabFormPanel,
+  labFieldCommentKey,
   type LabPanelSlug,
 } from '@/lib/lab-form-panels'
 import { useLabPanelsStore } from '@/stores/lab-panels'
@@ -96,8 +97,12 @@ const entryPanels = computed(() => labPanels.entryPanels)
 
 const selectablePanels = computed(() => {
   if (isConsultMode.value || isEditMode.value) {
-    return labPanels.panels.filter((panel) => isPanelFilled(panel.slug))
+    return labPanels.panels
+      .filter((panel) => isPanelFilled(panel.slug))
+      .slice()
+      .sort((a, b) => a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' }))
   }
+  // Tous les formulaires actifs non encore saisis (tri alphabétique)
   return entryPanels.value.filter((panel) => !isPanelFilled(panel.slug))
 })
 
@@ -206,7 +211,7 @@ async function completeDossier() {
     message:
       'Valider et transmettre les résultats au médecin ? Le dossier passera dans Examens terminés.',
     confirmLabel: 'Clôturer',
-    variant: 'primary',
+    type: 'CONFIRM',
   })
   if (!ok) return
 
@@ -266,7 +271,7 @@ watch(
 )
 
 onMounted(async () => {
-  await labPanels.fetchPanels()
+  await labPanels.fetchPanels(true)
   await loadDossier()
 })
 </script>
@@ -430,17 +435,23 @@ onMounted(async () => {
               :class="section.fields.length > 4 ? 'form-grid--cols-4' : 'form-grid--cols-2'"
             >
               <template v-for="field in section.fields" :key="field.key">
-                <UiInput
-                  v-if="field.type !== 'textarea'"
-                  v-model="formValues[field.key]"
-                  :label="field.reference ? `${field.label} (${field.reference})` : field.label"
-                  :placeholder="field.unit ? `Résultat ${field.unit}` : 'Résultat'"
-                  :disabled="isActivePanelReadOnly"
-                />
-                <label v-else class="textarea-field">
-                  <span class="textarea-field__label">{{ field.label }}</span>
-                  <textarea v-model="formValues[field.key]" rows="3" :disabled="isActivePanelReadOnly" />
-                </label>
+                <div class="lab-field">
+                  <UiInput
+                    v-model="formValues[field.key]"
+                    :label="field.reference ? `${field.label} (${field.reference})` : field.label"
+                    :placeholder="field.unit ? `Résultat ${field.unit}` : 'Résultat'"
+                    :disabled="isActivePanelReadOnly"
+                  />
+                  <label v-if="field.hasComment" class="field-comment">
+                    <span class="field-comment__label">Commentaire</span>
+                    <textarea
+                      v-model="formValues[labFieldCommentKey(field.key)]"
+                      rows="2"
+                      placeholder="Commentaire sur cette ligne…"
+                      :disabled="isActivePanelReadOnly"
+                    />
+                  </label>
+                </div>
               </template>
             </div>
           </div>
@@ -591,28 +602,40 @@ onMounted(async () => {
   font-size: 0.8125rem;
 }
 
-.textarea-field {
+.lab-field {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  grid-column: 1 / -1;
+  min-width: 0;
 }
 
-.textarea-field__label {
-  font-size: 0.8125rem;
+.lab-field :deep(.ui-field) {
+  margin-bottom: 0;
+}
+
+.field-comment {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.45rem;
+}
+
+.field-comment__label {
+  font-size: 0.75rem;
   font-weight: 600;
+  color: var(--text-muted);
 }
 
-.textarea-field textarea {
+.field-comment textarea {
   width: 100%;
-  padding: 0.65rem 0.75rem;
+  padding: 0.45rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font: inherit;
+  font-size: 0.8125rem;
   resize: vertical;
 }
 
-.textarea-field textarea:disabled {
+.field-comment textarea:disabled {
   background: #f8fafc;
   color: var(--text-muted);
 }

@@ -56,6 +56,11 @@ function formatValue(value: number) {
 </template>
 
 <style scoped>
+.bar-chart__bar--empty {
+  background: #e2e8f0;
+  opacity: 0.65;
+}
+
 .bar-chart__bar--a { background: linear-gradient(180deg, #3b82f6, #2563eb); }
 .bar-chart__bar--b { background: linear-gradient(180deg, #14b8a6, #0d9488); }
 .bar-chart__bar--c { background: linear-gradient(180deg, #f59e0b, #d97706); }

@@ -37,7 +37,9 @@ import GestionnaireRowAction from '@/components/gestionnaire/GestionnaireRowActi
 import GestionnaireRowActionGroup from '@/components/gestionnaire/GestionnaireRowActionGroup.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiInput from '@/components/ui/UiInput.vue'
+import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import '@/assets/gestionnaire-page.css'
 
 type CashRegisterSummary = {
@@ -157,6 +159,26 @@ async function confirmDisburse(payload: { disbursementFcfa: number; comment: str
 
 function exportCsv() {
   window.open('/api/gestionnaire/cash/history/export.csv?register=comptabilite', '_blank')
+}
+
+const historyExportColumns: ExportColumn<HistoryRow>[] = [
+  { header: 'Date', value: (r) => formatDateTimeFr(r.settledAt) },
+  { header: 'Caissier comptable', value: (r) => r.cashierName },
+  { header: 'Montant', value: (r) => formatFcfa(r.amountFcfa) },
+  { header: 'Transactions', value: (r) => r.transactionCount },
+  { header: 'Gestionnaire', value: (r) => r.gestionnaireName },
+  { header: 'Créneau', value: (r) => r.shiftLabel ?? '—' },
+  { header: 'Commentaire', value: (r) => r.comment ?? '—' },
+]
+
+function exportHistoryPdf() {
+  if (!historyRows.value.length) return
+  exportTablePdf('Historique des décaissements', historyExportColumns, historyRows.value)
+}
+
+function exportHistoryExcel() {
+  if (!historyRows.value.length) return
+  exportTableExcel('Historique des décaissements', historyExportColumns, historyRows.value)
 }
 
 async function openHistoryView(row: HistoryRow) {
@@ -382,6 +404,11 @@ onMounted(refreshAll)
           <UiInput v-model="historyTo" label="Au" type="date" class="caisse-history__field" />
           <UiButton size="sm" variant="ghost" @click="loadHistory">Filtrer</UiButton>
         </div>
+        <ExportButtons
+          :disabled="historyLoading || !historyRows.length"
+          @pdf="exportHistoryPdf"
+          @excel="exportHistoryExcel"
+        />
         <UiButton size="sm" variant="ghost" :icon="Download" @click="exportCsv">
           Export CSV
         </UiButton>

@@ -22,7 +22,13 @@ export async function patientHasPaidBilling(
   db: Prisma.TransactionClient | typeof prisma = prisma,
 ): Promise<boolean> {
   const paidInvoice = await db.invoice.findFirst({
-    where: { patientId, status: InvoiceStatus.PAID },
+    where: {
+      patientId,
+      OR: [
+        { status: InvoiceStatus.PAID },
+        { status: InvoiceStatus.PARTIALLY_PAID, paidAmountFcfa: { gt: 0 } },
+      ],
+    },
     select: { id: true },
   });
   if (paidInvoice) return true;

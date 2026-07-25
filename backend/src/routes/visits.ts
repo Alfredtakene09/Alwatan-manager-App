@@ -30,7 +30,7 @@ import {
   PATIENT_HAS_PAYMENTS_CODE,
 } from "../lib/patient-payment-guard.js";
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
-import { serializeDoctorFields } from "../lib/doctor-compensation.js";
+import { serializeDoctorFields, selectableDoctorWhere, selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
 import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
 import { resolveConsultationBilling, shouldCreateImmediateInvoice, isComptabiliteBillablePatient, comptabilitePatientWhere } from "../lib/patient-billing.js";
 import { consultationInvoiceCreateData, consultationInvoiceUpdateData } from "../lib/consultation-invoice.js";
@@ -110,7 +110,7 @@ router.get("/doctors", async (req, res) => {
   }
 
   const doctors = await prisma.user.findMany({
-    where: { role: "MEDECIN", active: true },
+    where: selectableDoctorWhere,
     select: {
       id: true,
       firstName: true,
@@ -119,6 +119,8 @@ router.get("/doctors", async (req, res) => {
       employee: {
         select: {
           isMedecin: true,
+          specialty: true,
+          availabilitySlots: true,
           doctorCompensationType: true,
           consultationTotalFcfa: true,
           consultationQuotaMode: true,
@@ -130,13 +132,15 @@ router.get("/doctors", async (req, res) => {
         },
       },
     },
-    orderBy: { lastName: "asc" },
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });
   return res.json(
     doctors.map((doctor) => ({
       id: doctor.id,
       firstName: doctor.firstName,
       lastName: doctor.lastName,
+      specialty: doctor.employee?.specialty ?? null,
+      availabilitySlots: doctor.employee?.availabilitySlots ?? null,
       ...serializeDoctorFields({ role: doctor.role, employee: doctor.employee }),
     })),
   );
@@ -237,7 +241,7 @@ router.patch("/:id/transfer", requireModule("consultation"), async (req, res) =>
     const body = transferSchema.parse(req.body);
 
     const doctor = await prisma.user.findFirst({
-      where: { id: body.doctorId, role: "MEDECIN", active: true },
+      where: selectableDoctorByIdWhere(body.doctorId),
     });
     if (!doctor) return res.status(400).json({ error: "Médecin invalide" });
 
@@ -535,7 +539,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
 
     if (body.doctorId) {
       const doctor = await prisma.user.findFirst({
-        where: { id: body.doctorId, role: "MEDECIN", active: true },
+        where: selectableDoctorByIdWhere(body.doctorId),
       });
       if (!doctor) {
         return res.status(400).json({ error: "Médecin invalide" });
@@ -745,6 +749,9 @@ const externalPatientSchema = z
     lastName: z.string().min(2).optional(),
     phone: z.string().optional(),
     gender: z.string().optional(),
+    /** Médecin / prescripteur optionnel pour le patient externe */
+    doctorId: z.string().optional(),
+    prescriberDoctorId: z.string().optional(),
     ...patientAgeShape,
   })
   .refine((data) => data.patientId || (data.firstName && data.lastName), {
@@ -801,6 +808,16 @@ router.get("/external-queue", requireModule("reception"), async (_req, res) => {
 router.post("/external-patient", requireModule("reception"), async (req, res) => {
   try {
     const body = externalPatientSchema.parse(req.body);
+    const requestedDoctorId = body.doctorId?.trim() || body.prescriberDoctorId?.trim() || null;
+
+    let assignedDoctorId: string | null = null;
+    if (requestedDoctorId) {
+      const doctor = await prisma.user.findFirst({
+        where: selectableDoctorByIdWhere(requestedDoctorId),
+      });
+      if (!doctor) return res.status(400).json({ error: "Médecin invalide" });
+      assignedDoctorId = doctor.id;
+    }
 
     if (!body.patientId) {
       const duplicate = await findDuplicatePatient({
@@ -880,6 +897,7 @@ router.post("/external-patient", requireModule("reception"), async (req, res) =>
           patientId,
           status: VisitStatus.IN_TREATMENT,
           notes: EXTERNAL_PATIENT_VISIT_NOTE,
+          assignedDoctorId: assignedDoctorId ?? undefined,
         },
         include: { patient: true },
       });

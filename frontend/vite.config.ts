@@ -14,10 +14,14 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    host: true,
+    // Écoute IPv4 sur toutes les interfaces (accès LAN clients)
+    host: '0.0.0.0',
+    // Autorise http://IP-LAN:5173 depuis les postes du réseau
+    allowedHosts: true,
+    strictPort: true,
     proxy: {
       '/api': {
-        target: process.env.VITE_API_PROXY_TARGET ?? 'http://localhost:4000',
+        target: process.env.VITE_API_PROXY_TARGET ?? 'http://127.0.0.1:4000',
         changeOrigin: true,
       },
     },

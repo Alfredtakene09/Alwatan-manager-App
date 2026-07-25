@@ -12,12 +12,12 @@ import {
   CheckCircle2,
 } from '@lucide/vue'
 import { formatFcfa } from '@/lib/roles'
-import { expenseCategoryIconComponent } from '@/lib/expense-category-icons'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiTextarea from '@/components/ui/UiTextarea.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
+import UiSelect from '@/components/ui/UiSelect.vue'
 
 export type ExpenseCategoryOption = {
   id: string
@@ -229,30 +229,17 @@ function submit() {
         <Tags :size="15" />
         Catégorie
       </h3>
-      <p class="form-panel__intro">Classement pour le suivi comptable et les rapports.</p>
+      <p class="form-panel__intro">Sélectionnez la catégorie : Fournitures, maintenance, équipement, transports, matériels, papier hygiénique, don, autres.</p>
 
-      <div class="gestionnaire-chips" role="radiogroup" aria-label="Catégorie de dépense">
-        <button
+      <UiSelect v-model="form.expenseCategoryId" label="Catégorie de dépense" required>
+        <option
           v-for="category in activeCategories"
           :key="category.id"
-          type="button"
-          class="gestionnaire-chips__item"
-          :class="{ 'gestionnaire-chips__item--active': form.expenseCategoryId === category.id }"
-          :style="
-            form.expenseCategoryId === category.id
-              ? { borderColor: category.color ?? '#d97706', background: `${category.color ?? '#d97706'}14` }
-              : undefined
-          "
-          @click="form.expenseCategoryId = category.id"
+          :value="category.id"
         >
-          <component
-            :is="expenseCategoryIconComponent(category.icon)"
-            :size="16"
-            :style="{ color: category.color ?? '#92400e' }"
-          />
           {{ category.name }}
-        </button>
-      </div>
+        </option>
+      </UiSelect>
     </section>
 
     <section class="form-panel gestionnaire-form-panel">

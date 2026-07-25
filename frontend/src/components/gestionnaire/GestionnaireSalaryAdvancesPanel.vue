@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
-import { Plus, HandCoins, Ban, Search, Printer, Download } from '@lucide/vue'
+import { Plus, HandCoins, Ban, Trash2, Search, Printer, Download } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { formatShortDate } from '@/lib/admin-dashboard'
 import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
 import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
+import { exportTableExcel, type ExportColumn } from '@/lib/table-export'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -19,10 +21,22 @@ import GestionnaireSalaryAdvanceFormModal, {
 } from '@/components/gestionnaire/GestionnaireSalaryAdvanceFormModal.vue'
 import '@/assets/gestionnaire-page.css'
 
+const props = withDefaults(
+  defineProps<{
+    apiBasePath?: string
+  }>(),
+  {
+    apiBasePath: '/gestionnaire',
+  },
+)
+
 type SalaryAdvanceRow = {
   id: string
   employeeId: string
   amountFcfa: number
+  remainingFcfa: number
+  installmentFcfa: number | null
+  nextDeductionFcfa: number
   businessDate: string
   comment: string | null
   status: 'PENDING' | 'DEDUCTED' | 'CANCELLED'
@@ -87,26 +101,36 @@ const allVisibleSelected = computed(
 const pendingTotal = computed(() =>
   rows.value
     .filter((row) => row.status === 'PENDING')
-    .reduce((sum, row) => sum + row.amountFcfa, 0),
+    .reduce((sum, row) => sum + (row.remainingFcfa ?? row.amountFcfa), 0),
 )
 
 const pendingCount = computed(() => rows.value.filter((row) => row.status === 'PENDING').length)
 
+const deletableSelectedRows = computed(() =>
+  selectedRows.value.filter((row) => row.status === 'CANCELLED' || row.status === 'DEDUCTED'),
+)
+
+const bulkDeleting = ref(false)
+
 async function loadEmployees() {
   const { data } = await api.get<Array<{ id: string; firstName: string; lastName: string; jobTitle: string | null }>>(
-    '/gestionnaire/employees?forSelection=true',
+    `${props.apiBasePath}/employees?forSelection=true`,
   )
-  employees.value = data.map((row) => ({
-    id: row.id,
-    fullName: `${row.firstName} ${row.lastName}`.trim(),
-    jobTitle: row.jobTitle,
-  }))
+  employees.value = data
+    .map((row) => ({
+      id: row.id,
+      fullName: `${row.firstName} ${row.lastName}`.trim(),
+      jobTitle: row.jobTitle,
+    }))
+    .sort((a, b) =>
+      a.fullName.localeCompare(b.fullName, 'fr', { sensitivity: 'base', numeric: true }),
+    )
 }
 
 async function loadRows() {
   loading.value = true
   try {
-    const { data } = await api.get<SalaryAdvanceRow[]>('/gestionnaire/salary-advances')
+    const { data } = await api.get<SalaryAdvanceRow[]>(`${props.apiBasePath}/salary-advances`)
     rows.value = data
   } finally {
     loading.value = false
@@ -127,7 +151,7 @@ async function submitForm(payload: SalaryAdvanceFormPayload) {
   saving.value = true
   formError.value = ''
   try {
-    await api.post('/gestionnaire/salary-advances', payload)
+    await api.post(`${props.apiBasePath}/salary-advances`, payload)
     closeModal()
     await loadRows()
   } catch (error) {
@@ -149,10 +173,53 @@ async function cancelAdvance(row: SalaryAdvanceRow) {
   })
   if (!ok) return
   try {
-    await api.patch(`/gestionnaire/salary-advances/${row.id}/cancel`)
+    await api.patch(`${props.apiBasePath}/salary-advances/${row.id}/cancel`)
     await loadRows()
   } catch (error) {
     await showApiErrorModal(error, 'Annulation impossible.')
+  }
+}
+
+async function deleteAdvance(row: SalaryAdvanceRow) {
+  const ok = await confirmAppModal({
+    type: 'WARNING',
+    title: 'Supprimer l\'avance',
+    message: `Supprimer définitivement l'avance de ${formatFcfa(row.amountFcfa)} pour ${row.employee.fullName} ?`,
+    confirmLabel: 'Supprimer',
+  })
+  if (!ok) return
+  try {
+    await api.delete(`${props.apiBasePath}/salary-advances/${row.id}`)
+    await loadRows()
+  } catch (error) {
+    await showApiErrorModal(error, 'Suppression impossible.')
+  }
+}
+
+async function deleteSelectedAdvances() {
+  const targets = deletableSelectedRows.value
+  if (!targets.length) return
+
+  const ok = await confirmAppModal({
+    type: 'WARNING',
+    title: 'Supprimer la sélection',
+    message: `Supprimer définitivement ${targets.length} avance(s) sélectionnée(s) ?`,
+    confirmLabel: 'Supprimer',
+  })
+  if (!ok) return
+
+  bulkDeleting.value = true
+  try {
+    for (const row of targets) {
+      await api.delete(`${props.apiBasePath}/salary-advances/${row.id}`)
+    }
+    selectedIds.value = selectedIds.value.filter((id) => !targets.some((row) => row.id === id))
+    await loadRows()
+  } catch (error) {
+    await showApiErrorModal(error, 'Suppression multiple impossible.')
+    await loadRows()
+  } finally {
+    bulkDeleting.value = false
   }
 }
 
@@ -190,6 +257,8 @@ function advancesRowsToTableHtml() {
         <td>${row.employee.fullName}</td>
         <td>${row.employee.service}</td>
         <td>${formatFcfa(row.amountFcfa)}</td>
+        <td>${formatFcfa(row.remainingFcfa ?? row.amountFcfa)}</td>
+        <td>${row.installmentFcfa != null ? formatFcfa(row.installmentFcfa) : 'Tout'}</td>
         <td>${row.statusLabel}</td>
         <td>${payrollPeriodLabel(row)}</td>
         <td>${row.recordedByName}</td>
@@ -203,7 +272,7 @@ function advancesRowsToTableHtml() {
     <table>
       <thead>
         <tr>
-          <th>Date</th><th>Employé</th><th>Service</th><th>Montant</th><th>Statut</th><th>Période paie</th><th>Enregistré par</th><th>Commentaire</th>
+          <th>Date</th><th>Employé</th><th>Service</th><th>Total</th><th>Reste</th><th>Tranche</th><th>Statut</th><th>Période paie</th><th>Enregistré par</th><th>Commentaire</th>
         </tr>
       </thead>
       <tbody>${rowsHtml}</tbody>
@@ -222,6 +291,27 @@ function exportAdvancesPdf() {
     autoPrint: true,
     pageSize: 'A4',
   })
+}
+
+const advancesExportColumns: ExportColumn<SalaryAdvanceRow>[] = [
+  { header: 'Date', value: (r) => formatShortDate(r.businessDate) },
+  { header: 'Employé', value: (r) => r.employee.fullName },
+  { header: 'Service', value: (r) => r.employee.service },
+  { header: 'Total', value: (r) => formatFcfa(r.amountFcfa) },
+  { header: 'Reste', value: (r) => formatFcfa(r.remainingFcfa ?? r.amountFcfa) },
+  {
+    header: 'Tranche',
+    value: (r) => (r.installmentFcfa != null ? formatFcfa(r.installmentFcfa) : 'Tout'),
+  },
+  { header: 'Statut', value: (r) => r.statusLabel },
+  { header: 'Période paie', value: (r) => payrollPeriodLabel(r) },
+  { header: 'Enregistré par', value: (r) => r.recordedByName },
+  { header: 'Commentaire', value: (r) => r.comment || '—' },
+]
+
+function exportAdvancesExcel() {
+  if (!exportRows.value.length) return
+  exportTableExcel('Avances sur salaire', advancesExportColumns, exportRows.value)
 }
 
 onMounted(async () => {
@@ -269,6 +359,15 @@ defineExpose({ reload: loadRows })
       >
         {{ option.label }}
       </button>
+      <button
+        type="button"
+        class="advances-filters__btn advances-filters__btn--delete"
+        :disabled="!deletableSelectedRows.length || bulkDeleting"
+        @click="deleteSelectedAdvances"
+      >
+        <Trash2 :size="14" />
+        Supprimer{{ deletableSelectedRows.length ? ` (${deletableSelectedRows.length})` : '' }}
+      </button>
     </div>
 
     <div v-if="filteredRows.length" class="table-head-actions">
@@ -288,6 +387,11 @@ defineExpose({ reload: loadRows })
       <UiButton :icon="Download" variant="secondary" :disabled="!exportRows.length" @click="exportAdvancesPdf">
         PDF
       </UiButton>
+      <ExportButtons
+        :show-pdf="false"
+        :disabled="!exportRows.length"
+        @excel="exportAdvancesExcel"
+      />
     </div>
 
     <div v-if="loading" class="chart-empty">Chargement…</div>
@@ -308,7 +412,9 @@ defineExpose({ reload: loadRows })
           <th>Date</th>
           <th>Employé</th>
           <th>Service</th>
-          <th>Montant</th>
+          <th>Total</th>
+          <th>Reste</th>
+          <th>Tranche / paie</th>
           <th>Statut</th>
           <th>Période paie</th>
           <th>Enregistré par</th>
@@ -335,6 +441,19 @@ defineExpose({ reload: loadRows })
           </td>
           <td>{{ row.employee.service }}</td>
           <td>{{ formatFcfa(row.amountFcfa) }}</td>
+          <td>{{ formatFcfa(row.remainingFcfa ?? row.amountFcfa) }}</td>
+          <td>
+            <template v-if="row.installmentFcfa != null">
+              {{ formatFcfa(row.installmentFcfa) }}
+              <span
+                v-if="row.status === 'PENDING' && (row.nextDeductionFcfa ?? 0) > 0"
+                class="advances-table__meta"
+              >
+                prochaine : {{ formatFcfa(row.nextDeductionFcfa) }}
+              </span>
+            </template>
+            <template v-else>Tout</template>
+          </td>
           <td>
             <span
               class="status-badge"
@@ -358,6 +477,13 @@ defineExpose({ reload: loadRows })
                 label="Annuler"
                 variant="danger"
                 @click="cancelAdvance(row)"
+              />
+              <GestionnaireRowAction
+                v-if="row.status === 'CANCELLED' || row.status === 'DEDUCTED'"
+                :icon="Trash2"
+                label="Supprimer"
+                variant="danger"
+                @click="deleteAdvance(row)"
               />
             </GestionnaireRowActionGroup>
           </td>
@@ -426,11 +552,15 @@ defineExpose({ reload: loadRows })
 .advances-filters {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.35rem;
   margin-bottom: 0.85rem;
 }
 
 .advances-filters__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   min-height: 2rem;
   padding: 0.35rem 0.75rem;
   border: 1px solid #e2e8f0;
@@ -447,6 +577,17 @@ defineExpose({ reload: loadRows })
   border-color: #fcd34d;
   background: #fffbeb;
   color: #b45309;
+}
+
+.advances-filters__btn--delete {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.advances-filters__btn--delete:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .advances-table__meta {

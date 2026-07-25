@@ -6,14 +6,17 @@ import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { PHARMACEUTICAL_FORMS, defaultExpiryDateInput } from '@/lib/pharmacy-product-forms'
 import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
+import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
 
 export type PharmacyCategoryOption = { id: string; name: string; active?: boolean }
 
@@ -316,7 +319,13 @@ async function toggleItem(id: string) {
 async function deleteItem(id: string) {
   const item = itemsById.value.get(id)
   if (!item) return
-  if (!globalThis.confirm(`Supprimer le produit « ${item.name} » ?`)) return
+  const confirmed = await confirmAppModal({
+    type: 'DELETE',
+    title: 'Supprimer le produit',
+    message: `Supprimer le produit « ${item.name} » ?`,
+    confirmLabel: 'Supprimer',
+  })
+  if (!confirmed) return
   try {
     const { data } = await api.delete<{ message?: string }>(`/pharmacie/products/${id}`)
     message.value = data.message ?? 'Produit supprimé.'
@@ -324,6 +333,7 @@ async function deleteItem(id: string) {
     emit('changed')
     await loadItems()
   } catch (error) {
+    await showApiErrorModal(error, 'Suppression impossible.')
     message.value = apiErrorMessage(error, 'Suppression impossible.')
     messageType.value = 'error'
   }
@@ -339,12 +349,34 @@ onMounted(async () => {
   await Promise.all([loadItems(), loadSuppliers()])
 })
 
+type ProductExportRow = (typeof tableRows.value)[number]
+
+const productExportColumns: ExportColumn<ProductExportRow>[] = [
+  { header: 'Médicament', value: (r) => r.name },
+  { header: 'Code-barres', value: (r) => r.barcode },
+  { header: 'Catégorie', value: (r) => r.category },
+  { header: 'Forme', value: (r) => r.form },
+  { header: 'Prix vente', value: (r) => r.price },
+  { header: 'Seuil', value: (r) => r.minStock },
+  { header: 'Disponible', value: (r) => r.quantity },
+  { header: 'Statut', value: (r) => r.statusLabel },
+]
+
+function exportPdf() {
+  exportTablePdf('Produits pharmacie', productExportColumns, tableRows.value)
+}
+
+function exportExcel() {
+  exportTableExcel('Produits pharmacie', productExportColumns, tableRows.value)
+}
+
 defineExpose({ reload: loadItems })
 </script>
 
 <template>
   <PageTableSection embedded>
     <template #toolbar>
+      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
         Actualiser
       </UiButton>

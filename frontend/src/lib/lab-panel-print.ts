@@ -1,6 +1,12 @@
 import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
 import { fullName } from '@/lib/roles'
-import { getAllLabFormPanels, getLabFormPanel, type LabFormPanel, type LabPanelSlug } from '@/lib/lab-form-panels'
+import {
+  getAllLabFormPanels,
+  getLabFormPanel,
+  labFieldCommentKey,
+  type LabFormPanel,
+  type LabPanelSlug,
+} from '@/lib/lab-form-panels'
 
 type PrintContext = {
   patientName: string
@@ -55,12 +61,18 @@ function initialPrintScale(panel: LabFormPanel) {
 
 function renderResultCell(field: LabFormPanel['sections'][number]['fields'][number], values: Record<string, string>) {
   const raw = values[field.key]?.trim() ?? ''
-  if (!raw) return '<td class="lab-sheet-table__result">&nbsp;</td>'
+  const comment = field.hasComment ? values[labFieldCommentKey(field.key)]?.trim() ?? '' : ''
+  if (!raw && !comment) return '<td class="lab-sheet-table__result">&nbsp;</td>'
 
-  const unit = field.unit ? `<span class="lab-sheet-table__unit">${escapeHtml(field.unit)}</span>` : ''
-  const multiline = field.type === 'textarea' ? ' lab-sheet-table__result--multiline' : ''
+  const unit = field.unit && raw ? `<span class="lab-sheet-table__unit">${escapeHtml(field.unit)}</span>` : ''
+  const resultLine = raw
+    ? `<div class="lab-sheet-table__result-value">${escapeHtml(raw)}${unit}</div>`
+    : ''
+  const commentLine = comment
+    ? `<div class="lab-sheet-table__result-comment">${escapeHtml(comment)}</div>`
+    : ''
 
-  return `<td class="lab-sheet-table__result${multiline}">${escapeHtml(raw)}${unit}</td>`
+  return `<td class="lab-sheet-table__result">${resultLine}${commentLine}</td>`
 }
 
 function renderSectionTable(
@@ -341,9 +353,17 @@ const LAB_PANEL_PRINT_STYLES = `
     border-left: 1px solid #ccfbf1;
     border-right: 1px solid #ccfbf1;
   }
-  .lab-sheet-table__result--multiline {
+  .lab-sheet-table__result-value {
+    line-height: 1.25;
+  }
+  .lab-sheet-table__result-comment {
+    margin-top: 2px;
+    font-size: 7px;
+    font-weight: 500;
+    color: #475569;
     text-align: left;
     white-space: pre-wrap;
+    line-height: 1.25;
   }
   .lab-sheet-table__unit {
     display: inline-block;

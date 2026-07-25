@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateDashboardLabel } from '@/lib/dashboard-i18n'
 
 export type DonutSlice = {
   key: string
@@ -14,6 +16,28 @@ const props = defineProps<{
   formatValue: (value: number) => string
   emptyLabel?: string
 }>()
+
+const { localeCode } = useAppI18n()
+
+const emptyText = computed(() => {
+  void localeCode.value
+  return props.emptyLabel
+    ? translateDashboardLabel(props.emptyLabel)
+    : translateDashboardLabel('Aucune recette ce mois')
+})
+
+const totalLabel = computed(() => {
+  void localeCode.value
+  return translateDashboardLabel('Total')
+})
+
+const localizedSlices = computed(() => {
+  void localeCode.value
+  return props.slices.map((slice) => ({
+    ...slice,
+    label: translateDashboardLabel(slice.label),
+  }))
+})
 
 const total = computed(() => props.slices.reduce((sum, row) => sum + row.amountFcfa, 0))
 
@@ -30,16 +54,16 @@ const gradient = computed(() => {
 </script>
 
 <template>
-  <div v-if="!total" class="chart-empty">{{ emptyLabel ?? 'Aucune recette ce mois' }}</div>
+  <div v-if="!total" class="chart-empty">{{ emptyText }}</div>
   <div v-else class="donut-chart">
     <div class="donut-chart__ring" :style="{ background: gradient }">
       <div class="donut-chart__hole">
-        <span>Total</span>
+        <span>{{ totalLabel }}</span>
         <strong>{{ formatValue(total) }}</strong>
       </div>
     </div>
     <div class="donut-chart__legend">
-      <div v-for="slice in slices" :key="slice.key" class="donut-chart__row">
+      <div v-for="slice in localizedSlices" :key="slice.key" class="donut-chart__row">
         <span class="donut-chart__dot" :style="{ background: slice.color }" />
         <span>{{ slice.label }}</span>
         <strong>{{ formatValue(slice.amountFcfa) }} ({{ slice.percent }} %)</strong>

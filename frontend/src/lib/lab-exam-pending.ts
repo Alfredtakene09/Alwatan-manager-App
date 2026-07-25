@@ -30,11 +30,15 @@ export type LabExamPendingItem = {
   reductionsByKind?: ExamReductionsByKind
   paidKinds?: ExamKindSlug[]
   unpaidKinds?: ExamKindSlug[]
+  partialPaymentsByKind?: Partial<
+    Record<ExamKindSlug, { totalFcfa: number; paidFcfa: number; remainingFcfa: number }>
+  >
   allExamsByKind?: ExamsByKindBlocks
   cashierName?: string | null
   clinicalNotes?: string | null
   visit: {
     patient: {
+      id?: string
       code: string
       firstName: string
       lastName: string

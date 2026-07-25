@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Coins, Banknote, History } from '@lucide/vue'
+import { Coins, Banknote, History, HandCoins, CheckCircle2, Clock } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { confirmAppModal } from '@/lib/api-modal-helper'
@@ -10,10 +10,12 @@ import { PAYROLL_STATUS_LABEL } from '@/lib/admin-dashboard'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import UiStatCard from '@/components/ui/UiStatCard.vue'
 import CaisseToolbar from '@/components/caisse/CaisseToolbar.vue'
 import AdminPayrollHistoriquePanel from '@/components/admin/AdminPayrollHistoriquePanel.vue'
+import GestionnaireSalaryAdvancesPanel from '@/components/gestionnaire/GestionnaireSalaryAdvancesPanel.vue'
 
-type TabId = 'mois' | 'historique'
+type TabId = 'mois' | 'historique' | 'avances'
 
 type PayrollResponse = {
   year: number
@@ -21,18 +23,33 @@ type PayrollResponse = {
   rows: Array<{
     id: string
     grossFcfa: number
+    pendingAdvancesFcfa?: number
     status: PayrollRow['status']
     employee: { fullName: string; jobTitle: string | null }
   }>
 }
 
+type SalaryAdvanceSummary = {
+  id: string
+  employeeId: string
+  remainingFcfa: number
+}
+
 const route = useRoute()
 const router = useRouter()
 
-const activeTab = ref<TabId>(route.query.tab === 'historique' ? 'historique' : 'mois')
+function resolveTab(tab: unknown): TabId {
+  if (tab === 'historique') return 'historique'
+  if (tab === 'avances') return 'avances'
+  return 'mois'
+}
+
+const activeTab = ref<TabId>(resolveTab(route.query.tab))
 const payload = ref<PayrollResponse | null>(null)
+const advanceRows = ref<SalaryAdvanceSummary[]>([])
 const loading = ref(false)
 const historiquePanelRef = ref<InstanceType<typeof AdminPayrollHistoriquePanel> | null>(null)
+const avancesPanelRef = ref<InstanceType<typeof GestionnaireSalaryAdvancesPanel> | null>(null)
 
 const rows = computed(() =>
   (payload.value?.rows ?? []).map((row) => ({
@@ -40,35 +57,65 @@ const rows = computed(() =>
     employeeName: row.employee.fullName,
     jobTitle: row.employee.jobTitle,
     grossFcfa: row.grossFcfa,
+    pendingAdvancesFcfa: row.pendingAdvancesFcfa ?? 0,
     status: row.status,
   })),
 )
 
 const paidCount = computed(() => rows.value.filter((row) => row.status === 'PAID').length)
+const unpaidCount = computed(() => rows.value.filter((row) => row.status !== 'PAID').length)
+const totalCount = computed(() => rows.value.length)
 const progress = computed(() =>
-  rows.value.length ? Math.round((paidCount.value / rows.value.length) * 100) : 0,
+  totalCount.value ? Math.round((paidCount.value / totalCount.value) * 100) : 0,
 )
 
-const pageSubtitle = computed(() =>
-  activeTab.value === 'historique'
-    ? 'Historique des salaires payés'
-    : 'Validation des salaires et fiches du personnel',
-)
+const employeesWithAdvancesCount = computed(() => {
+  const ids = new Set(advanceRows.value.map((row) => row.employeeId))
+  return ids.size
+})
+
+const periodLabel = computed(() => {
+  if (!payload.value) return 'Mois en cours'
+  return new Date(payload.value.year, payload.value.month - 1, 1).toLocaleDateString('fr-FR', {
+    month: 'long',
+    year: 'numeric',
+  })
+})
+
+const pageSubtitle = computed(() => {
+  if (activeTab.value === 'historique') return 'Historique des salaires payés'
+  if (activeTab.value === 'avances') return 'Avances sur salaire des employés'
+  return 'Validation des salaires et fiches du personnel'
+})
 
 function selectTab(tab: TabId) {
   activeTab.value = tab
 }
 
-watch(activeTab, (tab) => {
-  router.replace({ query: tab === 'historique' ? { tab: 'historique' } : {} })
+watch(activeTab, async (tab, previous) => {
+  router.replace({ query: tab === 'historique' || tab === 'avances' ? { tab } : {} })
+  if (previous === 'avances' || tab === 'avances') {
+    await loadAdvances()
+  }
 })
 
 watch(
   () => route.query.tab,
   (tab) => {
-    activeTab.value = tab === 'historique' ? 'historique' : 'mois'
+    activeTab.value = resolveTab(tab)
   },
 )
+
+async function loadAdvances() {
+  try {
+    const { data } = await api.get<SalaryAdvanceSummary[]>('/admin/salary-advances', {
+      params: { status: 'PENDING' },
+    })
+    advanceRows.value = data
+  } catch {
+    advanceRows.value = []
+  }
+}
 
 async function loadPayroll() {
   loading.value = true
@@ -80,6 +127,10 @@ async function loadPayroll() {
   }
 }
 
+async function reloadPayrollData() {
+  await Promise.all([loadPayroll(), loadAdvances()])
+}
+
 async function payRow(row: PayrollRow) {
   const ok = await confirmAppModal({
     type: 'CONFIRM',
@@ -89,8 +140,9 @@ async function payRow(row: PayrollRow) {
   })
   if (!ok) return
   await api.post(`/admin/payroll/${row.id}/pay`)
-  await loadPayroll()
+  await reloadPayrollData()
   historiquePanelRef.value?.reload()
+  avancesPanelRef.value?.reload()
 }
 
 async function payAllPending() {
@@ -106,11 +158,12 @@ async function payAllPending() {
   for (const row of pending) {
     await api.post(`/admin/payroll/${row.id}/pay`)
   }
-  await loadPayroll()
+  await reloadPayrollData()
   historiquePanelRef.value?.reload()
+  avancesPanelRef.value?.reload()
 }
 
-onMounted(loadPayroll)
+onMounted(reloadPayrollData)
 </script>
 
 <template>
@@ -121,36 +174,72 @@ onMounted(loadPayroll)
       </template>
     </UiPageHeader>
 
-    <CaisseToolbar role="tablist" aria-label="Sections salaires">
-      <button
-        type="button"
-        class="salaires-toolbar__tab"
-        :class="{ 'salaires-toolbar__tab--active': activeTab === 'mois' }"
-        :aria-selected="activeTab === 'mois'"
-        @click="selectTab('mois')"
-      >
-        <Banknote :size="16" />
-        Paie du mois
-      </button>
-      <button
-        type="button"
-        class="salaires-toolbar__tab"
-        :class="{ 'salaires-toolbar__tab--active': activeTab === 'historique' }"
-        :aria-selected="activeTab === 'historique'"
-        @click="selectTab('historique')"
-      >
-        <History :size="16" />
-        Historique
-      </button>
-    </CaisseToolbar>
+    <div class="salaires-toolbar-row">
+      <CaisseToolbar role="tablist" aria-label="Sections salaires" class="salaires-toolbar-row__tabs">
+        <button
+          type="button"
+          class="salaires-toolbar__tab"
+          :class="{ 'salaires-toolbar__tab--active': activeTab === 'mois' }"
+          :aria-selected="activeTab === 'mois'"
+          @click="selectTab('mois')"
+        >
+          <Banknote :size="16" />
+          Paie du mois
+        </button>
+        <button
+          type="button"
+          class="salaires-toolbar__tab"
+          :class="{ 'salaires-toolbar__tab--active': activeTab === 'historique' }"
+          :aria-selected="activeTab === 'historique'"
+          @click="selectTab('historique')"
+        >
+          <History :size="16" />
+          Historique
+        </button>
+        <button
+          type="button"
+          class="salaires-toolbar__tab"
+          :class="{ 'salaires-toolbar__tab--active': activeTab === 'avances' }"
+          :aria-selected="activeTab === 'avances'"
+          @click="selectTab('avances')"
+        >
+          <HandCoins :size="16" />
+          Avances
+        </button>
+      </CaisseToolbar>
+
+      <div class="salaires-toolbar-row__stats" aria-label="Synthèse paie">
+        <UiStatCard
+          label="Avances"
+          :value="employeesWithAdvancesCount"
+          :icon="HandCoins"
+          variant="amber"
+          mini
+        />
+        <UiStatCard
+          label="Payés"
+          :value="paidCount"
+          :icon="CheckCircle2"
+          variant="green"
+          mini
+        />
+        <UiStatCard
+          label="Non payés"
+          :value="unpaidCount"
+          :icon="Clock"
+          variant="rose"
+          mini
+        />
+      </div>
+    </div>
 
     <template v-if="activeTab === 'mois'">
-      <UiCard title="Fiches de paie" description="Suivi des paiements du mois en cours">
+      <UiCard title="Fiches de paie" :description="`Suivi des paiements — ${periodLabel}`">
         <div class="payroll-progress">
           <div class="payroll-progress__bar">
             <div class="payroll-progress__fill" :style="{ width: `${progress}%` }" />
           </div>
-          <span>{{ paidCount }}/{{ rows.length }} employés payés ce mois</span>
+          <span>{{ paidCount }}/{{ totalCount }} employés payés ce mois</span>
         </div>
 
         <div v-if="loading" class="chart-empty">Chargement…</div>
@@ -163,6 +252,7 @@ onMounted(loadPayroll)
               <th>Employé</th>
               <th>Poste</th>
               <th>Salaire brut</th>
+              <th>Avance</th>
               <th>Statut paiement</th>
               <th>Actions</th>
             </tr>
@@ -172,12 +262,18 @@ onMounted(loadPayroll)
               <td>{{ row.employeeName }}</td>
               <td>{{ row.jobTitle ?? '—' }}</td>
               <td>{{ formatFcfa(row.grossFcfa) }}</td>
+              <td>
+                <span v-if="(row.pendingAdvancesFcfa ?? 0) > 0" class="advance-deduct">
+                  -{{ formatFcfa(row.pendingAdvancesFcfa ?? 0) }}
+                </span>
+                <span v-else>—</span>
+              </td>
               <td>{{ PAYROLL_STATUS_LABEL[row.status] }}</td>
               <td>
                 <UiButton
                   v-if="row.status !== 'PAID'"
                   size="sm"
-                  variant="ghost"
+                  variant="success"
                   @click="payRow(row)"
                 >
                   Valider la paie
@@ -189,7 +285,13 @@ onMounted(loadPayroll)
       </UiCard>
     </template>
 
-    <AdminPayrollHistoriquePanel v-else ref="historiquePanelRef" />
+    <AdminPayrollHistoriquePanel v-else-if="activeTab === 'historique'" ref="historiquePanelRef" />
+    <div v-else class="salary-advances-admin">
+      <p class="salary-advances-admin__hint">
+        Les avances en attente sont automatiquement déduites au moment de la validation de la paie.
+      </p>
+      <GestionnaireSalaryAdvancesPanel ref="avancesPanelRef" api-base-path="/admin" />
+    </div>
   </div>
 </template>
 
@@ -198,6 +300,44 @@ onMounted(loadPayroll)
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.salaires-toolbar-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.3rem;
+  border-radius: 12px;
+  background: var(--surface-muted, #eef2e6);
+  border: 1px solid var(--border);
+}
+
+.salaires-toolbar-row__tabs {
+  flex: 0 0 auto;
+}
+
+.salaires-toolbar-row__tabs:deep(.caisse-toolbar) {
+  width: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.salaires-toolbar-row__stats {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.salaires-toolbar-row__stats :deep(.stat-card) {
+  flex: 1 1 0;
+  min-width: 7.5rem;
+  max-width: 11rem;
 }
 
 .salaires-toolbar__tab {
@@ -259,10 +399,52 @@ onMounted(loadPayroll)
   text-align: left;
 }
 
+.advance-deduct {
+  color: #b45309;
+  font-weight: 700;
+}
+
+@media (max-width: 960px) {
+  .salaires-toolbar-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .salaires-toolbar-row__stats {
+    justify-content: stretch;
+  }
+
+  .salaires-toolbar-row__stats :deep(.stat-card) {
+    max-width: none;
+  }
+}
+
 @media (max-width: 720px) {
   .salaires-toolbar__tab {
     flex: 1 1 auto;
     justify-content: center;
   }
+
+  .salaires-toolbar-row__stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.salary-advances-admin {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.salary-advances-admin__hint {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.8125rem;
+  font-weight: 600;
 }
 </style>

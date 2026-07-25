@@ -1,3 +1,5 @@
+import { intlLocaleFor } from '@/i18n/locale-format'
+
 export type DateFilterMode = 'day' | 'month' | 'custom'
 
 export function toLocalDateKey(date: Date): string {
@@ -85,15 +87,18 @@ export function lastDaysRange(days: number): { from: string; to: string } {
 
 export function formatDateRangeLabel(from: string, to: string): string {
   const fmt = (value: string) =>
-    parseDateKey(value).toLocaleDateString('fr-FR', {
+    parseDateKey(value).toLocaleDateString(intlLocaleFor(), {
       day: 'numeric',
       month: 'short',
       year: 'numeric',
     })
-  if (from && to) return `Du ${fmt(from)} au ${fmt(to)}`
-  if (from) return `À partir du ${fmt(from)}`
-  if (to) return `Jusqu'au ${fmt(to)}`
-  return 'Période personnalisée'
+  if (from && to) {
+    if (from === to) return fmt(from)
+    return `${fmt(from)} – ${fmt(to)}`
+  }
+  if (from) return fmt(from)
+  if (to) return fmt(to)
+  return '—'
 }
 
 export function formatPeriodLabel(
@@ -104,7 +109,7 @@ export function formatPeriodLabel(
   to: string,
 ): string {
   if (mode === 'day' && day) {
-    return new Date(`${day}T12:00:00`).toLocaleDateString('fr-FR', {
+    return new Date(`${day}T12:00:00`).toLocaleDateString(intlLocaleFor(), {
       weekday: 'long',
       day: 'numeric',
       month: 'long',
@@ -114,7 +119,7 @@ export function formatPeriodLabel(
 
   if (mode === 'month' && month) {
     const [y, m] = month.split('-').map(Number)
-    return new Date(y, m - 1, 1).toLocaleDateString('fr-FR', {
+    return new Date(y, m - 1, 1).toLocaleDateString(intlLocaleFor(), {
       month: 'long',
       year: 'numeric',
     })
@@ -124,5 +129,5 @@ export function formatPeriodLabel(
     return formatDateRangeLabel(from, to)
   }
 
-  return 'Toutes les dates'
+  return '—'
 }

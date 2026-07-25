@@ -17,6 +17,8 @@ import GestionnaireExpenseFormModal, {
   type GestionnaireExpenseFormPayload,
 } from '@/components/gestionnaire/GestionnaireExpenseFormModal.vue'
 import GestionnaireDepensesCategoriesPanel from '@/components/gestionnaire/GestionnaireDepensesCategoriesPanel.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import '@/assets/gestionnaire-page.css'
 
 type TabId = 'liste' | 'categories'
@@ -102,6 +104,35 @@ function setFilter(next: 'all' | 'month') {
   if (filter.value === next) return
   filter.value = next
   loadRows()
+}
+
+const expenseExportColumns: ExportColumn<ExpenseRow>[] = [
+  { header: 'Date', value: (r) => formatShortDate(r.date) },
+  { header: 'Catégorie', value: (r) => r.category },
+  { header: 'Description', value: (r) => r.description },
+  { header: 'Montant', value: (r) => formatFcfa(r.amountFcfa) },
+  {
+    header: 'Enregistrée par',
+    value: (r) =>
+      r.recordedByName
+        ? `${r.recordedByName}${r.recordedByRoleLabel ? ` (${r.recordedByRoleLabel})` : ''}`
+        : '—',
+  },
+  { header: 'Bénéficiaire', value: (r) => r.beneficiary ?? '—' },
+  { header: 'Commentaire', value: (r) => r.comment ?? '—' },
+]
+
+function exportPdf() {
+  exportTablePdf('Historique des dépenses', expenseExportColumns, rows.value, {
+    captionRows: [
+      { label: 'Période', value: filterLabel.value },
+      { label: 'Total', value: formatFcfa(totalFcfa.value) },
+    ],
+  })
+}
+
+function exportExcel() {
+  exportTableExcel('Historique des dépenses', expenseExportColumns, rows.value)
 }
 
 function openExpenseModal() {
@@ -275,23 +306,26 @@ onMounted(async () => {
               Vue consolidée — réception, comptabilité, gestionnaire
             </p>
           </div>
-          <div class="depenses-segment" role="group" aria-label="Filtrer par période">
-            <button
-              type="button"
-              class="depenses-segment__btn"
-              :class="{ 'depenses-segment__btn--active': filter === 'all' }"
-              @click="setFilter('all')"
-            >
-              Toutes
-            </button>
-            <button
-              type="button"
-              class="depenses-segment__btn"
-              :class="{ 'depenses-segment__btn--active': filter === 'month' }"
-              @click="setFilter('month')"
-            >
-              Ce mois
-            </button>
+          <div class="depenses-card__head-actions">
+            <ExportButtons :disabled="loading || !rows.length" @pdf="exportPdf" @excel="exportExcel" />
+            <div class="depenses-segment" role="group" aria-label="Filtrer par période">
+              <button
+                type="button"
+                class="depenses-segment__btn"
+                :class="{ 'depenses-segment__btn--active': filter === 'all' }"
+                @click="setFilter('all')"
+              >
+                Toutes
+              </button>
+              <button
+                type="button"
+                class="depenses-segment__btn"
+                :class="{ 'depenses-segment__btn--active': filter === 'month' }"
+                @click="setFilter('month')"
+              >
+                Ce mois
+              </button>
+            </div>
           </div>
         </div>
 
@@ -560,6 +594,13 @@ onMounted(async () => {
   gap: 1rem;
   flex-wrap: wrap;
   margin-bottom: 0.35rem;
+}
+
+.depenses-card__head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
 }
 
 .depenses-card__title {

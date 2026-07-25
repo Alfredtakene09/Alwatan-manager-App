@@ -2,15 +2,16 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { confirmAppModal } from '@/lib/api-modal-helper'
-import { Users, Plus, RefreshCw, Save } from '@lucide/vue'
+import { Users, Plus, RefreshCw, Save, Eye } from '@lucide/vue'
 import api from '@/api/client'
 import {
   fullName,
   MANAGEABLE_USER_ROLES,
   ROLE_LABELS,
+  type AppUserRole,
   type ManageableUserRole,
 } from '@/lib/roles'
-import { employeeNeedsAppAccount } from '@/lib/employee-app-account'
+import { employeeNeedsAppAccount, isHiddenPlatformAdminEmployee } from '@/lib/employee-app-account'
 import { catalogRowActionsHtml, statusBadge } from '@/lib/datatable-defaults'
 import { ALL_SHIFT_SLOTS, shiftButtonLabel, type ShiftSlot } from '@/lib/cash-shift'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -21,6 +22,8 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 type LinkedEmployee = {
   id: string
@@ -40,7 +43,7 @@ type PlatformUser = {
   email: string
   firstName: string
   lastName: string
-  role: ManageableUserRole
+  role: AppUserRole
   active: boolean
   employeeId: string
   cashShiftSlot?: ShiftSlot | null
@@ -50,62 +53,87 @@ type PlatformUser = {
   relatedDataCount?: number
 }
 
-type RoleFilter = 'ALL' | ManageableUserRole
-
 const users = ref<PlatformUser[]>([])
 const employeeOptions = ref<EmployeeOption[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
-const roleFilter = ref<RoleFilter>('ALL')
 const modalOpen = ref(false)
+const viewModalOpen = ref(false)
 const editingId = ref<string | null>(null)
+const viewingUser = ref<PlatformUser | null>(null)
 
 const form = ref({
   employeeId: '',
   username: '',
   email: '',
-  role: 'MEDECIN' as ManageableUserRole,
+  role: 'RECEPTIONNISTE' as ManageableUserRole,
   password: '',
+  passwordConfirm: '',
   cashShiftSlot: '' as '' | ShiftSlot,
 })
 
 const isReceptionRole = computed(() => form.value.role === 'RECEPTIONNISTE')
 
+const { uiText, localeCode } = useAppI18n()
+
+function roleLabel(role: AppUserRole) {
+  return uiText(ROLE_LABELS[role] ?? role)
+}
+
 const usersById = computed(() => new Map(users.value.map((user) => [user.id, user])))
 
+/** Employés vraiment sélectionnables selon le rôle (évite les options grisées). */
+const selectableEmployees = computed(() => {
+  const list =
+    form.value.role === 'MEDECIN'
+      ? employeeOptions.value.filter((employee) => employee.isMedecin)
+      : employeeOptions.value
+  return [...list].sort((a, b) =>
+    fullName(a.firstName, a.lastName).localeCompare(fullName(b.firstName, b.lastName), 'fr', {
+      sensitivity: 'base',
+      numeric: true,
+    }),
+  )
+})
+
 const selectedEmployee = computed(() =>
-  employeeOptions.value.find((employee) => employee.id === form.value.employeeId),
+  selectableEmployees.value.find((employee) => employee.id === form.value.employeeId),
 )
 
-const roleTabs: { value: RoleFilter; label: string }[] = [
-  { value: 'ALL', label: 'Tous' },
-  ...MANAGEABLE_USER_ROLES.map((role) => ({ value: role, label: ROLE_LABELS[role] })),
-]
+const employeeEmptyHint = computed(() => {
+  if (form.value.role === 'MEDECIN') {
+    return uiText(
+      'Aucun employé médecin disponible. Créez d’abord un employé coché « médecin » dans Employés.',
+    )
+  }
+  if (!employeeOptions.value.length) {
+    return uiText(
+      'Aucun employé disponible. Créez d’abord un employé sans compte dans la section Employés.',
+    )
+  }
+  return ''
+})
 
-const tableRows = computed(() =>
-  users.value.map((user) => ({
+const tableRows = computed(() => {
+  localeCode.value
+  return users.value.map((user) => ({
     id: user.id,
     name: fullName(user.firstName, user.lastName),
     username: user.username,
     email: user.email,
     employeeLabel: fullName(user.employee.firstName, user.employee.lastName),
-    roleLabel: ROLE_LABELS[user.role],
+    roleLabel: roleLabel(user.role),
     role: user.role,
-    shiftLabel:
-      user.role === 'RECEPTIONNISTE' && user.cashShiftSlot
-        ? shiftButtonLabel(user.cashShiftSlot)
-        : '—',
-    statusLabel: user.active ? 'Actif' : 'Inactif',
+    statusLabel: user.active ? uiText('Actif') : uiText('Inactif'),
     statusVariant: user.active ? 'success' : 'danger',
-    toggleLabel: user.active ? 'Désactiver' : 'Activer',
+    toggleLabel: user.active ? uiText('Désactiver') : uiText('Activer'),
     isActive: user.active,
     canDelete: user.canDelete ?? false,
     relatedDataCount: user.relatedDataCount ?? 0,
-    createdAt: new Date(user.createdAt).toLocaleDateString('fr-FR'),
-  })),
-)
+  }))
+})
 
 const columns = [
   {
@@ -129,20 +157,12 @@ const columns = [
     render: (label: string) => statusBadge(label, 'info'),
   },
   {
-    data: 'shiftLabel',
-    title: 'Créneau',
-    responsivePriority: 4,
-    render: (label: string) =>
-      label === '—' ? '<span class="dt-muted">—</span>' : `<span class="dt-date">${label}</span>`,
-  },
-  {
     data: 'statusLabel',
     title: 'Statut',
     responsivePriority: 4,
     render: (label: string, _t: string, row: { statusVariant: string }) =>
       statusBadge(label, row.statusVariant as 'success' | 'danger'),
   },
-  { data: 'createdAt', title: 'Créé le', responsivePriority: 5 },
   {
     data: null,
     title: 'Actions',
@@ -153,7 +173,7 @@ const columns = [
       _d: unknown,
       _t: string,
       row: { id: string; toggleLabel: string; isActive: boolean; canDelete: boolean },
-    ) => catalogRowActionsHtml(row),
+    ) => catalogRowActionsHtml({ ...row, showView: true }),
   },
 ]
 
@@ -162,8 +182,9 @@ function resetForm() {
     employeeId: '',
     username: '',
     email: '',
-    role: 'MEDECIN',
+    role: 'RECEPTIONNISTE',
     password: '',
+    passwordConfirm: '',
     cashShiftSlot: '',
   }
 }
@@ -172,6 +193,7 @@ async function loadEmployeeOptions(currentEmployeeId?: string) {
   const { data } = await api.get<EmployeeOption[]>('/admin/employees', { params: { active: true } })
   employeeOptions.value = data.filter(
     (employee) =>
+      !isHiddenPlatformAdminEmployee(employee) &&
       employeeNeedsAppAccount(employee.jobTitle) &&
       (!employee.hasUserAccount || employee.id === currentEmployeeId),
   )
@@ -181,8 +203,7 @@ async function loadUsers() {
   loading.value = true
   message.value = ''
   try {
-    const params = roleFilter.value === 'ALL' ? undefined : { role: roleFilter.value }
-    const { data } = await api.get<PlatformUser[]>('/admin/users', { params })
+    const { data } = await api.get<PlatformUser[]>('/admin/users')
     users.value = data
   } catch {
     users.value = []
@@ -211,8 +232,11 @@ async function openEditModal(id: string) {
     employeeId: user.employeeId,
     username: user.username,
     email: user.email,
-    role: user.role,
+    role: (MANAGEABLE_USER_ROLES as readonly string[]).includes(user.role)
+      ? (user.role as ManageableUserRole)
+      : 'RECEPTIONNISTE',
     password: '',
+    passwordConfirm: '',
     cashShiftSlot: user.cashShiftSlot ?? '',
   }
   modalOpen.value = true
@@ -223,6 +247,34 @@ function closeModal() {
   modalOpen.value = false
   editingId.value = null
   resetForm()
+}
+
+function openViewModal(id: string) {
+  viewingUser.value = usersById.value.get(id) ?? null
+  if (!viewingUser.value) return
+  viewModalOpen.value = true
+}
+
+function closeViewModal() {
+  viewModalOpen.value = false
+  viewingUser.value = null
+}
+
+function viewingUserShiftLabel(user: PlatformUser) {
+  if (user.role === 'RECEPTIONNISTE' && user.cashShiftSlot) {
+    return shiftButtonLabel(user.cashShiftSlot)
+  }
+  return '—'
+}
+
+function formatCreatedAt(value: string) {
+  return new Date(value).toLocaleString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 async function saveUser() {
@@ -236,6 +288,17 @@ async function saveUser() {
     messageType.value = 'error'
     return
   }
+  if (!/^[a-zA-Z0-9._-]+$/.test(form.value.username.trim())) {
+    message.value = 'Nom d\'utilisateur invalide. Caractères autorisés : lettres, chiffres, . _ -'
+    messageType.value = 'error'
+    return
+  }
+  const email = form.value.email.trim()
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    message.value = 'Adresse e-mail invalide.'
+    messageType.value = 'error'
+    return
+  }
   if (form.value.role === 'MEDECIN' && selectedEmployee.value && !selectedEmployee.value.isMedecin) {
     message.value = 'Un compte médecin doit être lié à un employé médecin.'
     messageType.value = 'error'
@@ -243,6 +306,21 @@ async function saveUser() {
   }
   if (!editingId.value && form.value.password.length < 6) {
     message.value = 'Le mot de passe doit contenir au moins 6 caractères.'
+    messageType.value = 'error'
+    return
+  }
+  if (!editingId.value && form.value.password !== form.value.passwordConfirm) {
+    message.value = 'La confirmation du mot de passe ne correspond pas.'
+    messageType.value = 'error'
+    return
+  }
+  if (editingId.value && form.value.password.trim() && form.value.password !== form.value.passwordConfirm) {
+    message.value = 'La confirmation du mot de passe ne correspond pas.'
+    messageType.value = 'error'
+    return
+  }
+  if (editingId.value && form.value.password.trim() && form.value.password.length < 6) {
+    message.value = 'Le nouveau mot de passe doit contenir au moins 6 caractères.'
     messageType.value = 'error'
     return
   }
@@ -260,18 +338,18 @@ async function saveUser() {
     if (editingId.value) {
       const payload: Record<string, string | null | undefined> = {
         username: form.value.username.trim(),
-        email: form.value.email.trim() || undefined,
         role: form.value.role,
         employeeId: form.value.employeeId,
         cashShiftSlot,
       }
+      if (email) payload.email = email
       if (form.value.password.trim()) payload.password = form.value.password
       await api.put(`/admin/users/${editingId.value}`, payload)
       message.value = 'Utilisateur mis à jour.'
     } else {
       await api.post('/admin/users', {
         username: form.value.username.trim(),
-        email: form.value.email.trim() || undefined,
+        ...(email ? { email } : {}),
         role: form.value.role,
         password: form.value.password,
         employeeId: form.value.employeeId,
@@ -326,8 +404,11 @@ async function deleteUser(id: string) {
   if (!user.canDelete) {
     const linked = user.relatedDataCount ?? 0
     if (linked > 0) {
-      const suffix = linked > 1 ? 'enregistrements liés' : 'enregistrement lié'
-      message.value = `Suppression impossible : ce compte a ${linked} ${suffix}. Désactivez-le plutôt.`
+      const suffix = uiText(linked > 1 ? 'enregistrements liés' : 'enregistrement lié')
+      message.value = translateTemplate(
+        'Suppression impossible : ce compte a {n} {suffix}. Désactivez-le plutôt.',
+        { n: linked, suffix },
+      )
     } else {
       message.value = 'Vous ne pouvez pas supprimer ce compte.'
     }
@@ -339,7 +420,10 @@ async function deleteUser(id: string) {
   const confirmed = await confirmAppModal({
     type: 'DELETE',
     title: 'Supprimer le compte',
-    message: `Supprimer définitivement le compte de ${label} (${user.email}) ? L'employé lié sera conservé. Cette action est irréversible.`,
+    message: translateTemplate(
+      'Supprimer définitivement le compte de {name} ({email}) ? L\'employé lié sera conservé. Cette action est irréversible.',
+      { name: label, email: user.email },
+    ),
     confirmLabel: 'Supprimer',
   })
   if (!confirmed) return
@@ -356,14 +440,10 @@ async function deleteUser(id: string) {
 }
 
 function onTableAction({ action, id }: { action: string; id: string }) {
+  if (action === 'view') openViewModal(id)
   if (action === 'edit') openEditModal(id)
   if (action === 'toggle') toggleUser(id)
   if (action === 'delete') deleteUser(id)
-}
-
-function setRoleFilter(value: RoleFilter) {
-  roleFilter.value = value
-  loadUsers()
 }
 
 watch(
@@ -411,19 +491,7 @@ onMounted(loadUsers)
           </UiButton>
         </template>
 
-        <div class="tabs">
-          <button
-            v-for="tab in roleTabs"
-            :key="tab.value"
-            type="button"
-            :class="{ active: roleFilter === tab.value }"
-            @click="setRoleFilter(tab.value)"
-          >
-            {{ tab.label }}
-          </button>
-        </div>
-
-        <p v-if="!loading && !users.length" class="empty">Aucun utilisateur pour ce filtre</p>
+        <p v-if="!loading && !users.length" class="empty">Aucun utilisateur</p>
         <UiDataTable
           v-else
           fill
@@ -444,22 +512,45 @@ onMounted(loadUsers)
       :title="editingId ? 'Modifier l\'utilisateur' : 'Nouvel utilisateur'"
       subtitle="Lier un employé existant à un compte de connexion"
       :icon="Users"
+      size="wide"
       @close="closeModal"
     >
       <UiAlert v-if="message && modalOpen" :type="messageType" :message="message" />
 
       <section class="form-panel">
+        <div class="form-grid-2">
+          <UiSelect v-model="form.role" label="Rôle application" required>
+            <option v-for="role in MANAGEABLE_USER_ROLES" :key="role" :value="role">
+              {{ ROLE_LABELS[role] ? uiText(ROLE_LABELS[role]) : role }}
+            </option>
+          </UiSelect>
+          <UiSelect
+            v-if="isReceptionRole"
+            v-model="form.cashShiftSlot"
+            label="Créneau caisse"
+            required
+          >
+            <option value="" disabled>Sélectionner le créneau</option>
+            <option v-for="slot in ALL_SHIFT_SLOTS" :key="slot" :value="slot">
+              {{ shiftButtonLabel(slot) }}
+            </option>
+          </UiSelect>
+        </div>
+
+        <p v-if="isReceptionRole" class="employee-preview">
+          Créneaux : matin 7h–14h · soir 16h–21h · nuit 21h–6h.
+        </p>
+
         <UiSelect v-model="form.employeeId" label="Employé lié" required>
           <option value="" disabled>Sélectionner un employé</option>
           <option
-            v-for="employee in employeeOptions"
+            v-for="employee in selectableEmployees"
             :key="employee.id"
             :value="employee.id"
-            :disabled="form.role === 'MEDECIN' && !employee.isMedecin"
           >
             {{ fullName(employee.firstName, employee.lastName) }}
             {{ employee.jobTitle ? ` — ${employee.jobTitle}` : '' }}
-            {{ employee.isMedecin ? ' (médecin)' : '' }}
+            {{ employee.isMedecin ? uiText(' (médecin)') : '' }}
           </option>
         </UiSelect>
 
@@ -467,50 +558,48 @@ onMounted(loadUsers)
           Nom sur le compte :
           <strong>{{ fullName(selectedEmployee.firstName, selectedEmployee.lastName) }}</strong>
         </p>
-        <p v-else-if="!employeeOptions.length" class="employee-hint">
-          Aucun employé disponible. Créez d'abord un employé sans compte dans la section Employés.
+        <p v-else-if="employeeEmptyHint" class="employee-hint employee-hint--inline">
+          {{ employeeEmptyHint }}
         </p>
 
-        <UiInput
-          v-model="form.username"
-          label="Nom d'utilisateur"
-          type="text"
-          autocomplete="username"
-          required
-          placeholder="p.ex. reception"
-        />
-        <UiInput
-          v-model="form.email"
-          label="E-mail (optionnel)"
-          type="email"
-          placeholder="contact@exemple.com"
-        />
-        <UiSelect v-model="form.role" label="Rôle application" required>
-          <option v-for="role in MANAGEABLE_USER_ROLES" :key="role" :value="role">
-            {{ ROLE_LABELS[role] }}
-          </option>
-        </UiSelect>
-        <UiSelect
-          v-if="isReceptionRole"
-          v-model="form.cashShiftSlot"
-          label="Créneau caisse"
-          required
-        >
-          <option value="" disabled>Sélectionner le créneau</option>
-          <option v-for="slot in ALL_SHIFT_SLOTS" :key="slot" :value="slot">
-            {{ shiftButtonLabel(slot) }}
-          </option>
-        </UiSelect>
-        <p v-if="isReceptionRole" class="employee-preview">
-          Créneaux : matin 7h–14h · soir 16h–21h · nuit 21h–6h.
-        </p>
-        <UiInput
-          v-model="form.password"
-          :label="editingId ? 'Nouveau mot de passe (optionnel)' : 'Mot de passe'"
-          type="password"
-          :required="!editingId"
-          placeholder="Minimum 6 caractères"
-        />
+        <div class="form-grid-2">
+          <UiInput
+            v-model="form.username"
+            label="Nom d'utilisateur"
+            type="text"
+            autocomplete="username"
+            required
+            placeholder="p.ex. reception (lettres, chiffres, . _ -)"
+          />
+          <UiInput
+            v-model="form.email"
+            label="E-mail (optionnel)"
+            type="email"
+            placeholder="Laisser vide si aucun e-mail"
+            autocomplete="off"
+          />
+        </div>
+
+        <div class="form-grid-2">
+          <UiInput
+            v-model="form.password"
+            :label="editingId ? 'Nouveau mot de passe (optionnel)' : 'Mot de passe'"
+            type="password"
+            :required="!editingId"
+            revealable
+            autocomplete="new-password"
+            placeholder="Minimum 6 caractères"
+          />
+          <UiInput
+            v-model="form.passwordConfirm"
+            :label="editingId ? 'Confirmer le nouveau mot de passe' : 'Confirmer le mot de passe'"
+            type="password"
+            :required="!editingId"
+            revealable
+            autocomplete="new-password"
+            placeholder="Retapez le mot de passe"
+          />
+        </div>
       </section>
 
       <template #footer>
@@ -520,34 +609,70 @@ onMounted(loadUsers)
         </UiButton>
       </template>
     </UiFormModal>
+
+    <UiFormModal
+      v-if="viewModalOpen && viewingUser"
+      title-id="user-view-title"
+      title="Détail de l'utilisateur"
+      :subtitle="fullName(viewingUser.firstName, viewingUser.lastName)"
+      :icon="Eye"
+      @close="closeViewModal"
+    >
+      <dl class="user-detail">
+        <div class="user-detail__row">
+          <dt>Nom complet</dt>
+          <dd>{{ fullName(viewingUser.firstName, viewingUser.lastName) }}</dd>
+        </div>
+        <div class="user-detail__row">
+          <dt>Nom d'utilisateur</dt>
+          <dd>{{ viewingUser.username }}</dd>
+        </div>
+        <div class="user-detail__row">
+          <dt>E-mail</dt>
+          <dd>{{ viewingUser.email || '—' }}</dd>
+        </div>
+        <div class="user-detail__row">
+          <dt>Employé lié</dt>
+          <dd>
+            {{ fullName(viewingUser.employee.firstName, viewingUser.employee.lastName) }}
+            <span v-if="viewingUser.employee.jobTitle" class="user-detail__muted">
+              — {{ viewingUser.employee.jobTitle }}
+            </span>
+          </dd>
+        </div>
+        <div class="user-detail__row">
+          <dt>Rôle</dt>
+          <dd>{{ ROLE_LABELS[viewingUser.role] ? uiText(ROLE_LABELS[viewingUser.role]) : viewingUser.role }}</dd>
+        </div>
+        <div class="user-detail__row">
+          <dt>Créneau caisse</dt>
+          <dd>{{ viewingUserShiftLabel(viewingUser) }}</dd>
+        </div>
+        <div class="user-detail__row">
+          <dt>Statut</dt>
+          <dd>{{ viewingUser.active ? uiText('Actif') : uiText('Inactif') }}</dd>
+        </div>
+        <div class="user-detail__row">
+          <dt>Créé le</dt>
+          <dd>{{ formatCreatedAt(viewingUser.createdAt) }}</dd>
+        </div>
+        <div v-if="(viewingUser.relatedDataCount ?? 0) > 0" class="user-detail__row">
+          <dt>Données liées</dt>
+          <dd>{{ translateTemplate('{n} enregistrement(s)', { n: viewingUser.relatedDataCount ?? 0 }) }}</dd>
+        </div>
+      </dl>
+
+      <template #footer>
+        <UiButton variant="ghost" @click="closeViewModal">Fermer</UiButton>
+        <UiButton variant="primary" @click="openEditModal(viewingUser.id); closeViewModal()">
+          Modifier
+        </UiButton>
+      </template>
+    </UiFormModal>
   </div>
 </template>
 
 <style scoped>
-.tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
-.tabs button {
-  padding: 0.45rem 0.85rem;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-card);
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-}
-
-.tabs button.active {
-  background: var(--primary-50);
-  border-color: var(--primary-500);
-  color: var(--primary-800);
-}
-
 .empty,
 .employee-hint {
   text-align: center;
@@ -556,9 +681,48 @@ onMounted(loadUsers)
   font-size: 0.875rem;
 }
 
+.employee-hint--inline {
+  text-align: left;
+  padding: 0 0 1rem;
+}
+
 .employee-preview {
   margin: 0 0 1rem;
   font-size: 0.8125rem;
   color: var(--text-muted);
+}
+
+.user-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.user-detail__row {
+  display: grid;
+  grid-template-columns: 10rem 1fr;
+  gap: 0.5rem 1rem;
+  align-items: baseline;
+}
+
+.user-detail__row dt {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.user-detail__row dd {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: var(--text);
+}
+
+.user-detail__muted {
+  color: var(--text-muted);
+  font-size: 0.875rem;
 }
 </style>

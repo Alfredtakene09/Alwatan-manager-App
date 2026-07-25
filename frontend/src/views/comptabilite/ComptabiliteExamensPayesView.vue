@@ -48,7 +48,7 @@ async function load() {
     const { data } = await api.get<LabExamPendingItem[]>('/comptabilite/paid-exams')
     paidItems.value = data
   } catch {
-    message.value = 'Impossible de charger la liste des examens payés.'
+    message.value = uiText('Impossible de charger la liste des examens payés.')
     messageType.value = 'error'
     paidItems.value = []
   } finally {
@@ -62,7 +62,7 @@ function onPrint(id: string) {
 
   const kinds = resolvePaidKinds(item)
   if (!kinds.length) {
-    message.value = 'Aucune facture payée à imprimer pour ce dossier.'
+    message.value = uiText('Aucune facture payée à imprimer pour ce dossier.')
     messageType.value = 'error'
     return
   }
@@ -83,7 +83,7 @@ function onPrint(id: string) {
   )
 
   if (!printed) {
-    message.value = 'Impossible de générer le reçu : données d\'examen manquantes.'
+    message.value = uiText("Impossible de générer le reçu : données d'examen manquantes.")
     messageType.value = 'error'
   }
 }
@@ -99,8 +99,9 @@ function closeReclamation() {
 }
 
 function onReclamationSubmitted() {
-  message.value =
-    'Remboursement appliqué : les montants ont été déduits et les examens retirés du dossier payé.'
+  message.value = uiText(
+    'Remboursement appliqué : les montants ont été déduits et les examens retirés du dossier payé.',
+  )
   messageType.value = 'success'
   void load()
 }

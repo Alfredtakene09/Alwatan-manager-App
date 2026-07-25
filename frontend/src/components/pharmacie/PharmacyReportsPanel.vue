@@ -3,8 +3,20 @@ import { computed, onMounted, ref } from 'vue'
 import { BarChart3, RefreshCw } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
+import {
+  buildClinicPrintHeader,
+  openPrintDocument,
+} from '@/lib/print-document'
+import {
+  escapeHtml,
+  exportBasename,
+  exportWorkbook,
+  rowsToHtmlTable,
+  type ExportColumn,
+} from '@/lib/table-export'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import DashboardBarChart, { type BarChartDay } from '@/components/dashboard/DashboardBarChart.vue'
@@ -77,6 +89,60 @@ async function loadReport() {
   }
 }
 
+const periodLabel = computed(() => {
+  if (period.value === '7d') return '7 derniers jours'
+  if (period.value === '30d') return '30 derniers jours'
+  return 'Mois en cours'
+})
+
+const kpiRows = computed(() => {
+  if (!report.value) return []
+  return [
+    { label: 'Ordonnances', value: report.value.prescriptionsCount },
+    { label: 'Unités vendues', value: report.value.totalUnitsSold },
+    { label: "Chiffre d'affaires", value: formatFcfa(report.value.totalRevenueFcfa) },
+    { label: 'Période', value: `${report.value.from} → ${report.value.to}` },
+  ]
+})
+
+const kpiColumns: ExportColumn<(typeof kpiRows.value)[number]>[] = [
+  { header: 'Indicateur', value: (r) => r.label },
+  { header: 'Valeur', value: (r) => r.value },
+]
+
+const topProductColumns: ExportColumn<PharmacyReport['topProducts'][number]>[] = [
+  { header: 'Produit', value: (r) => r.name },
+  { header: 'Quantité', value: (r) => r.quantity },
+  { header: 'CA', value: (r) => formatFcfa(r.revenueFcfa) },
+]
+
+const categoryColumns: ExportColumn<PharmacyReport['salesByCategory'][number]>[] = [
+  { header: 'Catégorie', value: (r) => r.name },
+  { header: 'Quantité', value: (r) => r.quantity },
+  { header: 'CA', value: (r) => formatFcfa(r.revenueFcfa) },
+]
+
+function exportPdf() {
+  if (!report.value) return
+  const body = `${buildClinicPrintHeader('Rapport des ventes pharmacie')}
+<div class="row"><span>Période</span><strong>${escapeHtml(periodLabel.value)}</strong></div>
+${rowsToHtmlTable(kpiColumns, kpiRows.value, { captionRows: [{ label: 'Synthèse', value: 'KPI' }] })}
+<h3>Top produits</h3>
+${rowsToHtmlTable(topProductColumns, report.value.topProducts)}
+<h3>Ventes par catégorie</h3>
+${rowsToHtmlTable(categoryColumns, report.value.salesByCategory)}`
+  openPrintDocument('Rapport des ventes pharmacie', body, { pageSize: 'A4', autoPrint: true })
+}
+
+function exportExcel() {
+  if (!report.value) return
+  exportWorkbook(exportBasename('rapport-ventes-pharmacie'), [
+    { name: 'KPI', columns: kpiColumns, rows: kpiRows.value },
+    { name: 'Top produits', columns: topProductColumns, rows: report.value.topProducts },
+    { name: 'Catégories', columns: categoryColumns, rows: report.value.salesByCategory },
+  ])
+}
+
 onMounted(loadReport)
 </script>
 
@@ -94,6 +160,7 @@ onMounted(loadReport)
           <option value="30d">30 derniers jours</option>
           <option value="month">Mois en cours</option>
         </UiSelect>
+        <ExportButtons :disabled="loading || !report" @pdf="exportPdf" @excel="exportExcel" />
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadReport">
           Actualiser
         </UiButton>

@@ -17,6 +17,7 @@ import {
   ChevronDown,
 } from '@lucide/vue'
 import { formatFcfa, fullName } from '@/lib/roles'
+import { formatAppDateTime } from '@/i18n/locale-format'
 import { EXAM_KIND_LABELS, type ExamKindSlug } from '@/lib/exam-catalog/types'
 import {
   buildExamSheetsFromBlocks,
@@ -38,6 +39,7 @@ import {
 import { loadExamCatalog } from '@/lib/exam-catalog/store'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiInput from '@/components/ui/UiInput.vue'
+import PatientPaymentHistory from '@/components/dossier/PatientPaymentHistory.vue'
 
 export type LabExamPaymentItem = LabExamPendingItem
 
@@ -46,6 +48,8 @@ export type LabExamPaymentConfirmPayload = {
   kinds: ExamKindSlug[]
   reductionFcfa: number
   reductionsByKind: ExamReductionsByKind
+  installmentAmountFcfa?: number
+  installmentsByKind?: Partial<Record<ExamKindSlug, number>>
 }
 
 const props = defineProps<{
@@ -60,6 +64,8 @@ const emit = defineEmits<{
 }>()
 
 const payingKind = ref<ExamKindSlug | null>(null)
+const installmentEnabledByKind = ref<Partial<Record<ExamKindSlug, boolean>>>({})
+const installmentAmountByKind = ref<Partial<Record<ExamKindSlug, string>>>({})
 
 const reductionsByKind = ref<ExamReductionsByKind>(emptyExamReductionsByKind())
 
@@ -73,6 +79,8 @@ watch(
     if (item) await loadExamCatalog()
     reductionsByKind.value = initLabExamReductionsByKind()
     payingKind.value = null
+    installmentEnabledByKind.value = {}
+    installmentAmountByKind.value = {}
   },
   { immediate: true },
 )
@@ -154,7 +162,7 @@ const patientInfo = computed(() => {
     doctor: props.item.doctor
       ? `Dr ${fullName(props.item.doctor.firstName, props.item.doctor.lastName)}`
       : 'Patient externe — réception',
-    date: new Date(props.item.updatedAt).toLocaleString('fr-FR'),
+    date: formatAppDateTime(props.item.updatedAt),
   }
 })
 
@@ -165,6 +173,32 @@ const kindIcons: Record<ExamKindSlug, typeof FlaskConical> = {
   odonto: Smile,
   operation: Scissors,
   hospitalisation: BedDouble,
+}
+
+function partialPayment(kind: ExamKindSlug) {
+  return normalizedItem.value?.partialPaymentsByKind?.[kind] ?? null
+}
+
+function remainingForKind(kind: ExamKindSlug, netFcfa: number) {
+  const partial = partialPayment(kind)
+  return partial?.remainingFcfa ?? netFcfa
+}
+
+function toggleInstallment(kind: ExamKindSlug, enabled: boolean, netFcfa: number) {
+  installmentEnabledByKind.value = { ...installmentEnabledByKind.value, [kind]: enabled }
+  if (enabled && !installmentAmountByKind.value[kind]) {
+    installmentAmountByKind.value = {
+      ...installmentAmountByKind.value,
+      [kind]: String(Math.max(1, Math.floor(netFcfa / 2))),
+    }
+  }
+}
+
+function resolveInstallmentAmount(kind: ExamKindSlug, netFcfa: number) {
+  if (!installmentEnabledByKind.value[kind]) return undefined
+  const remaining = remainingForKind(kind, netFcfa)
+  const parsed = Math.min(remaining, Math.max(1, Number(installmentAmountByKind.value[kind]) || 0))
+  return parsed
 }
 
 function buildPayableReductions(kinds: ExamKindSlug[]): ExamReductionsByKind {
@@ -198,6 +232,7 @@ function confirmKind(kind: ExamKindSlug) {
   if (!props.item) return
   const card = kindCards.value.find((row) => row.kind === kind)
   if (!card?.hasExams || card.isPaid) return
+  const installmentAmountFcfa = resolveInstallmentAmount(kind, card.netFcfa)
   payingKind.value = kind
   emit('confirm', {
     consultationId: props.item.id,
@@ -207,6 +242,7 @@ function confirmKind(kind: ExamKindSlug) {
       ...emptyExamReductionsByKind(),
       [kind]: reductionsByKind.value[kind] ?? 0,
     },
+    installmentAmountFcfa,
   })
 }
 
@@ -346,8 +382,36 @@ function updateReduction(kind: ExamKindSlug, value: string | number, max: number
                 </div>
                 <div v-if="!card.isPaid" class="exam-card__amount exam-card__amount--net">
                   <span>Net à payer</span>
-                  <strong>{{ formatFcfa(card.netFcfa) }}</strong>
+                  <strong>{{ formatFcfa(remainingForKind(card.kind, card.netFcfa)) }}</strong>
                 </div>
+                <div v-if="partialPayment(card.kind)" class="exam-card__amount exam-card__amount--partial">
+                  <span>Déjà réglé</span>
+                  <strong>{{ formatFcfa(partialPayment(card.kind)!.paidFcfa) }}</strong>
+                </div>
+              </div>
+
+              <div
+                v-if="!card.isPaid"
+                class="exam-card__installment"
+              >
+                <label class="exam-card__installment-toggle">
+                  <input
+                    type="checkbox"
+                    :checked="Boolean(installmentEnabledByKind[card.kind])"
+                    @change="toggleInstallment(card.kind, ($event.target as HTMLInputElement).checked, card.netFcfa)"
+                  />
+                  Paiement en tranche
+                </label>
+                <UiInput
+                  v-if="installmentEnabledByKind[card.kind]"
+                  :model-value="installmentAmountByKind[card.kind] ?? ''"
+                  label="Montant de la tranche (FCFA)"
+                  type="number"
+                  min="1"
+                  :max="remainingForKind(card.kind, card.netFcfa)"
+                  placeholder="Ex. 50 000"
+                  @update:model-value="installmentAmountByKind = { ...installmentAmountByKind, [card.kind]: String($event) }"
+                />
               </div>
 
               <div
@@ -379,7 +443,9 @@ function updateReduction(kind: ExamKindSlug, value: string | number, max: number
                   {{
                     submitting && (submittingKind === card.kind || payingKind === card.kind)
                       ? 'Validation…'
-                      : `Encaisser ${card.kindLabel}`
+                      : installmentEnabledByKind[card.kind]
+                        ? `Encaisser une tranche`
+                        : `Encaisser ${card.kindLabel}`
                   }}
                 </UiButton>
                 <p v-if="kindFollowUpLabel(card.kind)" class="exam-card__pay-hint">
@@ -388,6 +454,11 @@ function updateReduction(kind: ExamKindSlug, value: string | number, max: number
               </div>
             </div>
           </article>
+
+          <section v-if="item.visit.patient.id" class="invoice-modal__history">
+            <h3 class="invoice-modal__history-title">Historique des paiements du patient</h3>
+            <PatientPaymentHistory :patient-id="item.visit.patient.id" compact />
+          </section>
         </div>
 
         <footer class="invoice-modal__footer">
@@ -800,6 +871,38 @@ function updateReduction(kind: ExamKindSlug, value: string | number, max: number
 .exam-card__amount--net strong {
   color: var(--primary-800);
   font-size: 1rem;
+}
+
+.exam-card__amount--partial span,
+.exam-card__amount--partial strong {
+  color: #b45309;
+}
+
+.exam-card__installment {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.exam-card__installment-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.invoice-modal__history {
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--border);
+}
+
+.invoice-modal__history-title {
+  margin: 0 0 0.65rem;
+  font-size: 0.875rem;
+  color: var(--primary-800);
 }
 
 .exam-card__reduction {

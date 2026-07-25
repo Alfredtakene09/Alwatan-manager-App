@@ -26,7 +26,8 @@ export function employeeGrossSalary(employee: {
   }
   if (
     employee.isMedecin &&
-    employee.doctorCompensationType === DoctorCompensationType.FIXED_SALARY
+    (employee.doctorCompensationType === DoctorCompensationType.FIXED_SALARY ||
+      employee.doctorCompensationType === DoctorCompensationType.COMBINED)
   ) {
     return employee.fixedSalaryFcfa ?? 0;
   }

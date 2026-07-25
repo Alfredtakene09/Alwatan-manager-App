@@ -768,7 +768,7 @@
   align-items: center;
   justify-content: center;
   padding: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm, 10px);
   font-family: inherit;
   cursor: pointer;
   border: 1px solid transparent;
@@ -778,7 +778,7 @@
 .ui-dt .dt-btn--icon {
   width: 2rem;
   height: 2rem;
-  background: #fff;
+  background: var(--bg-card, #fff);
   border-color: var(--border);
   color: var(--text-muted);
 }
@@ -790,14 +790,14 @@
 }
 
 .ui-dt .dt-btn--accent {
-  background: var(--accent-600);
-  border-color: var(--accent-600);
+  background: var(--action, var(--accent-600));
+  border-color: var(--action, var(--accent-600));
   color: #fff;
 }
 
 .ui-dt .dt-btn--accent:hover {
-  background: var(--accent-700);
-  border-color: var(--accent-700);
+  background: var(--action-hover, var(--accent-700));
+  border-color: var(--action-hover, var(--accent-700));
   color: #fff;
 }
 
@@ -805,7 +805,7 @@
   padding: 0.35rem 0.65rem;
   font-size: 0.75rem;
   font-weight: 600;
-  background: #fff;
+  background: var(--bg-card, #fff);
   border-color: var(--border);
   color: var(--text);
 }
@@ -838,13 +838,13 @@
 }
 
 .ui-dt .dt-btn--icon.dt-btn--danger {
-  color: #b91c1c;
+  color: var(--danger);
 }
 
 .ui-dt .dt-btn--icon.dt-btn--danger:hover {
-  border-color: #fecaca;
-  background: #fef2f2;
-  color: #991b1b;
+  border-color: var(--brand-red-100, #fecaca);
+  background: var(--brand-red-50, #fef2f2);
+  color: var(--brand-red-800, #991b1b);
 }
 
 .ui-dt .dt-btn--icon.dt-btn--hosp {

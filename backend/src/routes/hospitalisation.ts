@@ -20,9 +20,11 @@ import {
   assertRoomAvailableForAdmission,
   computeRoomTypeAvailability,
   enrichRoomsWithStatus,
+  ensureDefaultBedsForRoom,
 } from "../lib/hospitalization-rooms.js";
 import { findDuplicateRoomByName } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
+import { selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
 import { requireAuth, requireModule, requireManageAccess } from "../middleware/auth.js";
 
 const router = Router();
@@ -34,16 +36,20 @@ const roomSchema = z.object({
   description: z.string().optional(),
   dailyRateFcfa: z.number().int().positive(),
   active: z.boolean().optional(),
+  /** Nombre de lits à créer (sinon défaut VIP=1 / SIMPLE=2) */
+  bedsCount: z.number().int().min(1).max(20).optional(),
 });
 
 const hospitalizationSchema = z.object({
   hospitalizationId: z.string(),
   roomId: z.string(),
+  bedId: z.string().optional(),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   reductionFcfa: z.coerce.number().int().min(0).default(0),
   service: z.string().optional(),
   attendingDoctor: z.string().optional(),
+  attendingDoctorId: z.string().optional(),
   doctorInstructions: z.string().optional(),
 });
 
@@ -54,6 +60,7 @@ const updateAdmissionSchema = z.object({
   reductionFcfa: z.coerce.number().int().min(0).default(0),
   service: z.string().optional(),
   attendingDoctor: z.string().optional(),
+  attendingDoctorId: z.string().optional(),
   doctorInstructions: z.string().optional(),
 });
 
@@ -70,6 +77,30 @@ function computeStayNights(startIso: string, endIso: string) {
   }
   const diffDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
   return Math.max(1, diffDays);
+}
+
+async function resolveAttendingDoctorFields(input: {
+  attendingDoctorId?: string;
+  attendingDoctor?: string;
+}) {
+  const doctorId = input.attendingDoctorId?.trim() || null;
+  if (!doctorId) {
+    return {
+      attendingDoctorId: null as string | null,
+      attendingDoctor: input.attendingDoctor?.trim() || null,
+    };
+  }
+
+  const doctor = await prisma.user.findFirst({
+    where: selectableDoctorByIdWhere(doctorId),
+    select: { id: true, firstName: true, lastName: true },
+  });
+  if (!doctor) throw new Error("ATTENDING_DOCTOR_INVALID");
+
+  return {
+    attendingDoctorId: doctor.id,
+    attendingDoctor: `Dr ${doctor.firstName} ${doctor.lastName}`,
+  };
 }
 
 const dischargeSchema = z.object({
@@ -100,6 +131,7 @@ router.get("/", async (req, res) => {
 
     const [rooms, hospitalizations] = await Promise.all([
       prisma.room.findMany({
+        include: { beds: { orderBy: { code: "asc" } } },
         orderBy: [{ type: "asc" }, { name: "asc" }],
       }),
       prisma.hospitalization.findMany({
@@ -116,6 +148,10 @@ router.get("/", async (req, res) => {
             },
           },
           room: true,
+          bed: true,
+          attendingDoctorUser: {
+            select: { id: true, firstName: true, lastName: true },
+          },
         },
         orderBy: [{ status: "asc" }, { createdAt: "desc" }],
       }),
@@ -158,7 +194,34 @@ router.post("/rooms", requireManageAccess, async (req, res) => {
         ),
       );
     }
-    const room = await prisma.room.create({ data: body });
+    const room = await prisma.$transaction(async (tx) => {
+      const created = await tx.room.create({
+        data: {
+          name: body.name,
+          type: body.type,
+          description: body.description,
+          dailyRateFcfa: body.dailyRateFcfa,
+          active: body.active,
+        },
+      });
+      if (body.bedsCount) {
+        const codes = Array.from({ length: body.bedsCount }, (_, i) => `L${i + 1}`);
+        await tx.bed.createMany({
+          data: codes.map((code) => ({
+            roomId: created.id,
+            code,
+            label: `Lit ${code}`,
+            active: true,
+          })),
+        });
+      } else {
+        await ensureDefaultBedsForRoom(tx, created);
+      }
+      return tx.room.findUniqueOrThrow({
+        where: { id: created.id },
+        include: { beds: { orderBy: { code: "asc" } } },
+      });
+    });
     return res.status(201).json(room);
   } catch {
     return res.status(400).json({ error: "Données invalides" });
@@ -168,9 +231,42 @@ router.post("/rooms", requireManageAccess, async (req, res) => {
 router.put("/rooms/:id", requireManageAccess, async (req, res) => {
   try {
     const body = roomSchema.partial().parse(req.body);
-    const room = await prisma.room.update({
-      where: { id: String(req.params.id) },
-      data: body,
+    const roomId = String(req.params.id);
+    const room = await prisma.$transaction(async (tx) => {
+      const updated = await tx.room.update({
+        where: { id: roomId },
+        data: {
+          name: body.name,
+          type: body.type,
+          description: body.description,
+          dailyRateFcfa: body.dailyRateFcfa,
+          active: body.active,
+        },
+      });
+      if (body.bedsCount !== undefined) {
+        const existingBeds = await tx.bed.findMany({
+          where: { roomId },
+          orderBy: { code: "asc" },
+        });
+        if (existingBeds.length < body.bedsCount) {
+          const toCreate = [];
+          for (let i = existingBeds.length + 1; i <= body.bedsCount; i += 1) {
+            toCreate.push({
+              roomId,
+              code: `L${i}`,
+              label: `Lit L${i}`,
+              active: true,
+            });
+          }
+          if (toCreate.length) await tx.bed.createMany({ data: toCreate });
+        }
+      } else {
+        await ensureDefaultBedsForRoom(tx, updated);
+      }
+      return tx.room.findUniqueOrThrow({
+        where: { id: roomId },
+        include: { beds: { orderBy: { code: "asc" } } },
+      });
     });
     return res.json(room);
   } catch {
@@ -225,8 +321,14 @@ router.post("/actions", async (req, res) => {
 
     if (action === "reserve_room" || action === "reserve_bed") {
       const data = hospitalizationSchema.parse(req.body);
+      const attending = await resolveAttendingDoctorFields(data);
       const result = await prisma.$transaction(async (tx) => {
-        const room = await assertRoomAvailableForAdmission(tx, data.roomId, data.hospitalizationId);
+        const { room, bed } = await assertRoomAvailableForAdmission(
+          tx,
+          data.roomId,
+          data.hospitalizationId,
+          { bedId: data.bedId },
+        );
 
         const startDate = parseIsoDate(data.startDate);
         const endDate = parseIsoDate(data.endDate);
@@ -238,7 +340,8 @@ router.post("/actions", async (req, res) => {
         const hospitalization = await tx.hospitalization.update({
           where: { id: data.hospitalizationId },
           data: {
-            roomId: data.roomId,
+            roomId: room.id,
+            bedId: bed?.id ?? null,
             accountantId: user.id,
             roomType: room.type,
             dailyRateFcfa: room.dailyRateFcfa,
@@ -250,11 +353,12 @@ router.post("/actions", async (req, res) => {
             startDate,
             endDate,
             service: data.service?.trim() || null,
-            attendingDoctor: data.attendingDoctor?.trim() || null,
+            attendingDoctor: attending.attendingDoctor,
+            attendingDoctorId: attending.attendingDoctorId,
             doctorInstructions: data.doctorInstructions?.trim() || null,
             paidAt: totalDueFcfa > 0 ? new Date() : null,
           },
-          include: { visit: true, room: true },
+          include: { visit: true, room: true, bed: true, attendingDoctorUser: true },
         });
         const invoice =
           totalDueFcfa > 0
@@ -280,6 +384,7 @@ router.post("/actions", async (req, res) => {
 
     if (action === "update_admission") {
       const data = updateAdmissionSchema.parse(req.body);
+      const attending = await resolveAttendingDoctorFields(data);
       const result = await prisma.$transaction(async (tx) => {
         const existing = await tx.hospitalization.findUniqueOrThrow({
           where: { id: data.hospitalizationId },
@@ -303,10 +408,11 @@ router.post("/actions", async (req, res) => {
             nightsCount: nights,
             totalDueFcfa,
             service: data.service?.trim() || null,
-            attendingDoctor: data.attendingDoctor?.trim() || null,
+            attendingDoctor: attending.attendingDoctor,
+            attendingDoctorId: attending.attendingDoctorId,
             doctorInstructions: data.doctorInstructions?.trim() || null,
           },
-          include: { visit: true, room: true },
+          include: { visit: true, room: true, bed: true, attendingDoctorUser: true },
         });
 
         return { hospitalization, nights, totalDueFcfa, reductionFcfa };
@@ -344,6 +450,7 @@ router.post("/actions", async (req, res) => {
             status: HospitalizationStatus.DISCHARGED,
             dischargedAt: new Date(),
             roomId: null,
+            bedId: null,
           },
         });
 
@@ -377,6 +484,15 @@ router.post("/actions", async (req, res) => {
     }
     if (error instanceof Error && error.message === "ROOM_UNAVAILABLE") {
       return res.status(409).json({ error: "Salle indisponible" });
+    }
+    if (error instanceof Error && error.message === "BED_UNAVAILABLE") {
+      return res.status(409).json({ error: "Lit indisponible" });
+    }
+    if (error instanceof Error && error.message === "BED_ROOM_MISMATCH") {
+      return res.status(400).json({ error: "Le lit ne correspond pas à la salle sélectionnée." });
+    }
+    if (error instanceof Error && error.message === "ATTENDING_DOCTOR_INVALID") {
+      return res.status(400).json({ error: "Médecin traitant invalide" });
     }
     if (error instanceof Error && error.message === "VIP_ROOM_OCCUPIED") {
       return res.status(409).json({

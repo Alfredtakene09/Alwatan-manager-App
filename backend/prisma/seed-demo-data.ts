@@ -1,7 +1,7 @@
 /**
  * Jeu de données de démonstration — patients, visites, factures, caisse,
  * chirurgie, hospitalisation, pharmacie, dépenses, paie, etc.
- * Préfixe DEMO-PAT-* pour idempotence (SEED_DEMO_RESET=1 pour régénérer).
+ * Préfixe PAT-* pour idempotence (SEED_DEMO_RESET=1 pour régénérer).
  */
 import {
   ClinicExpenseCategory,
@@ -16,17 +16,39 @@ import {
   PaymentMethod,
   PayrollStatus,
   ReceptionShiftSlot,
-  SalaryAdvanceStatus,
   SurgeryStatus,
   VisitStatus,
 } from "@prisma/client";
 import { prisma } from "../src/lib/db.js";
 
-const DEMO_PATIENT_PREFIX = "DEMO-PAT-";
+const DEMO_PATIENT_PREFIX = "PAT-";
+const LEGACY_DEMO_PATIENT_PREFIX = "DEMO-PAT-";
+
+function demoPatientCodes(count: number) {
+  return Array.from({ length: count }, (_, index) => `${DEMO_PATIENT_PREFIX}${String(index + 1).padStart(3, "0")}`);
+}
+
+export async function migrateLegacyPatientCodes() {
+  const legacyPatients = await prisma.patient.findMany({
+    where: { code: { startsWith: LEGACY_DEMO_PATIENT_PREFIX } },
+    select: { id: true, code: true },
+  });
+  for (const patient of legacyPatients) {
+    const newCode = patient.code.replace(/^DEMO-/, "");
+    const conflict = await prisma.patient.findUnique({
+      where: { code: newCode },
+      select: { id: true },
+    });
+    if (conflict && conflict.id !== patient.id) continue;
+    await prisma.patient.update({
+      where: { id: patient.id },
+      data: { code: newCode },
+    });
+  }
+}
 const DEMO_EMPLOYEE_FIRST_NAME = "Démo";
 const DEMO_BULK_EMPLOYEE_COUNT = 35;
 const DEMO_BULK_PAYROLL_MONTHS = 5;
-const DEMO_BULK_SALARY_ADVANCE_COUNT = 80;
 const DEMO_BULK_JOURNAL_INVOICE_COUNT = 120;
 
 const DEMO_FIRST_NAMES = [
@@ -104,7 +126,12 @@ async function loadStaffIds(): Promise<StaffIds> {
 
 export async function cleanupDemoData() {
   const demoPatients = await prisma.patient.findMany({
-    where: { code: { startsWith: DEMO_PATIENT_PREFIX } },
+    where: {
+      OR: [
+        { code: { startsWith: LEGACY_DEMO_PATIENT_PREFIX } },
+        { code: { in: demoPatientCodes(50) } },
+      ],
+    },
     select: { id: true },
   });
   const patientIds = demoPatients.map((p) => p.id);
@@ -247,7 +274,7 @@ async function seedBulkVolumeData(params: {
   const { staff, patients, year } = params;
   let invoiceSeq = params.invoiceSeqStart;
 
-  console.log(`Création volume démo (~${DEMO_BULK_EMPLOYEE_COUNT + DEMO_BULK_SALARY_ADVANCE_COUNT + DEMO_BULK_JOURNAL_INVOICE_COUNT + DEMO_BULK_EMPLOYEE_COUNT * DEMO_BULK_PAYROLL_MONTHS} enregistrements)…`);
+  console.log(`Création volume démo (~${DEMO_BULK_EMPLOYEE_COUNT + DEMO_BULK_JOURNAL_INVOICE_COUNT + DEMO_BULK_EMPLOYEE_COUNT * DEMO_BULK_PAYROLL_MONTHS} enregistrements)…`);
 
   const demoEmployees: { id: string }[] = [];
   for (let i = 1; i <= DEMO_BULK_EMPLOYEE_COUNT; i++) {
@@ -301,34 +328,6 @@ async function seedBulkVolumeData(params: {
     }
   }
 
-  for (let i = 0; i < DEMO_BULK_SALARY_ADVANCE_COUNT; i++) {
-    const employee = demoEmployees[i % demoEmployees.length];
-    const dayOffset = (i % 90) + 1;
-    const statusCycle: SalaryAdvanceStatus[] = [
-      SalaryAdvanceStatus.PENDING,
-      SalaryAdvanceStatus.DEDUCTED,
-      SalaryAdvanceStatus.CANCELLED,
-    ];
-    const status = statusCycle[i % statusCycle.length];
-    const amountFcfa = 10_000 + (i % 12) * 5_000;
-    const payrollMonth = status === SalaryAdvanceStatus.DEDUCTED ? currentMonth : null;
-    const payrollYear = status === SalaryAdvanceStatus.DEDUCTED ? currentYear : null;
-
-    await prisma.salaryAdvance.create({
-      data: {
-        employeeId: employee.id,
-        amountFcfa,
-        businessDate: dateOnly(dayOffset),
-        comment: `[DEMO] Avance test #${String(i + 1).padStart(3, "0")}`,
-        status,
-        payrollYear,
-        payrollMonth,
-        recordedById: staff.gestionnaire,
-        createdAt: daysAgo(dayOffset, 11, 0),
-      },
-    });
-  }
-
   const journalInvoices: { id: string; amountFcfa: number; paidAt: Date }[] = [];
   for (let i = 0; i < DEMO_BULK_JOURNAL_INVOICE_COUNT; i++) {
     const patient = patients[i % patients.length];
@@ -355,7 +354,7 @@ async function seedBulkVolumeData(params: {
       },
     });
     const inv = await createPaidInvoice({
-      invoiceNumber: `DEMO-FAC-${year}-${String(invoiceSeq++).padStart(4, "0")}`,
+      invoiceNumber: `FAC-${String(invoiceSeq++).padStart(3, "0")}`,
       patientId: patient.id,
       visitId: visit.id,
       type: InvoiceType.CONSULTATION,
@@ -370,13 +369,20 @@ async function seedBulkVolumeData(params: {
 }
 
 export async function seedDemoData() {
+  await migrateLegacyPatientCodes();
+
   if (process.env.SEED_DEMO === "0") {
     console.log("Seed démo ignoré (SEED_DEMO=0).");
     return;
   }
 
   const existing = await prisma.patient.findFirst({
-    where: { code: { startsWith: DEMO_PATIENT_PREFIX } },
+    where: {
+      OR: [
+        { code: { startsWith: LEGACY_DEMO_PATIENT_PREFIX } },
+        { code: `${DEMO_PATIENT_PREFIX}001` },
+      ],
+    },
     select: { id: true },
   });
 
@@ -508,7 +514,7 @@ export async function seedDemoData() {
     });
     const amount = day % 3 === 0 ? 9500 : 5000;
     const inv = await createPaidInvoice({
-      invoiceNumber: `DEMO-FAC-${year}-${String(invoiceSeq++).padStart(4, "0")}`,
+      invoiceNumber: `FAC-${String(invoiceSeq++).padStart(3, "0")}`,
       patientId: patient.id,
       visitId: visit.id,
       type: InvoiceType.CONSULTATION,
@@ -540,7 +546,7 @@ export async function seedDemoData() {
     },
   });
   await createPaidInvoice({
-    invoiceNumber: `DEMO-FAC-${year}-${String(invoiceSeq++).padStart(4, "0")}`,
+    invoiceNumber: `FAC-${String(invoiceSeq++).padStart(3, "0")}`,
     patientId: pKhadija.id,
     visitId: visitKhadija.id,
     type: InvoiceType.CONSULTATION,
@@ -549,7 +555,7 @@ export async function seedDemoData() {
     paidAt: daysAgo(4, 9, 15),
   });
   const examInvoice = await createPaidInvoice({
-    invoiceNumber: `DEMO-FAC-${year}-${String(invoiceSeq++).padStart(4, "0")}`,
+    invoiceNumber: `FAC-${String(invoiceSeq++).padStart(3, "0")}`,
     patientId: pKhadija.id,
     visitId: visitKhadija.id,
     type: InvoiceType.LAB_EXAM,
@@ -594,7 +600,7 @@ export async function seedDemoData() {
     },
   });
   await createPaidInvoice({
-    invoiceNumber: `DEMO-FAC-${year}-${String(invoiceSeq++).padStart(4, "0")}`,
+    invoiceNumber: `FAC-${String(invoiceSeq++).padStart(3, "0")}`,
     patientId: pFatna.id,
     visitId: visitFatna.id,
     type: InvoiceType.CONSULTATION,
@@ -622,7 +628,7 @@ export async function seedDemoData() {
     },
   });
   await createPaidInvoice({
-    invoiceNumber: `DEMO-FAC-${year}-${String(invoiceSeq++).padStart(4, "0")}`,
+    invoiceNumber: `FAC-${String(invoiceSeq++).padStart(3, "0")}`,
     patientId: pHassan.id,
     visitId: visitHassan.id,
     type: InvoiceType.CONSULTATION,
@@ -698,7 +704,7 @@ export async function seedDemoData() {
     },
   });
   const surgeryInv = await createPaidInvoice({
-    invoiceNumber: `DEMO-FAC-${year}-${String(invoiceSeq++).padStart(4, "0")}`,
+    invoiceNumber: `FAC-${String(invoiceSeq++).padStart(3, "0")}`,
     patientId: pAmina.id,
     visitId: visitAminaSurgery.id,
     surgeryCaseId: surgeryAmina.id,
@@ -744,7 +750,7 @@ export async function seedDemoData() {
     },
   });
   await createPaidInvoice({
-    invoiceNumber: `DEMO-FAC-${year}-${String(invoiceSeq++).padStart(4, "0")}`,
+    invoiceNumber: `FAC-${String(invoiceSeq++).padStart(3, "0")}`,
     patientId: pMoussa.id,
     visitId: visitMoussa.id,
     hospitalizationId: hospMoussa.id,
@@ -789,7 +795,7 @@ export async function seedDemoData() {
     },
   });
   await createPaidInvoice({
-    invoiceNumber: `DEMO-FAC-${year}-${String(invoiceSeq++).padStart(4, "0")}`,
+    invoiceNumber: `FAC-${String(invoiceSeq++).padStart(3, "0")}`,
     patientId: pZara.id,
     visitId: visitZara.id,
     hospitalizationId: hospZara.id,
@@ -799,7 +805,7 @@ export async function seedDemoData() {
     paidAt: daysAgo(18, 14, 30),
   });
   const hospFinalInv = await createPaidInvoice({
-    invoiceNumber: `DEMO-FAC-${year}-${String(invoiceSeq++).padStart(4, "0")}`,
+    invoiceNumber: `FAC-${String(invoiceSeq++).padStart(3, "0")}`,
     patientId: pZara.id,
     visitId: visitZara.id,
     hospitalizationId: hospZara.id,
@@ -840,7 +846,7 @@ export async function seedDemoData() {
     },
   });
   await createPaidInvoice({
-    invoiceNumber: `DEMO-FAC-${year}-${String(invoiceSeq++).padStart(4, "0")}`,
+    invoiceNumber: `FAC-${String(invoiceSeq++).padStart(3, "0")}`,
     patientId: pSaleh.id,
     visitId: visitSaleh.id,
     type: InvoiceType.CONSULTATION,
@@ -868,7 +874,7 @@ export async function seedDemoData() {
     },
   });
   const pharmaInv = await createPaidInvoice({
-    invoiceNumber: `DEMO-FAC-${year}-${String(invoiceSeq++).padStart(4, "0")}`,
+    invoiceNumber: `FAC-${String(invoiceSeq++).padStart(3, "0")}`,
     patientId: pIssa.id,
     visitId: visitIssa.id,
     type: InvoiceType.PHARMACY,
@@ -1129,19 +1135,15 @@ export async function seedDemoData() {
   const payrollDemoCount = await prisma.employeePayroll.count({
     where: { remarks: { startsWith: "[DEMO]" } },
   });
-  const advanceDemoCount = await prisma.salaryAdvance.count({
-    where: { comment: { startsWith: "[DEMO]" } },
-  });
   const employeeDemoCount = await prisma.employee.count({
     where: { firstName: DEMO_EMPLOYEE_FIRST_NAME, lastName: { startsWith: "Salarié " } },
   });
 
   console.log("Données démo créées :");
   console.log(`  · ${patients.length} patients (${DEMO_PATIENT_PREFIX}*)`);
-  console.log(`  · ${invoiceSeq - 1} factures DEMO-FAC-${year}-*`);
+  console.log(`  · ${invoiceSeq - 1} factures FAC-*`);
   console.log(`  · ${employeeDemoCount} employés démo (Démo Salarié ###)`);
   console.log(`  · ${payrollDemoCount} fiches de paie [DEMO]`);
-  console.log(`  · ${advanceDemoCount} avances sur salaire [DEMO]`);
   console.log("  · Visites (attente, consultation, chirurgie, hospitalisation)");
   console.log("  · Décaissements, dépenses, pharmacie, réclamations labo");
 }

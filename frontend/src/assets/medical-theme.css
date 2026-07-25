@@ -1,6 +1,18 @@
 :root {
   --font: 'Plus Jakarta Sans', system-ui, sans-serif;
 
+  /*
+   * Breakpoints canoniques (réutiliser ces valeurs littérales dans @media) :
+   *  --bp-sm: 640  → max-width: 639px  (mobile)
+   *  --bp-md: 768  → max-width: 767px  (tablette basse)
+   *  --bp-lg: 960  → max-width: 959px  (tablette)
+   *  --bp-xl: 1024 → max-width: 1023px (sous-desktop) / min-width: 1024px
+   */
+  --bp-sm: 640px;
+  --bp-md: 768px;
+  --bp-lg: 960px;
+  --bp-xl: 1024px;
+
   /* Palette logo Al-Watan — accents (danger / anneaux) */
   --brand-red: #d32f2f;
   --brand-red-50: #fdecea;

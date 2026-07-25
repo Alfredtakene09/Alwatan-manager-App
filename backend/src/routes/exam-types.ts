@@ -10,6 +10,7 @@ import {
   findDuplicateIntervention,
 } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
+import { selectableDoctorWhere } from "../lib/doctor-compensation.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -258,7 +259,7 @@ router.delete("/catalog/:kindSlug/:id", async (req, res) => {
 
 router.get("/operations/doctors", async (_req, res) => {
   const doctors = await prisma.user.findMany({
-    where: { role: "MEDECIN", active: true },
+    where: selectableDoctorWhere,
     select: { id: true, firstName: true, lastName: true },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });

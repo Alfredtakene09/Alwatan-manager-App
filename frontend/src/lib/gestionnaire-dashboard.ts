@@ -17,6 +17,7 @@ export type DailyFlowPoint = {
   inflowsFcfa: number
   outflowsFcfa: number
   balanceFcfa: number
+  payrollFcfa?: number
 }
 
 export type ExpenseDonutSlice = {
@@ -25,6 +26,60 @@ export type ExpenseDonutSlice = {
   amountFcfa: number
   percent: number
   color: string
+}
+
+export type CardPeriodKey = 'week' | 'month' | 'year'
+
+export type CardPeriodShare = {
+  key: string
+  label: string
+  amountFcfa: number
+  percent: number
+  color: string
+}
+
+export type CardPeriodChangeBar = {
+  key: string
+  label: string
+  amountFcfa: number
+  percent: number
+  color: string
+}
+
+export type CardPeriodSeriesPoint = {
+  label: string
+  revenueFcfa: number
+  expensesFcfa: number
+  netFcfa: number
+  payrollFcfa: number
+  revenuePercent: number
+  expensesPercent: number
+  netPercent: number
+  payrollPercent: number
+}
+
+export type CardPeriodStats = {
+  key: CardPeriodKey
+  label: string
+  revenueFcfa: number
+  expensesFcfa: number
+  netFcfa: number
+  payrollFcfa: number
+  revenueChangePercent: number
+  expensesChangePercent: number
+  netChangePercent: number
+  payrollChangePercent: number
+  shares: CardPeriodShare[]
+  netShare: CardPeriodShare
+  changeBars: CardPeriodChangeBar[]
+  series: CardPeriodSeriesPoint[]
+  expenseBreakdown: ExpenseDonutSlice[]
+}
+
+export type CardPeriodStatsBundle = {
+  week: CardPeriodStats
+  month: CardPeriodStats
+  year: CardPeriodStats
 }
 
 export type ComptableDisbursementPhase =
@@ -61,6 +116,7 @@ export type GestionnaireDashboardOverview = {
   financialKpis: FinancialKpis
   kpis: GestionnaireKpis
   dailyFlow: DailyFlowPoint[]
+  cardPeriodStats?: CardPeriodStatsBundle
   expenseBreakdown: ExpenseDonutSlice[]
   alerts: {
     cashRegisters: CashRegisterAlert[]

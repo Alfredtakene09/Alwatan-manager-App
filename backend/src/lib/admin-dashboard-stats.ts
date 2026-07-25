@@ -449,7 +449,7 @@ async function buildClinicalSupervision(now: Date) {
   const tomorrowStart = new Date(todayStart);
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
 
-  const [patientsToday, appointmentsToday, examsPending, activeHospitalizations] =
+  const [patientsToday, openVisitsToday, examsPending, activeHospitalizations] =
     await Promise.all([
       prisma.visit.count({ where: { createdAt: { gte: todayStart, lt: tomorrowStart } } }),
       prisma.visit.count({
@@ -468,7 +468,8 @@ async function buildClinicalSupervision(now: Date) {
 
   return {
     patientsToday,
-    appointmentsToday,
+    /** Visites du jour non terminées / non annulées (pas un module RDV). */
+    openVisitsToday,
     examsPending,
     activeHospitalizations,
   };

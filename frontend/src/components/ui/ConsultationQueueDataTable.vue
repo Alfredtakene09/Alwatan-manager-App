@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Config } from 'datatables.net'
+import type { Config, ConfigColumns } from 'datatables.net'
 import { fullName } from '@/lib/roles'
 import { getVisitStatusMeta } from '@/lib/visit-status'
 import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
@@ -61,8 +61,10 @@ const tableData = computed(() =>
   }),
 )
 
-const columns = computed(() => {
-  const base = [
+type QueueColumn = ConfigColumns & { responsivePriority?: number }
+
+const columns = computed((): ConfigColumns[] => {
+  const base: QueueColumn[] = [
   {
     data: 'code',
     title: 'Matricule',
@@ -101,7 +103,7 @@ const columns = computed(() => {
       responsivePriority: 2,
       render: (name: string) => `<span class="dt-date">${name}</span>`,
     })
-    return base
+    return base as ConfigColumns[]
   }
 
   base.push({
@@ -121,7 +123,7 @@ const columns = computed(() => {
       </div>
     `,
   })
-  return base
+  return base as ConfigColumns[]
 })
 
 const options = computed<Config>(() => ({

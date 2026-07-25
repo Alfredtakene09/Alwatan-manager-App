@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, type Component } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   LayoutDashboard,
@@ -7,7 +7,6 @@ import {
   TrendingDown,
   TrendingUp,
   Users,
-  CalendarDays,
   FlaskConical,
   BedDouble,
   Wallet,
@@ -18,14 +17,20 @@ import {
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { canAccessModule, formatFcfa } from '@/lib/roles'
-import type { AdminDashboardOverview, TrendFilter } from '@/lib/admin-dashboard'
-import { filterTrend, formatTrendPercent } from '@/lib/admin-dashboard'
+import type { AdminDashboardOverview } from '@/lib/admin-dashboard'
 import {
-  formatCashDelayLabel,
-  type GestionnaireDashboardOverview,
-} from '@/lib/gestionnaire-dashboard'
+  formatMonthLabel,
+  formatTrendPercentLocalized,
+  translateCashDelayLabel,
+  translateCashScheduleHint,
+  translateDashboardLabel,
+  translateTemplate,
+} from '@/lib/dashboard-i18n'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import type { GestionnaireDashboardOverview } from '@/lib/gestionnaire-dashboard'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import UiInput from '@/components/ui/UiInput.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import RoleDashboardShell from '@/components/dashboard/RoleDashboardShell.vue'
@@ -36,12 +41,13 @@ import type { SummaryStat } from '@/lib/dashboard-summary'
 
 const router = useRouter()
 const auth = useAuthStore()
+const { localeCode, isArabic } = useAppI18n()
 
 const overview = ref<AdminDashboardOverview | null>(null)
 const gestionnaireOverview = ref<GestionnaireDashboardOverview | null>(null)
 const loading = ref(false)
 const loadError = ref('')
-const trendFilter = ref<TrendFilter>('year')
+const selectedTrendMonth = ref('')
 const showAlertsModal = ref(false)
 
 const showAdminSection = computed(() =>
@@ -68,68 +74,82 @@ const EXPENSE_COLORS: Record<string, string> = {
 }
 
 const summaryStats = computed((): SummaryStat[] => {
+  void localeCode.value
   const k = gestionnaireOverview.value?.financialKpis ?? overview.value?.financialKpis
   if (!k) return []
   return [
     {
       id: 'revenue',
-      label: 'Recettes du mois',
+      label: translateDashboardLabel('Recettes du mois'),
       value: formatFcfa(k.revenueMonthFcfa),
       icon: Banknote,
       variant: 'green',
-      trend: formatTrendPercent(k.revenueChangePercent),
+      trend: formatTrendPercentLocalized(k.revenueChangePercent),
     },
     {
       id: 'expenses',
-      label: 'Dépenses du mois',
+      label: translateDashboardLabel('Dépenses du mois'),
       value: formatFcfa(k.expensesMonthFcfa),
       icon: TrendingDown,
       variant: 'rose',
-      trend: formatTrendPercent(k.expensesChangePercent),
+      trend: formatTrendPercentLocalized(k.expensesChangePercent),
     },
     {
       id: 'net',
-      label: 'Bénéfice net',
+      label: translateDashboardLabel('Bénéfice net'),
       value: formatFcfa(k.netMonthFcfa),
       icon: TrendingUp,
       variant: 'blue',
-      trend: formatTrendPercent(k.netChangePercent),
+      trend: formatTrendPercentLocalized(k.netChangePercent),
     },
     {
       id: 'payroll',
-      label: 'Masse salariale',
+      label: translateDashboardLabel('Masse salariale'),
       value: formatFcfa(k.payrollMonthFcfa),
       icon: Users,
       variant: 'violet',
-      trend: formatTrendPercent(k.payrollChangePercent),
+      trend: formatTrendPercentLocalized(k.payrollChangePercent),
     },
   ]
 })
 
 const filteredTrend = computed(() => {
   if (!overview.value) return []
-  return filterTrend(overview.value.monthlyTrend, trendFilter.value)
+  const points = overview.value.monthlyTrend
+  if (!selectedTrendMonth.value) return points
+  const [yearRaw, monthRaw] = selectedTrendMonth.value.split('-')
+  const year = Number(yearRaw)
+  const month = Number(monthRaw)
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return points
+  const endIndex = points.findIndex((row) => row.year === year && row.month === month)
+  if (endIndex < 0) return points
+  return points.slice(Math.max(0, endIndex - 11), endIndex + 1)
 })
 
-const lineChartLabels = computed(() => filteredTrend.value.map((row) => row.label))
+const lineChartLabels = computed(() => {
+  void localeCode.value
+  const locale = isArabic.value ? 'ar-TD' : 'fr-FR'
+  return filteredTrend.value.map((row) => formatMonthLabel(row.year, row.month, locale))
+})
 const lineChartSeries = computed(() => {
+  void localeCode.value
   const points = filteredTrend.value
   return [
     {
       key: 'revenue',
-      label: 'Recettes',
+      label: translateDashboardLabel('Recettes'),
       color: '#16a34a',
       values: points.map((row) => row.revenueFcfa),
     },
     {
       key: 'expenses',
-      label: 'Dépenses',
+      label: translateDashboardLabel('Dépenses'),
       color: '#e11d48',
       values: points.map((row) => row.expensesFcfa),
     },
     {
       key: 'net',
-      label: 'Bénéfice net',
+      label: translateDashboardLabel('Bénéfice net'),
       color: '#2563eb',
       values: points.map((row) => row.netFcfa),
     },
@@ -153,11 +173,55 @@ const expenseBars = computed(() =>
   })),
 )
 
+const moduleIconByKey: Record<string, Component> = {
+  consultations: Users,
+  examens: FlaskConical,
+  laboratoire: FlaskConical,
+  operations: TrendingUp,
+  hospitalisation: BedDouble,
+  pharmacie: Wallet,
+  autres: Banknote,
+}
+
+const moduleVariantByKey: Record<string, NonNullable<SummaryStat['variant']>> = {
+  consultations: 'teal',
+  examens: 'blue',
+  laboratoire: 'blue',
+  operations: 'amber',
+  hospitalisation: 'violet',
+  pharmacie: 'green',
+  autres: 'cyan',
+}
+
+const revenueModuleStats = computed(() => {
+  void localeCode.value
+  const rows = overview.value?.revenueBreakdown ?? []
+  return rows.map((row) => {
+    const normalizedKey = row.key.toLowerCase()
+    const icon = moduleIconByKey[normalizedKey] ?? Banknote
+    const variant = moduleVariantByKey[normalizedKey] ?? 'green'
+    return {
+      id: `revenue-module-${row.key}`,
+      label: `${translateDashboardLabel('Entrées')} ${translateDashboardLabel(row.label)}`,
+      value: formatFcfa(row.amountFcfa),
+      icon,
+      variant,
+    }
+  })
+})
+
+const pharmacieRevenueFcfa = computed(() => {
+  const rows = overview.value?.revenueBreakdown ?? []
+  const pharmacie = rows.find((row) => row.key.toLowerCase() === 'pharmacie')
+  return pharmacie?.amountFcfa ?? 0
+})
+
 const comptableCashAlert = computed(
   () => gestionnaireOverview.value?.alerts.cashRegisters.find((row) => row.id === 'comptabilite') ?? null,
 )
 
 const dashboardAlerts = computed(() => {
+  void localeCode.value
   const items: Array<{
     id: string
     severity: 'danger' | 'warning' | 'info'
@@ -169,9 +233,9 @@ const dashboardAlerts = computed(() => {
 
   const cash = comptableCashAlert.value
   if (cash && cash.pendingFcfa > 0) {
-    const delay = formatCashDelayLabel(cash.hoursSinceLastDisbursement, cash.lastDisbursementAt)
-    const scheduleHint = cash.hint ?? cash.workflowHint ?? ''
-    const statusLabel = cash.disbursementStatusLabel ?? 'Solde comptable en attente'
+    const delay = translateCashDelayLabel(cash.hoursSinceLastDisbursement, cash.lastDisbursementAt)
+    const scheduleHint = translateCashScheduleHint(cash.hint ?? cash.workflowHint ?? '')
+    const statusLabel = translateDashboardLabel(cash.disbursementStatusLabel ?? 'Solde comptable en attente')
     const isDuringDay = cash.disbursementPhase === 'during_day'
     let cashSeverity: 'danger' | 'warning' | 'info' = 'warning'
     if (cash.overdue) cashSeverity = 'danger'
@@ -180,8 +244,14 @@ const dashboardAlerts = computed(() => {
       id: 'cash-comptable',
       severity: cashSeverity,
       title: statusLabel,
-      message: `${formatFcfa(cash.pendingFcfa)} en tirelire comptable (${delay}). ${scheduleHint}`,
-      actionLabel: cash.overdue ? 'Récupérer la tirelire' : 'Voir la caisse comptable',
+      message: translateTemplate('{amount} en tirelire comptable ({delay}). {hint}', {
+        amount: formatFcfa(cash.pendingFcfa),
+        delay,
+        hint: scheduleHint,
+      }),
+      actionLabel: cash.overdue
+        ? translateDashboardLabel('Récupérer la tirelire')
+        : translateDashboardLabel('Voir la caisse comptable'),
       actionTo: '/gestionnaire/caisse',
     })
   }
@@ -192,9 +262,11 @@ const dashboardAlerts = computed(() => {
     items.push({
       id: 'payroll',
       severity: 'warning',
-      title: 'Paie du mois incomplète',
-      message: `${unpaidPayroll} salaire${unpaidPayroll > 1 ? 's' : ''} encore à valider ce mois.`,
-      actionLabel: 'Ouvrir la paie',
+      title: translateDashboardLabel('Paie du mois incomplète'),
+      message: unpaidPayroll > 1
+        ? translateTemplate('{n} salaires encore à valider ce mois.', { n: unpaidPayroll })
+        : translateTemplate('{n} salaire encore à valider ce mois.', { n: unpaidPayroll }),
+      actionLabel: translateDashboardLabel('Ouvrir la paie'),
       actionTo: showGestionnaireSection.value ? '/gestionnaire/salaires' : '/admin/salaires',
     })
   }
@@ -204,9 +276,11 @@ const dashboardAlerts = computed(() => {
     items.push({
       id: 'pending-expenses',
       severity: 'warning',
-      title: 'Dépenses à valider',
-      message: `${pendingExpenses} dépense${pendingExpenses > 1 ? 's' : ''} en attente de validation.`,
-      actionLabel: 'Voir les dépenses',
+      title: translateDashboardLabel('Dépenses à valider'),
+      message: pendingExpenses > 1
+        ? translateTemplate('{n} dépenses en attente de validation.', { n: pendingExpenses })
+        : translateTemplate('{n} dépense en attente de validation.', { n: pendingExpenses }),
+      actionLabel: translateDashboardLabel('Voir les dépenses'),
       actionTo: '/admin/depenses',
     })
   }
@@ -216,14 +290,29 @@ const dashboardAlerts = computed(() => {
     items.push({
       id: 'low-stock',
       severity: 'warning',
-      title: 'Stock pharmacie bas',
-      message: `${lowStock} produit${lowStock > 1 ? 's' : ''} en stock critique.`,
-      actionLabel: 'Voir la pharmacie',
+      title: translateDashboardLabel('Stock pharmacie bas'),
+      message: lowStock > 1
+        ? translateTemplate('{n} produits en stock critique.', { n: lowStock })
+        : translateTemplate('{n} produit en stock critique.', { n: lowStock }),
+      actionLabel: translateDashboardLabel('Voir la pharmacie'),
       actionTo: '/pharmacie/alertes',
     })
   }
 
   return items
+})
+
+const alertsAriaLabel = computed(() => {
+  void localeCode.value
+  return translateTemplate('Alertes ({n})', { n: alertsCount.value })
+})
+
+const alertsModalSubtitle = computed(() => {
+  void localeCode.value
+  if (!alertsCount.value) return translateDashboardLabel('Aucune alerte')
+  return alertsCount.value > 1
+    ? translateTemplate('{n} alertes à traiter', { n: alertsCount.value })
+    : translateTemplate('{n} alerte à traiter', { n: alertsCount.value })
 })
 
 const alertsCount = computed(() => dashboardAlerts.value.length)
@@ -237,29 +326,19 @@ async function loadOverview() {
   loading.value = true
   loadError.value = ''
   try {
-    const requests: Promise<void>[] = []
-
     if (showAdminSection.value) {
-      requests.push(
-        api.get<AdminDashboardOverview>('/dashboard/admin').then(({ data }) => {
-          overview.value = data
-        }),
-      )
+      const { data } = await api.get<AdminDashboardOverview>('/dashboard/admin')
+      overview.value = data
+      // Priorité au chargement direction pour afficher rapidement cartes + graphes.
+      gestionnaireOverview.value = null
+    } else if (showGestionnaireSection.value) {
+      const { data } = await api.get<GestionnaireDashboardOverview>('/dashboard/gestionnaire')
+      gestionnaireOverview.value = data
+      overview.value = null
     } else {
       overview.value = null
-    }
-
-    if (showGestionnaireSection.value) {
-      requests.push(
-        api.get<GestionnaireDashboardOverview>('/dashboard/gestionnaire').then(({ data }) => {
-          gestionnaireOverview.value = data
-        }),
-      )
-    } else {
       gestionnaireOverview.value = null
     }
-
-    await Promise.all(requests)
   } catch {
     loadError.value = 'Impossible de charger le tableau de bord.'
     overview.value = null
@@ -287,7 +366,7 @@ onMounted(loadOverview)
         type="button"
         class="alerts-bell"
         :class="{ 'alerts-bell--active': alertsCount > 0 }"
-        :aria-label="`Alertes (${alertsCount})`"
+        :aria-label="alertsAriaLabel"
         @click="showAlertsModal = true"
       >
         <Bell :size="18" />
@@ -300,7 +379,7 @@ onMounted(loadOverview)
         :icon="Wallet"
         @click="router.push('/admin/depenses')"
       >
-        Dépenses récentes
+        Gestion des dépenses
       </UiButton>
       <UiButton variant="ghost" size="sm" :disabled="loading" @click="loadOverview">
         Actualiser
@@ -308,34 +387,52 @@ onMounted(loadOverview)
     </template>
 
     <div class="admin-dashboard">
+      <section v-if="showAdminSection && revenueModuleStats.length" class="finance-entry-section">
+        <div class="finance-entry-section__header">
+          <h3>Entrées financières par module</h3>
+          <span>{{ selectedTrendMonth ? 'Période personnalisée' : 'Vue agrégée' }}</span>
+        </div>
+        <div class="finance-entry-cards">
+          <UiStatCard
+            v-for="card in revenueModuleStats"
+            :key="card.id"
+            :label="card.label"
+            :value="card.value"
+            :icon="card.icon"
+            :variant="card.variant"
+            compact
+          />
+        </div>
+      </section>
+
       <section v-if="showAdminSection" class="clinical-cards">
         <UiStatCard
           label="Patients aujourd'hui"
           :value="overview?.clinical.patientsToday ?? 0"
           :icon="Users"
           variant="teal"
-          mini
+          compact
         />
         <UiStatCard
-          label="RDV du jour"
-          :value="overview?.clinical.appointmentsToday ?? 0"
-          :icon="CalendarDays"
-          variant="blue"
-          mini
+          label="Entrées pharmacie"
+          :value="formatFcfa(pharmacieRevenueFcfa)"
+          :icon="Wallet"
+          variant="green"
+          compact
         />
         <UiStatCard
           label="Examens en attente"
           :value="overview?.clinical.examsPending ?? 0"
           :icon="FlaskConical"
           variant="amber"
-          mini
+          compact
         />
         <UiStatCard
           label="Hospitalisations actives"
           :value="overview?.clinical.activeHospitalizations ?? 0"
           :icon="BedDouble"
           variant="violet"
-          mini
+          compact
         />
       </section>
 
@@ -347,30 +444,7 @@ onMounted(loadOverview)
           icon-variant="blue"
         >
           <div class="trend-filters">
-            <button
-              type="button"
-              class="trend-filters__btn"
-              :class="{ 'trend-filters__btn--active': trendFilter === 'month' }"
-              @click="trendFilter = 'month'"
-            >
-              Mois
-            </button>
-            <button
-              type="button"
-              class="trend-filters__btn"
-              :class="{ 'trend-filters__btn--active': trendFilter === 'quarter' }"
-              @click="trendFilter = 'quarter'"
-            >
-              Trimestre
-            </button>
-            <button
-              type="button"
-              class="trend-filters__btn"
-              :class="{ 'trend-filters__btn--active': trendFilter === 'year' }"
-              @click="trendFilter = 'year'"
-            >
-              Année
-            </button>
+            <UiInput v-model="selectedTrendMonth" type="month" label="Période" class="trend-filters__date" />
           </div>
           <DashboardLineChart
             :labels="lineChartLabels"
@@ -403,7 +477,7 @@ onMounted(loadOverview)
     <UiFormModal
       v-if="showAlertsModal"
       title="Alertes"
-      :subtitle="alertsCount ? `${alertsCount} alerte${alertsCount > 1 ? 's' : ''} à traiter` : 'Aucune alerte'"
+      :subtitle="alertsModalSubtitle"
       :icon="Bell"
       @close="showAlertsModal = false"
     >
@@ -446,13 +520,45 @@ onMounted(loadOverview)
 .admin-dashboard {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1rem;
+}
+
+.finance-entry-section {
+  border: 1px solid rgba(22, 163, 74, 0.22);
+  border-radius: 14px;
+  padding: 0.75rem;
+  background: linear-gradient(180deg, rgba(240, 253, 244, 0.75), rgba(255, 255, 255, 0.95));
+}
+
+.finance-entry-section__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.finance-entry-section__header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #166534;
+}
+
+.finance-entry-section__header span {
+  font-size: 0.75rem;
+  color: #4b5563;
+}
+
+.finance-entry-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 
 .charts-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
+  gap: 0.75rem;
 }
 
 .charts-grid > :first-child {
@@ -471,21 +577,8 @@ onMounted(loadOverview)
   margin-bottom: 0.75rem;
 }
 
-.trend-filters__btn {
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-muted);
-  border-radius: 999px;
-  padding: 0.3rem 0.75rem;
-  font-size: 0.75rem;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.trend-filters__btn--active {
-  background: var(--accent-100);
-  color: var(--accent-700);
-  border-color: rgba(107, 124, 62, 0.35);
+.trend-filters__date {
+  max-width: 220px;
 }
 
 .alerts-bell {
@@ -597,7 +690,8 @@ onMounted(loadOverview)
 
 @media (max-width: 1100px) {
   .charts-grid,
-  .clinical-cards {
+  .clinical-cards,
+  .finance-entry-cards {
     grid-template-columns: 1fr;
   }
 

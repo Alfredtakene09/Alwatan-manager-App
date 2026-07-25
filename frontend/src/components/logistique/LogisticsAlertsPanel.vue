@@ -3,7 +3,18 @@ import { computed, onMounted, ref } from 'vue'
 import { RefreshCw } from '@lucide/vue'
 import api from '@/api/client'
 import { statusBadge } from '@/lib/datatable-defaults'
+import {
+  buildClinicPrintHeader,
+  openPrintDocument,
+} from '@/lib/print-document'
+import {
+  exportBasename,
+  exportWorkbook,
+  rowsToHtmlTable,
+  type ExportColumn,
+} from '@/lib/table-export'
 import UiButton from '@/components/ui/UiButton.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
 
@@ -84,12 +95,10 @@ const stockColumns = [
     responsivePriority: 1,
     render: (name: string) => `<span class="dt-name">${name}</span>`,
   },
-  { data: 'sku', title: 'SKU', responsivePriority: 3 },
-  { data: 'category', title: 'Catégorie', responsivePriority: 3 },
   {
     data: 'stockLabel',
     title: 'Stock',
-    responsivePriority: 2,
+    responsivePriority: 1,
     render: (label: string, _t: string, row: { levelVariant: string }) =>
       statusBadge(label, row.levelVariant as 'danger' | 'warning'),
   },
@@ -109,8 +118,7 @@ const expiryColumns = [
     responsivePriority: 1,
     render: (name: string) => `<span class="dt-name">${name}</span>`,
   },
-  { data: 'sku', title: 'SKU', responsivePriority: 3 },
-  { data: 'expiryDate', title: 'Expiration', responsivePriority: 2 },
+  { data: 'expiryDate', title: 'Exp.', responsivePriority: 2 },
   { data: 'daysLabel', title: 'Délai', responsivePriority: 2 },
   {
     data: 'levelLabel',
@@ -135,6 +143,42 @@ async function loadAlerts() {
   }
 }
 
+type StockExportRow = (typeof stockRows.value)[number]
+type ExpiryExportRow = (typeof expiryRows.value)[number]
+
+const stockExportColumns: ExportColumn<StockExportRow>[] = [
+  { header: 'Article', value: (r) => r.name },
+  { header: 'Stock', value: (r) => r.stockLabel },
+  { header: 'Alerte', value: (r) => r.levelLabel },
+]
+
+const expiryExportColumns: ExportColumn<ExpiryExportRow>[] = [
+  { header: 'Article', value: (r) => r.name },
+  { header: 'Expiration', value: (r) => r.expiryDate },
+  { header: 'Délai', value: (r) => r.daysLabel },
+  { header: 'Alerte', value: (r) => r.levelLabel },
+]
+
+const hasAlertRows = computed(() => stockRows.value.length > 0 || expiryRows.value.length > 0)
+
+function exportPdf() {
+  if (!hasAlertRows.value) return
+  const body = `${buildClinicPrintHeader('Alertes logistique')}
+<h3>Alertes stock</h3>
+${rowsToHtmlTable(stockExportColumns, stockRows.value)}
+<h3>Alertes péremption</h3>
+${rowsToHtmlTable(expiryExportColumns, expiryRows.value)}`
+  openPrintDocument('Alertes logistique', body, { pageSize: 'A4', autoPrint: true })
+}
+
+function exportExcel() {
+  if (!hasAlertRows.value) return
+  exportWorkbook(exportBasename('alertes-logistique'), [
+    { name: 'Stock', columns: stockExportColumns, rows: stockRows.value },
+    { name: 'Péremption', columns: expiryExportColumns, rows: expiryRows.value },
+  ])
+}
+
 onMounted(loadAlerts)
 
 defineExpose({ reload: loadAlerts })
@@ -145,6 +189,7 @@ defineExpose({ reload: loadAlerts })
     <div class="page-table-section">
       <div class="page-table-toolbar">
         <strong class="panel-table-title">Alertes stock</strong>
+        <ExportButtons :disabled="loading || !hasAlertRows" @pdf="exportPdf" @excel="exportExcel" />
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadAlerts">
           Actualiser
         </UiButton>

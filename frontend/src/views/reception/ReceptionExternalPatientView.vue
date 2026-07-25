@@ -17,6 +17,7 @@ import { showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { parsePatientAge, splitPatientFullName, formatPatientAge } from '@/lib/patient-name'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
+import { doctorSelectSuffix, type DoctorOption } from '@/lib/doctor-compensation'
 import { computeGrossFcfaFromExamsByKind, getLabExamPriceFcfa } from '@/lib/lab-exams'
 import { CLINIC } from '@/lib/clinic'
 import { buildClinicPrintHeader, buildLabExamInvoiceHtml, openPrintDocument } from '@/lib/print-document'
@@ -26,6 +27,7 @@ import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPati
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
+import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
@@ -33,6 +35,8 @@ import UiBadge from '@/components/ui/UiBadge.vue'
 import ReceptionQueueRowActions, {
   type QueueRowAction,
 } from '@/components/reception/ReceptionQueueRowActions.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 type PatientRow = {
   id: string
@@ -78,8 +82,12 @@ type DraftNewPatient = {
   ageUnit: PatientAgeUnit
   phone: string
   gender: string
+  doctorId: string
 }
 
+const { uiText, localeCode } = useAppI18n()
+
+const doctors = ref<DoctorOption[]>([])
 const search = ref('')
 const searchResults = ref<PatientRow[]>([])
 const showNewPatientModal = ref(false)
@@ -97,12 +105,13 @@ const patientForm = ref<DraftNewPatient>({
   ageUnit: 'YEARS',
   phone: '',
   gender: 'F',
+  doctorId: '',
 })
 
-const editForm = ref<DraftNewPatient>({
+const editForm = ref({
   fullName: '',
   age: '',
-  ageUnit: 'YEARS',
+  ageUnit: 'YEARS' as PatientAgeUnit,
   phone: '',
   gender: 'F',
 })
@@ -142,14 +151,56 @@ const activePatientLabel = computed(() => {
   return `${p.code} — ${fullName(p.firstName, p.lastName)}`
 })
 
-const searchLabel = computed(() =>
-  searchResults.value.length
-    ? `${searchResults.value.length} résultat(s)`
-    : 'Rechercher un dossier existant',
-)
+const searchLabel = computed(() => {
+  void localeCode.value
+  return searchResults.value.length
+    ? translateTemplate('{n} résultat(s)', { n: searchResults.value.length })
+    : uiText('Rechercher un dossier existant')
+})
+
+const queueCountLabel = computed(() => {
+  void localeCode.value
+  return translateTemplate('{n} dossier(s)', { n: queue.value.length })
+})
+
+const examsModalSubtitle = computed(() => {
+  void localeCode.value
+  if (!activePatientLabel.value) return ''
+  return translateTemplate('{patient} — Laboratoire, radiologie, échographie…', {
+    patient: activePatientLabel.value,
+  })
+})
+
+const tableHeaders = computed(() => {
+  void localeCode.value
+  return {
+    patient: uiText('Patient'),
+    exams: uiText('Examens'),
+    amount: uiText('Montant'),
+    status: uiText('Statut'),
+    actions: uiText('Actions'),
+  }
+})
+
+const formLabels = computed(() => {
+  void localeCode.value
+  return {
+    prescription: uiText('Prescription'),
+    netDue: uiText('Net à payer'),
+    registering: uiText('Enregistrement…'),
+    save: uiText('Enregistrer'),
+    validating: uiText('Validation…'),
+    validate: uiText('Valider'),
+  }
+})
+
+const subtotalLabel = computed(() => {
+  void localeCode.value
+  return translateTemplate('Sous-total {amount}', { amount: formatFcfa(grossFcfa.value) })
+})
 
 function resetPatientForm() {
-  patientForm.value = { fullName: '', age: '', ageUnit: 'YEARS', phone: '', gender: 'F' }
+  patientForm.value = { fullName: '', age: '', ageUnit: 'YEARS', phone: '', gender: 'F', doctorId: '' }
 }
 
 function openNewPatientModal() {
@@ -196,9 +247,10 @@ function closeEditModal() {
 }
 
 function queueStatusLabel(row: ExternalQueueRow) {
-  if (!row.hasExams) return 'En attente examens'
-  if (row.invoiced) return row.invoiceNumber ?? 'Payé'
-  return 'Envoyé au labo'
+  void localeCode.value
+  if (!row.hasExams) return uiText('En attente examens')
+  if (row.invoiced) return row.invoiceNumber ?? uiText('Payé')
+  return uiText('Envoyé au labo')
 }
 
 function queueStatusVariant(row: ExternalQueueRow): 'success' | 'warning' | 'info' {
@@ -241,13 +293,13 @@ function printRow(row: ExternalQueueRow) {
     openPrintDocument(
       `Fiche patient ${patient.code}`,
       `
-${buildClinicPrintHeader('Fiche patient externe')}
+${buildClinicPrintHeader(uiText('Fiche patient externe'))}
   <div class="row"><span>Date</span><strong>${new Date(row.updatedAt).toLocaleString('fr-FR')}</strong></div>
   <div class="row"><span>Patient</span><strong>${patientName}</strong></div>
   <div class="row"><span>Matricule</span><strong>${patient.code}</strong></div>
   ${patient.phone ? `<div class="row"><span>Téléphone</span><strong>${patient.phone}</strong></div>` : ''}
   ${patient.age != null ? `<div class="row"><span>Âge</span><strong>${formatPatientAge(patient.age, normalizePatientAgeUnit(patient.ageUnit))}</strong></div>` : ''}
-  <p style="margin-top:1rem;color:#64748b;font-size:0.875rem;">Dossier enregistré — examens en attente de prescription.</p>
+  <p style="margin-top:1rem;color:#64748b;font-size:0.875rem;">${uiText('Dossier enregistré — examens en attente de prescription.')}</p>
   <div class="footer">${CLINIC.fullAddress}<br>${CLINIC.phoneLabel} — ${CLINIC.email}</div>
 `,
     )
@@ -262,7 +314,7 @@ ${buildClinicPrintHeader('Fiche patient externe')}
     buildLabExamInvoiceHtml({
       patientCode: patient.code,
       patientName,
-      prescribedBy: 'Patient externe — réception',
+      prescribedBy: uiText('Patient externe — réception'),
       examLines: labels.map((label) => ({
         label,
         amountFcfa: getLabExamPriceFcfa(label),
@@ -279,6 +331,15 @@ ${buildClinicPrintHeader('Fiche patient externe')}
     }),
     { pageSize: 'A5' },
   )
+}
+
+async function loadDoctors() {
+  try {
+    const { data } = await api.get<DoctorOption[]>('/visits/doctors')
+    doctors.value = Array.isArray(data) ? data : []
+  } catch {
+    doctors.value = []
+  }
 }
 
 async function loadQueue() {
@@ -313,8 +374,8 @@ async function registerPatient(payload: Record<string, unknown>) {
   try {
     const { data } = await api.post<{ alreadyRegistered?: boolean }>('/visits/external-patient', payload)
     message.value = data.alreadyRegistered
-      ? 'Patient déjà dans la liste des dossiers externes.'
-      : 'Patient enregistré. Ajoutez les examens depuis la liste ci-dessous.'
+      ? uiText('Patient déjà dans la liste des dossiers externes.')
+      : uiText('Patient enregistré. Ajoutez les examens depuis la liste ci-dessous.')
     messageType.value = 'success'
     await loadQueue()
   } catch (error: unknown) {
@@ -324,7 +385,7 @@ async function registerPatient(payload: Record<string, unknown>) {
       error && typeof error === 'object' && 'response' in error
         ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
         : undefined
-    message.value = apiMessage ?? 'Erreur lors de l’enregistrement.'
+    message.value = apiMessage ?? uiText("Erreur lors de l'enregistrement.")
     messageType.value = 'error'
   } finally {
     registering.value = false
@@ -342,6 +403,7 @@ async function confirmNewPatient() {
     ageUnit: patientForm.value.ageUnit,
     phone: patientForm.value.phone.trim() || undefined,
     gender: patientForm.value.gender,
+    doctorId: patientForm.value.doctorId || undefined,
   })
   closeNewPatientModal()
   resetPatientForm()
@@ -363,8 +425,10 @@ async function submitExams() {
       reductionFcfa: Number(reductionFcfa.value) || 0,
     })
     message.value = data.invoice
-      ? `Paiement validé — ${data.invoice.invoiceNumber}. Patient envoyé au laboratoire.`
-      : 'Examens enregistrés et patient envoyé au laboratoire.'
+      ? translateTemplate('Paiement validé — {invoice}. Patient envoyé au laboratoire.', {
+          invoice: data.invoice.invoiceNumber,
+        })
+      : uiText('Examens enregistrés et patient envoyé au laboratoire.')
     messageType.value = 'success'
     closeExamsModal()
     resetExamsForm()
@@ -374,7 +438,7 @@ async function submitExams() {
       error && typeof error === 'object' && 'response' in error
         ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
         : undefined
-    message.value = apiMessage ?? 'Erreur lors de la validation.'
+    message.value = apiMessage ?? uiText('Erreur lors de la validation.')
     messageType.value = 'error'
   } finally {
     submitting.value = false
@@ -396,7 +460,7 @@ async function saveEdit() {
       phone: editForm.value.phone.trim() || undefined,
       gender: editForm.value.gender,
     })
-    message.value = 'Informations patient mises à jour.'
+    message.value = uiText('Informations patient mises à jour.')
     messageType.value = 'success'
     closeEditModal()
     await loadQueue()
@@ -407,7 +471,7 @@ async function saveEdit() {
         error && typeof error === 'object' && 'response' in error
           ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
           : undefined
-      message.value = apiMessage ?? 'Erreur lors de la modification.'
+      message.value = apiMessage ?? uiText('Erreur lors de la modification.')
       messageType.value = 'error'
     }
   } finally {
@@ -415,7 +479,10 @@ async function saveEdit() {
   }
 }
 
-onMounted(loadQueue)
+onMounted(() => {
+  loadQueue()
+  loadDoctors()
+})
 </script>
 
 <template>
@@ -475,7 +542,7 @@ onMounted(loadQueue)
         <UiButton variant="ghost" size="sm" :disabled="loadingQueue" @click="loadQueue">
           Actualiser
         </UiButton>
-        <span class="list-count">{{ queue.length }} dossier(s)</span>
+        <span class="list-count">{{ queueCountLabel }}</span>
       </template>
 
       <p v-if="!loadingQueue && !queue.length" class="empty">Aucun patient externe enregistré pour le moment</p>
@@ -483,11 +550,11 @@ onMounted(loadQueue)
         <table class="queue-table">
           <thead>
             <tr>
-              <th>Patient</th>
-              <th>Examens</th>
-              <th>Montant</th>
-              <th>Statut</th>
-              <th class="col-actions">Actions</th>
+              <th>{{ tableHeaders.patient }}</th>
+              <th>{{ tableHeaders.exams }}</th>
+              <th>{{ tableHeaders.amount }}</th>
+              <th>{{ tableHeaders.status }}</th>
+              <th class="col-actions">{{ tableHeaders.actions }}</th>
             </tr>
           </thead>
           <tbody>
@@ -535,6 +602,12 @@ onMounted(loadQueue)
           v-model:phone="patientForm.phone"
           v-model:gender="patientForm.gender"
         />
+        <UiSelect v-model="patientForm.doctorId" label="Médecin / prescripteur">
+          <option value="">Aucun (optionnel)</option>
+          <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
+            Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ doctorSelectSuffix(doctor) }}
+          </option>
+        </UiSelect>
       </form>
 
       <template #footer>
@@ -547,7 +620,7 @@ onMounted(loadQueue)
           :icon="UserPlus"
           :disabled="!canConfirmNewPatient || registering"
         >
-          {{ registering ? 'Enregistrement…' : 'Enregistrer' }}
+          {{ registering ? formLabels.registering : formLabels.save }}
         </UiButton>
       </template>
     </UiFormModal>
@@ -582,7 +655,7 @@ onMounted(loadQueue)
           :icon="Pencil"
           :disabled="!canSaveEdit || savingEdit"
         >
-          {{ savingEdit ? 'Enregistrement…' : 'Enregistrer' }}
+          {{ savingEdit ? formLabels.registering : formLabels.save }}
         </UiButton>
       </template>
     </UiFormModal>
@@ -591,7 +664,7 @@ onMounted(loadQueue)
       v-if="showExamsModal"
       title-id="exams-modal-title"
       title="Examens à réaliser"
-      :subtitle="`${activePatientLabel} — Laboratoire, radiologie, échographie…`"
+      :subtitle="examsModalSubtitle"
       :icon="FlaskConical"
       size="wide"
       @close="closeExamsModal"
@@ -599,7 +672,7 @@ onMounted(loadQueue)
       <section class="form-panel">
         <h3 class="form-panel__title">
           <FlaskConical :size="14" />
-          Prescription
+          {{ formLabels.prescription }}
         </h3>
         <MultiExamPrescriptionPicker v-model="examsByKind" />
 
@@ -614,9 +687,9 @@ onMounted(loadQueue)
             :icon="Percent"
           />
           <div class="total-preview">
-            <span>Net à payer</span>
+            <span>{{ formLabels.netDue }}</span>
             <strong>{{ formatFcfa(netFcfa) }}</strong>
-            <small>Sous-total {{ formatFcfa(grossFcfa) }}</small>
+            <small>{{ subtotalLabel }}</small>
           </div>
         </div>
       </section>
@@ -629,7 +702,7 @@ onMounted(loadQueue)
           :disabled="submitting || !canSubmitExams"
           @click="submitExams"
         >
-          {{ submitting ? 'Validation…' : 'Valider' }}
+          {{ submitting ? formLabels.validating : formLabels.validate }}
         </UiButton>
       </template>
     </UiFormModal>

@@ -5,6 +5,8 @@ import type { ExamKindSlug } from '@/lib/exam-catalog/types'
 import {
   buildExamSheetsFromBlocks,
   emptyExamReductionsByKind,
+  emptyExamsByKindBlocks,
+  examsByKindFromLines,
   type ExamReductionsByKind,
 } from '@/lib/exam-billing'
 import {
@@ -57,7 +59,7 @@ function buildPrintMetaFromVisit(visit: LabQueuePrintVisit) {
     id: visit.consultation?.id ?? visit.id,
     updatedAt: visit.consultation?.labSentToLabAt ?? visit.updatedAt,
     examLines: examLinesFromClinicalNotes(visit.consultation?.clinicalNotes),
-    examsByKind: {},
+    examsByKind: emptyExamsByKindBlocks(),
     grossFcfa: 0,
     visit: { patient: visit.patient },
     doctor: visit.consultation?.doctor ?? visit.assignedDoctor ?? null,
@@ -112,7 +114,7 @@ export function buildLabPrintItemFromVisit(visit: LabQueuePrintVisit): LabExamPe
     id: visit.consultation?.id ?? visit.id,
     updatedAt: visit.consultation?.labSentToLabAt ?? visit.updatedAt,
     examLines,
-    examsByKind: {},
+    examsByKind: examsByKindFromLines(examLines),
     grossFcfa: 0,
     paidAt: visit.consultation?.labSentToLabAt ?? null,
     labExamReductionFcfa: visit.consultation?.labExamReductionFcfa ?? 0,

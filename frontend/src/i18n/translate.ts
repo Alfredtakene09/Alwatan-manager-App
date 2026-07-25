@@ -21,6 +21,7 @@ const COMMON_FR: Record<string, string> = {
   dbConnected: 'PostgreSQL connecté',
   language: 'Langue',
   refresh: 'Actualiser',
+  myAccount: 'Mon compte',
 }
 
 function activeBundle(): MessageBundle {

@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import {
   BookOpen,
   FileDown,
+  FileSpreadsheet,
   Printer,
   RefreshCw,
   Search,
@@ -12,6 +13,8 @@ import api from '@/api/client'
 import AmountFcfa from '@/components/ui/AmountFcfa.vue'
 import { currentMonthRangeToToday, formatDateRangeLabel, todayDateKey } from '@/lib/date-filters'
 import { CLINIC } from '@/lib/clinic'
+import { exportBasename, exportTableExcel, type ExportColumn } from '@/lib/table-export'
+import { formatFcfa } from '@/lib/roles'
 import UiButton from '@/components/ui/UiButton.vue'
 import ClinicLetterhead from '@/components/ClinicLetterhead.vue'
 import '@/assets/gestionnaire-page.css'
@@ -234,6 +237,65 @@ async function downloadPdf() {
   }
 }
 
+type JournalExportRow = {
+  month: string
+  day: string
+  label: string
+  type: string
+  amountFcfa: number
+  dayInflows: number
+  dayOutflows: number
+  dayBalance: number
+}
+
+const journalExportRows = computed(() => {
+  const rows: JournalExportRow[] = []
+  for (const month of journal.value?.dailyByMonth ?? []) {
+    for (const day of month.days) {
+      for (const line of day.lines) {
+        rows.push({
+          month: month.monthLabel,
+          day: day.label,
+          label: line.label,
+          type: line.type === 'ENTREE' ? 'Entrée' : 'Sortie',
+          amountFcfa: line.amountFcfa,
+          dayInflows: day.inflowsFcfa,
+          dayOutflows: day.outflowsFcfa,
+          dayBalance: day.balanceFcfa,
+        })
+      }
+    }
+  }
+  return rows
+})
+
+const journalExportColumns: ExportColumn<JournalExportRow>[] = [
+  { header: 'Mois', value: (r) => r.month },
+  { header: 'Jour', value: (r) => r.day },
+  { header: 'Libellé', value: (r) => r.label },
+  { header: 'Type', value: (r) => r.type },
+  { header: 'Montant', value: (r) => formatFcfa(r.amountFcfa) },
+  { header: 'Entrées du jour', value: (r) => formatFcfa(r.dayInflows) },
+  { header: 'Sorties du jour', value: (r) => formatFcfa(r.dayOutflows) },
+  { header: 'Solde du jour', value: (r) => formatFcfa(r.dayBalance) },
+]
+
+function exportJournalExcel() {
+  if (!journalExportRows.value.length) return
+  exportTableExcel(`Livre journal — ${periodLabel.value}`, journalExportColumns, journalExportRows.value, {
+    filename: exportBasename(`livre-journal-${todayKey}`),
+  })
+}
+
+function exportJournalCsv() {
+  if (!journal.value?.dailyByMonth.length) return
+  const query = buildQuery({
+    periodLabel: periodLabel.value,
+    ...(filtersLabel.value ? { filtersLabel: filtersLabel.value } : {}),
+  })
+  window.open(`/api/gestionnaire/journal/export.csv?${query}`, '_blank')
+}
+
 function printJournal() {
   if (!journal.value?.dailyByMonth.length) return
   window.print()
@@ -407,6 +469,24 @@ onMounted(loadJournal)
             @click="downloadPdf"
           >
             PDF
+          </UiButton>
+          <UiButton
+            size="sm"
+            variant="outline"
+            :icon="FileSpreadsheet"
+            :disabled="loading || !journalExportRows.length"
+            @click="exportJournalExcel"
+          >
+            Excel
+          </UiButton>
+          <UiButton
+            size="sm"
+            variant="ghost"
+            :icon="FileDown"
+            :disabled="loading || !journal?.dailyByMonth.length"
+            @click="exportJournalCsv"
+          >
+            CSV
           </UiButton>
           <UiButton
             size="sm"

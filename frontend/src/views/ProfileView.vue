@@ -280,6 +280,7 @@ resetProfileForm()
             label="Mot de passe actuel"
             type="password"
             required
+            revealable
             :icon="KeyRound"
             autocomplete="current-password"
           />
@@ -289,6 +290,7 @@ resetProfileForm()
               label="Nouveau mot de passe"
               type="password"
               required
+              revealable
               autocomplete="new-password"
             />
             <UiInput
@@ -296,6 +298,7 @@ resetProfileForm()
               label="Confirmer le mot de passe"
               type="password"
               required
+              revealable
               autocomplete="new-password"
             />
           </div>

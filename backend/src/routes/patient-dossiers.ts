@@ -28,6 +28,7 @@ import {
   assertPatientDataDeletable,
   patientHasPaidBilling,
 } from "../lib/patient-payment-guard.js";
+import { buildPatientPaymentHistory } from "../lib/patient-invoice-payments.js";
 import { medecinMatchWhere } from "../lib/medecin-queues.js";
 import { requireAnyModule, requireAuth, requireManageAccess } from "../middleware/auth.js";
 import { canWriteDossierDocuments, type AppUserRole } from "../lib/roles.js";
@@ -36,6 +37,7 @@ const router = Router();
 router.use(requireAuth);
 
 const DOSSIER_MODULES = ["dossier-patient"] as const;
+const PAYMENT_HISTORY_MODULES = ["dossier-patient", "reception", "comptabilite"] as const;
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -84,6 +86,17 @@ router.get("/medecin/patients", requireAnyModule(...DOSSIER_MODULES), async (req
 
   const patients = await getMedecinDossierPatients(req.user!.id);
   return res.json(patients);
+});
+
+router.get("/:patientId/payment-history", requireAnyModule(...PAYMENT_HISTORY_MODULES), async (req, res) => {
+  const patientId = String(req.params.patientId);
+  const patient = await prisma.patient.findUnique({
+    where: { id: patientId },
+    select: { id: true },
+  });
+  if (!patient) return res.status(404).json({ error: "Patient introuvable" });
+  const history = await buildPatientPaymentHistory(patientId);
+  return res.json(history);
 });
 
 router.get("/:patientId", requireAnyModule(...DOSSIER_MODULES), async (req, res) => {

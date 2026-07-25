@@ -15,6 +15,7 @@ export type LabPanelFieldDto = {
   unit: string | null
   reference: string | null
   defaultValue: string | null
+  hasComment: boolean
   type: string
   sortOrder: number
 }
@@ -48,7 +49,8 @@ export function panelDtoToFormPanel(dto: LabPanelDto): LabFormPanel {
       unit: field.unit ?? undefined,
       reference: field.reference ?? undefined,
       defaultValue: field.defaultValue ?? undefined,
-      type: field.type === 'textarea' ? 'textarea' : 'text',
+      hasComment: field.hasComment === true,
+      type: 'text',
     })
   }
 
@@ -58,6 +60,7 @@ export function panelDtoToFormPanel(dto: LabPanelDto): LabFormPanel {
 export const useLabPanelsStore = defineStore('lab-panels', {
   state: () => ({
     panels: [] as LabFormPanel[],
+    /** Formulaires actifs proposés à la saisie labo (tous les actifs, pas seulement isEntry). */
     entrySlugs: [] as LabPanelSlug[],
     loaded: false,
     loading: false,
@@ -66,7 +69,10 @@ export const useLabPanelsStore = defineStore('lab-panels', {
     getPanel: (state) => (slug: LabPanelSlug) =>
       state.panels.find((panel) => panel.slug === slug),
     entryPanels: (state) =>
-      state.panels.filter((panel) => state.entrySlugs.includes(panel.slug)),
+      state.panels
+        .filter((panel) => state.entrySlugs.includes(panel.slug))
+        .slice()
+        .sort((a, b) => a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' })),
   },
   actions: {
     async fetchPanels(force = false) {
@@ -74,11 +80,12 @@ export const useLabPanelsStore = defineStore('lab-panels', {
       this.loading = true
       try {
         const { data } = await api.get<LabPanelDto[]>('/lab-panels')
-        const ordered = [...data].sort((a, b) => a.sortOrder - b.sortOrder)
+        const ordered = [...data].sort((a, b) =>
+          a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' }),
+        )
         this.panels = ordered.map(panelDtoToFormPanel)
-        this.entrySlugs = ordered
-          .filter((panel) => panel.active && panel.isEntry)
-          .map((panel) => panel.slug)
+        // Tous les formulaires actifs sont proposés à la saisie des résultats
+        this.entrySlugs = ordered.filter((panel) => panel.active).map((panel) => panel.slug)
         setRuntimeLabPanels(this.panels, this.entrySlugs)
         this.loaded = true
       } finally {

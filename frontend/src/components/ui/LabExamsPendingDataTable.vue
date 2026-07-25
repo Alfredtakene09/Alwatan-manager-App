@@ -8,7 +8,8 @@ import { formatExamLinesSummaryShort, type LabExamPendingItem } from '@/lib/lab-
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
 
-const { uiText } = useAppI18n()
+const { uiText, localeCode, isArabic } = useAppI18n()
+const dateLocale = computed(() => (isArabic.value ? 'ar-TD' : 'fr-FR'))
 
 export type LabExamPendingRow = LabExamPendingItem
 
@@ -32,8 +33,9 @@ const emit = defineEmits<{
 
 const isPaidMode = computed(() => props.mode === 'paid')
 
-const tableData = computed(() =>
-  sortByCreatedAtNewestFirst(
+const tableData = computed(() => {
+  void localeCode.value
+  return sortByCreatedAtNewestFirst(
     props.items.map((item) => ({
       ...item,
       createdAt: isPaidMode.value ? (item.paidAt ?? item.updatedAt) : item.updatedAt,
@@ -51,7 +53,7 @@ const tableData = computed(() =>
       patientPhone: item.visit.patient.phone || '',
       doctorName: item.doctor
         ? `Dr ${fullName(item.doctor.firstName, item.doctor.lastName)}`
-        : 'Patient externe — Réception',
+        : uiText('Patient externe — Réception'),
       ...(() => {
         const summary = formatExamLinesSummaryShort(item.examLines, {
           maxLabelChars: 18,
@@ -65,14 +67,15 @@ const tableData = computed(() =>
       })(),
       gross: formatFcfa(isPaidMode.value ? netFcfa : item.grossFcfa),
       grossSort: isPaidMode.value ? netFcfa : item.grossFcfa,
-      date: referenceDate.toLocaleDateString('fr-FR'),
-      time: referenceDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      date: referenceDate.toLocaleDateString(dateLocale.value),
+      time: referenceDate.toLocaleTimeString(dateLocale.value, { hour: '2-digit', minute: '2-digit' }),
       dateSort: referenceDate.getTime(),
     }
-  }),
-)
+  })
+})
 
 const columns = computed(() => {
+  void localeCode.value
   const base = [
     {
       data: 'code',
@@ -136,12 +139,13 @@ const columns = computed(() => {
         if (isPaidMode.value) {
           const canPrint = props.printableIds?.has(row.id) ?? true
           const printTitle = canPrint
-            ? 'Imprimer les factures'
-            : 'Aucune facture payée à imprimer'
+            ? uiText('Imprimer les factures')
+            : uiText('Aucune facture payée à imprimer')
+          const reclaimLabel = uiText('Réclamation')
           const printDisabled = canPrint ? '' : ' disabled aria-disabled="true"'
           return `
       <div class="dt-row-actions" data-id="${row.id}">
-        <button type="button" class="dt-btn dt-btn--icon" data-action="reclaim" title="Réclamation" aria-label="Réclamation">
+        <button type="button" class="dt-btn dt-btn--icon" data-action="reclaim" title="${reclaimLabel}" aria-label="${reclaimLabel}">
           ${DT_ICONS.reclaim}
         </button>
         <button type="button" class="dt-btn dt-btn--icon" data-action="print" title="${printTitle}" aria-label="${printTitle}"${printDisabled}>
@@ -207,7 +211,7 @@ function onAction({ action, id }: { action: string; id: string }) {
     :columns="columns"
     :options="options"
     :loading="loading"
-    :loading-label="isPaidMode ? 'Chargement des examens payés…' : 'Chargement des examens en attente…'"
+    :loading-label="isPaidMode ? uiText('Chargement des examens payés…') : uiText('Chargement des examens en attente…')"
     @action="onAction"
   />
 </template>

@@ -26,7 +26,6 @@ const activeTab = ref<TabId>(
       : 'mois',
 )
 
-const moisPanelRef = ref<InstanceType<typeof GestionnairePayrollMoisPanel> | null>(null)
 const historiquePanelRef = ref<InstanceType<typeof GestionnairePayrollHistoriquePanel> | null>(null)
 const avancesPanelRef = ref<InstanceType<typeof GestionnaireSalaryAdvancesPanel> | null>(null)
 
@@ -130,7 +129,6 @@ watch(
 
     <GestionnairePayrollMoisPanel
       v-if="activeTab === 'mois'"
-      ref="moisPanelRef"
       :year="payrollYear"
       :month="payrollMonth"
       @update:period="updatePeriod"

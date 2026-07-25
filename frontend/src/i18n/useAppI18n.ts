@@ -2,6 +2,13 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AppUserRole } from '@/lib/roles'
 import { getAppLocale, translateRole, translateUi } from './translate'
+import {
+  formatAppDate,
+  formatAppDateTime,
+  formatAppNumber,
+  formatAppTime,
+  intlLocaleFor,
+} from './locale-format'
 
 export function useAppI18n() {
   const { t, locale } = useI18n()
@@ -24,13 +31,48 @@ export function useAppI18n() {
     return translateRole(role)
   }
 
+  function dateText(
+    value: string | number | Date | null | undefined,
+    options?: Intl.DateTimeFormatOptions,
+  ) {
+    void localeCode.value
+    return formatAppDate(value, options)
+  }
+
+  function dateTimeText(
+    value: string | number | Date | null | undefined,
+    options?: Intl.DateTimeFormatOptions,
+  ) {
+    void localeCode.value
+    return formatAppDateTime(value, options)
+  }
+
+  function timeText(
+    value: string | number | Date | null | undefined,
+    options?: Intl.DateTimeFormatOptions,
+  ) {
+    void localeCode.value
+    return formatAppTime(value, options)
+  }
+
+  function numberText(value: number | null | undefined, options?: Intl.NumberFormatOptions) {
+    void localeCode.value
+    return formatAppNumber(value, options)
+  }
+
   return {
     t,
     locale,
     localeCode,
     isArabic: computed(() => getAppLocale() === 'ar'),
+    isRtl: computed(() => getAppLocale() === 'ar'),
+    intlLocale: computed(() => intlLocaleFor()),
     uiText,
     navLabel,
     roleLabel,
+    dateText,
+    dateTimeText,
+    timeText,
+    numberText,
   }
 }

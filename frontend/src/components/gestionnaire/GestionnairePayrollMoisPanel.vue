@@ -29,6 +29,8 @@ import GestionnairePayrollPaymentModal, {
 import GestionnaireRowAction from '@/components/gestionnaire/GestionnaireRowAction.vue'
 import GestionnaireRowActionGroup from '@/components/gestionnaire/GestionnaireRowActionGroup.vue'
 import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
+import { exportTableExcel, type ExportColumn } from '@/lib/table-export'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import '@/assets/gestionnaire-page.css'
 
 type PayrollRow = PayrollPaymentTarget & {
@@ -302,6 +304,24 @@ function exportPayrollPdf() {
   openPrintDocument('Fiches de paie (PDF)', payrollRowsToTableHtml(), { autoPrint: true, pageSize: 'A4' })
 }
 
+const payrollExportColumns: ExportColumn<PayrollRow>[] = [
+  { header: 'Employé', value: (r) => r.employee.fullName },
+  { header: 'Poste', value: (r) => r.employee.jobTitle ?? '—' },
+  { header: 'Service', value: (r) => r.employee.service },
+  { header: 'Brut', value: (r) => formatFcfa(r.grossFcfa) },
+  {
+    header: 'Avances',
+    value: (r) => ((r.pendingAdvancesFcfa ?? 0) > 0 ? `-${formatFcfa(r.pendingAdvancesFcfa ?? 0)}` : '—'),
+  },
+  { header: 'Net', value: (r) => formatFcfa(r.netFcfa) },
+  { header: 'Statut', value: (r) => PAYROLL_STATUS_LABEL[r.status] },
+]
+
+function exportPayrollExcel() {
+  if (!exportRows.value.length) return
+  exportTableExcel(`Fiches de paie — ${periodLabel.value}`, payrollExportColumns, exportRows.value)
+}
+
 watch(
   () => [props.year, props.month] as const,
   () => {
@@ -447,6 +467,11 @@ defineExpose({ reload: loadPayroll })
       <UiButton :icon="Download" variant="secondary" :disabled="!exportRows.length" @click="exportPayrollPdf">
         PDF
       </UiButton>
+      <ExportButtons
+        :show-pdf="false"
+        :disabled="!exportRows.length"
+        @excel="exportPayrollExcel"
+      />
     </div>
 
     <div v-if="loading" class="chart-empty">Chargement…</div>

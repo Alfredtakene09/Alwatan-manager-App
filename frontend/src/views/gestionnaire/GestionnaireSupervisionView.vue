@@ -8,7 +8,7 @@ import '@/assets/gestionnaire-page.css'
 
 type ClinicalOverview = {
   patientsToday: number
-  appointmentsToday: number
+  openVisitsToday: number
   examsPending: number
   activeHospitalizations: number
 }
@@ -21,7 +21,7 @@ const stats = computed(() => {
   if (!c) return []
   return [
     { label: 'Patients aujourd\'hui', value: c.patientsToday, icon: Users, variant: 'amber' as const },
-    { label: 'Rendez-vous du jour', value: c.appointmentsToday, icon: CalendarDays, variant: 'blue' as const },
+    { label: 'Visites en cours', value: c.openVisitsToday, icon: CalendarDays, variant: 'blue' as const },
     { label: 'Examens en attente', value: c.examsPending, icon: FlaskConical, variant: 'teal' as const },
     { label: 'Hospitalisations actives', value: c.activeHospitalizations, icon: BedDouble, variant: 'violet' as const },
   ]

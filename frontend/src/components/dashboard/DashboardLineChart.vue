@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateDashboardLabel } from '@/lib/dashboard-i18n'
 
 export type LineSeries = {
   key: string
@@ -15,59 +17,110 @@ const props = defineProps<{
   loading?: boolean
 }>()
 
-const PAD_X = 12
-const PAD_TOP = 14
-const PAD_BOTTOM = 12
+const { localeCode } = useAppI18n()
+const emptyLabel = computed(() => {
+  void localeCode.value
+  return translateDashboardLabel('Aucune donnée disponible')
+})
+const localizedSeries = computed(() => {
+  void localeCode.value
+  return props.series.map((row) => ({
+    ...row,
+    label: translateDashboardLabel(row.label),
+  }))
+})
 
-const maxValue = computed(() => {
+const PAD_X = 14
+const PAD_TOP = 14
+const PAD_BOTTOM = 16
+const CHART_WIDTH = 600
+const CHART_HEIGHT = 200
+
+const dataExtent = computed(() => {
   const all = props.series.flatMap((s) => s.values)
-  return Math.max(1, ...all, 0)
+  const min = Math.min(0, ...all, 0)
+  const max = Math.max(0, ...all, 0)
+  if (min === max) return { min: min - 1, max: max + 1 }
+  return { min, max }
 })
 
 function pointY(value: number, height: number) {
   const usable = height - PAD_TOP - PAD_BOTTOM
-  return PAD_TOP + (1 - value / maxValue.value) * usable
+  const ratio = (value - dataExtent.value.min) / (dataExtent.value.max - dataExtent.value.min)
+  const y = PAD_TOP + (1 - ratio) * usable
+  return Math.max(PAD_TOP, Math.min(height - PAD_BOTTOM, y))
 }
 
-function pointX(index: number, count: number, width: number) {
-  if (count <= 1) return width / 2
-  const usable = width - PAD_X * 2
-  return PAD_X + (index / (count - 1)) * usable
-}
+const zeroLineY = computed(() => pointY(0, CHART_HEIGHT))
 
-function buildPath(values: number[], width: number, height: number) {
-  if (!values.length) return ''
-  return values
-    .map((value, index) => {
-      const x = pointX(index, values.length, width)
-      const y = pointY(value, height)
-      return `${index === 0 ? 'M' : 'L'} ${x} ${y}`
+const histogramBars = computed(() => {
+  const labelCount = Math.max(1, props.labels.length)
+  const seriesCount = Math.max(1, props.series.length)
+  const usableWidth = CHART_WIDTH - PAD_X * 2
+  const groupWidth = usableWidth / labelCount
+  const barGap = 3
+  const barWidth = Math.max(4, (groupWidth - barGap * (seriesCount - 1)) / seriesCount)
+
+  const bars: Array<{
+    key: string
+    x: number
+    y: number
+    width: number
+    height: number
+    color: string
+    value: number
+  }> = []
+
+  props.labels.forEach((_, labelIndex) => {
+    const groupStartX = PAD_X + labelIndex * groupWidth
+    props.series.forEach((row, seriesIndex) => {
+      const value = row.values[labelIndex] ?? 0
+      const valueY = pointY(value, CHART_HEIGHT)
+      const baselineY = zeroLineY.value
+      bars.push({
+        key: `${row.key}-${labelIndex}`,
+        x: groupStartX + seriesIndex * (barWidth + barGap),
+        y: Math.min(valueY, baselineY),
+        width: barWidth,
+        height: Math.max(1, Math.abs(valueY - baselineY)),
+        color: row.color,
+        value,
+      })
     })
-    .join(' ')
-}
+  })
+
+  return bars
+})
 </script>
 
 <template>
   <div v-if="loading" class="line-chart-skeleton" />
-  <div v-else-if="!labels.length" class="chart-empty">Aucune donnée disponible</div>
+  <div v-else-if="!labels.length" class="chart-empty">{{ emptyLabel }}</div>
   <div v-else class="line-chart">
+    <div class="line-chart__legend">
+      <div v-for="row in localizedSeries" :key="row.key" class="line-chart__legend-item">
+        <span class="line-chart__legend-line" :style="{ backgroundColor: row.color }" />
+        <span class="line-chart__legend-label">{{ row.label }}</span>
+      </div>
+    </div>
     <svg class="line-chart__svg" viewBox="0 0 600 200" preserveAspectRatio="none" overflow="visible">
-      <g v-for="row in series" :key="row.key">
-        <path
-          :d="buildPath(row.values, 600, 200)"
-          fill="none"
-          :stroke="row.color"
-          stroke-width="2.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
-      </g>
+      <line class="line-chart__baseline" :x1="PAD_X" :x2="CHART_WIDTH - PAD_X" :y1="zeroLineY" :y2="zeroLineY" />
+      <rect
+        v-for="bar in histogramBars"
+        :key="bar.key"
+        :x="bar.x"
+        :y="bar.y"
+        :width="bar.width"
+        :height="bar.height"
+        :fill="bar.color"
+        class="line-chart__bar"
+      />
     </svg>
     <div class="line-chart__labels">
       <span v-for="label in labels" :key="label">{{ label }}</span>
     </div>
     <div class="chart-legend">
-      <span v-for="row in series" :key="row.key">
+      <span v-for="row in localizedSeries" :key="row.key">
         <span class="legend-dot" :style="{ background: row.color }" />
         {{ row.label }}
         <strong>{{ formatValue(row.values[row.values.length - 1] ?? 0) }}</strong>
@@ -83,11 +136,44 @@ function buildPath(values: number[], width: number, height: number) {
   gap: 0.75rem;
 }
 
+.line-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+}
+
+.line-chart__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.line-chart__legend-line {
+  width: 1.05rem;
+  height: 0.2rem;
+  border-radius: 999px;
+}
+
+.line-chart__legend-label {
+  font-weight: 600;
+}
+
 .line-chart__svg {
   width: 100%;
   height: 200px;
   background: linear-gradient(180deg, rgba(244, 246, 239, 0.5) 0%, transparent 100%);
   border-radius: var(--radius);
+}
+
+.line-chart__baseline {
+  stroke: rgba(100, 116, 139, 0.45);
+  stroke-width: 1;
+}
+
+.line-chart__bar {
+  opacity: 0.9;
 }
 
 .line-chart__labels {

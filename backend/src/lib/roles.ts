@@ -30,6 +30,7 @@ export const MANAGEABLE_USER_ROLES = [
   "MEDECIN",
   "COMPTABLE",
   "LABORANTIN",
+  "SOIGNANT",
   "PHARMACIEN",
   "LOGISTIQUE",
 ] as const satisfies readonly AppUserRole[];
@@ -43,8 +44,8 @@ export const MODULE_ACCESS: Record<string, AppUserRole[]> = {
   consultation: ["ADMIN", "MEDECIN", "COMPTABLE"],
   comptabilite: ["ADMIN", "COMPTABLE"],
   hospitalisation: ["ADMIN", "RECEPTIONNISTE", "COMPTABLE"],
-  "bloc-salles": ["ADMIN", "COMPTABLE"],
-  pharmacie: ["ADMIN", "PHARMACIEN", "COMPTABLE"],
+  "bloc-salles": ["ADMIN", "COMPTABLE", "SOIGNANT"],
+  pharmacie: ["ADMIN", "PHARMACIEN", "COMPTABLE", "GESTIONNAIRE"],
   logistique: ["ADMIN", "LOGISTIQUE", "COMPTABLE"],
   laboratoire: ["ADMIN", "LABORANTIN", "COMPTABLE"],
   "dossier-patient": ["ADMIN", "MEDECIN", "LABORANTIN", "COMPTABLE"],
@@ -65,6 +66,16 @@ export function canManageResources(role: AppUserRole) {
   return MANAGEMENT_ROLES.includes(role)
 }
 
+/**
+ * Catalogue pharmacie (catégories, produits, fournisseurs, mouvements).
+ * PHARMACIEN exclu — Direction (COMPTABLE) conserve l’accès admin existant.
+ */
+export const PHARMACY_CATALOG_ROLES: AppUserRole[] = ["ADMIN", "GESTIONNAIRE", "COMPTABLE"]
+
+export function canManagePharmacyCatalog(role: AppUserRole) {
+  return PHARMACY_CATALOG_ROLES.includes(role)
+}
+
 export function canWriteDossierDocuments(role: AppUserRole) {
   return (
     role === "ADMIN" ||
@@ -79,7 +90,7 @@ export function getDefaultRoute(role: AppUserRole) {
     case "RECEPTIONNISTE":
       return "/reception";
     case "MEDECIN":
-      return "/medecin/tableau-de-bord";
+      return "/consultation";
     case "COMPTABLE":
       return "/reception";
     case "SOIGNANT":

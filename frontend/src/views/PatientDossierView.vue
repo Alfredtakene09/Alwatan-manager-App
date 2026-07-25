@@ -7,12 +7,12 @@ import {
   Upload,
   Eye,
   Trash2,
-  FileText,
   RefreshCw,
   UserRound,
   Plus,
   History,
   Paperclip,
+  Banknote,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal } from '@/lib/api-modal-helper'
@@ -30,6 +30,7 @@ import {
 import PatientMedicalHistory, {
   type MedicalHistoryEntry,
 } from '@/components/dossier/PatientMedicalHistory.vue'
+import PatientPaymentHistory from '@/components/dossier/PatientPaymentHistory.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -102,7 +103,7 @@ const selectedPatientId = ref<string | null>(null)
 const dossier = ref<DossierResponse | null>(null)
 const loadingDossier = ref(false)
 const dossierError = ref('')
-const activeTab = ref<'history' | 'files'>('history')
+const activeTab = ref<'history' | 'payments' | 'files'>('history')
 const activeKind = ref<PatientDocumentKind | 'ALL'>('ALL')
 
 const medecinPatients = ref<MedecinPatientRow[]>([])
@@ -439,6 +440,15 @@ onMounted(async () => {
             <button
               type="button"
               class="tab-btn"
+              :class="{ 'tab-btn--active': activeTab === 'payments' }"
+              @click="activeTab = 'payments'"
+            >
+              <Banknote :size="16" />
+              Paiements
+            </button>
+            <button
+              type="button"
+              class="tab-btn"
               :class="{ 'tab-btn--active': activeTab === 'files' }"
               @click="activeTab = 'files'"
             >
@@ -459,6 +469,10 @@ onMounted(async () => {
                   : undefined
               "
             />
+          </UiCard>
+
+          <UiCard v-else-if="activeTab === 'payments'" title="Historique des paiements" :icon="Banknote" icon-variant="green">
+            <PatientPaymentHistory :patient-id="selectedPatientId" />
           </UiCard>
 
           <UiCard
