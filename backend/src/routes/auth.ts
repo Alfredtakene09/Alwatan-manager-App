@@ -11,7 +11,7 @@ const router = Router();
 
 const loginSchema = z.object({
   username: z.string().trim().min(2, "Nom d'utilisateur requis."),
-  password: z.string().min(4),
+  password: z.string().min(1, "Mot de passe requis."),
 });
 
 const profileSchema = z.object({
