@@ -42,6 +42,14 @@ export const MANAGEABLE_USER_ROLES = [
 
 export type ManageableUserRole = (typeof MANAGEABLE_USER_ROLES)[number]
 
+/** Rôles assignables par l’administrateur (y compris ADMIN). */
+export const ADMIN_ASSIGNABLE_USER_ROLES = [
+  'ADMIN',
+  ...MANAGEABLE_USER_ROLES,
+] as const satisfies readonly AppUserRole[]
+
+export type AdminAssignableUserRole = (typeof ADMIN_ASSIGNABLE_USER_ROLES)[number]
+
 /** Direction (COMPTABLE) gère désormais les modules d’administration. */
 export const MODULE_ACCESS: Record<string, AppUserRole[]> = {
   dashboard: ['ADMIN', 'RECEPTIONNISTE', 'MEDECIN', 'COMPTABLE', 'LABORANTIN', 'PHARMACIEN', 'GESTIONNAIRE', 'LOGISTIQUE', 'SOIGNANT'],
@@ -56,6 +64,8 @@ export const MODULE_ACCESS: Record<string, AppUserRole[]> = {
   'dossier-patient': ['ADMIN', 'MEDECIN', 'LABORANTIN', 'COMPTABLE'],
   factures: ['ADMIN', 'COMPTABLE'],
   utilisateurs: ['ADMIN', 'COMPTABLE'],
+  /** Comptes de connexion — réservé à l’administrateur plateforme. */
+  'user-accounts': ['ADMIN'],
   admin: ['ADMIN', 'COMPTABLE'],
   gestionnaire: ['ADMIN', 'GESTIONNAIRE', 'COMPTABLE'],
 }

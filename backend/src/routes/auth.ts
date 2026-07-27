@@ -28,7 +28,7 @@ const passwordSchema = z.object({
 const SESSION_COOKIE_OPTIONS = {
   httpOnly: true,
   sameSite: "lax" as const,
-  secure: process.env.NODE_ENV === "production",
+  secure: ["1", "true", "yes"].includes((process.env.COOKIE_SECURE ?? "").toLowerCase()),
   maxAge: 12 * 60 * 60 * 1000,
 };
 
@@ -56,10 +56,25 @@ async function attachSession(res: Response, user: SessionUser) {
 router.post("/login", async (req, res) => {
   try {
     const { username, password } = loginSchema.parse(req.body);
-    const user = await prisma.user.findUnique({ where: { username } });
-    if (!user || !user.active) {
+    const login = username.trim();
+
+    // Identifiant insensible à la casse — username ou e-mail.
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { username: { equals: login, mode: "insensitive" } },
+          { email: { equals: login, mode: "insensitive" } },
+        ],
+      },
+    });
+
+    if (!user) {
       return res.status(401).json({ error: "Identifiants invalides" });
     }
+    if (!user.active) {
+      return res.status(401).json({ error: "Compte désactivé. Contactez l'administrateur." });
+    }
+
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
       return res.status(401).json({ error: "Identifiants invalides" });
@@ -84,8 +99,23 @@ router.get("/me", async (req, res) => {
   if (!token) return res.status(401).json({ error: "Non autorisé" });
   try {
     const { verifySessionToken } = await import("../lib/auth.js");
-    const user = await verifySessionToken(token);
-    return res.json(user);
+    const sessionUser = await verifySessionToken(token);
+    const dbUser = await prisma.user.findUnique({
+      where: { id: sessionUser.id },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        active: true,
+      },
+    });
+    if (!dbUser?.active) {
+      res.clearCookie(COOKIE_NAME, SESSION_COOKIE_OPTIONS);
+      return res.status(401).json({ error: "Compte désactivé" });
+    }
+    return res.json(toSessionUser(dbUser));
   } catch {
     return res.status(401).json({ error: "Session invalide" });
   }

@@ -1,46 +1,37 @@
-# Ouvre Alwatan Manager sur un poste client (recherche automatique du serveur).
+# Ouvre Alwatan sur un poste client (sans PowerShell compliqué).
 . "$PSScriptRoot\_alwatan-common.ps1"
 
-$Root = Get-AlwatanRoot
-$projectInstalled = Test-Path (Join-Path $Root 'backend\package.json')
+# Après connexion au Wi-Fi du serveur (partage de connexion)
+$urls = @('http://192.168.137.1:4000/')
+$ip = Read-AlwatanServerIp
+if ($ip) { $urls += "http://${ip}:4000/" }
 
-Write-Host ''
-Write-Host '  Clinique Alwatan — Manager Pro' -ForegroundColor Cyan
-Write-Host '  Connexion poste CLIENT' -ForegroundColor Cyan
-Write-Host ''
+foreach ($url in $urls) {
+    $hostName = ([Uri]$url).Host
+    if (Test-AlwatanProductionApp -HostName $hostName -Port 4000 -TimeoutSec 2) {
+        Write-Host "Connexion : $url" -ForegroundColor Green
+        Open-AlwatanBrowser -Url $url
+        exit 0
+    }
+}
 
 $server = Find-AlwatanServer
 if ($server) {
-    Write-Host "Serveur trouvé : $($server.Url)" -ForegroundColor Green
     Open-AlwatanBrowser -Url $server.Url
     exit 0
 }
 
-if ($projectInstalled) {
-    Write-Host 'Interface introuvable — démarrage automatique du serveur sur ce poste...' -ForegroundColor Yellow
-    & (Join-Path $PSScriptRoot 'lancer-serveur.ps1')
+if (Test-Path (Join-Path (Get-AlwatanRoot) 'backend\package.json')) {
+    & (Join-Path $PSScriptRoot 'lancer-postes-clients.ps1')
     exit $LASTEXITCODE
 }
 
-$configPath = Get-AlwatanServerConfigPath
-$examplePath = Join-Path $PSScriptRoot 'alwatan-server.txt.example'
-if (-not (Test-Path $configPath) -and (Test-Path $examplePath)) {
-    Copy-Item $examplePath $configPath
-}
+Show-AlwatanMessage -Title 'Alwatan Manager' -Message @"
+Connexion impossible.
 
-$message = @"
-Impossible de joindre Alwatan Manager.
+1) Connectez ce PC au Wi-Fi du SERVEUR (partage de connexion Windows).
+2) Ouvrez : http://192.168.137.1:4000
 
-Vérifications :
-1. Le poste serveur est allumé et le raccourci « Serveur » a été lancé.
-2. Ce PC est sur le même réseau local.
-3. Renseignez l'adresse IP du serveur dans :
-   $configPath
-
-Exemple :
-SERVER_IP=192.168.1.50
-"@
-
-Show-AlwatanMessage -Title 'Alwatan Manager — Client' -Message $message -Type Warning
-Write-Host $message -ForegroundColor Yellow
+Demandez au serveur de lancer « lancer-postes-clients.cmd ».
+"@ -Type Warning
 exit 1

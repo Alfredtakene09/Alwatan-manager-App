@@ -18,6 +18,7 @@ import {
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiButton from '@/components/ui/UiButton.vue'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
+import InstallAppBanner from '@/components/pwa/InstallAppBanner.vue'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -306,6 +307,7 @@ async function logout() {
       </header>
 
       <main class="page-content" :class="{ 'page-content--dashboard': isDashboardPage }">
+        <InstallAppBanner />
         <RouterView />
       </main>
     </div>

@@ -21,7 +21,17 @@ Internet n’est **pas** requis pour le travail quotidien.
 
 1. Vérifier PostgreSQL (démarrage automatique dans `services.msc`).
 2. Vérifier `backend\.env` (`DATABASE_URL` correct).
-3. Clic droit sur **`installer-production.cmd`** → **Exécuter en tant qu’administrateur**.
+3. Clic droit sur **`installer-production.cmd`** → **Exécuter en tant qu’administrateur**  
+   (ou double-clic : une fenêtre UAC demandera l’élévation).
+
+   Depuis PowerShell **sans** être admin (en étant d’abord dans le dossier du projet) :
+
+   ```powershell
+   cd "C:\Users\ALWATAN SERVEUR\Downloads\Alwatan-manager-App"
+   powershell -ExecutionPolicy Bypass -File ".\scripts\deploy\installer-production-elevate.ps1"
+   ```
+
+   Ou double-clic sur **`INSTALLER-PRODUCTION.cmd`** à la racine du projet (chemin toujours correct).
 
 Le script :
 
@@ -39,7 +49,18 @@ Le script :
 | Sur le serveur | http://127.0.0.1:4000 |
 | Sur le réseau | http://IP-DU-SERVEUR:4000 |
 
-Sur les postes clients : raccourci **Alwatan Manager (Client)** ou ouvrir l’URL ci-dessus.
+Sur les postes clients : installez le **setup client** (voir ci-dessous) ou ouvrez `http://IP-DU-SERVEUR:4000`.
+
+### Installer l’app sur les autres PC (réception, médecin…)
+
+1. **Sur le serveur**, générez le package (une fois après install ou changement d’IP) :
+   - Double-clic **`CREER-SETUP-CLIENT.cmd`** à la racine du projet, ou  
+   - `scripts\creer-setup-client.cmd`
+2. Récupérez le fichier **`setup-client\Alwatan-Manager-Client.zip`** (ou le dossier `acces-client\`).
+3. **Sur chaque poste client** : copiez le ZIP, extrayez-le, double-clic **`INSTALLER.bat`**.
+4. Un raccourci **Alwatan Manager** (logo clinique) est créé sur le Bureau et dans le menu Démarrer.
+
+Aucun Node.js ni copie du projet complet n’est nécessaire sur les clients.
 
 ## Commandes utiles
 

@@ -10,6 +10,8 @@ frontend/dist/
 # Données locales / production
 backups/
 runtime/
+setup-client/
+acces-client/
 *.sql
 *.sql.gz
 .env

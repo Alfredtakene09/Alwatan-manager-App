@@ -117,9 +117,9 @@ $wrapperLines = @(
     "`$env:FRONTEND_DIST = '$frontDist'"
     "if (Test-Path '$envFile') {"
     "    Get-Content '$envFile' | ForEach-Object {"
-    "        if (`$_ -match '^\s*#' -or `$_ -notmatch '=') { return }"
-    "        `$k, `$v = `$_.Split('=', 2)"
-    "        Set-Item -Path ('Env:' + `$k.Trim()) -Value (`$v.Trim().Trim('\"'))"
+    '        if ($_ -match ''^\s*#'' -or $_ -notmatch ''='') { return }'
+    '        $k, $v = $_.Split(''='', 2)'
+    '        Set-Item -Path (''Env:'' + $k.Trim()) -Value ($v.Trim().Trim([char]34))'
     "    }"
     "}"
     "& '$nodeDir\node.exe' '$distJs'"
@@ -233,6 +233,32 @@ if (-not $SkipBackupTask) {
     & "$PSScriptRoot\installer-sauvegarde-planifiee.ps1" -Time '02:00' -KeepDays 30
 } else {
     Write-Host '[5/5] Sauvegarde planifiée ignorée.' -ForegroundColor Yellow
+}
+
+# --- Raccourcis Bureau (logo clinique, lancement sans console) ---
+Write-Host 'Raccourcis Bureau...' -ForegroundColor Cyan
+$raccourcisScript = Join-Path $Root 'scripts\installer-raccourcis-bureau.ps1'
+if (Test-Path $raccourcisScript) {
+    try {
+        & $raccourcisScript -Quiet
+    } catch {
+        Write-Host "Raccourcis Bureau non créés : $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host 'Script raccourcis introuvable — ignoré.' -ForegroundColor Yellow
+}
+
+# --- Package setup client (ZIP pour les autres PC) ---
+Write-Host 'Package client réseau (ZIP)...' -ForegroundColor Cyan
+$creerClient = Join-Path $Root 'scripts\creer-setup-client.ps1'
+if (Test-Path $creerClient) {
+    try {
+        $ipForClient = if ($lanIp) { $lanIp } else { Read-AlwatanServerIp }
+        & $creerClient -ServerIp $ipForClient -Port $Port -Quiet
+        Write-Host "ZIP client : $(Join-Path $Root 'setup-client\Alwatan-Manager-Client.zip')" -ForegroundColor Green
+    } catch {
+        Write-Host "Package client non créé : $($_.Exception.Message)" -ForegroundColor Yellow
+    }
 }
 
 # --- IP serveur pour clients ---

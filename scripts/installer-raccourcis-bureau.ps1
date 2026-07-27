@@ -1,15 +1,17 @@
 # Crée sur le Bureau les raccourcis Serveur et Client avec le logo alwatan.ico.
+param([switch]$Quiet)
+
 . "$PSScriptRoot\_alwatan-common.ps1"
 
 $Root = Get-AlwatanRoot
-$icon = Ensure-AlwatanIcon -Root $Root
+$icon = Ensure-AlwatanIcon -Root $Root -Force
 if (-not $icon) {
     Write-Host 'ERREUR : alwatan.ico introuvable.' -ForegroundColor Red
     exit 1
 }
 
-$serverLauncher = Join-Path $PSScriptRoot 'lancer-serveur.cmd'
-$clientLauncher = Join-Path $PSScriptRoot 'lancer-client.cmd'
+$serverLauncher = Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-serveur'
+$clientLauncher = Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-client'
 
 $serverShortcut = New-AlwatanDesktopShortcut `
     -Name 'Alwatan Manager (Serveur)' `
@@ -44,4 +46,6 @@ Write-Host ''
 Write-Host 'Pour les postes sans le projet : exécutez preparer-poste-client.cmd' -ForegroundColor DarkGray
 Write-Host ''
 
-Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Les raccourcis ont été recréés sur le Bureau avec l'icône Alwatan.`n`n• Serveur : démarre l'application`n• Client : ouvre l'application (démarre le serveur si besoin sur ce PC)"
+if (-not $Quiet) {
+    Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Les raccourcis ont été recréés sur le Bureau avec le logo de la clinique.`n`nDouble-clic : ouverture directe de l'application, sans fenêtre noire.`n`n• Serveur : démarre ou ouvre l'application`n• Client : ouvre l'application sur le réseau"
+}

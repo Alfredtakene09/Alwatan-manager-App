@@ -1,5 +1,7 @@
 import "dotenv/config";
 import fs from "node:fs";
+import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -30,6 +32,7 @@ import cashSettlementsRoutes from "./routes/cash-settlements.js";
 import cashDeskRoutes from "./routes/cash-desk.js";
 import gestionnaireRoutes from "./routes/gestionnaire.js";
 import logistiqueRoutes from "./routes/logistique.js";
+import { getLanIpv4, isPrivateLanOrigin, parseCorsOrigins } from "./lib/lan-host.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
@@ -39,9 +42,15 @@ const frontendDist =
   process.env.FRONTEND_DIST?.trim() ||
   path.resolve(__dirname, "../../frontend/dist");
 
+const corsAllowList = parseCorsOrigins(process.env.CORS_ORIGIN);
 app.use(
   cors({
-    origin: (process.env.CORS_ORIGIN ?? "http://localhost:5173").split(",").map((s) => s.trim()),
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (corsAllowList.includes(origin)) return callback(null, true);
+      if (isPrivateLanOrigin(origin)) return callback(null, true);
+      callback(null, false);
+    },
     credentials: true,
   }),
 );
@@ -116,9 +125,50 @@ if (serveFrontend) {
   console.log(`Interface servie depuis ${frontendDist}`);
 }
 
-app.listen(port, host, () => {
-  console.log(`API Al-Watan Manager sur http://${host === "0.0.0.0" ? "localhost" : host}:${port}`);
-  if (serveFrontend) {
-    console.log(`Application clinique : http://localhost:${port}`);
+function startServer() {
+  const keyPath = process.env.SSL_KEY_PATH?.trim();
+  const certPath = process.env.SSL_CERT_PATH?.trim();
+  const useTls =
+    keyPath &&
+    certPath &&
+    fs.existsSync(keyPath) &&
+    fs.existsSync(certPath);
+
+  const onListen = (scheme: "http" | "https") => {
+    const label = host === "0.0.0.0" ? "localhost" : host;
+    console.log(`API Al-Watan Manager sur ${scheme}://${label}:${port}`);
+    if (serveFrontend) {
+      console.log(`Application clinique : ${scheme}://localhost:${port}`);
+    }
+    const lanIp = getLanIpv4();
+    if (lanIp && host === "0.0.0.0") {
+      console.log(`Accès réseau (autres postes) : ${scheme}://${lanIp}:${port}`);
+      if (serveFrontend) {
+        console.log(`  → interface + API sur le même port ${port}`);
+      }
+      console.log(`  → mode dev interface : ${scheme}://${lanIp}:5173 (si Vite est démarré)`);
+    }
+  };
+
+  if (useTls) {
+    const server = https.createServer(
+      {
+        key: fs.readFileSync(keyPath),
+        cert: fs.readFileSync(certPath),
+      },
+      app,
+    );
+    server.listen(port, host, () => onListen("https"));
+    return;
   }
-});
+
+  if (keyPath || certPath) {
+    console.warn(
+      "SSL_KEY_PATH / SSL_CERT_PATH défini(s) mais fichier(s) introuvable(s) — démarrage en HTTP.",
+    );
+  }
+
+  http.createServer(app).listen(port, host, () => onListen("http"));
+}
+
+startServer();

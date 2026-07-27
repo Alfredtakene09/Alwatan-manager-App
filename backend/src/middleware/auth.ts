@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { COOKIE_NAME, verifySessionToken, type SessionUser } from "../lib/auth.js";
+import { prisma } from "../lib/db.js";
 import {
   canAccessModule,
   canManagePharmacyCatalog,
@@ -21,7 +22,16 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return res.status(401).json({ error: "Non autorisé" });
   }
   try {
-    req.user = await verifySessionToken(token);
+    const sessionUser = await verifySessionToken(token);
+    const dbUser = await prisma.user.findUnique({
+      where: { id: sessionUser.id },
+      select: { active: true },
+    });
+    if (!dbUser?.active) {
+      res.clearCookie(COOKIE_NAME);
+      return res.status(401).json({ error: "Compte désactivé" });
+    }
+    req.user = sessionUser;
     next();
   } catch {
     return res.status(401).json({ error: "Session invalide" });

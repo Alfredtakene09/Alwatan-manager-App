@@ -15,7 +15,7 @@ import {
 } from "@prisma/client";
 import { parseShiftSlot } from "../lib/cash-shift.js";
 import { prisma } from "../lib/db.js";
-import { MANAGEABLE_USER_ROLES } from "../lib/roles.js";
+import { USER_ROLES } from "../lib/roles.js";
 import { employeeCompensationData } from "../lib/doctor-compensation.js";
 import {
   deleteOrDeactivateEmployee,
@@ -37,6 +37,12 @@ import {
   syncEmployeeJobTitles,
 } from "../lib/employee-job-titles-sync.js";
 import { countUserRelatedData, userDeletionBlockedMessage } from "../lib/user-deletion.js";
+import {
+  assertMaintainsActiveAdmin,
+  canHardDeleteUser,
+  countOtherActiveAdmins,
+  LAST_ACTIVE_ADMIN_ERROR,
+} from "../lib/admin-user-guards.js";
 import {
   findDuplicateIntervention,
   findDuplicateProduct,
@@ -101,7 +107,7 @@ const roomSchema = z.object({
   active: z.boolean().optional(),
 });
 
-const manageableRoleSchema = z.enum(MANAGEABLE_USER_ROLES);
+const assignableUserRoleSchema = z.enum(USER_ROLES);
 
 const employeeCompensationSchema = z.object({
   doctorCompensationType: z.nativeEnum(DoctorCompensationType).optional(),
@@ -165,9 +171,10 @@ const createUserSchema = z.object({
     .regex(/^[a-zA-Z0-9._-]+$/, "Caractères autorisés : lettres, chiffres, . _ -"),
   email: optionalEmailSchema,
   password: z.string().min(6, "Le mot de passe doit contenir au moins 6 caractères."),
-  role: manageableRoleSchema,
+  role: assignableUserRoleSchema,
   employeeId: z.string().min(1, "Sélectionnez un employé à lier au compte."),
   cashShiftSlot: cashShiftSlotSchema.optional().nullable(),
+  active: z.boolean().optional(),
 });
 
 const updateUserSchema = z.object({
@@ -180,7 +187,7 @@ const updateUserSchema = z.object({
     .optional(),
   email: optionalEmailSchema,
   password: z.string().min(6, "Le mot de passe doit contenir au moins 6 caractères.").optional(),
-  role: manageableRoleSchema.optional(),
+  role: assignableUserRoleSchema.optional(),
   active: z.boolean().optional(),
   employeeId: z.string().min(1).optional(),
   cashShiftSlot: cashShiftSlotSchema.optional().nullable(),
@@ -262,6 +269,14 @@ function serializeUser(
     canDelete: meta?.canDelete ?? false,
     relatedDataCount: meta?.relatedDataCount ?? 0,
   };
+}
+
+type SerializedUserInput = Parameters<typeof serializeUser>[0];
+
+async function enrichUserForAdmin(user: SerializedUserInput, currentUserId: string) {
+  const relatedDataCount = await countUserRelatedData(user.id);
+  const canDelete = await canHardDeleteUser(user, currentUserId, relatedDataCount);
+  return serializeUser(user, { canDelete, relatedDataCount });
 }
 
 async function validateEmployeeForUser(
@@ -552,43 +567,47 @@ router.delete("/employees/:id", requireModule("utilisateurs"), async (req, res) 
   });
 });
 
-router.get("/users", requireModule("utilisateurs"), async (req, res) => {
+router.get("/users", requireModule("user-accounts"), async (req, res) => {
   const role = req.query.role as string | undefined;
-  const roleFilter = role && MANAGEABLE_USER_ROLES.includes(role as (typeof MANAGEABLE_USER_ROLES)[number])
-    ? (role as UserRole)
-    : undefined;
+  const roleFilter =
+    role && (USER_ROLES as readonly string[]).includes(role) ? (role as UserRole) : undefined;
 
   const users = await prisma.user.findMany({
-    where: {
-      role: { not: UserRole.ADMIN },
-      ...(roleFilter ? { role: roleFilter } : {}),
-    },
+    where: roleFilter ? { role: roleFilter } : {},
     orderBy: [{ role: "asc" }, { lastName: "asc" }, { firstName: "asc" }],
     select: userSelect,
   });
 
   const currentUserId = req.user!.id;
-  const enriched = await Promise.all(
-    users.map(async (user) => {
-      const relatedDataCount = await countUserRelatedData(user.id);
-      const canDelete = user.id !== currentUserId && relatedDataCount === 0;
-      return serializeUser(user, { canDelete, relatedDataCount });
-    }),
-  );
+  const enriched = await Promise.all(users.map((user) => enrichUserForAdmin(user, currentUserId)));
 
   return res.json(enriched);
 });
 
-router.post("/users", requireModule("utilisateurs"), async (req, res) => {
+router.get("/users/:id", requireModule("user-accounts"), async (req, res) => {
+  const userId = String(req.params.id);
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: userSelect,
+  });
+  if (!user) return res.status(404).json({ error: "Utilisateur introuvable" });
+  return res.json(await enrichUserForAdmin(user, req.user!.id));
+});
+
+router.post("/users", requireModule("user-accounts"), async (req, res) => {
   try {
     const body = createUserSchema.parse(req.body);
-    const existingUsername = await prisma.user.findUnique({ where: { username: body.username } });
+    const existingUsername = await prisma.user.findFirst({
+      where: { username: { equals: body.username, mode: "insensitive" } },
+    });
     if (existingUsername) {
       return res.status(409).json({ error: "Ce nom d'utilisateur est déjà utilisé." });
     }
 
     const email = body.email?.trim() || `${body.username}@alwatan.local`;
-    const existingEmail = await prisma.user.findUnique({ where: { email } });
+    const existingEmail = await prisma.user.findFirst({
+      where: { email: { equals: email, mode: "insensitive" } },
+    });
     if (existingEmail) {
       return res.status(409).json({ error: "Cet e-mail est déjà utilisé." });
     }
@@ -614,19 +633,20 @@ router.post("/users", requireModule("utilisateurs"), async (req, res) => {
         firstName: employeeCheck.employee.firstName,
         lastName: employeeCheck.employee.lastName,
         role: body.role,
+        active: body.active ?? true,
         employeeId: body.employeeId,
         cashShiftSlot,
       },
       select: userSelect,
     });
 
-    return res.status(201).json(serializeUser(user));
+    return res.status(201).json(await enrichUserForAdmin(user, req.user!.id));
   } catch (error) {
     return res.status(400).json({ error: zodErrorMessage(error, "Données invalides") });
   }
 });
 
-router.put("/users/:id", requireModule("utilisateurs"), async (req, res) => {
+router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
   try {
     const userId = String(req.params.id);
     const body = updateUserSchema.parse(req.body);
@@ -634,17 +654,24 @@ router.put("/users/:id", requireModule("utilisateurs"), async (req, res) => {
 
     const existing = await prisma.user.findUnique({ where: { id: userId } });
     if (!existing) return res.status(404).json({ error: "Utilisateur introuvable" });
-    if (!MANAGEABLE_USER_ROLES.includes(existing.role as (typeof MANAGEABLE_USER_ROLES)[number])) {
-      return res.status(403).json({ error: "Cet utilisateur ne peut pas être modifié." });
-    }
 
     if (body.username && body.username !== existing.username) {
-      const usernameTaken = await prisma.user.findUnique({ where: { username: body.username } });
+      const usernameTaken = await prisma.user.findFirst({
+        where: {
+          username: { equals: body.username, mode: "insensitive" },
+          id: { not: userId },
+        },
+      });
       if (usernameTaken) return res.status(409).json({ error: "Ce nom d'utilisateur est déjà utilisé." });
     }
 
     if (body.email && body.email !== existing.email) {
-      const emailTaken = await prisma.user.findUnique({ where: { email: body.email } });
+      const emailTaken = await prisma.user.findFirst({
+        where: {
+          email: { equals: body.email, mode: "insensitive" },
+          id: { not: userId },
+        },
+      });
       if (emailTaken) return res.status(409).json({ error: "Cet e-mail est déjà utilisé." });
     }
 
@@ -653,6 +680,16 @@ router.put("/users/:id", requireModule("utilisateurs"), async (req, res) => {
     }
 
     const nextRole = body.role ?? existing.role;
+    const nextActive = body.active !== undefined ? body.active : existing.active;
+    const adminGuard = await assertMaintainsActiveAdmin({
+      existing,
+      nextRole,
+      nextActive,
+    });
+    if (adminGuard) {
+      return res.status(409).json({ error: adminGuard });
+    }
+
     let employeeNames: { firstName: string; lastName: string } | undefined;
     if (body.employeeId && body.employeeId !== existing.employeeId) {
       const employeeCheck = await validateEmployeeForUser(body.employeeId, nextRole, userId);
@@ -694,21 +731,18 @@ router.put("/users/:id", requireModule("utilisateurs"), async (req, res) => {
       select: userSelect,
     });
 
-    return res.json(serializeUser(user));
+    return res.json(await enrichUserForAdmin(user, currentUser.id));
   } catch (error) {
     return res.status(400).json({ error: zodErrorMessage(error, "Mise à jour impossible") });
   }
 });
 
-router.delete("/users/:id", requireModule("utilisateurs"), async (req, res) => {
+router.delete("/users/:id", requireModule("user-accounts"), async (req, res) => {
   const userId = String(req.params.id);
   const currentUser = req.user!;
 
   const existing = await prisma.user.findUnique({ where: { id: userId } });
   if (!existing) return res.status(404).json({ error: "Utilisateur introuvable" });
-  if (!MANAGEABLE_USER_ROLES.includes(existing.role as (typeof MANAGEABLE_USER_ROLES)[number])) {
-    return res.status(403).json({ error: "Cet utilisateur ne peut pas être supprimé." });
-  }
   if (userId === currentUser.id) {
     return res.status(409).json({ error: "Vous ne pouvez pas supprimer votre propre compte." });
   }
@@ -719,6 +753,13 @@ router.delete("/users/:id", requireModule("utilisateurs"), async (req, res) => {
       error: userDeletionBlockedMessage(relatedDataCount),
       relatedDataCount,
     });
+  }
+
+  if (existing.role === UserRole.ADMIN && existing.active) {
+    const others = await countOtherActiveAdmins(existing.id);
+    if (others === 0) {
+      return res.status(409).json({ error: LAST_ACTIVE_ADMIN_ERROR });
+    }
   }
 
   await prisma.user.delete({ where: { id: userId } });

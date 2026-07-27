@@ -1,5 +1,6 @@
 @echo off
-:: Installation production Alwatan (Administrateur requis)
-cd /d "%~dp0"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer-production.ps1" %*
-pause
+title Alwatan Manager - Installation production
+set "DEPLOY=%~dp0"
+cd /d "%DEPLOY%"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%DEPLOY%installer-production-elevate.ps1" %*
+if errorlevel 1 pause

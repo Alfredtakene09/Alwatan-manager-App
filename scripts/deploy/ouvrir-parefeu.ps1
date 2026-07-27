@@ -29,10 +29,10 @@ function Ensure-FirewallRule {
         -Action Allow `
         -Protocol TCP `
         -LocalPort $Port `
-        -Profile Private `
+        -Profile Any `
         -Description "Accès réseau local Clinique Alwatan Manager" | Out-Null
 
-    Write-Host "Règle créée : $Name (TCP $Port, profil Privé)" -ForegroundColor Green
+    Write-Host "Règle créée : $Name (TCP $Port, tous profils réseau)" -ForegroundColor Green
 }
 
 Ensure-FirewallRule -Name "Alwatan Manager API/Web ($Port)" -Port $Port

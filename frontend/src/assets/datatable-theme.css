@@ -892,6 +892,49 @@
   width: auto;
 }
 
+/* Colonne Actions toujours visible (évite qu’elle soit hors écran à droite). */
+.ui-dt table.dataTable thead th.dt-actions-col--sticky,
+.ui-dt table.dataTable tbody td.dt-actions-col--sticky {
+  position: sticky;
+  right: 0;
+  z-index: 4;
+  min-width: 11rem;
+  width: 11rem;
+  background: #fff;
+  box-shadow: -6px 0 10px -8px rgba(15, 23, 42, 0.35);
+}
+
+.ui-dt table.dataTable thead th.dt-actions-col--sticky {
+  z-index: 5;
+  background: #eef2f7;
+}
+
+.ui-dt table.dataTable.stripe tbody tr.odd td.dt-actions-col--sticky {
+  background: var(--ui-input-bg, #f8fafc);
+}
+
+.ui-dt table.dataTable.hover tbody tr:hover td.dt-actions-col--sticky {
+  background: var(--accent-50, #eff6ff) !important;
+}
+
+.ui-dt .dt-col-username {
+  min-width: 7.5rem;
+  white-space: nowrap;
+}
+
+.ui-dt .dt-col-status {
+  min-width: 5.5rem;
+  white-space: nowrap;
+}
+
+.ui-dt .dt-col-email {
+  min-width: 9rem;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ui-dt .dt-catalog-actions {
   display: inline-flex;
   align-items: center;

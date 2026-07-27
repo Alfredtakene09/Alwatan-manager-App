@@ -747,7 +747,7 @@ export default {
   },
   login: {
     title: 'تسجيل الدخول',
-    username: 'اسم المستخدم',
+    username: 'اسم المستخدم أو البريد',
     password: 'كلمة المرور',
     submit: 'دخول',
     demoLabel: 'حسابات تجريبية — كلمة المرور:',
@@ -766,6 +766,19 @@ export default {
       badRequest: 'اسم المستخدم أو كلمة المرور غير صالحين.',
       generic: 'خطأ في تسجيل الدخول. حاول مرة أخرى بعد لحظات.',
     },
+  },
+  pwa: {
+    installTitle: 'التثبيت على هذا الجهاز',
+    installBody: 'ثبّت Alwatan Manager لفتحه في نافذة مستقلة مع أيقونة على سطح المكتب أو قائمة ابدأ.',
+    installButton: 'تثبيت التطبيق',
+    installDismiss: 'لاحقاً',
+    installHttpHint:
+      'الوصول عبر HTTP على الشبكة المحلية: التثبيت من المتصفح غير متاح. حمّل مشغّل Windows أو استخدم اختصار « Client » من مجلد scripts.',
+    downloadLauncher: 'تحميل مشغّل Windows',
+    updateAvailable: 'إصدار جديد من التطبيق جاهز.',
+    updateReload: 'تحديث',
+    offline:
+      'الشبكة أو الخادم غير متاح. بيانات المرضى غير متاحة دون اتصال — تحقق من جهاز الخادم والشبكة المحلية.',
   },
   roles: {
     ADMIN: 'مسؤول',

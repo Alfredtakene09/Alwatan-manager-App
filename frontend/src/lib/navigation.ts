@@ -536,7 +536,7 @@ const directionSettingsNav: NavSection[] = [
             to: '/admin/utilisateurs',
             label: 'Utilisateurs',
             icon: Users,
-            module: 'utilisateurs',
+            module: 'user-accounts',
           },
         ],
       },

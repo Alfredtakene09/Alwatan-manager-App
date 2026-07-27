@@ -6,10 +6,10 @@ import { Users, Plus, RefreshCw, Save, Eye } from '@lucide/vue'
 import api from '@/api/client'
 import {
   fullName,
-  MANAGEABLE_USER_ROLES,
+  ADMIN_ASSIGNABLE_USER_ROLES,
   ROLE_LABELS,
   type AppUserRole,
-  type ManageableUserRole,
+  type AdminAssignableUserRole,
 } from '@/lib/roles'
 import { employeeNeedsAppAccount, isHiddenPlatformAdminEmployee } from '@/lib/employee-app-account'
 import { catalogRowActionsHtml, statusBadge } from '@/lib/datatable-defaults'
@@ -68,10 +68,11 @@ const form = ref({
   employeeId: '',
   username: '',
   email: '',
-  role: 'RECEPTIONNISTE' as ManageableUserRole,
+  role: 'RECEPTIONNISTE' as AdminAssignableUserRole,
   password: '',
   passwordConfirm: '',
   cashShiftSlot: '' as '' | ShiftSlot,
+  active: true,
 })
 
 const isReceptionRole = computed(() => form.value.role === 'RECEPTIONNISTE')
@@ -142,38 +143,57 @@ const columns = [
     responsivePriority: 1,
     render: (name: string) => `<span class="dt-name">${name}</span>`,
   },
-  { data: 'username', title: "Nom d'utilisateur", responsivePriority: 2 },
-  { data: 'email', title: 'E-mail', responsivePriority: 3 },
   {
-    data: 'employeeLabel',
-    title: 'Employé lié',
-    responsivePriority: 2,
-    render: (label: string) => `<span class="dt-date">${label}</span>`,
+    data: 'username',
+    title: "Nom d'utilisateur",
+    responsivePriority: 1,
+    className: 'dt-col-username',
   },
   {
     data: 'roleLabel',
     title: 'Rôle',
-    responsivePriority: 3,
+    responsivePriority: 1,
     render: (label: string) => statusBadge(label, 'info'),
   },
   {
     data: 'statusLabel',
     title: 'Statut',
-    responsivePriority: 4,
+    responsivePriority: 1,
+    className: 'dt-col-status',
     render: (label: string, _t: string, row: { statusVariant: string }) =>
       statusBadge(label, row.statusVariant as 'success' | 'danger'),
+  },
+  {
+    data: 'employeeLabel',
+    title: 'Employé lié',
+    responsivePriority: 3,
+    render: (label: string) => `<span class="dt-date">${label}</span>`,
+  },
+  {
+    data: 'email',
+    title: 'E-mail',
+    responsivePriority: 4,
+    className: 'dt-col-email',
   },
   {
     data: null,
     title: 'Actions',
     orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog all',
+    className: 'dt-actions-col dt-actions-col--catalog dt-actions-col--sticky all',
     responsivePriority: 1,
     render: (
       _d: unknown,
       _t: string,
       row: { id: string; toggleLabel: string; isActive: boolean; canDelete: boolean },
-    ) => catalogRowActionsHtml({ ...row, showView: true }),
+    ) =>
+      catalogRowActionsHtml({
+        ...row,
+        showView: true,
+        showEdit: true,
+        showToggle: true,
+        // Toujours afficher le bouton supprimer : le handler explique si c’est bloqué.
+        canDelete: true,
+      }),
   },
 ]
 
@@ -186,6 +206,7 @@ function resetForm() {
     password: '',
     passwordConfirm: '',
     cashShiftSlot: '',
+    active: true,
   }
 }
 
@@ -232,12 +253,11 @@ async function openEditModal(id: string) {
     employeeId: user.employeeId,
     username: user.username,
     email: user.email,
-    role: (MANAGEABLE_USER_ROLES as readonly string[]).includes(user.role)
-      ? (user.role as ManageableUserRole)
-      : 'RECEPTIONNISTE',
+    role: user.role as AdminAssignableUserRole,
     password: '',
     passwordConfirm: '',
     cashShiftSlot: user.cashShiftSlot ?? '',
+    active: user.active,
   }
   modalOpen.value = true
   message.value = ''
@@ -336,11 +356,12 @@ async function saveUser() {
     const cashShiftSlot =
       form.value.role === 'RECEPTIONNISTE' ? form.value.cashShiftSlot || null : null
     if (editingId.value) {
-      const payload: Record<string, string | null | undefined> = {
+      const payload: Record<string, string | boolean | null | undefined> = {
         username: form.value.username.trim(),
         role: form.value.role,
         employeeId: form.value.employeeId,
         cashShiftSlot,
+        active: form.value.active,
       }
       if (email) payload.email = email
       if (form.value.password.trim()) payload.password = form.value.password
@@ -354,6 +375,7 @@ async function saveUser() {
         password: form.value.password,
         employeeId: form.value.employeeId,
         cashShiftSlot,
+        active: form.value.active,
       })
       message.value = 'Utilisateur créé avec succès.'
     }
@@ -379,13 +401,36 @@ async function saveUser() {
 async function toggleUser(id: string) {
   const user = usersById.value.get(id)
   if (!user) return
+
+  const label = fullName(user.firstName, user.lastName)
+  if (user.active) {
+    const confirmed = await confirmAppModal({
+      type: 'WARNING',
+      title: 'Désactiver le compte',
+      message: translateTemplate(
+        'Désactiver le compte de {name} ? Cette personne ne pourra plus se connecter.',
+        { name: label },
+      ),
+      confirmLabel: 'Désactiver',
+    })
+    if (!confirmed) return
+  } else {
+    const confirmed = await confirmAppModal({
+      type: 'CONFIRM',
+      title: 'Réactiver le compte',
+      message: translateTemplate('Réactiver le compte de {name} ?', { name: label }),
+      confirmLabel: 'Activer',
+    })
+    if (!confirmed) return
+  }
+
   try {
     await api.put(`/admin/users/${id}`, { active: !user.active })
     message.value = user.active ? 'Compte désactivé.' : 'Compte réactivé.'
     messageType.value = 'success'
     await loadUsers()
-  } catch {
-    message.value = 'Action impossible sur ce compte.'
+  } catch (error) {
+    message.value = apiErrorMessage(error, 'Action impossible sur ce compte.')
     messageType.value = 'error'
   }
 }
@@ -520,7 +565,7 @@ onMounted(loadUsers)
       <section class="form-panel">
         <div class="form-grid-2">
           <UiSelect v-model="form.role" label="Rôle application" required>
-            <option v-for="role in MANAGEABLE_USER_ROLES" :key="role" :value="role">
+            <option v-for="role in ADMIN_ASSIGNABLE_USER_ROLES" :key="role" :value="role">
               {{ ROLE_LABELS[role] ? uiText(ROLE_LABELS[role]) : role }}
             </option>
           </UiSelect>
@@ -578,6 +623,13 @@ onMounted(loadUsers)
             placeholder="Laisser vide si aucun e-mail"
             autocomplete="off"
           />
+        </div>
+
+        <div v-if="editingId" class="form-grid-2">
+          <UiSelect v-model="form.active" label="Statut du compte" required>
+            <option :value="true">{{ uiText('Actif') }}</option>
+            <option :value="false">{{ uiText('Inactif') }}</option>
+          </UiSelect>
         </div>
 
         <div class="form-grid-2">

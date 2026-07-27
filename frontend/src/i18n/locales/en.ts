@@ -748,7 +748,7 @@ export default {
   },
   login: {
     title: 'Sign in',
-    username: 'Username',
+    username: 'Username or email',
     password: 'Password',
     submit: 'Sign in',
     demoLabel: 'Demo accounts — password:',
@@ -767,6 +767,20 @@ export default {
       badRequest: 'Invalid username or password.',
       generic: 'Sign-in error. Please try again shortly.',
     },
+  },
+  pwa: {
+    installTitle: 'Install on this computer',
+    installBody:
+      'Install Alwatan Manager to open it in its own window, with a desktop or Start menu icon.',
+    installButton: 'Install app',
+    installDismiss: 'Later',
+    installHttpHint:
+      'HTTP on the local network: browser install is not available. Download the Windows launcher or use the scripts “Client” shortcut.',
+    downloadLauncher: 'Download Windows launcher',
+    updateAvailable: 'A new version of the app is ready.',
+    updateReload: 'Update',
+    offline:
+      'Network or server unavailable. Patient data is not available offline — check the server PC and LAN connection.',
   },
   roles: {
     ADMIN: 'Administrator',

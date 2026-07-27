@@ -10,6 +10,7 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
+import InstallAppBanner from '@/components/pwa/InstallAppBanner.vue'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -49,6 +50,10 @@ onMounted(async () => {
   <div class="login">
     <div class="login__lang">
       <LanguageSwitcher />
+    </div>
+
+    <div class="login__install">
+      <InstallAppBanner />
     </div>
 
     <form
@@ -121,6 +126,16 @@ onMounted(async () => {
   top: max(1rem, env(safe-area-inset-top, 0px));
   inset-inline-end: max(1rem, env(safe-area-inset-end, 0px));
   z-index: 2;
+}
+
+.login__install {
+  position: absolute;
+  left: 1rem;
+  right: 1rem;
+  bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  z-index: 2;
+  max-width: 32rem;
+  margin: 0 auto;
 }
 
 .login__card {

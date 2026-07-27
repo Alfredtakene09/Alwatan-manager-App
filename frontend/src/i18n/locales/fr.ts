@@ -771,7 +771,7 @@ export default {
   },
   login: {
     title: 'Connexion',
-    username: "Nom d'utilisateur",
+    username: "Nom d'utilisateur ou e-mail",
     password: 'Mot de passe',
     submit: 'Se connecter',
     demoLabel: 'Comptes démo — mot de passe :',
@@ -790,6 +790,20 @@ export default {
       badRequest: "Nom d'utilisateur ou mot de passe invalide.",
       generic: 'Erreur de connexion. Réessayez dans un instant.',
     },
+  },
+  pwa: {
+    installTitle: 'Installer sur ce poste',
+    installBody:
+      "Installez Alwatan Manager pour l'ouvrir dans sa propre fenêtre, avec une icône sur le bureau ou le menu Démarrer.",
+    installButton: 'Installer l’application',
+    installDismiss: 'Plus tard',
+    installHttpHint:
+      'Accès en HTTP sur le réseau local : l’installation navigateur n’est pas disponible. Téléchargez le lanceur Windows ou utilisez le raccourci « Client » du dossier scripts.',
+    downloadLauncher: 'Télécharger le lanceur Windows',
+    updateAvailable: 'Une nouvelle version de l’application est prête.',
+    updateReload: 'Mettre à jour',
+    offline:
+      'Réseau ou serveur indisponible. Les données patients ne sont pas accessibles hors ligne — vérifiez le poste serveur et la connexion LAN.',
   },
   roles: {
     ADMIN: 'Administrateur',

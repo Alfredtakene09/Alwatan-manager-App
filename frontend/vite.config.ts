@@ -1,9 +1,65 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { VitePWA } from 'vite-plugin-pwa'
 import { fileURLToPath, URL } from 'node:url'
 
+const APP_NAME = 'Clinique Alwatan — Manager Pro'
+const APP_SHORT_NAME = 'Alwatan Manager'
+const THEME_COLOR = '#1b4f9c'
+
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    VitePWA({
+      registerType: 'prompt',
+      includeAssets: ['logo-alwatan.jpeg', 'pwa/icon-192.png', 'pwa/icon-512.png'],
+      manifest: {
+        name: APP_NAME,
+        short_name: APP_SHORT_NAME,
+        description: 'Gestion clinique Alwatan — réception, consultation, laboratoire, pharmacie.',
+        theme_color: THEME_COLOR,
+        background_color: '#ffffff',
+        display: 'standalone',
+        scope: '/',
+        start_url: '/',
+        lang: 'fr',
+        icons: [
+          {
+            src: '/pwa/icon-192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'any',
+          },
+          {
+            src: '/pwa/icon-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any',
+          },
+          {
+            src: '/pwa/icon-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+        ],
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,ico,png,jpeg,svg,woff,woff2}'],
+        navigateFallback: '/index.html',
+        navigateFallbackDenylist: [/^\/api\//],
+        runtimeCaching: [
+          {
+            urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
+            handler: 'NetworkOnly',
+          },
+        ],
+      },
+      devOptions: {
+        enabled: false,
+      },
+    }),
+  ],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -14,9 +70,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    // Écoute IPv4 sur toutes les interfaces (accès LAN clients)
     host: '0.0.0.0',
-    // Autorise http://IP-LAN:5173 depuis les postes du réseau
     allowedHosts: true,
     strictPort: true,
     proxy: {

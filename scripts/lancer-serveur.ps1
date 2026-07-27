@@ -1,114 +1,101 @@
-# Démarre le serveur Alwatan Manager (API + interface) et ouvre le navigateur.
+# Démarre Alwatan en mode cabinet (1 port, accès réseau fiable) ou mode dev (-Dev).
+param(
+    [switch]$Dev
+)
+
 . "$PSScriptRoot\_alwatan-common.ps1"
 
 $Root = Get-AlwatanRoot
 $nodeDir = Initialize-NodePath
+$networkIps = Get-AlwatanNetworkIps
 $lanIp = Get-LocalLanIpv4
 
 Write-Host ''
 Write-Host '  Clinique Alwatan — Manager Pro' -ForegroundColor Cyan
-Write-Host '  Démarrage du poste SERVEUR' -ForegroundColor Cyan
+if ($Dev) {
+    Write-Host '  Mode développement (ports 4000 + 5173)' -ForegroundColor Cyan
+} else {
+    Write-Host '  Mode cabinet (port 4000 — recommandé réseau)' -ForegroundColor Cyan
+}
 Write-Host ''
 
 Ensure-AlwatanEnvFile -Root $Root | Out-Null
+Sync-AlwatanLanConfig -Root $Root -LanIp $lanIp -LanIps $networkIps
 
-Write-Host 'Ouverture du pare-feu pour l''accès réseau (ports 4000 et 5173)...'
-$firewallOk = Ensure-AlwatanLanFirewall -Ports @(4000, 5173)
+Ensure-AlwatanPrivateNetwork | Out-Null
+
+$fwPorts = if ($Dev) { @(4000, 5173) } else { @(4000) }
+Write-Host "Ouverture du pare-feu (TCP $($fwPorts -join ', '))..."
+$firewallOk = Ensure-AlwatanLanFirewall -Ports $fwPorts
 if (-not $firewallOk) {
-    $elevateScript = Join-Path $PSScriptRoot 'deploy\ouvrir-parefeu.ps1'
     try {
         Start-Process powershell -Verb RunAs -Wait -ArgumentList @(
-            '-NoProfile',
-            '-ExecutionPolicy', 'Bypass',
-            '-File', $elevateScript,
-            '-IncludeDevPorts'
+            '-NoProfile', '-ExecutionPolicy', 'Bypass',
+            '-File', (Join-Path $PSScriptRoot 'deploy\forcer-acces-lan.ps1')
         )
-        Ensure-AlwatanLanFirewall -Ports @(4000, 5173) | Out-Null
+        Ensure-AlwatanLanFirewall -Ports $fwPorts | Out-Null
     } catch {
-        Write-Host 'Élévation admin refusée ou échouée — les postes clients peuvent être bloqués.' -ForegroundColor Yellow
+        Write-Host 'Pare-feu : exécutez scripts\forcer-acces-lan.cmd en administrateur.' -ForegroundColor Yellow
     }
 }
 
-$dbTest = Test-NetConnection -ComputerName localhost -Port 5433 -WarningAction SilentlyContinue
+$dbPort = Get-AlwatanDatabasePort -Root $Root
+$dbTest = Test-NetConnection -ComputerName localhost -Port $dbPort -WarningAction SilentlyContinue
 if (-not $dbTest.TcpTestSucceeded) {
-    Write-Host 'ATTENTION : PostgreSQL inaccessible sur localhost:5433.' -ForegroundColor Yellow
-    Write-Host 'Vérifiez que la base de données est démarrée avant de continuer.' -ForegroundColor Yellow
-    Write-Host ''
+    Write-Host "ATTENTION : PostgreSQL inaccessible sur localhost:${dbPort}." -ForegroundColor Yellow
 }
 
-$existingUrl = Get-AlwatanAppUrl -HostName '127.0.0.1'
-if ($existingUrl) {
-    if ($lanIp) {
-        Write-Host "Interface déjà active : $existingUrl" -ForegroundColor Green
-        Write-Host "  Sur le réseau   : http://${lanIp}:5173" -ForegroundColor Green
-    } else {
-        Write-Host "Interface déjà active : $existingUrl" -ForegroundColor Green
-    }
-    Open-AlwatanBrowser -Url $existingUrl
+$prodUrl = $null
+if (-not $Dev -and (Test-AlwatanProductionApp -HostName '127.0.0.1' -Port 4000 -TimeoutSec 3)) {
+    $prodUrl = 'http://127.0.0.1:4000/'
+}
+if ($prodUrl -and -not $Dev) {
+    $clientDir = Publish-AlwatanClientAccess -ServerIps $networkIps -Port 4000 -Root $Root
+    Write-Host "Application déjà active : $prodUrl" -ForegroundColor Green
+    Show-AlwatanNetworkUrls -LanIp $lanIp
+    Open-AlwatanBrowser -Url $prodUrl
     exit 0
 }
 
-$apiRunning = Test-AlwatanApi -HostName '127.0.0.1'
+if ($Dev) {
+    & (Join-Path $PSScriptRoot 'lancer-serveur-dev.ps1')
+    exit $LASTEXITCODE
+}
+
+# --- Mode cabinet : API + interface sur le port 4000 uniquement ---
 $be = Join-Path $Root 'backend'
-$fe = Join-Path $Root 'frontend'
-$corsOrigin = Build-AlwatanCorsOrigin -LanIp $lanIp
+$corsOrigin = Build-AlwatanCorsOrigin -LanIps $networkIps
 
-if (-not $apiRunning) {
-    Write-Host '[1/4] Préparation des dépendances...'
-    Push-Location $be
-    & "$nodeDir\npm.cmd" install --silent 2>$null
-    & "$nodeDir\npx.cmd" prisma generate 2>$null
-    Pop-Location
-
-    Push-Location $fe
-    & "$nodeDir\npm.cmd" install --silent 2>$null
-    Pop-Location
-
-    Write-Host '[2/4] Libération des ports 4000 et 5173...'
-    Stop-PortListeners -Ports @(4000, 5173)
-} else {
-    Write-Host '[1/2] API déjà active — démarrage de l''interface seulement...' -ForegroundColor Yellow
-    Write-Host 'Libération du port 5173...'
-    Stop-PortListeners -Ports @(5173)
-}
-
-if (-not $apiRunning) {
-    Write-Host '[3/4] Démarrage API et interface...'
-    $backendCmd = @"
-`$env:Path='$nodeDir;'+`$env:Path
-`$env:CORS_ORIGIN='$corsOrigin'
-Set-Location '$be'
-npm.cmd run dev
-"@
-    Start-Process powershell -ArgumentList @('-NoExit', '-Command', $backendCmd)
-    Start-Sleep -Seconds 4
-} else {
-    Write-Host '[2/2] Démarrage de l''interface...'
-}
-
-$frontendCmd = @"
-`$env:Path='$nodeDir;'+`$env:Path
-Set-Location '$fe'
-npm.cmd run dev
-"@
-Start-Process powershell -ArgumentList @('-NoExit', '-Command', $frontendCmd)
-
-Write-Host 'Attente de l''interface et ouverture du navigateur...'
-$url = Wait-AlwatanFrontend -HostName '127.0.0.1'
-if (-not $url) {
-    Show-AlwatanMessage -Title 'Alwatan Manager' -Message 'L''interface met plus de temps que prévu à démarrer. Vérifiez la fenêtre « npm run dev » du frontend, puis ouvrez http://127.0.0.1:5173' -Type Warning
+if (-not (Ensure-AlwatanProductionBuild -Root $Root -NodeDir $nodeDir)) {
+    Show-AlwatanMessage -Title 'Alwatan Manager' -Message 'La compilation a échoué. Vérifiez Node.js et relancez, ou utilisez lancer-serveur.ps1 -Dev' -Type Error
     exit 1
 }
 
+Write-Host 'Arrêt des anciens services sur le port 4000...'
+Stop-PortListeners -Ports @(4000)
+
+Write-Host 'Démarrage du serveur cabinet (production locale)...'
+$backendCmd = @"
+`$env:Path='$nodeDir;'+`$env:Path
+`$env:HOST='0.0.0.0'
+`$env:SERVE_FRONTEND='1'
+`$env:CORS_ORIGIN='$corsOrigin'
+Set-Location '$be'
+npm.cmd run start
+"@
+Start-Process powershell -ArgumentList @('-NoExit', '-Command', $backendCmd)
+
+$url = Wait-AlwatanProductionUrl -HostName '127.0.0.1' -Port 4000
+if (-not $url) {
+    Show-AlwatanMessage -Title 'Alwatan Manager' -Message 'Le serveur met trop de temps à démarrer. Vérifiez la fenêtre npm run start.' -Type Warning
+    exit 1
+}
+
+$clientDir = Publish-AlwatanClientAccess -ServerIps $networkIps -Port 4000 -Root $Root
 Open-AlwatanBrowser -Url $url
 
 Write-Host ''
-Write-Host 'Application prête :' -ForegroundColor Green
-Write-Host "  Sur ce poste    : $url"
-if ($lanIp) {
-    Write-Host "  Sur le réseau   : http://${lanIp}:5173"
-    Write-Host ''
-    Write-Host 'Sur les postes clients, utilisez le raccourci « Alwatan Manager (Client) »' -ForegroundColor DarkGray
-    Write-Host "ou renseignez $lanIp dans scripts\alwatan-server.txt" -ForegroundColor DarkGray
-}
+Write-Host 'Application prête sur ce poste :' -ForegroundColor Green
+Write-Host "  $url"
+Show-AlwatanNetworkUrls -LanIp $lanIp
 Write-Host ''

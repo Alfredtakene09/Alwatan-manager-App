@@ -348,7 +348,7 @@ const router = createRouter({
           path: 'admin/utilisateurs',
           name: 'admin-utilisateurs',
           component: () => import('@/views/UtilisateursView.vue'),
-          meta: { module: 'utilisateurs' },
+          meta: { module: 'user-accounts' },
         },
         {
           path: 'admin/depenses',
