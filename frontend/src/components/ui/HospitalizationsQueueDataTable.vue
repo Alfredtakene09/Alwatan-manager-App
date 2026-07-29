@@ -18,7 +18,7 @@ export type HospitalizationQueueItem = {
   startDate?: string | null
   visit: {
     id: string
-    patient: { code: string; firstName: string; lastName: string; phone?: string | null }
+    patient: { code: string; firstName: string; lastName: string; phone?: string | null; service?: string | null }
     consultation?: {
       doctor?: { firstName: string; lastName: string } | null
     } | null
@@ -98,6 +98,7 @@ const tableData = computed(() =>
         code: item.visit.patient.code,
         patientName: fullName(item.visit.patient.firstName, item.visit.patient.lastName),
         patientPhone: item.visit.patient.phone || '',
+        patientService: item.visit.patient.service?.trim() || '—',
         doctorName: doctorName(item),
         roomLabel: roomLabel(item),
         roomTypeLabel: roomTypeLabel(item),
@@ -126,8 +127,8 @@ const columns = [
     data: 'patientName',
     title: 'Patient',
     responsivePriority: 1,
-    render: (name: string, _t: string, row: { patientPhone: string; focused: boolean }) =>
-      `<span class="dt-name${row.focused ? ' dt-name--focus' : ''}">${name}</span>${
+    render: (name: string, _t: string, row: { patientPhone: string; patientService: string; focused: boolean }) =>
+      `<span class="dt-name${row.focused ? ' dt-name--focus' : ''}">${name}</span><span class="dt-sub">${row.patientService}</span>${
         row.patientPhone ? `<span class="dt-sub">${row.patientPhone}</span>` : ''
       }`,
   },

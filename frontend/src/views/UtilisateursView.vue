@@ -13,7 +13,7 @@ import {
 } from '@/lib/roles'
 import { employeeNeedsAppAccount, isHiddenPlatformAdminEmployee } from '@/lib/employee-app-account'
 import { catalogRowActionsHtml, statusBadge } from '@/lib/datatable-defaults'
-import { ALL_SHIFT_SLOTS, shiftButtonLabel, type ShiftSlot } from '@/lib/cash-shift'
+import { shiftButtonLabel, type ShiftSlot } from '@/lib/cash-shift'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -47,7 +47,7 @@ type PlatformUser = {
   active: boolean
   employeeId: string
   cashShiftSlot?: ShiftSlot | null
-  employee: LinkedEmployee
+  employee?: LinkedEmployee | null
   createdAt: string
   canDelete?: boolean
   relatedDataCount?: number
@@ -74,8 +74,6 @@ const form = ref({
   cashShiftSlot: '' as '' | ShiftSlot,
   active: true,
 })
-
-const isReceptionRole = computed(() => form.value.role === 'RECEPTIONNISTE')
 
 const { uiText, localeCode } = useAppI18n()
 
@@ -124,7 +122,9 @@ const tableRows = computed(() => {
     name: fullName(user.firstName, user.lastName),
     username: user.username,
     email: user.email,
-    employeeLabel: fullName(user.employee.firstName, user.employee.lastName),
+    employeeLabel: user.employee
+      ? fullName(user.employee.firstName, user.employee.lastName)
+      : 'Employé indisponible',
     roleLabel: roleLabel(user.role),
     role: user.role,
     statusLabel: user.active ? uiText('Actif') : uiText('Inactif'),
@@ -287,6 +287,11 @@ function viewingUserShiftLabel(user: PlatformUser) {
   return '—'
 }
 
+function viewingEmployeeLabel(user: PlatformUser) {
+  if (!user.employee) return 'Employé indisponible'
+  return fullName(user.employee.firstName, user.employee.lastName)
+}
+
 function formatCreatedAt(value: string) {
   return new Date(value).toLocaleString('fr-FR', {
     day: '2-digit',
@@ -344,12 +349,6 @@ async function saveUser() {
     messageType.value = 'error'
     return
   }
-  if (form.value.role === 'RECEPTIONNISTE' && !form.value.cashShiftSlot) {
-    message.value = 'Sélectionnez le créneau caisse du réceptionniste (matin, soir ou nuit).'
-    messageType.value = 'error'
-    return
-  }
-
   saving.value = true
   message.value = ''
   try {
@@ -569,22 +568,7 @@ onMounted(loadUsers)
               {{ ROLE_LABELS[role] ? uiText(ROLE_LABELS[role]) : role }}
             </option>
           </UiSelect>
-          <UiSelect
-            v-if="isReceptionRole"
-            v-model="form.cashShiftSlot"
-            label="Créneau caisse"
-            required
-          >
-            <option value="" disabled>Sélectionner le créneau</option>
-            <option v-for="slot in ALL_SHIFT_SLOTS" :key="slot" :value="slot">
-              {{ shiftButtonLabel(slot) }}
-            </option>
-          </UiSelect>
         </div>
-
-        <p v-if="isReceptionRole" class="employee-preview">
-          Créneaux : matin 7h–14h · soir 16h–21h · nuit 21h–6h.
-        </p>
 
         <UiSelect v-model="form.employeeId" label="Employé lié" required>
           <option value="" disabled>Sélectionner un employé</option>
@@ -686,8 +670,8 @@ onMounted(loadUsers)
         <div class="user-detail__row">
           <dt>Employé lié</dt>
           <dd>
-            {{ fullName(viewingUser.employee.firstName, viewingUser.employee.lastName) }}
-            <span v-if="viewingUser.employee.jobTitle" class="user-detail__muted">
+            {{ viewingEmployeeLabel(viewingUser) }}
+            <span v-if="viewingUser.employee?.jobTitle" class="user-detail__muted">
               — {{ viewingUser.employee.jobTitle }}
             </span>
           </dd>

@@ -202,10 +202,12 @@ function onTableClick(event: MouseEvent) {
   const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-action]')
   if (!button?.dataset.action) return
 
-  const row = button.closest<HTMLElement>('[data-id]')
-  if (!row?.dataset.id) return
+  const actionOwner = button.closest<HTMLElement>('[data-id]')
+  const tr = button.closest<HTMLTableRowElement>('tr[data-row-id]')
+  const id = actionOwner?.dataset.id ?? tr?.dataset.rowId
+  if (!id) return
 
-  emit('action', { action: button.dataset.action, id: row.dataset.id })
+  emit('action', { action: button.dataset.action, id })
 }
 </script>
 
@@ -241,6 +243,7 @@ function onTableClick(event: MouseEvent) {
             <tr
               v-for="(row, rowIdx) in sortedData"
               :key="rowKey(row, rowIdx)"
+              :data-row-id="rowKey(row, rowIdx)"
               :class="rowIdx % 2 === 0 ? 'odd' : 'even'"
             >
               <td

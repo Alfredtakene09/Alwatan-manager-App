@@ -17,6 +17,7 @@ import {
   SalaryAdvanceStatus,
 } from "@prisma/client";
 import { prisma } from "../lib/db.js";
+import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 import { employeeCompensationData } from "../lib/doctor-compensation.js";
 import {
@@ -130,6 +131,14 @@ const jobTitleSchema = z.object({
   label: z.string().min(2).max(120),
   active: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
+});
+
+const clinicServiceSchema = z.object({
+  name: z.string().min(2).max(120),
+  active: z
+    .union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")])
+    .optional(),
+  sortOrder: z.coerce.number().int().min(0).optional(),
 });
 
 function employeeValidationMessage(error: unknown) {
@@ -1254,6 +1263,63 @@ router.get("/finances", async (_req, res) => {
 router.get("/supervision", async (_req, res) => {
   const overview = await buildAdminDashboardOverview();
   return res.json(overview.clinical);
+});
+
+router.get("/services", async (req, res) => {
+  await ensureDefaultClinicServices(prisma);
+
+  const activeOnly = req.query.activeOnly === "true";
+  const items = await prisma.clinicService.findMany({
+    where: activeOnly ? { active: true } : undefined,
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+  });
+  return res.json(items);
+});
+
+router.post("/services", async (req, res) => {
+  try {
+    const body = clinicServiceSchema.parse(req.body);
+    const item = await prisma.clinicService.create({
+      data: {
+        name: body.name.trim(),
+        active: body.active ?? true,
+        sortOrder: body.sortOrder ?? 0,
+      },
+    });
+    return res.status(201).json(item);
+  } catch {
+    return res.status(400).json({ error: "Service invalide ou déjà existant." });
+  }
+});
+
+router.put("/services/:id", async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const body = clinicServiceSchema.partial().parse(req.body);
+    const existing = await prisma.clinicService.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: "Service introuvable." });
+
+    const item = await prisma.clinicService.update({
+      where: { id },
+      data: {
+        ...(body.name !== undefined ? { name: body.name.trim() } : {}),
+        active: body.active,
+        sortOrder: body.sortOrder,
+      },
+    });
+    return res.json(item);
+  } catch {
+    return res.status(400).json({ error: "Mise à jour impossible — nom invalide ou déjà utilisé." });
+  }
+});
+
+router.delete("/services/:id", async (req, res) => {
+  const id = String(req.params.id);
+  const item = await prisma.clinicService.findUnique({ where: { id } });
+  if (!item) return res.status(404).json({ error: "Service introuvable." });
+
+  await prisma.clinicService.delete({ where: { id } });
+  return res.json({ ok: true, message: `Le service « ${item.name} » a été supprimé.` });
 });
 
 export default router;

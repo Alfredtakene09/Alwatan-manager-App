@@ -31,6 +31,7 @@ type StaffPatientRow = {
   firstName: string
   lastName: string
   phone?: string | null
+  service?: string | null
   gender?: string | null
   age?: number | null
   ageUnit?: PatientAgeUnit | null
@@ -39,6 +40,7 @@ type StaffPatientRow = {
 }
 
 const doctors = ref<DoctorOption[]>([])
+const services = ref<Array<{ id: string; name: string }>>([])
 const queue = ref<StaffPatientRow[]>([])
 const loadingQueue = ref(false)
 const registering = ref(false)
@@ -51,6 +53,7 @@ const form = ref({
   age: '',
   ageUnit: 'YEARS' as PatientAgeUnit,
   phone: '',
+  service: '',
   gender: 'F',
   recommendedByName: '',
   doctorId: '',
@@ -66,6 +69,7 @@ const canRegister = computed(() => {
     firstName.length >= 2 &&
     lastName.length >= 2 &&
     parsedAge.value !== null &&
+    !!form.value.service &&
     form.value.recommendedByName.trim().length >= 2 &&
     !!form.value.doctorId
   )
@@ -77,6 +81,7 @@ function resetForm() {
     age: '',
     ageUnit: 'YEARS',
     phone: '',
+    service: services.value[0]?.name ?? '',
     gender: 'F',
     recommendedByName: '',
     doctorId: doctors.value[0]?.id ?? '',
@@ -89,7 +94,8 @@ function getDoctorName(doctorId: string) {
   return doctor ? `Dr ${fullName(doctor.firstName, doctor.lastName)}` : '—'
 }
 
-function openFormModal() {
+async function openFormModal() {
+  await loadServices()
   resetForm()
   message.value = ''
   showFormModal.value = true
@@ -112,6 +118,16 @@ async function loadDoctors() {
     if (!form.value.doctorId) form.value.doctorId = doctors.value[0]?.id ?? ''
   } catch {
     doctors.value = []
+  }
+}
+
+async function loadServices() {
+  try {
+    const { data } = await api.get<Array<{ id: string; name: string }>>('/visits/external-services')
+    services.value = Array.isArray(data) ? data : []
+    if (!form.value.service) form.value.service = services.value[0]?.name ?? ''
+  } catch {
+    services.value = []
   }
 }
 
@@ -141,6 +157,7 @@ async function registerStaffPatient() {
         age: parsedAge.value ?? undefined,
         ageUnit: form.value.ageUnit,
         phone: form.value.phone.trim() || undefined,
+        service: form.value.service || undefined,
         gender: form.value.gender,
         category: 'PERSONNEL',
         recommendedByName: form.value.recommendedByName.trim(),
@@ -183,6 +200,7 @@ ${buildClinicPrintHeader('Fiche patient — Personnel (gratuit)')}
   <div class="row"><span>Date</span><strong>${new Date(row.createdAt).toLocaleString('fr-FR')}</strong></div>
   <div class="row"><span>Patient</span><strong>${patientName}</strong></div>
   <div class="row"><span>Matricule</span><strong>${row.code}</strong></div>
+  ${row.service ? `<div class="row"><span>Service</span><strong>${row.service}</strong></div>` : ''}
   ${row.recommendedByName ? `<div class="row"><span>Recommandé par</span><strong>${row.recommendedByName}</strong></div>` : ''}
   ${row.phone ? `<div class="row"><span>Téléphone</span><strong>${row.phone}</strong></div>` : ''}
   ${row.age != null ? `<div class="row"><span>Âge</span><strong>${formatPatientAge(row.age, normalizePatientAgeUnit(row.ageUnit))}</strong></div>` : ''}
@@ -194,6 +212,7 @@ ${buildClinicPrintHeader('Fiche patient — Personnel (gratuit)')}
 
 onMounted(() => {
   void loadDoctors()
+  void loadServices()
   void loadQueue()
 })
 </script>
@@ -227,6 +246,7 @@ onMounted(() => {
           <thead>
             <tr>
               <th>Patient</th>
+              <th>Service</th>
               <th>Recommandé par</th>
               <th>Enregistré le</th>
               <th class="col-actions">Actions</th>
@@ -238,6 +258,7 @@ onMounted(() => {
                 <strong>{{ fullName(row.firstName, row.lastName) }}</strong>
                 <span class="sub">{{ row.code }}</span>
               </td>
+              <td>{{ row.service || '—' }}</td>
               <td>{{ row.recommendedByName || '—' }}</td>
               <td>{{ new Date(row.createdAt).toLocaleString('fr-FR') }}</td>
               <td class="col-actions">
@@ -273,6 +294,12 @@ onMounted(() => {
         />
 
         <div class="form-grid-2">
+          <UiSelect v-model="form.service" label="Service" required>
+            <option value="" disabled>{{ services.length ? 'Sélectionner un service' : 'Aucun service disponible' }}</option>
+            <option v-for="service in services" :key="service.id" :value="service.name">
+              {{ service.name }}
+            </option>
+          </UiSelect>
           <UiInput
             v-model="form.recommendedByName"
             label="Recommandé par"
@@ -280,13 +307,14 @@ onMounted(() => {
             :icon="UserRound"
             required
           />
-          <UiSelect v-model="form.doctorId" label="Médecin" required>
-            <option value="" disabled>{{ doctors.length ? 'Sélectionner' : 'Aucun médecin disponible' }}</option>
-            <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
-              Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ doctorSelectSuffix(doctor) }}
-            </option>
-          </UiSelect>
         </div>
+
+        <UiSelect v-model="form.doctorId" label="Médecin" required>
+          <option value="" disabled>{{ doctors.length ? 'Sélectionner' : 'Aucun médecin disponible' }}</option>
+          <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
+            Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ doctorSelectSuffix(doctor) }}
+          </option>
+        </UiSelect>
 
         <UiSelect v-model="form.treatingDoctorId" label="Médecin traitant (dossier)">
           <option value="">Aucun (optionnel)</option>

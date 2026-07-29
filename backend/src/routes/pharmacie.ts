@@ -68,6 +68,7 @@ const productSchema = z.object({
   noExpiry: z.boolean().optional(),
   quantity: z.number().int().min(0).optional(),
   unitPriceFcfa: z.number().int().positive(),
+  purchasePriceFcfa: z.number().int().positive().optional().nullable(),
   minStock: z.number().int().min(0).optional(),
   sachetsPerBox: z.number().int().positive().optional(),
   sachetPriceFcfa: z.number().int().positive().optional().nullable(),
@@ -110,6 +111,7 @@ function productDataFromBody(body: z.infer<typeof productSchema>, options?: { in
     noExpiry: body.noExpiry ?? false,
     quantity: body.quantity ?? 0,
     unitPriceFcfa: body.unitPriceFcfa,
+    purchasePriceFcfa: body.purchasePriceFcfa ?? null,
     minStock: body.minStock ?? 10,
     sachetsPerBox: body.sachetsPerBox ?? 1,
     sachetPriceFcfa: body.sachetPriceFcfa ?? null,
@@ -382,6 +384,7 @@ router.put("/products/:id", ...catalogAccess, async (req, res) => {
     else if (body.expiryDate !== undefined) data.expiryDate = parseExpiryDate(body.expiryDate);
     if (body.quantity !== undefined) data.quantity = body.quantity;
     if (body.unitPriceFcfa !== undefined) data.unitPriceFcfa = body.unitPriceFcfa;
+    if (body.purchasePriceFcfa !== undefined) data.purchasePriceFcfa = body.purchasePriceFcfa;
     if (body.minStock !== undefined) data.minStock = body.minStock;
     if (body.sachetsPerBox !== undefined) data.sachetsPerBox = body.sachetsPerBox;
     if (body.sachetPriceFcfa !== undefined) data.sachetPriceFcfa = body.sachetPriceFcfa;

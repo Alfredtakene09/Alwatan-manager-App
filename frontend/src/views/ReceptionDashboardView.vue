@@ -15,9 +15,11 @@ import {
   Banknote,
   Printer,
   Percent,
+  Lock,
+  CheckCircle2,
 } from '@lucide/vue'
 import api from '@/api/client'
-import { showDuplicateModalFromError, confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
+import { showDuplicateModalFromError, confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
 import { fullName, formatFcfa, formatFcfaCompact } from '@/lib/roles'
 import {
   joinPatientFullName,
@@ -45,7 +47,11 @@ import {
   type ConsultationRenewalPreview,
   type DoctorOption,
 } from '@/lib/doctor-compensation'
-import { buildConsultationReceiptHtml, openPrintDocument } from '@/lib/print-document'
+import {
+  buildConsultationReceiptHtml,
+  buildDayClosureReceiptHtml,
+  openPrintDocument,
+} from '@/lib/print-document'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -80,6 +86,7 @@ type Patient = {
   age?: number | null
   ageUnit?: PatientAgeUnit | null
   phone?: string
+  service?: string | null
   gender?: string
   category?: PatientCategory
   treatingDoctorId?: string | null
@@ -88,6 +95,7 @@ type Patient = {
 }
 
 type Doctor = DoctorOption
+type ServiceOption = { id: string; name: string }
 
 function findDoctor(doctorId: string) {
   return doctors.value.find((doctor) => doctor.id === doctorId)
@@ -124,6 +132,30 @@ type ReceiptData = {
   processedBy?: string
 }
 
+type DayClosureStatus = {
+  businessDate: string
+  shiftSlot: 'MORNING' | 'EVENING' | 'NIGHT' | null
+  shiftLabel: string | null
+  collectedFcfa: number
+  expensesFcfa: number
+  netFcfa: number
+  visitsToday: number
+  registeredToday: number
+  consultationsFcfa?: number
+  examsFcfa?: number
+  surgeryFcfa?: number
+  hospitalizationFcfa?: number
+  receptionistName: string
+  closed: boolean
+  closure: {
+    id: string
+    closedAt: string
+    collectedFcfa: number
+    expensesFcfa: number
+    netFcfa: number
+  } | null
+}
+
 const { uiText } = useAppI18n()
 const auth = useAuthStore()
 
@@ -133,6 +165,7 @@ function currentReceptionistName() {
 
 const patients = ref<Patient[]>([])
 const doctors = ref<Doctor[]>([])
+const services = ref<ServiceOption[]>([])
 const sortedDoctors = computed(() =>
   [...doctors.value].sort((a, b) => {
     const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
@@ -148,6 +181,9 @@ const stats = ref<ReceptionStats>({
   revenueTodayFcfa: 0,
 })
 const loadingStats = ref(false)
+const dayClosure = ref<DayClosureStatus | null>(null)
+const closingDay = ref(false)
+const loadingDayClosure = ref(false)
 const search = ref('')
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
@@ -193,6 +229,7 @@ const editForm = ref({
   age: '',
   ageUnit: 'YEARS' as PatientAgeUnit,
   phone: '',
+  service: '',
   gender: 'F',
   category: 'STANDARD' as PatientCategory,
   doctorId: '',
@@ -206,6 +243,7 @@ const form = ref({
   age: '',
   ageUnit: 'YEARS' as PatientAgeUnit,
   phone: '',
+  service: '',
   gender: 'F',
   category: 'STANDARD' as PatientCategory,
   doctorId: '',
@@ -273,6 +311,7 @@ const canSubmit = computed(() => {
     firstName.length >= 2 &&
     lastName.length >= 2 &&
     formAge.value !== null &&
+    !!form.value.service &&
     !!form.value.doctorId
   if (!base) return false
   if (formBillingExempt.value || !showDoctorConsultationBilling(formDoctor.value)) return true
@@ -289,6 +328,7 @@ const canSaveEdit = computed(() => {
     firstName.length >= 2 &&
     lastName.length >= 2 &&
     editAge.value !== null &&
+    !!editForm.value.service &&
     !!editForm.value.doctorId
   if (!base) return false
   if (editBillingExempt.value || !showDoctorConsultationBilling(editDoctor.value)) return true
@@ -365,6 +405,83 @@ async function loadReceptionStats() {
   }
 }
 
+async function loadDayClosure() {
+  loadingDayClosure.value = true
+  try {
+    const { data } = await api.get<DayClosureStatus>('/cash-desk/day-closure')
+    dayClosure.value = data
+  } catch {
+    dayClosure.value = null
+  } finally {
+    loadingDayClosure.value = false
+  }
+}
+
+function printDayClosure(data: DayClosureStatus) {
+  const closedAt = data.closure?.closedAt ?? new Date().toISOString()
+  openPrintDocument(
+    'Clôture de journée',
+    buildDayClosureReceiptHtml({
+      businessDate: data.businessDate,
+      closedAt,
+      receptionistName: data.receptionistName || currentReceptionistName() || '—',
+      shiftLabel: data.shiftLabel,
+      collectedFcfa: data.closure?.collectedFcfa ?? data.collectedFcfa,
+      expensesFcfa: data.closure?.expensesFcfa ?? data.expensesFcfa,
+      netFcfa: data.closure?.netFcfa ?? data.netFcfa,
+      visitsToday: data.visitsToday,
+      registeredToday: data.registeredToday,
+      consultationsFcfa: data.consultationsFcfa,
+      examsFcfa: data.examsFcfa,
+      surgeryFcfa: data.surgeryFcfa,
+      hospitalizationFcfa: data.hospitalizationFcfa,
+    }),
+    { pageSize: '80mm' },
+  )
+}
+
+async function closeReceptionDay() {
+  if (dayClosure.value?.closed || closingDay.value) return
+
+  const snapshot = dayClosure.value
+  const collected = snapshot?.collectedFcfa ?? stats.value.revenueTodayFcfa
+  const expenses = snapshot?.expensesFcfa ?? stats.value.expensesTodayFcfa ?? 0
+  const net = snapshot?.netFcfa ?? stats.value.netTodayFcfa ?? collected
+  const shiftHint = snapshot?.shiftLabel ? `\nCréneau : ${snapshot.shiftLabel}` : ''
+
+  const confirmed = await confirmAppModal({
+    type: 'WARNING',
+    title: 'Clôturer la journée',
+    message:
+      `Confirmer la clôture de la journée ?\n\n` +
+      `Encaissements : ${formatFcfa(collected)}\n` +
+      `Dépenses : ${formatFcfa(expenses)}\n` +
+      `Net à remettre : ${formatFcfa(net)}` +
+      shiftHint +
+      `\n\nRemettez ensuite la caisse à la comptabilité.`,
+    confirmLabel: 'Clôturer',
+    cancelLabel: 'Annuler',
+  })
+  if (!confirmed) return
+
+  closingDay.value = true
+  try {
+    const { data } = await api.post<DayClosureStatus & { message?: string }>('/cash-desk/day-closure')
+    dayClosure.value = data
+    await showSuccessModal(
+      'Journée clôturée',
+      data.message ?? 'Remettez la caisse à la comptabilité.',
+    )
+    printDayClosure(data)
+    await loadReceptionStats()
+  } catch (error) {
+    await showApiErrorModal(error, 'Impossible de clôturer la journée.')
+    await loadDayClosure()
+  } finally {
+    closingDay.value = false
+  }
+}
+
 async function loadPatients() {
   loadingPatients.value = true
   try {
@@ -384,8 +501,25 @@ async function loadDoctors() {
   }
 }
 
+async function loadServices() {
+  try {
+    const { data } = await api.get<ServiceOption[]>('/visits/external-services')
+    services.value = Array.isArray(data) ? data : []
+    if (!form.value.service) form.value.service = services.value[0]?.name ?? ''
+    if (!editForm.value.service) editForm.value.service = services.value[0]?.name ?? ''
+  } catch {
+    services.value = []
+  }
+}
+
 async function refreshAll() {
-  await Promise.all([loadPatients(), loadReceptionStats(), loadDoctors()])
+  await Promise.all([
+    loadPatients(),
+    loadReceptionStats(),
+    loadDayClosure(),
+    loadDoctors(),
+    loadServices(),
+  ])
 }
 
 function resetForm() {
@@ -394,6 +528,7 @@ function resetForm() {
     age: '',
     ageUnit: 'YEARS',
     phone: '',
+    service: services.value[0]?.name ?? '',
     gender: 'F',
     category: 'STANDARD',
     doctorId: doctors.value[0]?.id ?? '',
@@ -491,7 +626,8 @@ function applyCategoryBillingDefaults(target: 'form' | 'edit') {
   applyDoctorBillingDefaults(target)
 }
 
-function openModal() {
+async function openModal() {
+  await loadServices()
   resetForm()
   showModal.value = true
 }
@@ -576,6 +712,7 @@ async function createPatientAndVisit() {
       age: formAge.value ?? undefined,
       ageUnit: form.value.ageUnit,
       phone: form.value.phone.trim() || undefined,
+      service: form.value.service || undefined,
       gender: form.value.gender,
       category: form.value.category,
       doctorId: form.value.doctorId,
@@ -665,6 +802,7 @@ async function openEditModal(patient: Patient) {
   loadingEdit.value = true
   showEditModal.value = true
   try {
+    await loadServices()
     const detail = await loadPatientDetail(patient.id)
     selectedPatient.value = detail
     editForm.value = {
@@ -672,6 +810,7 @@ async function openEditModal(patient: Patient) {
       age: detail.age != null ? String(detail.age) : '',
       ageUnit: normalizePatientAgeUnit(detail.ageUnit),
       phone: detail.phone ?? '',
+      service: detail.service || services.value[0]?.name || '',
       gender: detail.gender ?? 'F',
       category: detail.category === 'ONG' ? 'STANDARD' : (detail.category ?? 'STANDARD'),
       doctorId: detail.waitingVisit?.doctorId ?? doctors.value[0]?.id ?? '',
@@ -699,6 +838,7 @@ function resetEditForm() {
     age: selectedPatient.value.age != null ? String(selectedPatient.value.age) : '',
     ageUnit: normalizePatientAgeUnit(selectedPatient.value.ageUnit),
     phone: selectedPatient.value.phone ?? '',
+    service: selectedPatient.value.service ?? '',
     gender: selectedPatient.value.gender ?? 'F',
     category:
       selectedPatient.value.category === 'ONG'
@@ -799,6 +939,7 @@ async function saveEdit() {
       age: editAge.value ?? undefined,
       ageUnit: editForm.value.ageUnit,
       phone: editForm.value.phone.trim() || undefined,
+      service: editForm.value.service || undefined,
       gender: editForm.value.gender,
       category: editForm.value.category,
       doctorId: editForm.value.doctorId,
@@ -849,7 +990,28 @@ onUnmounted(clearAlert)
         title="Dashboard"
         subtitle="Vue d'ensemble et enregistrement des patients"
         :icon="LayoutDashboard"
-      />
+      >
+        <template #actions>
+          <UiButton
+            v-if="dayClosure?.closed"
+            variant="success"
+            :icon="CheckCircle2"
+            :disabled="loadingDayClosure"
+            @click="dayClosure && printDayClosure(dayClosure)"
+          >
+            Journée clôturée
+          </UiButton>
+          <UiButton
+            v-else
+            variant="dark"
+            :icon="Lock"
+            :loading="closingDay || loadingDayClosure"
+            @click="closeReceptionDay"
+          >
+            Clôturer la journée
+          </UiButton>
+        </template>
+      </UiPageHeader>
 
       <UiAlert v-if="message" :type="messageType" :message="message" class="page-alert" />
 
@@ -878,7 +1040,11 @@ onUnmounted(clearAlert)
         <div class="table-toolbar">
           <div class="table-toolbar__title">
             <h3>{{ uiText('Patients enregistrés') }}</h3>
-            <p>{{ uiText('Liste des dossiers créés à la réception') }}</p>
+            <p>{{
+              auth.user?.role === 'RECEPTIONNISTE'
+                ? uiText('Vos dossiers créés à la réception')
+                : uiText('Liste des dossiers créés à la réception')
+            }}</p>
           </div>
 
           <div class="table-toolbar__search">
@@ -958,12 +1124,29 @@ onUnmounted(clearAlert)
           </option>
         </UiSelect>
 
-        <UiSelect v-model="form.doctorId" label="Médecin" required>
-          <option value="" disabled>{{ sortedDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin disponible') }}</option>
-          <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
-            Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
-          </option>
-        </UiSelect>
+        <div class="form-grid-2">
+          <UiSelect v-model="form.service" label="Service" required>
+            <option value="" disabled>
+              {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
+            </option>
+            <option
+              v-if="form.service && !services.some((s) => s.name === form.service)"
+              :value="form.service"
+            >
+              {{ form.service }}
+            </option>
+            <option v-for="service in services" :key="service.id" :value="service.name">
+              {{ service.name }}
+            </option>
+          </UiSelect>
+
+          <UiSelect v-model="form.doctorId" label="Médecin" required>
+            <option value="" disabled>{{ sortedDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin disponible') }}</option>
+            <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
+              Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
+            </option>
+          </UiSelect>
+        </div>
 
         <UiAlert v-if="!sortedDoctors.length" type="warning" message="Aucun médecin sélectionnable. Les médecins du personnel doivent être en profil Médecin et avoir un compte utilisateur (rôle Médecin)." />
         <p v-if="!sortedDoctors.length" class="doctors-empty-alert__links">
@@ -1063,19 +1246,35 @@ onUnmounted(clearAlert)
         </UiSelect>
 
         <div class="form-grid-2">
+          <UiSelect v-model="editForm.service" label="Service" required>
+            <option value="" disabled>
+              {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
+            </option>
+            <option
+              v-if="editForm.service && !services.some((s) => s.name === editForm.service)"
+              :value="editForm.service"
+            >
+              {{ editForm.service }}
+            </option>
+            <option v-for="service in services" :key="service.id" :value="service.name">
+              {{ service.name }}
+            </option>
+          </UiSelect>
+
           <UiSelect v-model="editForm.doctorId" label="Médecin" required>
             <option value="" disabled>{{ sortedDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin disponible') }}</option>
             <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
               Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
             </option>
           </UiSelect>
-          <UiSelect v-model="editForm.treatingDoctorId" label="Médecin traitant (dossier)">
-            <option value="">{{ uiText('Aucun (optionnel)') }}</option>
-            <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
-              Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
-            </option>
-          </UiSelect>
         </div>
+
+        <UiSelect v-model="editForm.treatingDoctorId" label="Médecin traitant (dossier)">
+          <option value="">{{ uiText('Aucun (optionnel)') }}</option>
+          <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
+            Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
+          </option>
+        </UiSelect>
 
         <p
           v-if="selectedPatient.treatingDoctor"

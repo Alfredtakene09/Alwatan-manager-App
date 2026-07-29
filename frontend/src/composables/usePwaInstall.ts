@@ -20,16 +20,12 @@ export function usePwaInstall() {
   const dismissed = ref(readDismissed())
   const isStandalone = ref(false)
 
-  const isSecureContext = computed(
-    () => typeof window !== 'undefined' && window.isSecureContext,
-  )
-
   const canNativeInstall = computed(() => deferredPrompt.value !== null)
 
   const shouldShowBanner = computed(() => {
     if (isStandalone.value || dismissed.value) return false
-    if (canNativeInstall.value) return true
-    return !isSecureContext.value
+    // Pas de bandeau « télécharger le lanceur » en HTTP LAN — seulement l’install PWA native.
+    return canNativeInstall.value
   })
 
   const onBeforeInstall = (event: Event) => {
@@ -69,39 +65,11 @@ export function usePwaInstall() {
     return outcome === 'accepted'
   }
 
-  function downloadWindowsAppLauncher() {
-    const origin = `${window.location.origin}/`
-    const lines = [
-      '@echo off',
-      'title Alwatan Manager',
-      `set "APP_URL=${origin}"`,
-      'set "EDGE=%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe"',
-      'if not exist "%EDGE%" set "EDGE=%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe"',
-      'if not exist "%EDGE%" set "EDGE=%LocalAppData%\\Google\\Chrome\\Application\\chrome.exe"',
-      'if not exist "%EDGE%" set "EDGE=%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe"',
-      'if exist "%EDGE%" (',
-      '  start "" "%EDGE%" --app="%APP_URL%"',
-      ') else (',
-      '  start "" "%APP_URL%"',
-      ')',
-    ]
-    const blob = new Blob([lines.join('\r\n')], { type: 'application/octet-stream' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = 'Lancer-Alwatan-Manager.cmd'
-    anchor.click()
-    URL.revokeObjectURL(url)
-    dismissBanner()
-  }
-
   return {
     isStandalone,
-    isSecureContext,
     canNativeInstall,
     shouldShowBanner,
     dismissBanner,
     promptNativeInstall,
-    downloadWindowsAppLauncher,
   }
 }

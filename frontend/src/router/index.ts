@@ -65,7 +65,7 @@ const router = createRouter({
         },
         {
           path: 'reception/depenses',
-          redirect: { name: 'admin-depenses' },
+          redirect: { name: 'reception-comptabilite' },
         },
         { path: 'reception/bloc-operatoire', redirect: '/reception/operations-attente' },
         { path: 'reception/file-attente', redirect: '/reception/etat-patients' },
@@ -351,10 +351,16 @@ const router = createRouter({
           meta: { module: 'user-accounts' },
         },
         {
+          path: 'admin/services',
+          name: 'admin-services',
+          component: () => import('@/views/admin/AdminServicesView.vue'),
+          meta: { modules: ['utilisateurs', 'gestionnaire'] },
+        },
+        {
           path: 'admin/depenses',
           name: 'admin-depenses',
           component: () => import('@/views/admin/AdminDepensesView.vue'),
-          meta: { modules: ['admin', 'reception'] },
+          meta: { module: 'admin' },
         },
         {
           path: 'admin/salaires',
@@ -392,6 +398,12 @@ const router = createRouter({
         {
           path: 'gestionnaire/depenses/categories',
           redirect: { name: 'gestionnaire-depenses', query: { tab: 'categories' } },
+        },
+        {
+          path: 'gestionnaire/services',
+          name: 'gestionnaire-services',
+          component: () => import('@/views/admin/AdminServicesView.vue'),
+          meta: { module: 'gestionnaire' },
         },
         {
           path: 'gestionnaire/personnel',

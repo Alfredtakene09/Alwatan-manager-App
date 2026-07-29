@@ -24,6 +24,7 @@ export async function countUserRelatedData(userId: string): Promise<number> {
     prisma.patient.count({ where: { treatingDoctorId: userId } }),
     prisma.receptionCashSettlement.count({ where: { receptionistId: userId } }),
     prisma.receptionCashSettlement.count({ where: { accountantId: userId } }),
+    prisma.receptionDayClosure.count({ where: { receptionistId: userId } }),
     prisma.clinicExpense.count({ where: { paidById: userId } }),
     prisma.clinicExpense.count({ where: { recordedById: userId } }),
     prisma.clinicExpense.count({ where: { validatedById: userId } }),

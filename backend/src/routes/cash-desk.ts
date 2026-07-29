@@ -1,13 +1,21 @@
 import { Router } from "express";
 import { z } from "zod";
-import { ClinicExpenseCategory, ClinicExpenseStatus, Prisma, UserRole } from "@prisma/client";
+import { ClinicExpenseCategory, ClinicExpenseStatus, Prisma, ReceptionShiftSlot, UserRole } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import {
   CASH_COLLECTOR_ROLES,
   formatBusinessDate,
+  inferShiftSlotFromDate,
   isValidBusinessDate,
   parseBusinessDate,
+  SHIFT_SLOT_LABELS,
+  startOfLocalDay,
 } from "../lib/cash-shift.js";
+import {
+  aggregateCollectedForCashier,
+  netAfterExpenses,
+  sumExpensesForCashierOnDate,
+} from "../lib/cashier-personal-stats.js";
 import { DEFAULT_EXPENSE_INDICES } from "../lib/expense-indices-seed.js";
 import { requireAuth, requireAnyModule } from "../middleware/auth.js";
 
@@ -198,7 +206,8 @@ router.post("/expenses", async (req, res) => {
   try {
     const body = expenseSchema.parse(req.body);
     const businessDate = parseBusinessDate(body.businessDate);
-    const paidById = body.paidById ?? user.id;
+    const paidById =
+      user.role === UserRole.RECEPTIONNISTE ? user.id : (body.paidById ?? user.id);
 
     const cashier = await assertCashier(paidById);
     if (!cashier) return res.status(400).json({ error: "Caissier invalide" });
@@ -384,6 +393,186 @@ router.delete("/expense-indices/:id", async (req, res) => {
 
   await prisma.clinicExpenseIndice.delete({ where: { id: item.id } });
   return res.json({ message: "Indice supprimé." });
+});
+
+function serializeDayClosure(row: {
+  id: string;
+  receptionistId: string;
+  businessDate: Date;
+  shiftSlot: ReceptionShiftSlot | null;
+  collectedFcfa: number;
+  expensesFcfa: number;
+  netFcfa: number;
+  visitsToday: number;
+  registeredToday: number;
+  comment: string | null;
+  closedAt: Date;
+}) {
+  return {
+    id: row.id,
+    receptionistId: row.receptionistId,
+    businessDate: formatBusinessDate(row.businessDate),
+    shiftSlot: row.shiftSlot,
+    shiftLabel: row.shiftSlot ? SHIFT_SLOT_LABELS[row.shiftSlot] : null,
+    collectedFcfa: row.collectedFcfa,
+    expensesFcfa: row.expensesFcfa,
+    netFcfa: row.netFcfa,
+    visitsToday: row.visitsToday,
+    registeredToday: row.registeredToday,
+    comment: row.comment,
+    closedAt: row.closedAt.toISOString(),
+  };
+}
+
+async function buildDayClosureSnapshot(userId: string, businessDate: Date) {
+  const dayStart = startOfLocalDay(businessDate);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+
+  const [collected, expenses, visitsToday, registeredToday, dbUser] = await Promise.all([
+    aggregateCollectedForCashier(userId, dayStart, dayEnd),
+    sumExpensesForCashierOnDate(userId, dayStart),
+    prisma.visit.count({ where: { createdAt: { gte: dayStart, lt: dayEnd } } }),
+    prisma.patient.count({ where: { createdAt: { gte: dayStart, lt: dayEnd } } }),
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { cashShiftSlot: true, firstName: true, lastName: true },
+    }),
+  ]);
+
+  const shiftSlot = dbUser?.cashShiftSlot ?? inferShiftSlotFromDate(new Date());
+  const netFcfa = netAfterExpenses(collected.totalFcfa, expenses.totalFcfa);
+
+  return {
+    businessDate: formatBusinessDate(dayStart),
+    shiftSlot,
+    shiftLabel: shiftSlot ? SHIFT_SLOT_LABELS[shiftSlot] : null,
+    collectedFcfa: collected.totalFcfa,
+    expensesFcfa: expenses.totalFcfa,
+    netFcfa,
+    visitsToday,
+    registeredToday,
+    consultationsFcfa: collected.consultationsFcfa,
+    examsFcfa: collected.examsFcfa,
+    surgeryFcfa: collected.surgeryFcfa,
+    hospitalizationFcfa: collected.hospitalizationFcfa,
+    receptionistName: dbUser ? `${dbUser.firstName} ${dbUser.lastName}`.trim() : "",
+  };
+}
+
+router.get("/day-closure", async (req, res) => {
+  const user = req.user!;
+  if (!CASH_COLLECTOR_ROLES.includes(user.role)) {
+    return res.status(403).json({ error: "Réservé aux caissiers réception." });
+  }
+
+  const businessDateIso =
+    typeof req.query.businessDate === "string" && isValidBusinessDate(req.query.businessDate)
+      ? req.query.businessDate
+      : formatBusinessDate(new Date());
+  const businessDate = parseBusinessDate(businessDateIso);
+  const snapshot = await buildDayClosureSnapshot(user.id, businessDate);
+  const existing = await prisma.receptionDayClosure.findUnique({
+    where: {
+      receptionistId_businessDate: {
+        receptionistId: user.id,
+        businessDate,
+      },
+    },
+  });
+
+  return res.json({
+    ...snapshot,
+    closed: Boolean(existing),
+    closure: existing ? serializeDayClosure(existing) : null,
+  });
+});
+
+router.post("/day-closure", async (req, res) => {
+  const user = req.user!;
+  if (!CASH_COLLECTOR_ROLES.includes(user.role)) {
+    return res.status(403).json({ error: "Réservé aux caissiers réception." });
+  }
+
+  try {
+    const body = z
+      .object({
+        businessDate: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
+        comment: z.string().max(500).optional(),
+      })
+      .parse(req.body ?? {});
+
+    const businessDateIso = body.businessDate ?? formatBusinessDate(new Date());
+    if (!isValidBusinessDate(businessDateIso)) {
+      return res.status(400).json({ error: "Date métier invalide." });
+    }
+    const businessDate = parseBusinessDate(businessDateIso);
+    const snapshot = await buildDayClosureSnapshot(user.id, businessDate);
+
+    const existing = await prisma.receptionDayClosure.findUnique({
+      where: {
+        receptionistId_businessDate: {
+          receptionistId: user.id,
+          businessDate,
+        },
+      },
+    });
+    if (existing) {
+      return res.status(409).json({
+        error: "La journée est déjà clôturée.",
+        closure: serializeDayClosure(existing),
+      });
+    }
+
+    const closure = await prisma.$transaction(async (tx) => {
+      const created = await tx.receptionDayClosure.create({
+        data: {
+          receptionistId: user.id,
+          businessDate,
+          shiftSlot: snapshot.shiftSlot,
+          collectedFcfa: snapshot.collectedFcfa,
+          expensesFcfa: snapshot.expensesFcfa,
+          netFcfa: snapshot.netFcfa,
+          visitsToday: snapshot.visitsToday,
+          registeredToday: snapshot.registeredToday,
+          comment: body.comment?.trim() || null,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: user.id,
+          action: "RECEPTION_DAY_CLOSURE",
+          entity: "ReceptionDayClosure",
+          entityId: created.id,
+          metadata: {
+            businessDate: snapshot.businessDate,
+            shiftSlot: snapshot.shiftSlot,
+            collectedFcfa: snapshot.collectedFcfa,
+            expensesFcfa: snapshot.expensesFcfa,
+            netFcfa: snapshot.netFcfa,
+          },
+        },
+      });
+
+      return created;
+    });
+
+    return res.status(201).json({
+      message: "Journée clôturée — remettez la caisse à la comptabilité.",
+      ...snapshot,
+      closed: true,
+      closure: serializeDayClosure(closure),
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: "Données invalides.", details: error.flatten() });
+    }
+    return res.status(500).json({ error: "Impossible de clôturer la journée." });
+  }
 });
 
 export { EXPENSE_CATEGORY_LABELS };

@@ -234,8 +234,12 @@ watch(
 )
 
 onMounted(async () => {
-  await labPanels.fetchPanels()
-  loadDossier()
+  try {
+    await labPanels.fetchPanels()
+  } catch {
+    // Ne pas bloquer l'ouverture du dossier si les formulaires ne chargent pas
+  }
+  await loadDossier()
   pollTimer = setInterval(loadDossier, POLL_MS)
 })
 
@@ -248,7 +252,15 @@ onUnmounted(() => {
   <div class="lab-dossier">
     <UiPageHeader
       :title="patientLabel || 'Résultats laboratoire'"
-      :subtitle="visit ? `${visit.patient.code} — ${prescribedExamsPreview}` : 'Chargement…'"
+      :subtitle="
+        visit
+          ? `${visit.patient.code} — ${prescribedExamsPreview}`
+          : loading
+            ? 'Chargement…'
+            : message
+              ? 'Dossier indisponible'
+              : 'Chargement…'
+      "
       :icon="ClipboardList"
     >
       <template #actions>

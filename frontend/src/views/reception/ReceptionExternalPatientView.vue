@@ -20,7 +20,7 @@ import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
 import { doctorSelectSuffix, type DoctorOption } from '@/lib/doctor-compensation'
 import { computeGrossFcfaFromExamsByKind, getLabExamPriceFcfa } from '@/lib/lab-exams'
 import { CLINIC } from '@/lib/clinic'
-import { buildClinicPrintHeader, buildLabExamInvoiceHtml, openPrintDocument } from '@/lib/print-document'
+import { buildClinicPrintHeader, buildLabExamThermalReceiptHtml, openPrintDocument } from '@/lib/print-document'
 import MultiExamPrescriptionPicker from '@/components/MultiExamPrescriptionPicker.vue'
 import { emptyExamsByKind, countExamsByKind, type ExamsByKind } from '@/lib/exam-catalog'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
@@ -60,6 +60,11 @@ type QueuePatient = {
   ageUnit?: PatientAgeUnit | null
 }
 
+type ServiceOption = {
+  id: string
+  name: string
+}
+
 type ExternalQueueRow = {
   id: string
   visitId: string
@@ -72,6 +77,7 @@ type ExternalQueueRow = {
   invoiced: boolean
   invoiceNumber?: string | null
   labSentToLabAt: string | null
+  service?: string | null
   clinicalNotes?: string | null
   patient: QueuePatient
 }
@@ -82,12 +88,14 @@ type DraftNewPatient = {
   ageUnit: PatientAgeUnit
   phone: string
   gender: string
+  service: string
   doctorId: string
 }
 
 const { uiText, localeCode } = useAppI18n()
 
 const doctors = ref<DoctorOption[]>([])
+const services = ref<ServiceOption[]>([])
 const search = ref('')
 const searchResults = ref<PatientRow[]>([])
 const showNewPatientModal = ref(false)
@@ -105,6 +113,7 @@ const patientForm = ref<DraftNewPatient>({
   ageUnit: 'YEARS',
   phone: '',
   gender: 'F',
+  service: '',
   doctorId: '',
 })
 
@@ -133,7 +142,12 @@ const netFcfa = computed(() => Math.max(0, grossFcfa.value - (Number(reductionFc
 
 const canConfirmNewPatient = computed(() => {
   const { firstName, lastName } = parsedName.value
-  return firstName.length >= 2 && lastName.length >= 2 && parsedAge.value !== null
+  return (
+    firstName.length >= 2 &&
+    lastName.length >= 2 &&
+    parsedAge.value !== null &&
+    !!patientForm.value.service
+  )
 })
 
 const canSaveEdit = computed(() => {
@@ -200,10 +214,19 @@ const subtotalLabel = computed(() => {
 })
 
 function resetPatientForm() {
-  patientForm.value = { fullName: '', age: '', ageUnit: 'YEARS', phone: '', gender: 'F', doctorId: '' }
+  patientForm.value = {
+    fullName: '',
+    age: '',
+    ageUnit: 'YEARS',
+    phone: '',
+    gender: 'F',
+    service: services.value[0]?.name ?? '',
+    doctorId: '',
+  }
 }
 
-function openNewPatientModal() {
+async function openNewPatientModal() {
+  await loadServices()
   resetPatientForm()
   showNewPatientModal.value = true
 }
@@ -311,7 +334,7 @@ ${buildClinicPrintHeader(uiText('Fiche patient externe'))}
 
   openPrintDocument(
     `Facture examens ${patient.code}`,
-    buildLabExamInvoiceHtml({
+    buildLabExamThermalReceiptHtml({
       patientCode: patient.code,
       patientName,
       prescribedBy: uiText('Patient externe — réception'),
@@ -329,7 +352,7 @@ ${buildClinicPrintHeader(uiText('Fiche patient externe'))}
       gender: patient.gender,
       phone: patient.phone ?? undefined,
     }),
-    { pageSize: 'A5' },
+    { pageSize: '80mm' },
   )
 }
 
@@ -339,6 +362,18 @@ async function loadDoctors() {
     doctors.value = Array.isArray(data) ? data : []
   } catch {
     doctors.value = []
+  }
+}
+
+async function loadServices() {
+  try {
+    const { data } = await api.get<ServiceOption[]>('/visits/external-services')
+    services.value = Array.isArray(data) ? data : []
+    if (!patientForm.value.service) {
+      patientForm.value.service = services.value[0]?.name ?? ''
+    }
+  } catch {
+    services.value = []
   }
 }
 
@@ -403,6 +438,7 @@ async function confirmNewPatient() {
     ageUnit: patientForm.value.ageUnit,
     phone: patientForm.value.phone.trim() || undefined,
     gender: patientForm.value.gender,
+    service: patientForm.value.service,
     doctorId: patientForm.value.doctorId || undefined,
   })
   closeNewPatientModal()
@@ -482,6 +518,11 @@ async function saveEdit() {
 onMounted(() => {
   loadQueue()
   loadDoctors()
+  loadServices().then(() => {
+    if (!patientForm.value.service) {
+      patientForm.value.service = services.value[0]?.name ?? ''
+    }
+  })
 })
 </script>
 
@@ -562,6 +603,7 @@ onMounted(() => {
               <td>
                 <strong>{{ fullName(row.patient.firstName, row.patient.lastName) }}</strong>
                 <span class="sub">{{ row.patient.code }}</span>
+                <span v-if="row.service" class="sub">{{ row.service }}</span>
               </td>
               <td>{{ row.examsSummary }}</td>
               <td>{{ row.hasExams ? formatFcfa(row.netFcfa) : '—' }}</td>
@@ -602,6 +644,14 @@ onMounted(() => {
           v-model:phone="patientForm.phone"
           v-model:gender="patientForm.gender"
         />
+        <UiSelect v-model="patientForm.service" label="Service" required>
+          <option value="" disabled>
+            {{ services.length ? 'Sélectionner un service' : 'Aucun service disponible' }}
+          </option>
+          <option v-for="service in services" :key="service.id" :value="service.name">
+            {{ service.name }}
+          </option>
+        </UiSelect>
         <UiSelect v-model="patientForm.doctorId" label="Médecin / prescripteur">
           <option value="">Aucun (optionnel)</option>
           <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">

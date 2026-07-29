@@ -38,7 +38,7 @@ const props = withDefaults(
 
 type ConsultationRow = {
   visitId: string
-  patient: { code: string; firstName: string; lastName: string }
+  patient: { code: string; firstName: string; lastName: string; service?: string | null }
   doctor: { firstName: string; lastName: string } | null
   consultationFeeFcfa: number
   reductionFcfa: number
@@ -111,6 +111,7 @@ const tableData = computed(() =>
       invoiceNumber: row.invoiceNumber ?? '—',
       patientName: fullName(row.patient.firstName, row.patient.lastName),
       patientCode: row.patient.code,
+      patientService: row.patient.service?.trim() || '—',
       doctorName: row.doctor ? `Dr ${fullName(row.doctor.firstName, row.doctor.lastName)}` : '—',
       fee: formatFcfa(amounts.consultationFeeFcfa),
       feeSort: amounts.consultationFeeFcfa,
@@ -135,8 +136,8 @@ const columns = [
     data: 'patientName',
     title: 'Patient',
     responsivePriority: 2,
-    render: (name: string, _t: string, row: { patientCode: string }) =>
-      `<span class="dt-name">${name}</span><span class="dt-sub">${row.patientCode}</span>`,
+    render: (name: string, _t: string, row: { patientCode: string; patientService: string }) =>
+      `<span class="dt-name">${name}</span><span class="dt-sub">${row.patientCode}</span><span class="dt-sub">${row.patientService}</span>`,
   },
   { data: 'doctorName', title: 'Médecin', responsivePriority: 5 },
   {

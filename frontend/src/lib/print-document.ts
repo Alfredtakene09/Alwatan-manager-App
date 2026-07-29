@@ -674,8 +674,22 @@ export const CLINIC_PRINT_STYLES = `
     text-align: right;
     white-space: nowrap;
   }
+  body.print-thermal .thermal-receipt__items--exams th:nth-child(2),
+  body.print-thermal .thermal-receipt__items--exams td:nth-child(2) {
+    width: 34%;
+    text-align: right;
+    white-space: nowrap;
+  }
+  body.print-thermal .thermal-receipt__type-header td {
+    font-weight: 700;
+    text-align: center;
+    background: #fff;
+  }
   body.print-thermal .thermal-receipt__totals th {
     width: 50%;
+  }
+  body.print-thermal .print-invoice-page + .print-invoice-page {
+    margin-top: 8px;
   }
   body.print-thermal .thermal-receipt__thanks {
     margin: 8px 0 2px;
@@ -799,7 +813,7 @@ function parseReceiptDateTime(dateStr: string, shortDate = false) {
   const match = dateStr.match(
     /(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/,
   )
-  const date = match
+  const parsed = match
     ? new Date(
         Number(match[3]),
         Number(match[2]) - 1,
@@ -808,7 +822,8 @@ function parseReceiptDateTime(dateStr: string, shortDate = false) {
         Number(match[5] ?? 0),
         Number(match[6] ?? 0),
       )
-    : new Date()
+    : new Date(dateStr)
+  const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed
 
   return {
     date: shortDate
@@ -899,6 +914,106 @@ export function buildConsultationReceiptHtml(data: ConsultationReceiptData): str
 </div>`
 }
 
+export type DayClosureReceiptData = {
+  businessDate: string
+  closedAt: string
+  receptionistName: string
+  shiftLabel?: string | null
+  collectedFcfa: number
+  expensesFcfa: number
+  netFcfa: number
+  visitsToday: number
+  registeredToday: number
+  consultationsFcfa?: number
+  examsFcfa?: number
+  surgeryFcfa?: number
+  hospitalizationFcfa?: number
+}
+
+export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string {
+  const closed = parseReceiptDateTime(data.closedAt)
+  const dateLabel = new Date(`${data.businessDate}T12:00:00`).toLocaleDateString('fr-FR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })
+
+  const metaRows = [
+    ['Date', dateLabel],
+    ['Clôturé le', `${closed.date} à ${closed.time}`],
+    ['Réceptionniste', data.receptionistName],
+    ...(data.shiftLabel ? [['Créneau', data.shiftLabel] as const] : []),
+    ['Inscriptions', String(data.registeredToday)],
+    ['Passages', String(data.visitsToday)],
+  ]
+    .map(
+      ([label, value]) => `
+      <tr>
+        <th>${escapeHtml(label)}</th>
+        <td>${escapeHtml(value)}</td>
+      </tr>`,
+    )
+    .join('')
+
+  const detailRows = [
+    data.consultationsFcfa != null ? ['Consultations', data.consultationsFcfa] as const : null,
+    data.examsFcfa != null ? ['Examens', data.examsFcfa] as const : null,
+    data.surgeryFcfa != null ? ['Chirurgie', data.surgeryFcfa] as const : null,
+    data.hospitalizationFcfa != null ? ['Hospitalisation', data.hospitalizationFcfa] as const : null,
+  ]
+    .filter((row): row is readonly [string, number] => row != null && row[1] > 0)
+    .map(
+      ([label, amount]) => `
+      <tr>
+        <th>${escapeHtml(label)}</th>
+        <td>${formatFcfaPrint(amount)}</td>
+      </tr>`,
+    )
+    .join('')
+
+  return `
+<div class="thermal-receipt">
+  <header class="thermal-receipt__head">
+    <img src="${CLINIC.logo}" alt="${escapeHtml(CLINIC.nameFr)}" class="thermal-receipt__logo" />
+    <p class="thermal-receipt__name-ar" dir="rtl" lang="ar">${escapeHtml(CLINIC.nameAr)}</p>
+    <p class="thermal-receipt__name">${escapeHtml(CLINIC.shortName)}</p>
+    <p class="thermal-receipt__contact">${escapeHtml(CLINIC.city)}</p>
+  </header>
+
+  <hr class="thermal-receipt__rule" />
+  <h1 class="thermal-receipt__title">Clôture de journée</h1>
+  <p class="thermal-receipt__subtitle">${escapeHtml(dateLabel)}</p>
+  <hr class="thermal-receipt__rule" />
+
+  <table class="thermal-receipt__meta">
+    <tbody>${metaRows}</tbody>
+  </table>
+
+  ${detailRows ? `<table class="thermal-receipt__meta"><tbody>${detailRows}</tbody></table>` : ''}
+
+  <table class="thermal-receipt__totals">
+    <tbody>
+      <tr>
+        <th>Encaissements</th>
+        <td>${formatFcfaPrint(data.collectedFcfa)}</td>
+      </tr>
+      <tr>
+        <th>Dépenses</th>
+        <td>${formatFcfaPrint(data.expensesFcfa)}</td>
+      </tr>
+      <tr>
+        <th>Net à remettre</th>
+        <td>${formatFcfaPrint(data.netFcfa)}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <hr class="thermal-receipt__rule" />
+  <p class="thermal-receipt__thanks">Remettre la caisse à la comptabilité</p>
+</div>`
+}
+
 export type LabExamInvoiceLine = {
   label: string
   amountFcfa: number
@@ -925,6 +1040,148 @@ export type LabExamInvoiceData = {
   processedBy?: string
 }
 
+function resolveLabExamDocTitle(data: LabExamInvoiceData) {
+  return (
+    data.docTitle ??
+    resolveLabExamInvoiceDocTitle(
+      data.examLines.map((line) => ({
+        label: line.label,
+        unitPriceFcfa: line.amountFcfa,
+        kind: line.kind,
+      })),
+    )
+  )
+}
+
+function buildGroupedThermalExamRows(examLines: LabExamInvoiceLine[]) {
+  const renderRow = (line: LabExamInvoiceLine) => `
+      <tr>
+        <td>${escapeHtml(line.label)}</td>
+        <td>${formatFcfaPrint(line.amountFcfa)}</td>
+      </tr>`
+
+  if (examLines.length <= 1) {
+    return examLines.map(renderRow).join('')
+  }
+
+  const kinds = new Set(examLines.map((line) => line.kind ?? 'examen'))
+  if (kinds.size === 1) {
+    return examLines.map(renderRow).join('')
+  }
+
+  const grouped: Record<ExamKindSlug, LabExamInvoiceLine[]> = {
+    examen: [],
+    radio: [],
+    echo: [],
+    odonto: [],
+    operation: [],
+    hospitalisation: [],
+  }
+  for (const line of examLines) {
+    grouped[line.kind ?? 'examen'].push(line)
+  }
+
+  return EXAM_KIND_ORDER.flatMap((kind) => {
+    const lines = grouped[kind]
+    if (!lines.length) return []
+    const header = `
+      <tr class="thermal-receipt__type-header">
+        <td colspan="2">${escapeHtml(EXAM_KIND_LABELS[kind])}</td>
+      </tr>`
+    return header + lines.map(renderRow).join('')
+  }).join('')
+}
+
+/** Ticket thermique 80 mm (Xprinter) — encaissements examens réception */
+export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string {
+  const { date, time } = parseReceiptDateTime(data.date, true)
+  const genderLabel = formatGender(data.gender)
+  const hasReduction = data.reductionFcfa > 0
+  const invoiceNo = data.invoiceNumber ?? '—'
+  const status = data.status ?? 'Payé'
+  const docTitle = resolveLabExamDocTitle(data)
+  const totalLabel = status === 'Payé' ? 'Total payé' : 'Total à payer'
+  const ageLabel = data.age != null ? patientAgeLabel(data.age, data.ageUnit) : null
+
+  const metaRows = [
+    ['Patient', data.patientName],
+    ['Matricule', data.patientCode],
+    ...(genderLabel ? [['Sexe', genderLabel] as const] : []),
+    ...(ageLabel ? [['Âge', ageLabel] as const] : []),
+    ...(data.phone ? [['Tél.', data.phone] as const] : []),
+    ['Date', date],
+    ['Heure', time],
+    ['N° facture', invoiceNo],
+    ['Statut', status],
+    ['Prescrit par', data.prescribedBy],
+    ...(data.processedBy ? [['Encaissé par', data.processedBy] as const] : []),
+  ]
+    .map(
+      ([label, value]) => `
+      <tr>
+        <th>${escapeHtml(label)}</th>
+        <td>${escapeHtml(value)}</td>
+      </tr>`,
+    )
+    .join('')
+
+  const kindComment = data.kindComment?.trim()
+  const kindCommentBlock = kindComment
+    ? `<p class="thermal-receipt__note"><strong>Commentaire:</strong> ${escapeHtml(kindComment)}</p>`
+    : ''
+
+  const totalsRows = [
+    ...(hasReduction
+      ? [
+          `<tr><th>Sous-total</th><td>${formatFcfaPrint(data.grossFcfa)}</td></tr>`,
+          `<tr><th>Réduction</th><td>- ${formatFcfaPrint(data.reductionFcfa)}</td></tr>`,
+        ]
+      : []),
+    `<tr><th>${escapeHtml(totalLabel)}</th><td>${formatFcfaPrint(data.totalFcfa)}</td></tr>`,
+  ].join('')
+
+  return `
+<div class="thermal-receipt">
+  <header class="thermal-receipt__head">
+    <img src="${CLINIC.logo}" alt="${escapeHtml(CLINIC.nameFr)}" class="thermal-receipt__logo" />
+    <p class="thermal-receipt__name-ar" dir="rtl" lang="ar">${escapeHtml(CLINIC.nameAr)}</p>
+    <p class="thermal-receipt__name">${escapeHtml(CLINIC.shortName)}</p>
+    <p class="thermal-receipt__contact">${escapeHtml(CLINIC.city)}</p>
+    <p class="thermal-receipt__contact">${escapeHtml(CLINIC.phones)}</p>
+  </header>
+
+  <hr class="thermal-receipt__rule" />
+  <h1 class="thermal-receipt__title">${escapeHtml(docTitle)}</h1>
+  <p class="thermal-receipt__subtitle">${escapeHtml(invoiceNo)}</p>
+  <hr class="thermal-receipt__rule" />
+
+  <table class="thermal-receipt__meta">
+    <tbody>${metaRows}</tbody>
+  </table>
+
+  <table class="thermal-receipt__items thermal-receipt__items--exams">
+    <thead>
+      <tr>
+        <th>Examen</th>
+        <th>Montant</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${buildGroupedThermalExamRows(data.examLines)}
+    </tbody>
+  </table>
+
+  <table class="thermal-receipt__totals">
+    <tbody>${totalsRows}</tbody>
+  </table>
+
+  ${kindCommentBlock}
+
+  <hr class="thermal-receipt__rule" />
+  <p class="thermal-receipt__thanks">Merci de votre confiance</p>
+</div>`
+}
+
 export function buildLabExamInvoiceHtml(data: LabExamInvoiceData): string {
   const examCount = data.examLines.length
   const density = labExamDensityClass(examCount)
@@ -934,15 +1191,7 @@ export function buildLabExamInvoiceHtml(data: LabExamInvoiceData): string {
   const hasReduction = data.reductionFcfa > 0
   const invoiceNo = data.invoiceNumber ?? '—'
   const status = data.status ?? 'Payé'
-  const docTitle =
-    data.docTitle ??
-    resolveLabExamInvoiceDocTitle(
-      data.examLines.map((line) => ({
-        label: line.label,
-        unitPriceFcfa: line.amountFcfa,
-        kind: line.kind,
-      })),
-    )
+  const docTitle = resolveLabExamDocTitle(data)
   const totalLabel = status === 'Payé' ? 'Total payé' : 'Total à payer'
   const invoiceKinds = new Set(data.examLines.map((line) => line.kind ?? 'examen'))
   const singleKind = invoiceKinds.size === 1 ? [...invoiceKinds][0] : null

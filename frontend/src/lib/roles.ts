@@ -55,18 +55,18 @@ export const MODULE_ACCESS: Record<string, AppUserRole[]> = {
   dashboard: ['ADMIN', 'RECEPTIONNISTE', 'MEDECIN', 'COMPTABLE', 'LABORANTIN', 'PHARMACIEN', 'GESTIONNAIRE', 'LOGISTIQUE', 'SOIGNANT'],
   reception: ['ADMIN', 'RECEPTIONNISTE', 'COMPTABLE'],
   consultation: ['ADMIN', 'MEDECIN', 'COMPTABLE'],
-  comptabilite: ['ADMIN', 'COMPTABLE'],
-  hospitalisation: ['ADMIN', 'RECEPTIONNISTE', 'COMPTABLE'],
+  comptabilite: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE'],
+  hospitalisation: ['ADMIN', 'RECEPTIONNISTE', 'COMPTABLE', 'GESTIONNAIRE'],
   'bloc-salles': ['ADMIN', 'COMPTABLE', 'SOIGNANT'],
   pharmacie: ['ADMIN', 'PHARMACIEN', 'COMPTABLE', 'GESTIONNAIRE'],
   logistique: ['ADMIN', 'LOGISTIQUE', 'COMPTABLE'],
   laboratoire: ['ADMIN', 'LABORANTIN', 'COMPTABLE'],
   'dossier-patient': ['ADMIN', 'MEDECIN', 'LABORANTIN', 'COMPTABLE'],
   factures: ['ADMIN', 'COMPTABLE'],
-  utilisateurs: ['ADMIN', 'COMPTABLE'],
-  /** Comptes de connexion — réservé à l’administrateur plateforme. */
-  'user-accounts': ['ADMIN'],
-  admin: ['ADMIN', 'COMPTABLE'],
+  utilisateurs: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE'],
+  /** Comptes de connexion — admin plateforme et gestionnaire. */
+  'user-accounts': ['ADMIN', 'GESTIONNAIRE'],
+  admin: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE'],
   gestionnaire: ['ADMIN', 'GESTIONNAIRE', 'COMPTABLE'],
 }
 
@@ -78,8 +78,8 @@ export function canAccessAnyModule(role: AppUserRole, modules: string[]) {
   return modules.some((module) => canAccessModule(role, module))
 }
 
-/** Nomenclatures, suppressions, structure — réservé admin / comptabilité. */
-export const MANAGEMENT_ROLES: AppUserRole[] = ['ADMIN', 'COMPTABLE']
+/** Nomenclatures, suppressions, structure — réservé admin / comptabilité / gestionnaire. */
+export const MANAGEMENT_ROLES: AppUserRole[] = ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE']
 
 export function canManageResources(role: AppUserRole) {
   return MANAGEMENT_ROLES.includes(role)

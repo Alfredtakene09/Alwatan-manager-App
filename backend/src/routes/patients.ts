@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { InvoiceStatus, InvoiceType, PatientCategory, VisitStatus, type Prisma } from "@prisma/client";
+import { InvoiceStatus, InvoiceType, PatientCategory, UserRole, VisitStatus, type Prisma } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.js";
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
@@ -33,6 +33,12 @@ import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
+/** Réceptionniste : uniquement ses dossiers. Direction / gestionnaire / admin : tout. */
+function receptionistOwnPatientsWhere(user: { id: string; role: UserRole }): Prisma.PatientWhereInput {
+  if (user.role !== UserRole.RECEPTIONNISTE) return {};
+  return { createdById: user.id };
+}
+
 const router = Router();
 router.use(requireAuth);
 
@@ -43,6 +49,7 @@ const patientSchema = z
     age: z.number().int().min(0).optional(),
     ageUnit: ageUnitSchema,
     phone: z.string().optional(),
+    service: z.string().max(120).optional(),
     gender: z.string().optional(),
     dateOfBirth: z.string().optional(),
     address: z.string().optional(),
@@ -272,12 +279,15 @@ async function syncWaitingVisit(
 }
 
 router.get("/", async (req, res) => {
+  const user = req.user!;
   const q = String(req.query.q ?? "").trim();
   const category = req.query.category as string | undefined;
   const terms = q.split(/\s+/).filter(Boolean);
+  const ownScope = receptionistOwnPatientsWhere(user);
 
   const patients = await prisma.patient.findMany({
     where: {
+      ...ownScope,
       ...(category ? { category: category as PatientCategory } : {}),
       ...(terms.length > 0
         ? {
@@ -305,6 +315,8 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   startOfToday.setHours(0, 0, 0, 0);
   const tomorrowStart = new Date(startOfToday);
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+  const ownScope = receptionistOwnPatientsWhere(user);
+  const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
 
   const [
     registeredToday,
@@ -314,10 +326,26 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     collectedToday,
     myExpensesToday,
   ] = await Promise.all([
-    prisma.patient.count({ where: { createdAt: { gte: startOfToday } } }),
-    prisma.patient.count({ where: { gender: "F" } }),
-    prisma.patient.count({ where: { gender: "M" } }),
-    prisma.visit.count({ where: { createdAt: { gte: startOfToday } } }),
+    prisma.patient.count({
+      where: { ...ownScope, createdAt: { gte: startOfToday } },
+    }),
+    prisma.patient.count({ where: { ...ownScope, gender: "F" } }),
+    prisma.patient.count({ where: { ...ownScope, gender: "M" } }),
+    isReceptionist
+      ? prisma.visit.count({
+          where: {
+            createdAt: { gte: startOfToday },
+            OR: [
+              { patient: { createdById: user.id } },
+              {
+                invoices: {
+                  some: { type: InvoiceType.CONSULTATION, issuedById: user.id },
+                },
+              },
+            ],
+          },
+        })
+      : prisma.visit.count({ where: { createdAt: { gte: startOfToday } } }),
     CASH_COLLECTOR_ROLES.includes(user.role)
       ? aggregateCollectedForCashier(user.id, startOfToday, tomorrowStart)
       : aggregateCollectedToday(),
@@ -407,12 +435,14 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
           age: body.age,
           ageUnit: body.ageUnit,
           phone: body.phone,
+          service: body.service?.trim() || null,
           gender: body.gender,
           address: body.address,
           category: resolvePatientCategory(category),
           ongName: null,
           recommendedByName: normalizeRecommendedByName(body.recommendedByName),
           treatingDoctorId: treatingDoctorId ?? null,
+          createdById: req.user!.id,
           dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : undefined,
         },
         include: { treatingDoctor: { select: treatingDoctorSelect } },
@@ -539,12 +569,14 @@ router.post("/", requireModule("reception"), async (req, res) => {
         age: body.age,
         ageUnit: body.ageUnit,
         phone: body.phone,
+        service: body.service?.trim() || null,
         gender: body.gender,
         address: body.address,
         category: resolvePatientCategory(body.category),
         ongName: null,
         recommendedByName: normalizeRecommendedByName(body.recommendedByName),
         treatingDoctorId: treatingDoctorId ?? null,
+        createdById: req.user!.id,
         dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : undefined,
       },
       include: { treatingDoctor: { select: treatingDoctorSelect } },
@@ -607,6 +639,7 @@ router.patch("/:id", requireModule("reception"), async (req, res) => {
           age: body.age,
           ageUnit: body.ageUnit,
           phone: body.phone,
+          service: body.service === undefined ? undefined : body.service.trim() || null,
           gender: body.gender,
           address: body.address,
           category: nextCategory,

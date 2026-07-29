@@ -76,7 +76,8 @@ function resolveLabPanelSlug(label: string): string | undefined {
   return LEGACY_LAB_PANEL_LABELS[label];
 }
 
-const PANEL_LINE_RE = /^Labo panel \(([^)]+)\) : (\{.*\})$/
+// Accepte les libellés contenant des parenthèses, ex. "Panel (v2)"
+const PANEL_LINE_RE = /^Labo panel \((.+)\) : (\{.*\})$/
 
 export function hasLabExamsPrescribed(notes?: string | null) {
   return parsePrescribedExamsByKind(notes).examen.length > 0;
@@ -112,7 +113,7 @@ function stripPanelLines(notes: string, slug: string) {
     .trim();
 }
 
-const PANEL_RECEIVED_RE = /^Labo panel reçu \(([^)]+)\) : (.+)$/;
+const PANEL_RECEIVED_RE = /^Labo panel reçu \((.+)\) : (.+)$/;
 
 function stripPanelReceivedLines(notes: string, slug: string) {
   const label = labelForSlug(slug);
@@ -181,7 +182,7 @@ export type LabPanelDoctorComment = {
   updatedAt: string;
 };
 
-const PANEL_DOCTOR_COMMENT_RE = /^Labo panel avis médecin \(([^)]+)\) : (\{.*\})$/;
+const PANEL_DOCTOR_COMMENT_RE = /^Labo panel avis médecin \((.+)\) : (\{.*\})$/;
 
 function stripPanelDoctorCommentLines(notes: string, slug: string) {
   const label = labelForSlug(slug);

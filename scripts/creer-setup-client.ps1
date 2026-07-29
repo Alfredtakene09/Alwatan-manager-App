@@ -41,6 +41,7 @@ $filesFromScripts = @(
     'lancer-client.ps1',
     'installer-poste-client.ps1',
     'tester-poste-client.ps1',
+    'diagnostic-poste-client.ps1',
     'alwatan-server.txt.example'
 )
 foreach ($file in $filesFromScripts) {
@@ -57,36 +58,60 @@ $installerBat = @"
 title Installation Alwatan Manager (client)
 cd /d "%~dp0"
 echo.
-echo   Clinique Alwatan — Installation poste client
+echo   Clinique Alwatan - Installation poste client
 echo.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer-poste-client.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer-poste-client.ps1" > "%~dp0INSTALL-LOG.txt" 2>&1
 if errorlevel 1 (
     echo.
     echo Installation echouee.
+    echo Ouvrez INSTALL-LOG.txt ou lancez DIAGNOSTIC.bat
+    echo puis rapportez RAPPORT-ALWATAN-CLIENT.txt sur le serveur.
+    start "" notepad.exe "%~dp0INSTALL-LOG.txt"
     pause
     exit /b 1
 )
+echo.
+echo Installation OK. Raccourci Bureau : Alwatan Manager
+pause
 "@
 Set-Content -Path (Join-Path $packageDir 'INSTALLER.bat') -Value $installerBat -Encoding ASCII
 
+$diagnosticBat = @"
+@echo off
+title Diagnostic Alwatan (poste client)
+cd /d "%~dp0"
+echo.
+echo   Diagnostic Alwatan - creation du rapport...
+echo.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0diagnostic-poste-client.ps1"
+if errorlevel 1 (
+    echo.
+    echo Probleme detecte. Rapportez RAPPORT-ALWATAN-CLIENT.txt sur le serveur.
+    pause
+)
+"@
+Set-Content -Path (Join-Path $packageDir 'DIAGNOSTIC.bat') -Value $diagnosticBat -Encoding ASCII
+
 $lisezMoi = @"
-Clinique Alwatan — Setup client (accès réseau)
+Clinique Alwatan - Setup client (acces reseau)
 ==============================================
 
-Sur ce PC (réception, médecin, etc.) — pas le serveur :
+Sur ce PC (reception, medecin, etc.) - pas le serveur :
 
-1. Copiez tout le dossier « $packageName » (clé USB ou réseau).
+1. Copiez tout le dossier « $packageName » (cle USB ou reseau).
 2. Double-cliquez sur INSTALLER.bat
-3. Validez l'IP du serveur si demandée (défaut : $ServerIp)
+3. Validez l'IP du serveur si demandee (defaut : $ServerIp)
 4. Utilisez le raccourci Bureau « Alwatan Manager »
 
-URL après installation : http://${ServerIp}:${Port}/
+URL apres installation : http://${ServerIp}:${Port}/
 
-Prérequis : Windows 10/11, Edge ou Chrome, même réseau local que le serveur.
-Le serveur doit être allumé (service AlwatanManager sur le port $Port).
+Prerequis : Windows 10/11, Edge ou Chrome, meme reseau local que le serveur.
+Le serveur doit etre allume (service AlwatanManager sur le port $Port).
 
-Dépannage : lancez tester-poste-client.ps1 (clic droit → Exécuter avec PowerShell)
-ou modifiez alwatan-server.txt avant de réinstaller.
+Si ca ne marche pas :
+1. Double-cliquez sur DIAGNOSTIC.bat
+2. Un fichier RAPPORT-ALWATAN-CLIENT.txt s'ouvre
+3. Copiez ce fichier sur une cle USB et ouvrez-le sur le serveur
 "@
 Set-Content -Path (Join-Path $packageDir 'LISEZMOI.txt') -Value $lisezMoi -Encoding UTF8
 

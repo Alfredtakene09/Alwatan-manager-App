@@ -2,6 +2,7 @@ import { ExamCatalogKind, InterventionCategory, RoomType } from "@prisma/client"
 import { prisma } from "../src/lib/db.js";
 import { EXAM_CATALOG_SEED } from "../src/lib/exam-catalog-seed.js";
 import { DEFAULT_EMPLOYEE_JOB_TITLES } from "../src/lib/employee-job-titles-seed.js";
+import { DEFAULT_CLINIC_SERVICES } from "../src/lib/clinic-services-seed.js";
 import { DEFAULT_EXPENSE_INDICES } from "../src/lib/expense-indices-seed.js";
 import { DEFAULT_EXPENSE_CATEGORIES } from "../src/lib/expense-categories-seed.js";
 
@@ -15,6 +16,14 @@ export async function seedReferenceData() {
       where: { label },
       update: { active: true, sortOrder: index },
       create: { label, active: true, sortOrder: index },
+    });
+  }
+
+  for (const [index, name] of DEFAULT_CLINIC_SERVICES.entries()) {
+    await prisma.clinicService.upsert({
+      where: { name },
+      update: { active: true, sortOrder: index },
+      create: { name, active: true, sortOrder: index },
     });
   }
 

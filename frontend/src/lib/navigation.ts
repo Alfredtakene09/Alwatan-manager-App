@@ -303,11 +303,11 @@ const receptionNav: NavSection[] = [
         children: examensPaiementsNavChildren.map((item) => ({ ...item })),
       },
       {
-        to: '/admin/depenses',
-        label: 'Gestion des dépenses',
-        icon: Receipt,
+        to: '/reception/comptabilite',
+        label: 'Encaissements clinique',
+        icon: Wallet,
         module: 'reception',
-        description: 'Dépenses clinique et suivi caisse',
+        description: 'Consultations, examens, chirurgie et hospitalisation',
       },
     ],
   },
@@ -492,55 +492,55 @@ const directionOperationalNav: NavSection[] = [
   },
 ]
 
-const directionSettingsNav: NavSection[] = [
+/** Sous-menus Paramètres partagés (clinique). */
+const clinicParametresChildren = [
   {
-    pinnedBottom: true,
-    items: [
-      {
-        label: 'Paramètres',
-        icon: Settings,
-        module: 'comptabilite',
-        children: [
-          {
-            to: '/admin',
-            label: 'Nomenclatures',
-            icon: Settings,
-            module: 'admin',
-            description: 'Chirurgie et salles',
-          },
-          {
-            to: '/comptabilite/types-examen/examen',
-            label: "Types d'examen",
-            icon: FlaskConical,
-            module: 'comptabilite',
-          },
-          {
-            to: '/comptabilite/parametres/salles',
-            label: 'Salles',
-            icon: BedDouble,
-            module: 'comptabilite',
-          },
-          {
-            to: '/comptabilite/types-examen/operation',
-            label: 'Types opérations',
-            icon: Scissors,
-            module: 'comptabilite',
-          },
-          {
-            to: '/admin/employes',
-            label: 'Employés',
-            icon: UserRound,
-            module: 'utilisateurs',
-          },
-          {
-            to: '/admin/utilisateurs',
-            label: 'Utilisateurs',
-            icon: Users,
-            module: 'user-accounts',
-          },
-        ],
-      },
-    ],
+    to: '/admin',
+    label: 'Nomenclatures',
+    icon: Settings,
+    module: 'admin',
+    description: 'Chirurgie et salles',
+  },
+  {
+    to: '/comptabilite/types-examen/examen',
+    label: "Types d'examen",
+    icon: FlaskConical,
+    module: 'comptabilite',
+  },
+  {
+    to: '/comptabilite/parametres/salles',
+    label: 'Salles',
+    icon: BedDouble,
+    module: 'comptabilite',
+  },
+  {
+    to: '/comptabilite/types-examen/operation',
+    label: 'Types opérations',
+    icon: Scissors,
+    module: 'comptabilite',
+  },
+] as const
+
+/** Paramètres Clinique — identiques pour Direction et Gestionnaire. */
+const parametresChildren = [
+  ...clinicParametresChildren,
+  {
+    to: '/admin/employes',
+    label: 'Employés',
+    icon: UserRound,
+    module: 'utilisateurs',
+  },
+  {
+    to: '/admin/services',
+    label: 'Services',
+    icon: Building2,
+    module: 'utilisateurs',
+  },
+  {
+    to: '/admin/utilisateurs',
+    label: 'Utilisateurs',
+    icon: Users,
+    module: 'user-accounts',
   },
 ]
 
@@ -599,15 +599,20 @@ const directionAdminNav: NavSection[] = [
         module: 'laboratoire',
         children: laboratoireNavChildren,
       },
+      {
+        label: 'Paramètres',
+        icon: Settings,
+        module: 'admin',
+        children: [...parametresChildren],
+      },
     ],
   },
 ]
 
-/** Direction = pages opérationnelles + modules admin + paramètres en bas. */
+/** Direction = pages opérationnelles + modules admin. */
 const directionNav: NavSection[] = [
   ...directionOperationalNav,
   ...directionAdminNav,
-  ...directionSettingsNav,
 ]
 
 const soignantNav: NavSection[] = [
@@ -702,12 +707,6 @@ const gestionnaireNav: NavSection[] = [
     label: 'Personnel',
     items: [
       {
-        to: '/gestionnaire/personnel',
-        label: 'Registre du personnel',
-        icon: Users,
-        module: 'gestionnaire',
-      },
-      {
         to: '/gestionnaire/salaires',
         label: 'Salaires & paie',
         icon: Coins,
@@ -724,6 +723,12 @@ const gestionnaireNav: NavSection[] = [
         label: 'Supervision',
         icon: Eye,
         module: 'gestionnaire',
+      },
+      {
+        label: 'Paramètres',
+        icon: Settings,
+        module: 'gestionnaire',
+        children: [...parametresChildren],
       },
     ],
   },

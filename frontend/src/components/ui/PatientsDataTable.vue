@@ -12,6 +12,7 @@ export type PatientRow = {
   firstName: string
   lastName: string
   phone?: string
+  service?: string | null
   gender?: string
   createdAt?: string
 }
@@ -49,6 +50,7 @@ const tableData = computed(() =>
     id: p.id,
     code: p.code,
     fullName: fullName(p.firstName, p.lastName),
+    service: p.service?.trim() || '—',
     phone: p.phone || '—',
     genderRaw: p.gender,
     createdAt: formatDate(p.createdAt),
@@ -70,16 +72,23 @@ const columns = computed(() => [
     render: (name: string) => `<span class="dt-name">${name}</span>`,
   },
   {
+    data: 'service',
+    title: 'Service',
+    responsivePriority: 4,
+    render: (service: string) =>
+      service === '—' ? '<span class="dt-muted">—</span>' : `<span class="dt-date">${service}</span>`,
+  },
+  {
     data: 'phone',
     title: 'Téléphone',
-    responsivePriority: 4,
+    responsivePriority: 5,
     render: (phone: string) =>
       phone === '—' ? '<span class="dt-muted">—</span>' : `<a class="dt-phone" href="tel:${phone}">${phone}</a>`,
   },
   {
     data: 'genderRaw',
     title: 'Genre',
-    responsivePriority: 5,
+    responsivePriority: 6,
     render: (_d: unknown, _t: string, row: { genderRaw?: string }) => genderBadge(row.genderRaw),
   },
   {

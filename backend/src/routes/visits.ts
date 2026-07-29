@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { InvoiceStatus, InvoiceType, PatientCategory, Prisma, UserRole, VisitStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
+import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
 import {
   EXAMS_PRESCRIBED_PREFIX,
   LAB_BILLABLE_EXAM_KINDS,
@@ -20,7 +21,12 @@ import {
 import { canAccessModule } from "../lib/roles.js";
 import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.js";
 import { computeGrossFcfaFromExamLabels, computeLabExamsGrossFcfa, buildLabExamLines } from "../lib/lab-exam-prices.js";
-import { EXTERNAL_PATIENT_VISIT_NOTE, EXTERNAL_EXAMS_PENDING_NOTE } from "../lib/visit-external.js";
+import {
+  EXTERNAL_PATIENT_VISIT_NOTE,
+  EXTERNAL_EXAMS_PENDING_NOTE,
+  buildExternalPatientVisitNote,
+  extractExternalPatientService,
+} from "../lib/visit-external.js";
 import {
   cancelDuplicateActiveVisits,
   keepLatestVisitPerPatient,
@@ -144,6 +150,17 @@ router.get("/doctors", async (req, res) => {
       ...serializeDoctorFields({ role: doctor.role, employee: doctor.employee }),
     })),
   );
+});
+
+router.get("/external-services", requireModule("reception"), async (_req, res) => {
+  await ensureDefaultClinicServices(prisma);
+
+  const items = await prisma.clinicService.findMany({
+    where: { active: true },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    select: { id: true, name: true },
+  });
+  return res.json(items);
 });
 
 router.get("/", async (req, res) => {
@@ -294,20 +311,35 @@ router.get("/consultations-comptabilite", async (req, res) => {
   }
 
   const statusFilter = req.query.status as string | undefined;
+  const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
 
   const visits = await prisma.visit.findMany({
     where: {
       patient: comptabilitePatientWhere(),
-      OR: [
-        { consultationFeeFcfa: { not: null } },
-        { invoices: { some: { type: InvoiceType.CONSULTATION } } },
-      ],
+      ...(isReceptionist
+        ? {
+            invoices: {
+              some: {
+                type: InvoiceType.CONSULTATION,
+                issuedById: user.id,
+              },
+            },
+          }
+        : {
+            OR: [
+              { consultationFeeFcfa: { not: null } },
+              { invoices: { some: { type: InvoiceType.CONSULTATION } } },
+            ],
+          }),
     },
     include: {
-      patient: { select: { code: true, firstName: true, lastName: true } },
+      patient: { select: { code: true, firstName: true, lastName: true, service: true } },
       assignedDoctor: { select: { firstName: true, lastName: true } },
       invoices: {
-        where: { type: InvoiceType.CONSULTATION },
+        where: {
+          type: InvoiceType.CONSULTATION,
+          ...(isReceptionist ? { issuedById: user.id } : {}),
+        },
         orderBy: { createdAt: "desc" },
         take: 1,
       },
@@ -358,7 +390,7 @@ router.get("/encaissements-comptabilite", async (req, res) => {
       ...(user.role === UserRole.RECEPTIONNISTE ? { issuedById: user.id } : {}),
     },
     include: {
-      patient: { select: { code: true, firstName: true, lastName: true } },
+      patient: { select: { code: true, firstName: true, lastName: true, service: true } },
       visit: {
         select: {
           assignedDoctor: { select: { firstName: true, lastName: true } },
@@ -400,19 +432,35 @@ router.get("/compte-rendu-receptions", async (req, res) => {
     return res.status(403).json({ error: "Accès refusé" });
   }
 
+  const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
+
   const visits = await prisma.visit.findMany({
     where: {
       patient: comptabilitePatientWhere(),
-      OR: [
-        { consultationFeeFcfa: { not: null } },
-        { invoices: { some: { type: InvoiceType.CONSULTATION } } },
-      ],
+      ...(isReceptionist
+        ? {
+            invoices: {
+              some: {
+                type: InvoiceType.CONSULTATION,
+                issuedById: user.id,
+              },
+            },
+          }
+        : {
+            OR: [
+              { consultationFeeFcfa: { not: null } },
+              { invoices: { some: { type: InvoiceType.CONSULTATION } } },
+            ],
+          }),
     },
     include: {
-      patient: { select: { code: true, firstName: true, lastName: true } },
+      patient: { select: { code: true, firstName: true, lastName: true, service: true } },
       assignedDoctor: { select: { firstName: true, lastName: true } },
       invoices: {
-        where: { type: InvoiceType.CONSULTATION },
+        where: {
+          type: InvoiceType.CONSULTATION,
+          ...(isReceptionist ? { issuedById: user.id } : {}),
+        },
         orderBy: { createdAt: "desc" },
         take: 1,
         include: {
@@ -749,6 +797,7 @@ const externalPatientSchema = z
     lastName: z.string().min(2).optional(),
     phone: z.string().optional(),
     gender: z.string().optional(),
+    service: z.string().max(120).optional(),
     /** Médecin / prescripteur optionnel pour le patient externe */
     doctorId: z.string().optional(),
     prescriberDoctorId: z.string().optional(),
@@ -790,6 +839,7 @@ router.get("/external-queue", requireModule("reception"), async (_req, res) => {
       updatedAt: row.updatedAt,
       labSentToLabAt: row.labSentToLabAt,
       patient: row.visit.patient,
+      service: extractExternalPatientService(row.visit.notes),
       clinicalNotes: row.clinicalNotes,
       hasExams,
       examsSummary: hasExams
@@ -808,6 +858,7 @@ router.get("/external-queue", requireModule("reception"), async (_req, res) => {
 router.post("/external-patient", requireModule("reception"), async (req, res) => {
   try {
     const body = externalPatientSchema.parse(req.body);
+    const service = body.service?.trim() || null;
     const requestedDoctorId = body.doctorId?.trim() || body.prescriberDoctorId?.trim() || null;
 
     let assignedDoctorId: string | null = null;
@@ -852,6 +903,7 @@ router.post("/external-patient", requireModule("reception"), async (req, res) =>
             age: body.age,
             ageUnit: body.ageUnit,
             category: PatientCategory.STANDARD,
+            createdById: req.user!.id,
           },
         });
         patientId = patient.id;
@@ -896,7 +948,7 @@ router.post("/external-patient", requireModule("reception"), async (req, res) =>
         data: {
           patientId,
           status: VisitStatus.IN_TREATMENT,
-          notes: EXTERNAL_PATIENT_VISIT_NOTE,
+          notes: buildExternalPatientVisitNote(service),
           assignedDoctorId: assignedDoctorId ?? undefined,
         },
         include: { patient: true },
@@ -990,6 +1042,7 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
             age: body.age,
             ageUnit: body.ageUnit,
             category: PatientCategory.STANDARD,
+            createdById: req.user!.id,
           },
         });
         patientId = patient.id;

@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Wallet, Stethoscope, Layers } from '@lucide/vue'
 import ConsultationsComptabilitePanel from '@/components/comptabilite/ConsultationsComptabilitePanel.vue'
 import EncaissementsComptabilitePanel from '@/components/comptabilite/EncaissementsComptabilitePanel.vue'
+import { useAuthStore } from '@/stores/auth'
 
 type TabId = 'encaissements' | 'consultations'
 
 const route = useRoute()
+const auth = useAuthStore()
+const isReceptionist = computed(() => auth.user?.role === 'RECEPTIONNISTE')
 
 function tabFromQuery(): TabId {
   return route.query.tab === 'consultations' ? 'consultations' : 'encaissements'
@@ -26,6 +29,18 @@ const tabs: { id: TabId; label: string; icon: typeof Wallet }[] = [
   { id: 'encaissements', label: 'Tous les encaissements', icon: Layers },
   { id: 'consultations', label: 'Consultations seules', icon: Stethoscope },
 ]
+
+const encaissementsSubtitle = computed(() =>
+  isReceptionist.value
+    ? 'Uniquement vos encaissements — consultations, examens, chirurgie et hospitalisation'
+    : 'Tous les encaissements — consultations, examens, chirurgie et hospitalisation',
+)
+
+const consultationsSubtitle = computed(() =>
+  isReceptionist.value
+    ? 'Uniquement vos enregistrements de consultation'
+    : 'Tous les enregistrements de consultation à la réception',
+)
 </script>
 
 <template>
@@ -49,13 +64,13 @@ const tabs: { id: TabId; label: string; icon: typeof Wallet }[] = [
     <EncaissementsComptabilitePanel
       v-if="activeTab === 'encaissements'"
       title="Comptabilité — Encaissements"
-      subtitle="Uniquement vos encaissements — consultations, examens, chirurgie et hospitalisation"
+      :subtitle="encaissementsSubtitle"
       table-key="reception-encaissements"
     />
     <ConsultationsComptabilitePanel
       v-else
       title="Comptabilité — Consultations"
-      subtitle="Détail des montants de consultation enregistrés à la réception"
+      :subtitle="consultationsSubtitle"
       :icon="Wallet"
       table-key="reception-comptabilite"
     />

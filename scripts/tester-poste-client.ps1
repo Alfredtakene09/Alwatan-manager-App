@@ -1,10 +1,13 @@
-# Test de connexion au serveur Alwatan — à lancer sur un POSTE CLIENT.
+﻿# Test de connexion au serveur Alwatan - a lancer sur un POSTE CLIENT.
 param(
-    [string]$ServerIp = $(Read-AlwatanServerIp)
+    [string]$ServerIp = ''
 )
 
 . "$PSScriptRoot\_alwatan-common.ps1"
 
+if (-not $ServerIp) {
+    $ServerIp = Read-AlwatanServerIp
+}
 if (-not $ServerIp) {
     $ServerIp = Read-Host 'Adresse IP du serveur (ex. 192.168.88.161)'
 }
@@ -16,7 +19,7 @@ if ($ServerIp -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
 }
 
 Write-Host ''
-Write-Host "  Test client → serveur $ServerIp" -ForegroundColor Cyan
+Write-Host "  Test client -> serveur $ServerIp" -ForegroundColor Cyan
 Write-Host ''
 
 $localIp = Get-LocalLanIpv4
@@ -25,7 +28,7 @@ if ($localIp) {
     $serverPrefix = ($ServerIp -split '\.')[0..2] -join '.'
     $localPrefix = ($localIp -split '\.')[0..2] -join '.'
     if ($serverPrefix -ne $localPrefix) {
-        Write-Host "ATTENTION : sous-réseau différent ($localPrefix vs $serverPrefix) — les PC ne se verront peut-être pas." -ForegroundColor Yellow
+        Write-Host "ATTENTION : sous-reseau different ($localPrefix vs $serverPrefix) - les PC ne se verront peut-etre pas." -ForegroundColor Yellow
     }
 }
 Write-Host ''
@@ -35,19 +38,19 @@ $ping = Test-Connection -ComputerName $ServerIp -Count 2 -Quiet -ErrorAction Sil
 if ($ping) {
     Write-Host "  ping $ServerIp : OK" -ForegroundColor Green
 } else {
-    Write-Host "  ping $ServerIp : échec (souvent normal si ICMP bloqué)" -ForegroundColor DarkYellow
+    Write-Host "  ping $ServerIp : echec (souvent normal si ICMP bloque)" -ForegroundColor DarkYellow
 }
 
 Write-Host ''
 Write-Host '--- Ports TCP ---'
 foreach ($port in @(4000, 5173, 445)) {
     $t = Test-NetConnection -ComputerName $ServerIp -Port $port -WarningAction SilentlyContinue
-    $label = if ($t.TcpTestSucceeded) { 'OK' } else { 'ÉCHEC' }
+    $label = if ($t.TcpTestSucceeded) { 'OK' } else { 'ECHEC' }
     $color = if ($t.TcpTestSucceeded) { 'Green' } else { 'Red' }
     $hint = switch ($port) {
-        4000 { ' (application Alwatan — production)' }
+        4000 { ' (application Alwatan - production)' }
         5173 { ' (mode dev Vite)' }
-        445  { ' (partage Windows — test réseau local)' }
+        445  { ' (partage Windows - test reseau local)' }
     }
     Write-Host "  TCP ${ServerIp}:$port$hint : $label" -ForegroundColor $color
 }
@@ -63,12 +66,12 @@ if ($t4000.TcpTestSucceeded) {
 
 Write-Host 'Diagnostic :' -ForegroundColor Yellow
 if (-not $t445.TcpTestSucceeded) {
-    Write-Host '  Aucun port ne répond → isolation Wi-Fi (AP isolation), VLAN, ou mauvaise IP.'
-    Write-Host '  Demandez à l''admin réseau de désactiver l''isolation des clients sur le point d''accès.'
-    Write-Host '  Ou branchez les postes et le serveur sur le même switch Ethernet.'
+    Write-Host '  Aucun port ne repond -> isolation Wi-Fi (AP isolation), VLAN, ou mauvaise IP.'
+    Write-Host '  Demandez a l''admin reseau de desactiver l''isolation des clients sur le point d''acces.'
+    Write-Host '  Ou branchez les postes et le serveur sur le meme switch Ethernet.'
 } else {
-    Write-Host '  Le réseau local fonctionne (445 OK) mais pas le port 4000.'
-    Write-Host '  Sur le SERVEUR : exécutez scripts\forcer-acces-lan.cmd en administrateur, puis relancez l''application.'
+    Write-Host '  Le reseau local fonctionne (445 OK) mais pas le port 4000.'
+    Write-Host '  Sur le SERVEUR : executez scripts\forcer-acces-lan.cmd en administrateur, puis relancez l''application.'
 }
 Write-Host ''
 exit 1

@@ -144,6 +144,17 @@ model EmployeeJobTitle {
   updatedAt DateTime @updatedAt
 }
 
+model ClinicService {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, sortOrder, name])
+}
+
 model Employee {
   id                       String                 @id @default(cuid())
   firstName                String
@@ -216,6 +227,7 @@ model User {
   uploadedDocuments     PatientDocument[]
   receptionCashSettlementsAsReceptionist ReceptionCashSettlement[] @relation("SettlementReceptionist")
   receptionCashSettlementsAsAccountant   ReceptionCashSettlement[] @relation("SettlementAccountant")
+  receptionDayClosures                   ReceptionDayClosure[]
   clinicExpensesPaid                     ClinicExpense[]           @relation("ExpensePaidBy")
   clinicExpensesRecorded                 ClinicExpense[]           @relation("ExpenseRecordedBy")
   changeTransfersAsRequester             CashChangeTransfer[]      @relation("ChangeRequester")
@@ -232,6 +244,7 @@ model User {
   logisticsRequestsCreated               LogisticsRequest[]        @relation("LogisticsRequestRequestedBy")
   logisticsRequestsHandled               LogisticsRequest[]        @relation("LogisticsRequestHandledBy")
   treatingDoctorPatients                 Patient[]                 @relation("TreatingDoctorPatients")
+  registeredPatients                     Patient[]                 @relation("PatientRegisteredBy")
   attendingHospitalizations              Hospitalization[]         @relation("HospitalizationAttendingDoctor")
 }
 
@@ -250,6 +263,7 @@ model Patient {
   ageUnit     AgeUnit          @default(YEARS)
   dateOfBirth DateTime?
   phone       String?
+  service     String?
   gender      String?
   address     String?
   category    PatientCategory  @default(STANDARD)
@@ -257,16 +271,21 @@ model Patient {
   recommendedByName String?
   /// Médecin traitant permanent du dossier (optionnel) — distinct du médecin de la visite
   treatingDoctorId String?
+  /// Utilisateur qui a créé le dossier à la réception (pour périmètre réceptionniste)
+  createdById String?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
   treatingDoctor User? @relation("TreatingDoctorPatients", fields: [treatingDoctorId], references: [id])
+  createdBy     User?  @relation("PatientRegisteredBy", fields: [createdById], references: [id])
   visits        Visit[]
   prescriptions Prescription[]
   invoices      Invoice[]
   dossier       PatientDossier?
   documents     PatientDocument[]
   examReclamations ExamReclamation[]
+
+  @@index([createdById])
 }
 
 model PatientDossier {
@@ -627,6 +646,7 @@ model Product {
   noExpiry           Boolean   @default(false)
   quantity           Int       @default(0)
   unitPriceFcfa      Int
+  purchasePriceFcfa  Int?
   minStock           Int       @default(10)
   sachetsPerBox      Int       @default(1)
   sachetPriceFcfa    Int?
@@ -738,6 +758,27 @@ model ReceptionCashSettlement {
 
   @@unique([receptionistId, businessDate, shiftSlot])
   @@index([businessDate, shiftSlot])
+}
+
+/// Clôture journalière déclarée par le réceptionniste (avant décaissement comptable).
+model ReceptionDayClosure {
+  id             String              @id @default(cuid())
+  receptionistId String
+  businessDate   DateTime            @db.Date
+  shiftSlot      ReceptionShiftSlot?
+  collectedFcfa  Int
+  expensesFcfa   Int
+  netFcfa        Int
+  visitsToday    Int                 @default(0)
+  registeredToday Int                @default(0)
+  comment        String?
+  closedAt       DateTime            @default(now())
+  createdAt      DateTime            @default(now())
+
+  receptionist User @relation(fields: [receptionistId], references: [id])
+
+  @@unique([receptionistId, businessDate])
+  @@index([businessDate])
 }
 
 model ReceptionCashSettlementLine {

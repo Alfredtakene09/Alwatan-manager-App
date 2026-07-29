@@ -1,4 +1,4 @@
-import { buildLabExamInvoiceHtml, openPrintDocument } from '@/lib/print-document'
+import { buildLabExamThermalReceiptHtml, openPrintDocument } from '@/lib/print-document'
 import { fullName } from '@/lib/roles'
 import { normalizePatientAgeUnit } from '@/lib/patient-age'
 import type { ExamKindSlug } from '@/lib/exam-catalog/types'
@@ -181,7 +181,7 @@ function buildKindInvoiceSection(
       ? parsePrescribedExamCommentsByKind(normalized.clinicalNotes)[kind]?.trim() ?? ''
       : ''
 
-  return buildLabExamInvoiceHtml({
+  return buildLabExamThermalReceiptHtml({
     ...buildPatientContext(normalized),
     docTitle: resolveSingleExamInvoiceDocTitle(kind),
     examLines: block.lines.map((line) => ({
@@ -228,7 +228,7 @@ export function printLabExamKindInvoice(
   openPrintDocument(
     resolveSingleExamInvoiceDocTitle(kind),
     section,
-    { pageSize: 'A5' },
+    { pageSize: '80mm' },
   )
 }
 
@@ -267,7 +267,7 @@ export function printAllPendingLabExamInvoices(
   openPrintDocument(
     `Factures examens — ${normalized.visit.patient.code}`,
     sections,
-    { pageSize: 'A5' },
+    { pageSize: '80mm' },
   )
   return true
 }

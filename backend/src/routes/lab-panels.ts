@@ -2,10 +2,26 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/db.js";
 import { refreshLabPanelRegistry } from "../lib/lab-panels-registry.js";
-import { requireAuth, requireModule } from "../middleware/auth.js";
+import { requireAuth, requireAnyModule, requireModule } from "../middleware/auth.js";
+
+const panelInclude = {
+  fields: { orderBy: { sortOrder: "asc" as const } },
+} as const;
 
 const router = Router();
-router.use(requireAuth, requireModule("laboratoire"));
+router.use(requireAuth);
+
+/** Lecture des formulaires : labo + médecins (consultation des résultats). */
+router.get("/", requireAnyModule("laboratoire", "consultation"), async (_req, res) => {
+  const panels = await prisma.labPanel.findMany({
+    include: panelInclude,
+    orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+  });
+  return res.json(panels);
+});
+
+/** Écriture réservée au module laboratoire. */
+router.use(requireModule("laboratoire"));
 
 const fieldSchema = z.object({
   section: z.string().max(120).optional().nullable(),
@@ -34,10 +50,6 @@ const panelUpdateSchema = z.object({
   sortOrder: z.number().int().min(0).optional(),
   fields: z.array(fieldSchema).min(1).optional(),
 });
-
-const panelInclude = {
-  fields: { orderBy: { sortOrder: "asc" as const } },
-} as const;
 
 function slugify(value: string) {
   return value
@@ -91,14 +103,6 @@ function buildFieldRows(fields: z.infer<typeof fieldSchema>[]) {
     };
   });
 }
-
-router.get("/", async (_req, res) => {
-  const panels = await prisma.labPanel.findMany({
-    include: panelInclude,
-    orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
-  });
-  return res.json(panels);
-});
 
 router.post("/", async (req, res) => {
   try {

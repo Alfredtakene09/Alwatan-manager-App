@@ -35,6 +35,7 @@ export type PharmacyProductRecord = {
   noExpiry: boolean
   quantity: number
   unitPriceFcfa: number
+  purchasePriceFcfa: number | null
   minStock: number
   sachetsPerBox: number
   sachetPriceFcfa: number | null
@@ -64,6 +65,7 @@ const formExpiryDate = ref(defaultExpiryDateInput())
 const formNoExpiry = ref(false)
 const formQuantity = ref('0')
 const formUnitPrice = ref('')
+const formPurchasePrice = ref('')
 const formMinStock = ref('10')
 const formSachetsPerBox = ref('1')
 const formSachetPrice = ref('')
@@ -200,6 +202,7 @@ function resetForm() {
   formNoExpiry.value = false
   formQuantity.value = '0'
   formUnitPrice.value = ''
+  formPurchasePrice.value = ''
   formMinStock.value = '10'
   formSachetsPerBox.value = '1'
   formSachetPrice.value = ''
@@ -227,6 +230,7 @@ function openEditModal(id: string) {
   formNoExpiry.value = item.noExpiry
   formQuantity.value = String(item.quantity)
   formUnitPrice.value = String(item.unitPriceFcfa)
+  formPurchasePrice.value = item.purchasePriceFcfa ? String(item.purchasePriceFcfa) : ''
   formMinStock.value = String(item.minStock)
   formSachetsPerBox.value = String(item.sachetsPerBox)
   formSachetPrice.value = item.sachetPriceFcfa ? String(item.sachetPriceFcfa) : ''
@@ -243,6 +247,7 @@ function closeModal() {
 
 function buildPayload() {
   const unitPriceFcfa = Number(formUnitPrice.value)
+  const purchasePriceFcfa = Number(formPurchasePrice.value)
   const sachetPrice = Number(formSachetPrice.value)
   return {
     name: formName.value.trim(),
@@ -254,6 +259,7 @@ function buildPayload() {
     expiryDate: formNoExpiry.value ? null : formExpiryDate.value,
     noExpiry: formNoExpiry.value,
     unitPriceFcfa,
+    purchasePriceFcfa: Number.isFinite(purchasePriceFcfa) && purchasePriceFcfa > 0 ? purchasePriceFcfa : null,
     minStock: Number(formMinStock.value) || 10,
     sachetsPerBox: Number(formSachetsPerBox.value) || 1,
     sachetPriceFcfa: Number.isFinite(sachetPrice) && sachetPrice > 0 ? sachetPrice : null,
@@ -265,6 +271,7 @@ function buildPayload() {
 async function saveItem() {
   const name = formName.value.trim()
   const unitPriceFcfa = Number(formUnitPrice.value)
+  const purchasePriceFcfa = Number(formPurchasePrice.value)
 
   if (name.length < 2) {
     message.value = 'Le nom du médicament est requis.'
@@ -273,6 +280,11 @@ async function saveItem() {
   }
   if (!Number.isFinite(unitPriceFcfa) || unitPriceFcfa <= 0) {
     message.value = 'Prix de vente invalide.'
+    messageType.value = 'error'
+    return
+  }
+  if (formPurchasePrice.value.trim() && (!Number.isFinite(purchasePriceFcfa) || purchasePriceFcfa <= 0)) {
+    message.value = "Prix d'achat invalide."
     messageType.value = 'error'
     return
   }
@@ -453,7 +465,7 @@ defineExpose({ reload: loadItems })
         </div>
       </div>
 
-      <div class="product-form__row product-form__row--3">
+      <div class="product-form__row product-form__row--4">
         <UiInput
           v-if="!isEditing"
           v-model="formQuantity"
@@ -470,6 +482,19 @@ defineExpose({ reload: loadItems })
               type="number"
               min="1"
               required
+              placeholder="0"
+            />
+            <span class="amount-field__suffix">FCFA</span>
+          </div>
+        </div>
+        <div class="amount-field">
+          <span class="amount-field__label">Prix d'achat</span>
+          <div class="amount-field__wrap">
+            <input
+              v-model="formPurchasePrice"
+              class="amount-field__input"
+              type="number"
+              min="1"
               placeholder="0"
             />
             <span class="amount-field__suffix">FCFA</span>
@@ -550,6 +575,10 @@ defineExpose({ reload: loadItems })
 
 .product-form__row--3 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.product-form__row--4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .product-form__section {
@@ -662,7 +691,8 @@ defineExpose({ reload: loadItems })
   .product-form__row--name,
   .product-form__row--2,
   .product-form__row--supplier,
-  .product-form__row--3 {
+  .product-form__row--3,
+  .product-form__row--4 {
     grid-template-columns: 1fr;
   }
 

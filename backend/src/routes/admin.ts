@@ -15,6 +15,7 @@ import {
 } from "@prisma/client";
 import { parseShiftSlot } from "../lib/cash-shift.js";
 import { prisma } from "../lib/db.js";
+import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
 import { USER_ROLES } from "../lib/roles.js";
 import { employeeCompensationData } from "../lib/doctor-compensation.js";
 import {
@@ -49,7 +50,7 @@ import {
   findDuplicateRoomByName,
 } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
-import { requireAuth, requireModule } from "../middleware/auth.js";
+import { requireAuth, requireAnyModule, requireModule } from "../middleware/auth.js";
 import {
   currentPayrollPeriod,
   ensurePayrollForMonth,
@@ -197,6 +198,14 @@ const jobTitleSchema = z.object({
   label: z.string().min(2).max(120),
   active: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
+});
+
+const clinicServiceSchema = z.object({
+  name: z.string().min(2).max(120),
+  active: z
+    .union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")])
+    .optional(),
+  sortOrder: z.coerce.number().int().min(0).optional(),
 });
 
 const userSelect = {
@@ -419,6 +428,65 @@ router.delete("/job-titles/:id", requireModule("utilisateurs"), async (req, res)
   return res.json({ ok: true, message: `Le poste « ${item.label} » a été supprimé.` });
 });
 
+const clinicServicesAccess = requireAnyModule("utilisateurs", "gestionnaire");
+
+router.get("/services", clinicServicesAccess, async (req, res) => {
+  await ensureDefaultClinicServices(prisma);
+
+  const activeOnly = req.query.activeOnly === "true";
+  const items = await prisma.clinicService.findMany({
+    where: activeOnly ? { active: true } : undefined,
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+  });
+  return res.json(items);
+});
+
+router.post("/services", clinicServicesAccess, async (req, res) => {
+  try {
+    const body = clinicServiceSchema.parse(req.body);
+    const item = await prisma.clinicService.create({
+      data: {
+        name: body.name.trim(),
+        active: body.active ?? true,
+        sortOrder: body.sortOrder ?? 0,
+      },
+    });
+    return res.status(201).json(item);
+  } catch {
+    return res.status(400).json({ error: "Service invalide ou déjà existant." });
+  }
+});
+
+router.put("/services/:id", clinicServicesAccess, async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const body = clinicServiceSchema.partial().parse(req.body);
+    const existing = await prisma.clinicService.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: "Service introuvable." });
+
+    const item = await prisma.clinicService.update({
+      where: { id },
+      data: {
+        ...(body.name !== undefined ? { name: body.name.trim() } : {}),
+        active: body.active,
+        sortOrder: body.sortOrder,
+      },
+    });
+    return res.json(item);
+  } catch {
+    return res.status(400).json({ error: "Mise à jour impossible — nom invalide ou déjà utilisé." });
+  }
+});
+
+router.delete("/services/:id", clinicServicesAccess, async (req, res) => {
+  const id = String(req.params.id);
+  const item = await prisma.clinicService.findUnique({ where: { id } });
+  if (!item) return res.status(404).json({ error: "Service introuvable." });
+
+  await prisma.clinicService.delete({ where: { id } });
+  return res.json({ ok: true, message: `Le service « ${item.name} » a été supprimé.` });
+});
+
 router.post("/employees", requireModule("utilisateurs"), async (req, res) => {
   try {
     const body = createEmployeeSchema.parse(req.body);
@@ -618,12 +686,6 @@ router.post("/users", requireModule("user-accounts"), async (req, res) => {
     }
 
     const cashShiftSlot = resolveCashShiftSlotForRole(body.role, body.cashShiftSlot);
-    if (body.role === UserRole.RECEPTIONNISTE && !cashShiftSlot) {
-      return res.status(400).json({
-        error: "Sélectionnez le créneau caisse du réceptionniste (matin, soir ou nuit).",
-      });
-    }
-
     const passwordHash = await bcrypt.hash(body.password, 10);
     const user = await prisma.user.create({
       data: {
@@ -709,12 +771,6 @@ router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
             body.cashShiftSlot !== undefined ? body.cashShiftSlot : existing.cashShiftSlot,
           )
         : undefined;
-    if (nextRole === UserRole.RECEPTIONNISTE && cashShiftSlot === null) {
-      return res.status(400).json({
-        error: "Sélectionnez le créneau caisse du réceptionniste (matin, soir ou nuit).",
-      });
-    }
-
     const passwordHash = body.password ? await bcrypt.hash(body.password, 10) : undefined;
     const user = await prisma.user.update({
       where: { id: userId },

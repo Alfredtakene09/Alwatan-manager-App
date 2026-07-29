@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import api from '@/api/client'
 import {
+  getAllLabFormPanels,
+  getEntryPanelSlugs,
   setRuntimeLabPanels,
   type LabFormPanel,
   type LabFormSection,
@@ -59,9 +61,9 @@ export function panelDtoToFormPanel(dto: LabPanelDto): LabFormPanel {
 
 export const useLabPanelsStore = defineStore('lab-panels', {
   state: () => ({
-    panels: [] as LabFormPanel[],
+    panels: getAllLabFormPanels() as LabFormPanel[],
     /** Formulaires actifs proposés à la saisie labo (tous les actifs, pas seulement isEntry). */
-    entrySlugs: [] as LabPanelSlug[],
+    entrySlugs: getEntryPanelSlugs() as LabPanelSlug[],
     loaded: false,
     loading: false,
   }),
@@ -87,6 +89,11 @@ export const useLabPanelsStore = defineStore('lab-panels', {
         // Tous les formulaires actifs sont proposés à la saisie des résultats
         this.entrySlugs = ordered.filter((panel) => panel.active).map((panel) => panel.slug)
         setRuntimeLabPanels(this.panels, this.entrySlugs)
+        this.loaded = true
+      } catch {
+        // Fallback hors-ligne / accès lecture refusé : garder les définitions par défaut
+        this.panels = getAllLabFormPanels()
+        this.entrySlugs = getEntryPanelSlugs()
         this.loaded = true
       } finally {
         this.loading = false
