@@ -962,7 +962,7 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
     data.surgeryFcfa != null ? ['Chirurgie', data.surgeryFcfa] as const : null,
     data.hospitalizationFcfa != null ? ['Hospitalisation', data.hospitalizationFcfa] as const : null,
   ]
-    .filter((row): row is readonly [string, number] => row != null && row[1] > 0)
+    .filter((row): row is NonNullable<typeof row> => row != null && row[1] > 0)
     .map(
       ([label, amount]) => `
       <tr>

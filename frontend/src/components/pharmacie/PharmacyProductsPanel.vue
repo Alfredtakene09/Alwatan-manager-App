@@ -80,7 +80,6 @@ const tableRows = computed(() =>
   items.value.map((item) => ({
     id: item.id,
     name: item.dosage ? `${item.name} — ${item.dosage}` : item.name,
-    barcode: item.barcode || item.sku,
     form: item.pharmaceuticalForm || '—',
     category: item.category?.name ?? '—',
     price: formatFcfa(item.unitPriceFcfa),
@@ -104,7 +103,6 @@ const columns = [
     responsivePriority: 1,
     render: (name: string) => `<span class="dt-name">${name}</span>`,
   },
-  { data: 'barcode', title: 'Code-barres', responsivePriority: 2 },
   { data: 'category', title: 'Catégorie', responsivePriority: 3 },
   { data: 'form', title: 'Forme', responsivePriority: 3 },
   {
@@ -365,7 +363,6 @@ type ProductExportRow = (typeof tableRows.value)[number]
 
 const productExportColumns: ExportColumn<ProductExportRow>[] = [
   { header: 'Médicament', value: (r) => r.name },
-  { header: 'Code-barres', value: (r) => r.barcode },
   { header: 'Catégorie', value: (r) => r.category },
   { header: 'Forme', value: (r) => r.form },
   { header: 'Prix vente', value: (r) => r.price },
@@ -463,9 +460,22 @@ defineExpose({ reload: loadItems })
             <span>Aucune</span>
           </label>
         </div>
+        <div class="amount-field">
+          <span class="amount-field__label">Prix d'achat</span>
+          <div class="amount-field__wrap">
+            <input
+              v-model="formPurchasePrice"
+              class="amount-field__input"
+              type="number"
+              min="1"
+              placeholder="0"
+            />
+            <span class="amount-field__suffix">FCFA</span>
+          </div>
+        </div>
       </div>
 
-      <div class="product-form__row product-form__row--4">
+      <div :class="['product-form__row', isEditing ? 'product-form__row--2' : 'product-form__row--3']">
         <UiInput
           v-if="!isEditing"
           v-model="formQuantity"
@@ -482,19 +492,6 @@ defineExpose({ reload: loadItems })
               type="number"
               min="1"
               required
-              placeholder="0"
-            />
-            <span class="amount-field__suffix">FCFA</span>
-          </div>
-        </div>
-        <div class="amount-field">
-          <span class="amount-field__label">Prix d'achat</span>
-          <div class="amount-field__wrap">
-            <input
-              v-model="formPurchasePrice"
-              class="amount-field__input"
-              type="number"
-              min="1"
               placeholder="0"
             />
             <span class="amount-field__suffix">FCFA</span>
