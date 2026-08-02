@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import {
   UserRound,
@@ -13,9 +13,11 @@ import { showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { fullName } from '@/lib/roles'
 import { parsePatientAge, splitPatientFullName, formatPatientAge } from '@/lib/patient-name'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
-import { doctorSelectSuffix, type DoctorOption } from '@/lib/doctor-compensation'
+import { doctorSelectSuffix, doctorMatchesService, type DoctorOption } from '@/lib/doctor-compensation'
 import { CLINIC } from '@/lib/clinic'
 import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -24,6 +26,8 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
+
+const { uiText, dateTimeText, numberText, localeCode } = useAppI18n()
 
 type StaffPatientRow = {
   id: string
@@ -62,6 +66,17 @@ const form = ref({
 
 const parsedName = computed(() => splitPatientFullName(form.value.fullName))
 const parsedAge = computed(() => parsePatientAge(form.value.age, form.value.ageUnit))
+const sortedDoctors = computed(() =>
+  [...doctors.value].sort((a, b) => {
+    const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
+    if (byLast !== 0) return byLast
+    return a.firstName.localeCompare(b.firstName, 'fr', { sensitivity: 'base' })
+  }),
+)
+const filteredDoctors = computed(() => {
+  if (!form.value.service) return sortedDoctors.value
+  return sortedDoctors.value.filter((doctor) => doctorMatchesService(doctor, form.value.service))
+})
 
 const canRegister = computed(() => {
   const { firstName, lastName } = parsedName.value
@@ -84,14 +99,29 @@ function resetForm() {
     service: services.value[0]?.name ?? '',
     gender: 'F',
     recommendedByName: '',
-    doctorId: doctors.value[0]?.id ?? '',
+    doctorId: '',
     treatingDoctorId: '',
   }
+  syncDoctorsForService()
 }
 
 function getDoctorName(doctorId: string) {
   const doctor = doctors.value.find((d) => d.id === doctorId)
   return doctor ? `Dr ${fullName(doctor.firstName, doctor.lastName)}` : '—'
+}
+
+function syncDoctorsForService() {
+  if (!filteredDoctors.value.length) {
+    form.value.doctorId = ''
+    form.value.treatingDoctorId = ''
+    return
+  }
+  if (!filteredDoctors.value.some((d) => d.id === form.value.doctorId)) {
+    form.value.doctorId = filteredDoctors.value[0]?.id ?? ''
+  }
+  if (form.value.treatingDoctorId && !filteredDoctors.value.some((d) => d.id === form.value.treatingDoctorId)) {
+    form.value.treatingDoctorId = ''
+  }
 }
 
 async function openFormModal() {
@@ -108,14 +138,8 @@ function closeFormModal() {
 async function loadDoctors() {
   try {
     const { data } = await api.get<DoctorOption[]>('/visits/doctors')
-    doctors.value = Array.isArray(data)
-      ? [...data].sort((a, b) => {
-          const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
-          if (byLast !== 0) return byLast
-          return a.firstName.localeCompare(b.firstName, 'fr', { sensitivity: 'base' })
-        })
-      : []
-    if (!form.value.doctorId) form.value.doctorId = doctors.value[0]?.id ?? ''
+    doctors.value = Array.isArray(data) ? data : []
+    syncDoctorsForService()
   } catch {
     doctors.value = []
   }
@@ -126,10 +150,16 @@ async function loadServices() {
     const { data } = await api.get<Array<{ id: string; name: string }>>('/visits/external-services')
     services.value = Array.isArray(data) ? data : []
     if (!form.value.service) form.value.service = services.value[0]?.name ?? ''
+    syncDoctorsForService()
   } catch {
     services.value = []
   }
 }
+
+watch(
+  () => form.value.service,
+  () => syncDoctorsForService(),
+)
 
 async function loadQueue() {
   loadingQueue.value = true
@@ -149,7 +179,7 @@ async function registerStaffPatient() {
   message.value = ''
   try {
     const { firstName, lastName } = parsedName.value
-    const { data } = await api.post<{ patient: StaffPatientRow }>(
+    const { data } = await api.post<{ patient: StaffPatientRow; linkedExistingDossier?: boolean }>(
       '/patients/register-consultation',
       {
         firstName,
@@ -167,7 +197,17 @@ async function registerStaffPatient() {
         reductionFcfa: 0,
       },
     )
-    message.value = `Patient personnel enregistré (gratuit) — envoyé chez ${getDoctorName(form.value.doctorId)}.`
+    message.value = data.linkedExistingDossier
+      ? translateTemplate(
+          'Dossier existant réutilisé (gratuit) — {name} envoyé chez {doctor} (historique conservé).',
+          {
+            name: fullName(data.patient.firstName, data.patient.lastName),
+            doctor: getDoctorName(form.value.doctorId),
+          },
+        )
+      : translateTemplate('Patient personnel enregistré (gratuit) — envoyé chez {doctor}.', {
+          doctor: getDoctorName(form.value.doctorId),
+        })
     messageType.value = 'success'
     printFiche({
       ...data.patient,
@@ -184,7 +224,7 @@ async function registerStaffPatient() {
       error && typeof error === 'object' && 'response' in error
         ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
         : undefined
-    message.value = apiMessage ?? 'Erreur lors de l’enregistrement.'
+    message.value = apiMessage ?? "Erreur lors de l'enregistrement."
     messageType.value = 'error'
   } finally {
     registering.value = false
@@ -194,21 +234,26 @@ async function registerStaffPatient() {
 function printFiche(row: StaffPatientRow) {
   const patientName = fullName(row.firstName, row.lastName)
   openPrintDocument(
-    `Fiche patient personnel ${row.code}`,
+    `${uiText('Fiche patient personnel')} ${row.code}`,
     `
-${buildClinicPrintHeader('Fiche patient — Personnel (gratuit)')}
-  <div class="row"><span>Date</span><strong>${new Date(row.createdAt).toLocaleString('fr-FR')}</strong></div>
-  <div class="row"><span>Patient</span><strong>${patientName}</strong></div>
-  <div class="row"><span>Matricule</span><strong>${row.code}</strong></div>
-  ${row.service ? `<div class="row"><span>Service</span><strong>${row.service}</strong></div>` : ''}
-  ${row.recommendedByName ? `<div class="row"><span>Recommandé par</span><strong>${row.recommendedByName}</strong></div>` : ''}
-  ${row.phone ? `<div class="row"><span>Téléphone</span><strong>${row.phone}</strong></div>` : ''}
-  ${row.age != null ? `<div class="row"><span>Âge</span><strong>${formatPatientAge(row.age, normalizePatientAgeUnit(row.ageUnit))}</strong></div>` : ''}
-  <p style="margin-top:1rem;color:#64748b;font-size:0.875rem;">Parcours gratuit — consultation et examens exonérés.</p>
+${buildClinicPrintHeader(uiText('Fiche patient — Personnel (gratuit)'))}
+  <div class="row"><span>${uiText('Date')}</span><strong>${dateTimeText(row.createdAt)}</strong></div>
+  <div class="row"><span>${uiText('Patient')}</span><strong>${patientName}</strong></div>
+  <div class="row"><span>${uiText('Matricule')}</span><strong>${row.code}</strong></div>
+  ${row.service ? `<div class="row"><span>${uiText('Service')}</span><strong>${row.service}</strong></div>` : ''}
+  ${row.recommendedByName ? `<div class="row"><span>${uiText('Recommandé par')}</span><strong>${row.recommendedByName}</strong></div>` : ''}
+  ${row.phone ? `<div class="row"><span>${uiText('Téléphone')}</span><strong>${row.phone}</strong></div>` : ''}
+  ${row.age != null ? `<div class="row"><span>${uiText('Âge')}</span><strong>${formatPatientAge(row.age, normalizePatientAgeUnit(row.ageUnit))}</strong></div>` : ''}
+  <p style="margin-top:1rem;color:#64748b;font-size:0.875rem;">${uiText('Parcours gratuit — consultation et examens exonérés.')}</p>
   <div class="footer">${CLINIC.fullAddress}<br>${CLINIC.phoneLabel} — ${CLINIC.email}</div>
 `,
   )
 }
+
+const queueCountLabel = computed(() => {
+  void localeCode.value
+  return translateTemplate('{n} dossier(s)', { n: numberText(queue.value.length) })
+})
 
 onMounted(() => {
   void loadDoctors()
@@ -221,7 +266,7 @@ onMounted(() => {
   <div>
     <UiPageHeader
       title="Patient personnel"
-      subtitle="Enregistrement d’un membre du personnel ou d’un proche recommandé — parcours entièrement gratuit"
+      subtitle="Enregistrement d'un membre du personnel ou d'un proche recommandé — parcours entièrement gratuit"
       :icon="UserCheck"
     />
 
@@ -235,21 +280,21 @@ onMounted(() => {
         <UiButton variant="ghost" size="sm" :disabled="loadingQueue" @click="loadQueue">
           Actualiser
         </UiButton>
-        <span class="list-count">{{ queue.length }} dossier(s)</span>
+        <span class="list-count">{{ queueCountLabel }}</span>
       </template>
 
       <p v-if="!loadingQueue && !queue.length" class="empty">
-        Aucun patient personnel enregistré pour le moment
+        {{ uiText('Aucun patient personnel enregistré pour le moment') }}
       </p>
       <div v-else class="queue-table-wrap">
         <table class="queue-table">
           <thead>
             <tr>
-              <th>Patient</th>
-              <th>Service</th>
-              <th>Recommandé par</th>
-              <th>Enregistré le</th>
-              <th class="col-actions">Actions</th>
+              <th>{{ uiText('Patient') }}</th>
+              <th>{{ uiText('Service') }}</th>
+              <th>{{ uiText('Recommandé par') }}</th>
+              <th>{{ uiText('Enregistré le') }}</th>
+              <th class="col-actions">{{ uiText('Actions') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -260,7 +305,7 @@ onMounted(() => {
               </td>
               <td>{{ row.service || '—' }}</td>
               <td>{{ row.recommendedByName || '—' }}</td>
-              <td>{{ new Date(row.createdAt).toLocaleString('fr-FR') }}</td>
+              <td>{{ dateTimeText(row.createdAt) }}</td>
               <td class="col-actions">
                 <UiButton variant="ghost" size="sm" :icon="Printer" @click="printFiche(row)">
                   Fiche
@@ -295,43 +340,55 @@ onMounted(() => {
 
         <div class="form-grid-2">
           <UiSelect v-model="form.service" label="Service" required>
-            <option value="" disabled>{{ services.length ? 'Sélectionner un service' : 'Aucun service disponible' }}</option>
+            <option value="" disabled>
+              {{
+                services.length
+                  ? uiText('Sélectionner un service')
+                  : uiText('Aucun service disponible')
+              }}
+            </option>
             <option v-for="service in services" :key="service.id" :value="service.name">
               {{ service.name }}
             </option>
           </UiSelect>
-          <UiInput
-            v-model="form.recommendedByName"
-            label="Recommandé par"
-            placeholder="Nom du membre du personnel"
-            :icon="UserRound"
-            required
-          />
+          <UiSelect v-model="form.doctorId" label="Médecin" required>
+            <option value="" disabled>
+              {{
+                filteredDoctors.length
+                  ? uiText('Sélectionner')
+                  : uiText('Aucun médecin sur ce service')
+              }}
+            </option>
+            <option v-for="doctor in filteredDoctors" :key="doctor.id" :value="doctor.id">
+              Dr {{ fullName(doctor.firstName, doctor.lastName)
+              }}{{ uiText(doctorSelectSuffix(doctor)) }}
+            </option>
+          </UiSelect>
         </div>
 
-        <UiSelect v-model="form.doctorId" label="Médecin" required>
-          <option value="" disabled>{{ doctors.length ? 'Sélectionner' : 'Aucun médecin disponible' }}</option>
-          <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
-            Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ doctorSelectSuffix(doctor) }}
-          </option>
-        </UiSelect>
+        <UiInput
+          v-model="form.recommendedByName"
+          label="Recommandé par"
+          placeholder="Nom du membre du personnel"
+          :icon="UserRound"
+          required
+        />
 
         <UiSelect v-model="form.treatingDoctorId" label="Médecin traitant (dossier)">
-          <option value="">Aucun (optionnel)</option>
-          <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
-            Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ doctorSelectSuffix(doctor) }}
+          <option value="">{{ uiText('Aucun (optionnel)') }}</option>
+          <option v-for="doctor in filteredDoctors" :key="doctor.id" :value="doctor.id">
+            Dr {{ fullName(doctor.firstName, doctor.lastName)
+            }}{{ uiText(doctorSelectSuffix(doctor)) }}
           </option>
         </UiSelect>
 
         <UiAlert
-          v-if="!doctors.length"
+          v-if="!filteredDoctors.length"
           type="warning"
-          message="Aucun médecin sélectionnable. Les médecins du personnel doivent être en profil Médecin et avoir un compte utilisateur (rôle Médecin)."
+          message="Aucun médecin lié à ce service. Affectez les médecins au service depuis la page Services."
         />
-        <p v-if="!doctors.length" class="doctors-empty-alert__links">
-          <RouterLink to="/admin/utilisateurs">Utilisateurs</RouterLink>
-          <span aria-hidden="true"> · </span>
-          <RouterLink to="/admin/employes">Employés</RouterLink>
+        <p v-if="!filteredDoctors.length" class="doctors-empty-alert__links">
+          <RouterLink to="/admin/services">{{ uiText('Services') }}</RouterLink>
         </p>
       </form>
 
@@ -345,7 +402,7 @@ onMounted(() => {
           :icon="UserPlus"
           :disabled="!canRegister || registering"
         >
-          {{ registering ? 'Enregistrement…' : 'Enregistrer (gratuit)' }}
+          {{ registering ? uiText('Enregistrement…') : uiText('Enregistrer (gratuit)') }}
         </UiButton>
       </template>
     </UiFormModal>

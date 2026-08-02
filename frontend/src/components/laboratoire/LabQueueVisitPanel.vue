@@ -13,6 +13,8 @@ import {
 } from '@lucide/vue'
 import { fullName } from '@/lib/roles'
 import { formatAppDateTime } from '@/i18n/locale-format'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import {
   parsePrescribedExamsByKind,
   parsePrescribedExamCommentsByKind,
@@ -22,6 +24,8 @@ import { buildPrescribedByLabel } from '@/lib/lab-panel-print'
 import { patientCategoryLabel, type PatientCategory } from '@/lib/patient-category'
 import UiButton from '@/components/ui/UiButton.vue'
 import type { LabsWaitingVisitRow } from '@/components/ui/LabsWaitingDataTable.vue'
+
+const { uiText, numberText } = useAppI18n()
 
 const props = defineProps<{
   visit: LabsWaitingVisitRow | null
@@ -46,10 +50,10 @@ const labComment = computed(() => {
 const vitals = computed(() => props.visit?.vitalSigns?.[0] ?? null)
 
 const categoryLabel = computed(() => {
-  if (!props.visit) return 'Standard'
+  if (!props.visit) return uiText('Standard')
   const { category } = props.visit.patient
-  if (category) return patientCategoryLabel(category as PatientCategory)
-  return 'Standard'
+  if (category) return uiText(patientCategoryLabel(category as PatientCategory))
+  return uiText('Standard')
 })
 
 const doctorLabel = computed(() => {
@@ -121,10 +125,10 @@ function printResults() {
               </h2>
               <p>
                 {{ visit.patient.code }} — {{ categoryLabel }}
-                <span v-if="completed" class="modal__badge">Clôturé</span>
+                <span v-if="completed" class="modal__badge">{{ uiText('Clôturé') }}</span>
               </p>
             </div>
-            <button type="button" class="modal__close" aria-label="Fermer" @click="emit('close')">
+            <button type="button" class="modal__close" :aria-label="uiText('Fermer')" @click="emit('close')">
               <X :size="18" />
             </button>
           </header>
@@ -134,35 +138,35 @@ function printResults() {
               <article v-if="visit.patient.phone" class="info-card">
                 <Phone :size="16" class="info-card__icon" />
                 <div>
-                  <span class="info-card__label">Téléphone</span>
+                  <span class="info-card__label">{{ uiText('Téléphone') }}</span>
                   <strong>{{ visit.patient.phone }}</strong>
                 </div>
               </article>
               <article class="info-card">
                 <Stethoscope :size="16" class="info-card__icon" />
                 <div>
-                  <span class="info-card__label">Prescripteur</span>
+                  <span class="info-card__label">{{ uiText('Prescripteur') }}</span>
                   <strong>{{ doctorLabel }}</strong>
                 </div>
               </article>
               <article v-if="completedAt" class="info-card">
                 <Calendar :size="16" class="info-card__icon" />
                 <div>
-                  <span class="info-card__label">Terminé le</span>
+                  <span class="info-card__label">{{ uiText('Terminé le') }}</span>
                   <strong>{{ completedAt }}</strong>
                 </div>
               </article>
               <article v-if="!completed" class="info-card">
                 <Calendar :size="16" class="info-card__icon" />
                 <div>
-                  <span class="info-card__label">Transféré le</span>
+                  <span class="info-card__label">{{ uiText('Transféré le') }}</span>
                   <strong>{{ transferredAt }}</strong>
                 </div>
               </article>
               <article v-if="sentByLabel" class="info-card">
                 <Send :size="16" class="info-card__icon" />
                 <div>
-                  <span class="info-card__label">Envoyé par</span>
+                  <span class="info-card__label">{{ uiText('Envoyé par') }}</span>
                   <strong>{{ sentByLabel }}</strong>
                 </div>
               </article>
@@ -171,31 +175,35 @@ function printResults() {
             <section v-if="vitals" class="vitals-strip">
               <h3>
                 <HeartPulse :size="15" />
-                Constantes réception
+                {{ uiText('Constantes réception') }}
               </h3>
               <div class="vitals-strip__items">
-                <span v-if="vitals.weightKg" class="vital-pill">Poids {{ vitals.weightKg }} kg</span>
+                <span v-if="vitals.weightKg" class="vital-pill">{{
+                  translateTemplate('Poids {n} kg', { n: vitals.weightKg })
+                }}</span>
                 <span v-if="vitals.bloodPressure" class="vital-pill">TA {{ vitals.bloodPressure }}</span>
-                <span v-if="vitals.temperatureC" class="vital-pill">{{ vitals.temperatureC }} °C</span>
-                <span v-if="vitals.pulseBpm" class="vital-pill">{{ vitals.pulseBpm }} bpm</span>
+                <span v-if="vitals.temperatureC" class="vital-pill">{{ numberText(vitals.temperatureC) }} °C</span>
+                <span v-if="vitals.pulseBpm" class="vital-pill">{{ numberText(vitals.pulseBpm) }} bpm</span>
               </div>
             </section>
 
             <section class="exams-block">
               <header class="exams-block__head">
                 <FlaskConical :size="17" />
-                <h3>Examens laboratoire</h3>
-                <span v-if="labExams.length" class="exams-block__count">{{ labExams.length }}</span>
+                <h3>{{ uiText('Examens laboratoire') }}</h3>
+                <span v-if="labExams.length" class="exams-block__count">{{ numberText(labExams.length) }}</span>
               </header>
 
-              <p v-if="!labExams.length" class="exams-block__empty">Aucun examen de laboratoire prescrit.</p>
+              <p v-if="!labExams.length" class="exams-block__empty">{{
+                uiText('Aucun examen de laboratoire prescrit.')
+              }}</p>
 
               <ul v-else class="exam-tags">
                 <li v-for="exam in labExams" :key="exam">{{ exam }}</li>
               </ul>
 
               <p v-if="labComment" class="exams-block__comment">
-                <strong>Commentaire :</strong> {{ labComment }}
+                <strong>{{ uiText('Commentaire :') }}</strong> {{ labComment }}
               </p>
             </section>
           </div>
@@ -211,7 +219,7 @@ function printResults() {
               Imprimer
             </UiButton>
             <UiButton variant="primary" :icon="ClipboardEdit" @click="saisir">
-              {{ completed ? 'Consulter les résultats' : 'Saisir les résultats' }}
+              {{ completed ? uiText('Consulter les résultats') : uiText('Saisir les résultats') }}
             </UiButton>
           </footer>
         </div>

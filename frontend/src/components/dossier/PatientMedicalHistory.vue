@@ -1,10 +1,20 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronDown, ChevronRight, FlaskConical, MessageSquare, Stethoscope, Eye, FileText } from '@lucide/vue'
+import {
+  ChevronDown,
+  ChevronRight,
+  FlaskConical,
+  MessageSquare,
+  Stethoscope,
+  Eye,
+  FileText,
+  PillBottle,
+} from '@lucide/vue'
 import { fullName } from '@/lib/roles'
 import { getLabFormPanel, getFilledLabPanelSections, type LabPanelSlug } from '@/lib/lab-form-panels'
 import { useLabPanelsStore } from '@/stores/lab-panels'
+import type { PharmacyOrdonnanceLine } from '@/lib/lab-notes'
 import UiButton from '@/components/ui/UiButton.vue'
 
 export type MedicalHistoryLabPanel = {
@@ -22,10 +32,11 @@ export type MedicalHistoryEntry = {
   prescribedExams: string[]
   labPanels: MedicalHistoryLabPanel[]
   doctorComment: string | null
+  pharmacyOrdonnance?: PharmacyOrdonnanceLine[]
   hasLabResults: boolean
 }
 
-const props = defineProps<{
+defineProps<{
   entries: MedicalHistoryEntry[]
   loading?: boolean
   showOpenLabLink?: boolean
@@ -51,6 +62,19 @@ function formatDate(iso: string) {
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+}
+
+function pharmacyLines(entry: MedicalHistoryEntry) {
+  return entry.pharmacyOrdonnance ?? []
+}
+
+function formatPharmacyLine(line: PharmacyOrdonnanceLine) {
+  const parts = [line.name]
+  if (line.dosage?.trim()) parts.push(line.dosage.trim())
+  parts.push(`× ${line.quantity}`)
+  if (line.instructions?.trim()) parts.push(`— ${line.instructions.trim()}`)
+  if (!line.productId?.trim()) parts.push('(hors pharmacie)')
+  return parts.join(' ')
 }
 
 function toggleVisit(visitId: string) {
@@ -79,12 +103,22 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
 <template>
   <p v-if="loading" class="history-empty">Chargement de l'historique…</p>
   <p v-else-if="!entries.length" class="history-empty">
-    {{ emptyMessage ?? 'Aucune consultation, examen ou commentaire enregistré pour ce patient.' }}
+    {{
+      emptyMessage ??
+      'Aucune consultation, ordonnance, examen ou commentaire enregistré pour ce patient.'
+    }}
   </p>
 
   <ol v-else class="timeline">
     <li v-for="entry in entries" :key="entry.visitId" class="timeline-item">
-      <div class="timeline-item__marker" :class="{ 'timeline-item__marker--lab': entry.labPanels.length }" />
+      <div
+        class="timeline-item__marker"
+        :class="{
+          'timeline-item__marker--lab': entry.labPanels.length,
+          'timeline-item__marker--clinical':
+            !entry.labPanels.length && (entry.doctorComment || pharmacyLines(entry).length),
+        }"
+      />
 
       <article class="timeline-card">
         <button type="button" class="timeline-card__head" @click="toggleVisit(entry.visitId)">
@@ -94,16 +128,20 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
             <span class="timeline-card__time">{{ formatTime(entry.date) }}</span>
           </div>
           <div class="timeline-card__badges">
+            <span v-if="entry.doctorComment" class="badge badge--comment">
+              <MessageSquare :size="12" />
+              Consultation
+            </span>
+            <span v-if="pharmacyLines(entry).length" class="badge badge--pharmacy">
+              <PillBottle :size="12" />
+              {{ pharmacyLines(entry).length }} produit(s)
+            </span>
             <span v-if="entry.prescribedExams.length" class="badge badge--exam">
               <FlaskConical :size="12" />
               {{ entry.prescribedExams.length }} examen(s)
             </span>
             <span v-if="entry.labPanels.length" class="badge badge--result">
               {{ entry.labPanels.length }} résultat(s)
-            </span>
-            <span v-if="entry.doctorComment" class="badge badge--comment">
-              <MessageSquare :size="12" />
-              Commentaire
             </span>
           </div>
         </button>
@@ -114,14 +152,23 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
             Dr {{ fullName(entry.doctor.firstName, entry.doctor.lastName) }}
           </p>
 
+          <div v-if="entry.doctorComment" class="timeline-block timeline-block--comment">
+            <h4>Informations cliniques</h4>
+            <p class="timeline-block__text">{{ entry.doctorComment }}</p>
+          </div>
+
+          <div v-if="pharmacyLines(entry).length" class="timeline-block timeline-block--pharmacy">
+            <h4>Ordonnance pharmacie</h4>
+            <ul class="pharmacy-list">
+              <li v-for="line in pharmacyLines(entry)" :key="`${line.productId}-${line.name}`">
+                {{ formatPharmacyLine(line) }}
+              </li>
+            </ul>
+          </div>
+
           <div v-if="entry.prescribedExams.length" class="timeline-block">
             <h4>Examens prescrits</h4>
             <p class="exam-list">{{ entry.prescribedExams.join(' · ') }}</p>
-          </div>
-
-          <div v-if="entry.doctorComment" class="timeline-block timeline-block--comment">
-            <h4>Commentaire médecin</h4>
-            <p>{{ entry.doctorComment }}</p>
           </div>
 
           <div v-if="entry.labPanels.length" class="timeline-block">
@@ -222,6 +269,11 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
   box-shadow: 0 0 0 3px #ede9fe;
 }
 
+.timeline-item__marker--clinical {
+  background: #0d9488;
+  box-shadow: 0 0 0 3px #ccfbf1;
+}
+
 .timeline-card {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -287,6 +339,11 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
   color: #0f766e;
 }
 
+.badge--pharmacy {
+  background: #ffe4e6;
+  color: #9f1239;
+}
+
 .timeline-card__body {
   padding: 0 1rem 1rem;
   border-top: 1px solid var(--border);
@@ -321,13 +378,7 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
   gap: 0.5rem;
 }
 
-.exam-list {
-  margin: 0;
-  font-size: 0.875rem;
-  line-height: 1.5;
-}
-
-.timeline-block--comment p {
+.timeline-block__text {
   margin: 0;
   padding: 0.65rem 0.75rem;
   border-radius: var(--radius-sm);
@@ -336,6 +387,26 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
   font-size: 0.875rem;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+.exam-list {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.pharmacy-list {
+  margin: 0;
+  padding: 0.65rem 0.75rem 0.65rem 1.35rem;
+  border-radius: var(--radius-sm);
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.pharmacy-list li + li {
+  margin-top: 0.25rem;
 }
 
 .panel-grid {

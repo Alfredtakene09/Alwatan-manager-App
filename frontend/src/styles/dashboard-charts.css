@@ -1,6 +1,6 @@
 .bar-chart {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--bar-cols, 7), minmax(0, 1fr));
   gap: 0.5rem;
   align-items: end;
   min-height: 220px;

@@ -17,7 +17,7 @@ import {
 import api from '@/api/client'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import { useAuthStore } from '@/stores/auth'
-import { fullName, canWriteDossierDocuments } from '@/lib/roles'
+import { fullName, canWriteDossierDocuments, isDirectionOrGestionnaire } from '@/lib/roles'
 import { matchesPatientSearch } from '@/lib/patient-search'
 import { formatPatientAge, normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
 import {
@@ -94,6 +94,10 @@ const canDeleteDocuments = computed(
 )
 
 const isMedecin = computed(() => auth.user?.role === 'MEDECIN')
+const isManagementDossier = computed(() =>
+  auth.user ? isDirectionOrGestionnaire(auth.user.role) : false,
+)
+const showPatientSidebar = computed(() => isMedecin.value || isManagementDossier.value)
 
 const searchQuery = ref('')
 const searchResults = ref<PatientSummary[]>([])
@@ -107,7 +111,9 @@ const activeTab = ref<'history' | 'payments' | 'files'>('history')
 const activeKind = ref<PatientDocumentKind | 'ALL'>('ALL')
 
 const medecinPatients = ref<MedecinPatientRow[]>([])
+const managementPatients = ref<PatientSummary[]>([])
 const loadingMedecinPatients = ref(false)
+const loadingManagementPatients = ref(false)
 const sidebarQuery = ref('')
 
 const showUpload = ref(false)
@@ -135,6 +141,26 @@ const filteredMedecinPatients = computed(() => {
     ),
   )
 })
+
+const filteredManagementPatients = computed(() => {
+  const q = sidebarQuery.value.trim()
+  if (!q) return managementPatients.value
+  return managementPatients.value.filter((patient) =>
+    matchesPatientSearch(
+      {
+        code: patient.code,
+        firstName: patient.firstName,
+        lastName: patient.lastName,
+        phone: patient.phone,
+      },
+      q,
+    ),
+  )
+})
+
+const loadingSidebarPatients = computed(() =>
+  isMedecin.value ? loadingMedecinPatients.value : loadingManagementPatients.value,
+)
 
 const historyCount = computed(() => dossier.value?.medicalHistory.length ?? 0)
 const filesCount = computed(() => dossier.value?.documents.length ?? 0)
@@ -190,6 +216,19 @@ async function loadMedecinPatients() {
     medecinPatients.value = []
   } finally {
     loadingMedecinPatients.value = false
+  }
+}
+
+async function loadManagementPatients() {
+  if (!isManagementDossier.value) return
+  loadingManagementPatients.value = true
+  try {
+    const { data } = await api.get<PatientSummary[]>('/patients')
+    managementPatients.value = data
+  } catch {
+    managementPatients.value = []
+  } finally {
+    loadingManagementPatients.value = false
   }
 }
 
@@ -289,7 +328,7 @@ watch(activeKind, () => {
 })
 
 onMounted(async () => {
-  await loadMedecinPatients()
+  await Promise.all([loadMedecinPatients(), loadManagementPatients()])
   const patientId = route.query.patient as string | undefined
   if (patientId) {
     await loadDossier(patientId)
@@ -298,6 +337,8 @@ onMounted(async () => {
     }
   } else if (isMedecin.value && medecinPatients.value[0]) {
     selectPatient(medecinPatients.value[0].patient)
+  } else if (isManagementDossier.value && managementPatients.value[0]) {
+    selectPatient(managementPatients.value[0])
   }
 })
 </script>
@@ -310,7 +351,7 @@ onMounted(async () => {
       :icon="FolderOpen"
     />
 
-    <div class="dossier-layout" :class="{ 'dossier-layout--with-sidebar': isMedecin }">
+    <div class="dossier-layout" :class="{ 'dossier-layout--with-sidebar': showPatientSidebar }">
       <aside v-if="isMedecin" class="dossier-sidebar">
         <UiCard
           title="Mes patients"
@@ -342,6 +383,40 @@ onMounted(async () => {
                   Validé le {{ new Date(row.lastVisitAt).toLocaleDateString('fr-FR') }}
                   · {{ row.labResultsCount }} formulaire(s)
                 </span>
+              </button>
+            </li>
+          </ul>
+        </UiCard>
+      </aside>
+
+      <aside v-else-if="isManagementDossier" class="dossier-sidebar">
+        <UiCard
+          title="Patients"
+          description="50 derniers dossiers — recherchez pour affiner"
+          :icon="UserRound"
+          icon-variant="teal"
+        >
+          <label class="sidebar-search">
+            <Search :size="14" />
+            <input v-model="sidebarQuery" type="search" placeholder="Filtrer la liste…" />
+          </label>
+
+          <p v-if="loadingManagementPatients" class="hint">Chargement…</p>
+          <p v-else-if="!filteredManagementPatients.length" class="hint">
+            Aucun patient trouvé. Utilisez la recherche ci-contre.
+          </p>
+
+          <ul v-else class="patient-list">
+            <li v-for="patient in filteredManagementPatients" :key="patient.id">
+              <button
+                type="button"
+                class="patient-list__item"
+                :class="{ 'patient-list__item--active': selectedPatientId === patient.id }"
+                @click="selectPatient(patient)"
+              >
+                <strong>{{ patient.code }}</strong>
+                <span>{{ fullName(patient.firstName, patient.lastName) }}</span>
+                <span v-if="patient.phone" class="patient-list__meta">{{ patient.phone }}</span>
               </button>
             </li>
           </ul>
@@ -434,7 +509,7 @@ onMounted(async () => {
               @click="activeTab = 'history'"
             >
               <History :size="16" />
-              Parcours labo
+              Parcours médical
               <span class="tab-btn__count">{{ historyCount }}</span>
             </button>
             <button
@@ -458,14 +533,14 @@ onMounted(async () => {
             </button>
           </div>
 
-          <UiCard v-if="activeTab === 'history'" title="Résultats validés (labo)" :icon="History" icon-variant="violet">
+          <UiCard v-if="activeTab === 'history'" title="Historique médical" :icon="History" icon-variant="violet">
             <PatientMedicalHistory
               :entries="dossier.medicalHistory"
               :loading="loadingDossier"
               :show-open-lab-link="isMedecin"
               :empty-message="
                 isMedecin
-                  ? 'Aucun résultat validé par le laboratoire pour ce patient.'
+                  ? 'Aucune consultation, ordonnance ou examen enregistré pour ce patient.'
                   : undefined
               "
             />
@@ -533,9 +608,17 @@ onMounted(async () => {
           </UiCard>
         </template>
 
-        <UiCard v-else-if="isMedecin && !loadingMedecinPatients" title="Sélectionnez un patient" :icon="UserRound">
+        <UiCard
+          v-else-if="showPatientSidebar && !loadingSidebarPatients"
+          title="Sélectionnez un patient"
+          :icon="UserRound"
+        >
           <p class="hint">
-            Seuls les patients dont le laboratoire a enregistré et validé des résultats apparaissent ici.
+            {{
+              isMedecin
+                ? 'Seuls les patients dont le laboratoire a enregistré et validé des résultats apparaissent ici.'
+                : 'Choisissez un patient dans la liste ou recherchez par matricule, nom ou téléphone.'
+            }}
           </p>
         </UiCard>
       </div>

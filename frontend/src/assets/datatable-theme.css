@@ -1308,19 +1308,22 @@
 }
 
 .table-panel-scroll {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  max-height: min(42dvh, 420px);
-  overflow: hidden;
+  display: block;
+  min-height: 12rem;
+  max-height: min(70dvh, 720px);
+  overflow: auto;
   margin-bottom: 1rem;
 }
 
-.table-panel-scroll .ui-dt-shell {
-  flex: 1;
-  min-height: 0;
+/* Évite l’effondrement flex (liste visible 1 frame puis hauteur 0). */
+.table-panel-scroll .ui-dt-shell,
+.table-panel-scroll .ui-dt-shell .ui-dt-scroll {
+  display: block;
+  flex: none;
+  min-height: unset;
+  height: auto;
   max-height: none;
-  height: 100%;
+  overflow: visible;
 }
 
 /* ——— Tableaux HTML natifs (ex. état patients) ——— */

@@ -2,33 +2,22 @@
 import { computed, onMounted, ref } from 'vue'
 import {
   Wallet,
-  Download,
   RefreshCw,
   ArrowRight,
-  Clock,
   UserCheck,
-  Sun,
-  Moon,
   History,
-  ListOrdered,
   Banknote,
-  AlertTriangle,
-  Plus,
-  Pencil,
   Eye,
+  FileCheck,
+  Users,
+  CheckCircle2,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
-import { showSuccessModal, showApiErrorModal } from '@/lib/api-modal-helper'
+import { showSuccessModal, showApiErrorModal, confirmAppModal } from '@/lib/api-modal-helper'
 import {
-  formatCashDelayLabel,
   formatDateTimeFr,
-  formatShortTimeFr,
-  comptableScheduleBadgeLabel,
 } from '@/lib/gestionnaire-dashboard'
-import GestionnaireDisburseModal, {
-  type CashRegisterDetail,
-} from '@/components/gestionnaire/GestionnaireDisburseModal.vue'
 import GestionnaireDisburseHistoryModal, {
   type DisburseHistoryDetail,
   type DisburseHistoryRow,
@@ -39,78 +28,84 @@ import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiInput from '@/components/ui/UiInput.vue'
+import UiSelect from '@/components/ui/UiSelect.vue'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import '@/assets/gestionnaire-page.css'
 
-type CashRegisterSummary = {
-  id: 'comptabilite'
-  label: string
-  balanceFcfa: number
-  transactionCount: number
-  lastDisbursementAt: string | null
-  hoursSinceLastDisbursement: number | null
-  overdue: boolean
-  disbursementPhase?: 'ok' | 'during_day' | 'evening_due' | 'morning_due' | 'carry_over'
-  disbursementStatusLabel?: string
-  disbursementHint?: string
+type DayClosureRow = {
+  id: string
+  receptionistId: string
+  receptionistName: string
+  businessDate: string
+  shiftSlot: string | null
+  collectedFcfa: number
+  expensesFcfa: number
+  netFcfa: number
+  visitsToday: number
+  registeredToday: number
+  comment: string | null
+  closedAt: string
+  validatedAt: string | null
+  validatedById: string | null
+  validatedByName: string | null
+  validationComment: string | null
+  status: 'pending' | 'validated'
 }
 
+type DayClosureReceptionist = { id: string; name: string }
+
 type HistoryRow = DisburseHistoryRow
+
+const { uiText, dateText, timeText } = useAppI18n()
 
 const WORKFLOW_STEPS = [
   {
     step: '1',
-    title: 'Comptable',
-    text: 'Tirelire consolidée — créneaux matin, soir et nuit',
-    icon: Sun,
+    title: 'Réception',
+    text: 'Clôture de journée — recettes du jour',
+    icon: FileCheck,
   },
   {
     step: '2',
     title: 'Gestionnaire',
-    text: 'Collecte journalière — après chaque créneau',
-    icon: Moon,
+    text: 'Valide → décaissement auto (historique)',
+    icon: UserCheck,
   },
 ] as const
 
-const comptableRegister = ref<CashRegisterSummary | null>(null)
 const historyRows = ref<HistoryRow[]>([])
-const loading = ref(false)
 const historyLoading = ref(false)
-const disburseSaving = ref(false)
-
-const showDisburseModal = ref(false)
-const disburseDetail = ref<CashRegisterDetail | null>(null)
 
 const showHistoryModal = ref(false)
-const historyModalMode = ref<'view' | 'edit'>('view')
 const historyTarget = ref<HistoryRow | null>(null)
 const historyDetail = ref<DisburseHistoryDetail | null>(null)
 const historyDetailLoading = ref(false)
-const historySaving = ref(false)
 
 const historyFrom = ref('')
 const historyTo = ref('')
 
-async function loadRegisters() {
-  loading.value = true
-  try {
-    const { data } = await api.get<{ registers: CashRegisterSummary[] }>(
-      '/gestionnaire/cash/registers',
-    )
-    comptableRegister.value = data.registers.find((r) => r.id === 'comptabilite') ?? null
-  } finally {
-    loading.value = false
-  }
-}
+// ─── Clôtures de journée ────────────────────────
+const dayClosures = ref<DayClosureRow[]>([])
+const dayClosureReceptionists = ref<DayClosureReceptionist[]>([])
+const dayClosureLoading = ref(false)
+const dayClosureFilterUser = ref('')
+const dayClosureFrom = ref('')
+const dayClosureTo = ref('')
+const dayClosureStatus = ref<'all' | 'pending' | 'validated'>('pending')
+const dayClosurePendingCount = ref(0)
+const validatingClosureId = ref<string | null>(null)
 
 async function loadHistory() {
   historyLoading.value = true
   try {
-    const params = new URLSearchParams({ register: 'comptabilite' })
+    const params = new URLSearchParams()
     if (historyFrom.value) params.set('from', historyFrom.value)
     if (historyTo.value) params.set('to', historyTo.value)
+    const qs = params.toString()
     const { data } = await api.get<{ rows: HistoryRow[] }>(
-      `/gestionnaire/cash/history?${params.toString()}`,
+      `/gestionnaire/cash/history${qs ? `?${qs}` : ''}`,
     )
     historyRows.value = data.rows
   } finally {
@@ -118,52 +113,81 @@ async function loadHistory() {
   }
 }
 
-async function refreshAll() {
-  await Promise.all([loadRegisters(), loadHistory()])
-}
-
-async function openDisburse() {
+async function loadDayClosures() {
+  dayClosureLoading.value = true
   try {
-    const { data } = await api.get<CashRegisterDetail>('/gestionnaire/cash/registers/comptabilite')
-    disburseDetail.value = data
-    showDisburseModal.value = true
-  } catch (error) {
-    await showApiErrorModal(error, 'Impossible de charger le détail de la caisse.')
-  }
-}
-
-async function confirmDisburse(payload: { disbursementFcfa: number; comment: string }) {
-  disburseSaving.value = true
-  try {
-    const { data } = await api.post<{ disbursedFcfa: number; label: string }>(
-      '/gestionnaire/cash/disburse',
-      {
-        registerId: 'comptabilite',
-        disbursementFcfa: payload.disbursementFcfa,
-        comment: payload.comment || undefined,
-      },
-    )
-    showDisburseModal.value = false
-    disburseDetail.value = null
-    await showSuccessModal(
-      'Décaissement enregistré',
-      `${formatFcfa(data.disbursedFcfa)} décaissés — ${data.label}`,
-    )
-    await refreshAll()
-  } catch (error) {
-    await showApiErrorModal(error, 'Le décaissement a échoué.')
+    const params = new URLSearchParams()
+    if (dayClosureFilterUser.value) params.set('userId', dayClosureFilterUser.value)
+    if (dayClosureFrom.value) params.set('from', dayClosureFrom.value)
+    if (dayClosureTo.value) params.set('to', dayClosureTo.value)
+    if (dayClosureStatus.value !== 'all') params.set('status', dayClosureStatus.value)
+    const { data } = await api.get<{
+      closures: DayClosureRow[]
+      receptionists: DayClosureReceptionist[]
+      pendingCount: number
+    }>(`/gestionnaire/day-closures?${params.toString()}`)
+    dayClosures.value = data.closures ?? []
+    dayClosureReceptionists.value = data.receptionists ?? []
+    dayClosurePendingCount.value = data.pendingCount ?? 0
   } finally {
-    disburseSaving.value = false
+    dayClosureLoading.value = false
   }
 }
 
-function exportCsv() {
-  window.open('/api/gestionnaire/cash/history/export.csv?register=comptabilite', '_blank')
+const dayClosureTotalNet = computed(() =>
+  dayClosures.value.reduce((sum, c) => sum + c.netFcfa, 0),
+)
+
+const dayClosureTotalCollected = computed(() =>
+  dayClosures.value.reduce((sum, c) => sum + c.collectedFcfa, 0),
+)
+
+async function validateDayClosure(row: DayClosureRow) {
+  const confirmed = await confirmAppModal({
+    type: 'CONFIRM',
+    title: 'Valider la clôture',
+    message: translateTemplate(
+      'Confirmer la validation ? Réceptionniste : {name} Date : {date} Recettes : {collected} Dépenses : {expenses} Net à décaisser : {net} Le décaissement sera enregistré automatiquement dans l’historique.',
+      {
+        name: row.receptionistName,
+        date: row.businessDate,
+        collected: formatFcfa(row.collectedFcfa),
+        expenses: formatFcfa(row.expensesFcfa),
+        net: formatFcfa(row.netFcfa),
+      },
+    ),
+    confirmLabel: 'Valider et décaisser',
+    cancelLabel: 'Annuler',
+  })
+  if (!confirmed) return
+
+  validatingClosureId.value = row.id
+  try {
+    const { data } = await api.post<{ message: string; closure: DayClosureRow; disbursedFcfa?: number }>(
+      `/gestionnaire/day-closures/${row.id}/validate`,
+    )
+    await showSuccessModal(
+      'Clôture validée',
+      translateTemplate('Décaissement automatique de {amount} enregistré — {name}', {
+        amount: formatFcfa(data.disbursedFcfa ?? row.netFcfa),
+        name: row.receptionistName,
+      }),
+    )
+    await Promise.all([loadDayClosures(), loadHistory()])
+  } catch (error) {
+    await showApiErrorModal(error, 'Impossible de valider la clôture.')
+  } finally {
+    validatingClosureId.value = null
+  }
+}
+
+async function refreshAll() {
+  await Promise.all([loadHistory(), loadDayClosures()])
 }
 
 const historyExportColumns: ExportColumn<HistoryRow>[] = [
   { header: 'Date', value: (r) => formatDateTimeFr(r.settledAt) },
-  { header: 'Caissier comptable', value: (r) => r.cashierName },
+  { header: 'Réceptionniste', value: (r) => r.cashierName },
   { header: 'Montant', value: (r) => formatFcfa(r.amountFcfa) },
   { header: 'Transactions', value: (r) => r.transactionCount },
   { header: 'Gestionnaire', value: (r) => r.gestionnaireName },
@@ -171,19 +195,64 @@ const historyExportColumns: ExportColumn<HistoryRow>[] = [
   { header: 'Commentaire', value: (r) => r.comment ?? '—' },
 ]
 
+const dayClosureExportColumns: ExportColumn<DayClosureRow>[] = [
+  { header: 'Date', value: (r) => r.businessDate },
+  { header: 'Réceptionniste', value: (r) => r.receptionistName },
+  {
+    header: 'Statut',
+    value: (r) => uiText(r.status === 'validated' ? 'Validée' : 'En attente'),
+  },
+  { header: 'Recettes', value: (r) => formatFcfa(r.collectedFcfa) },
+  { header: 'Dépenses', value: (r) => formatFcfa(r.expensesFcfa) },
+  { header: 'Net', value: (r) => formatFcfa(r.netFcfa) },
+  { header: 'Visites', value: (r) => r.visitsToday },
+  { header: 'Inscrits', value: (r) => r.registeredToday },
+  { header: 'Validé par', value: (r) => r.validatedByName ?? '—' },
+  { header: 'Commentaire', value: (r) => r.comment ?? '—' },
+]
+
+function localizedExportColumns<T>(columns: ExportColumn<T>[]): ExportColumn<T>[] {
+  return columns.map((col) => ({ ...col, header: uiText(col.header) }))
+}
+
+function exportDayClosuresPdf() {
+  if (!dayClosures.value.length) return
+  exportTablePdf(
+    uiText('Clôtures de journée — Réception'),
+    localizedExportColumns(dayClosureExportColumns),
+    dayClosures.value,
+  )
+}
+
+function exportDayClosuresExcel() {
+  if (!dayClosures.value.length) return
+  exportTableExcel(
+    uiText('Clôtures de journée — Réception'),
+    localizedExportColumns(dayClosureExportColumns),
+    dayClosures.value,
+  )
+}
+
 function exportHistoryPdf() {
   if (!historyRows.value.length) return
-  exportTablePdf('Historique des décaissements', historyExportColumns, historyRows.value)
+  exportTablePdf(
+    uiText('Historique des décaissements'),
+    localizedExportColumns(historyExportColumns),
+    historyRows.value,
+  )
 }
 
 function exportHistoryExcel() {
   if (!historyRows.value.length) return
-  exportTableExcel('Historique des décaissements', historyExportColumns, historyRows.value)
+  exportTableExcel(
+    uiText('Historique des décaissements'),
+    localizedExportColumns(historyExportColumns),
+    historyRows.value,
+  )
 }
 
 async function openHistoryView(row: HistoryRow) {
   historyTarget.value = row
-  historyModalMode.value = 'view'
   historyDetail.value = null
   showHistoryModal.value = true
   historyDetailLoading.value = true
@@ -198,60 +267,15 @@ async function openHistoryView(row: HistoryRow) {
   }
 }
 
-function openHistoryEdit(row: HistoryRow) {
-  historyTarget.value = row
-  historyModalMode.value = 'edit'
-  historyDetail.value = null
-  showHistoryModal.value = true
-}
-
 function closeHistoryModal() {
   showHistoryModal.value = false
   historyTarget.value = null
   historyDetail.value = null
 }
 
-function switchHistoryToEdit() {
-  historyModalMode.value = 'edit'
-}
-
-async function saveHistoryComment(comment: string) {
-  if (!historyTarget.value) return
-  historySaving.value = true
-  try {
-    const { data } = await api.patch<DisburseHistoryDetail>(
-      `/gestionnaire/cash/history/${historyTarget.value.id}`,
-      { comment },
-    )
-    historyDetail.value = data
-    historyModalMode.value = 'view'
-    await loadHistory()
-    await showSuccessModal('Commentaire enregistré', 'Le décaissement a été mis à jour.')
-  } catch (error) {
-    await showApiErrorModal(error, 'Enregistrement impossible.')
-  } finally {
-    historySaving.value = false
-  }
-}
-
-const delayLabel = computed(() => {
-  const r = comptableRegister.value
-  if (!r) return ''
-  return formatCashDelayLabel(r.hoursSinceLastDisbursement, r.lastDisbursementAt)
-})
-
 const historyTotalFcfa = computed(() =>
   historyRows.value.reduce((sum, row) => sum + row.amountFcfa, 0),
 )
-
-const registerStateClass = computed(() => {
-  const r = comptableRegister.value
-  if (!r) return ''
-  if (r.overdue) return 'caisse-panel--overdue'
-  if (r.disbursementPhase === 'during_day') return 'caisse-panel--during-day'
-  if (r.balanceFcfa <= 0) return 'caisse-panel--empty'
-  return 'caisse-panel--ready'
-})
 
 onMounted(refreshAll)
 </script>
@@ -264,10 +288,10 @@ onMounted(refreshAll)
           <Wallet :size="26" />
         </div>
         <div>
-          <p class="caisse-hero__eyebrow">Trésorerie gestionnaire</p>
-          <h1 class="caisse-hero__title">Caisse comptable</h1>
+          <p class="caisse-hero__eyebrow">{{ uiText('Trésorerie gestionnaire') }}</p>
+          <h1 class="caisse-hero__title">{{ uiText('Caisse') }}</h1>
           <p class="caisse-hero__subtitle">
-            Collecte journalière de la tirelire — créneaux <strong>matin, soir et nuit</strong>
+            {{ uiText('Validez une clôture de journée : le décaissement est créé automatiquement dans l’historique') }}
           </p>
         </div>
       </div>
@@ -276,14 +300,14 @@ onMounted(refreshAll)
         variant="ghost"
         class="caisse-hero__refresh"
         :icon="RefreshCw"
-        :disabled="loading || historyLoading"
+        :disabled="historyLoading || dayClosureLoading"
         @click="refreshAll"
       >
         Actualiser
       </UiButton>
     </header>
 
-    <section class="workflow-strip" aria-label="Circuit de caisse">
+    <section class="workflow-strip" :aria-label="uiText('Circuit de caisse')">
       <article
         v-for="(item, index) in WORKFLOW_STEPS"
         :key="item.step"
@@ -295,8 +319,8 @@ onMounted(refreshAll)
         </div>
         <div class="workflow-step__body">
           <span class="workflow-step__num">{{ item.step }}</span>
-          <strong class="workflow-step__title">{{ item.title }}</strong>
-          <p class="workflow-step__text">{{ item.text }}</p>
+          <strong class="workflow-step__title">{{ uiText(item.title) }}</strong>
+          <p class="workflow-step__text">{{ uiText(item.text) }}</p>
         </div>
         <ArrowRight
           v-if="index < WORKFLOW_STEPS.length - 1"
@@ -307,202 +331,267 @@ onMounted(refreshAll)
       </article>
     </section>
 
-    <div v-if="loading" class="caisse-state">Chargement de la tirelire…</div>
+    <div v-if="dayClosureLoading && !dayClosures.length && !historyRows.length" class="caisse-state">
+      {{ uiText('Chargement…') }}
+    </div>
 
-    <section v-else-if="comptableRegister" class="caisse-main">
-      <article class="caisse-panel" :class="registerStateClass">
-        <div class="caisse-panel__glow" aria-hidden="true" />
-
-        <div class="caisse-panel__top">
-          <div>
-            <p class="caisse-panel__label">{{ comptableRegister.label }}</p>
-            <p class="caisse-panel__amount">{{ formatFcfa(comptableRegister.balanceFcfa) }}</p>
-          </div>
-          <span
-            v-if="comptableScheduleBadgeLabel(comptableRegister.disbursementPhase)"
-            class="caisse-panel__badge"
-            :class="{
-              'caisse-panel__badge--danger': comptableRegister.overdue,
-              'caisse-panel__badge--info': comptableRegister.disbursementPhase === 'during_day',
-            }"
-          >
-            <AlertTriangle v-if="comptableRegister.overdue" :size="12" />
-            {{ comptableScheduleBadgeLabel(comptableRegister.disbursementPhase) }}
-          </span>
-        </div>
-
-        <p v-if="comptableRegister.disbursementStatusLabel" class="caisse-panel__status">
-          {{ comptableRegister.disbursementStatusLabel }}
-        </p>
-
-        <div class="caisse-panel__stats">
-          <div class="caisse-stat">
-            <ListOrdered :size="16" />
-            <div>
-              <span class="caisse-stat__value">{{ comptableRegister.transactionCount }}</span>
-              <span class="caisse-stat__label">transaction(s) en attente</span>
-            </div>
-          </div>
-          <div class="caisse-stat">
-            <Clock :size="16" />
-            <div>
-              <span class="caisse-stat__value caisse-stat__value--text">{{ delayLabel }}</span>
-            </div>
-          </div>
-        </div>
-
-        <p v-if="comptableRegister.disbursementHint" class="caisse-panel__hint">
-          {{ comptableRegister.disbursementHint }}
-        </p>
-
-        <UiButton
-          class="caisse-panel__cta"
-          variant="primary"
-          :icon="Banknote"
-          :disabled="comptableRegister.balanceFcfa <= 0"
-          @click="openDisburse"
-        >
-          Récupérer la tirelire
-        </UiButton>
-      </article>
-
-      <aside class="caisse-aside">
-        <UiCard title="Rappel" description="Collecte de la tirelire comptable" :icon="UserCheck" icon-variant="amber">
-          <ul class="caisse-tips">
-            <li>Vous récupérez uniquement la <strong>tirelire comptable</strong>.</li>
-            <li>Passage habituel : <strong>après la nuit (6h)</strong> ou <strong>le matin</strong>.</li>
-            <li>Créneaux caisse : <strong>matin 7h–14h, soir 16h–21h, nuit 21h–6h</strong>.</li>
-          </ul>
-        </UiCard>
-
-        <div v-if="historyRows.length" class="caisse-recent">
-          <p class="caisse-recent__title">
-            <History :size="15" />
-            Dernier passage
-          </p>
-          <div class="caisse-recent__card">
-            <strong>{{ formatFcfa(historyRows[0].amountFcfa) }}</strong>
-            <span>{{ formatDateTimeFr(historyRows[0].settledAt) }}</span>
-            <span class="caisse-recent__meta">
-              {{ historyRows[0].cashierName }} → {{ historyRows[0].gestionnaireName }}
+    <template v-else>
+      <section class="caisse-summary" :aria-label="uiText('Résumé')">
+        <article class="summary-card summary-card--pending">
+          <div class="summary-card__top">
+            <span class="summary-card__label">{{ uiText('Clôtures à valider') }}</span>
+            <span
+              class="summary-card__badge"
+              :class="dayClosurePendingCount > 0 ? 'summary-card__badge--info' : 'summary-card__badge--ok'"
+            >
+              {{ uiText(dayClosurePendingCount > 0 ? 'À faire' : 'À jour') }}
             </span>
           </div>
-        </div>
-      </aside>
-    </section>
+          <p class="summary-card__value">{{ dayClosurePendingCount }}</p>
+          <p class="summary-card__hint">
+            {{
+              uiText(
+                dayClosurePendingCount > 0
+                  ? 'Validation = décaissement automatique'
+                  : 'Aucune clôture en attente',
+              )
+            }}
+          </p>
+        </article>
 
-    <UiCard
-      class="caisse-history"
-      title="Historique des décaissements"
-      description="Caisse comptable — passages gestionnaire"
-      :icon="History"
-      icon-variant="amber"
-    >
-      <div class="caisse-history__toolbar">
-        <div class="caisse-history__filters">
-          <UiInput v-model="historyFrom" label="Du" type="date" class="caisse-history__field" />
-          <UiInput v-model="historyTo" label="Au" type="date" class="caisse-history__field" />
-          <UiButton size="sm" variant="ghost" @click="loadHistory">Filtrer</UiButton>
-        </div>
-        <ExportButtons
-          :disabled="historyLoading || !historyRows.length"
-          @pdf="exportHistoryPdf"
-          @excel="exportHistoryExcel"
-        />
-        <UiButton size="sm" variant="ghost" :icon="Download" @click="exportCsv">
-          Export CSV
-        </UiButton>
-        <UiButton size="sm" :icon="Plus" @click="openDisburse">
-          Nouveau décaissement
-        </UiButton>
-      </div>
+        <article class="summary-card summary-card--users">
+          <div class="summary-card__top">
+            <span class="summary-card__label">{{ uiText('Réceptionnistes') }}</span>
+            <Users :size="16" class="summary-card__icon" />
+          </div>
+          <p class="summary-card__value">{{ dayClosureReceptionists.length }}</p>
+          <p class="summary-card__hint">{{ uiText('Filtrez par utilisateur pour voir les recettes') }}</p>
+        </article>
 
-      <div v-if="historyLoading" class="caisse-state caisse-state--compact">Chargement…</div>
-      <div v-else-if="!historyRows.length" class="caisse-state caisse-state--empty">
-        <History :size="28" />
-        <p>Aucun décaissement enregistré</p>
-      </div>
-      <div v-else class="caisse-history__table-wrap">
-        <table class="caisse-history__table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Caissier comptable</th>
-              <th class="col-amount">Montant</th>
-              <th class="col-center">Transactions</th>
-              <th>Gestionnaire</th>
-              <th class="col-actions"><span class="sr-only">Actions</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in historyRows" :key="row.id">
-              <td>
-                <span class="caisse-history__date">
-                  {{
-                    new Date(row.settledAt).toLocaleDateString('fr-FR', {
-                      weekday: 'short',
-                      day: 'numeric',
-                      month: 'short',
-                    })
-                  }}
-                </span>
-                <span class="caisse-history__time">{{ formatShortTimeFr(row.settledAt) }}</span>
-              </td>
-              <td>{{ row.cashierName }}</td>
-              <td class="col-amount">
-                <strong>{{ formatFcfa(row.amountFcfa) }}</strong>
-              </td>
-              <td class="col-center">
-                <span class="tx-pill">{{ row.transactionCount }}</span>
-              </td>
-              <td>{{ row.gestionnaireName }}</td>
-              <td class="actions">
-                <GestionnaireRowActionGroup>
-                  <GestionnaireRowAction
-                    :icon="Eye"
-                    label="Voir"
-                    variant="neutral"
-                    @click="openHistoryView(row)"
-                  />
-                  <GestionnaireRowAction
-                    :icon="Pencil"
-                    label="Modifier"
-                    variant="edit"
-                    @click="openHistoryEdit(row)"
-                  />
-                </GestionnaireRowActionGroup>
-              </td>
-            </tr>
-          </tbody>
-          <tfoot>
-            <tr>
-              <td colspan="2"><strong>{{ historyRows.length }} passage(s)</strong></td>
-              <td class="col-amount"><strong>{{ formatFcfa(historyTotalFcfa) }}</strong></td>
-              <td colspan="3" />
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    </UiCard>
+        <article class="summary-card summary-card--history">
+          <div class="summary-card__top">
+            <span class="summary-card__label">{{ uiText('Décaissements') }}</span>
+            <Banknote :size="16" class="summary-card__icon" />
+          </div>
+          <p class="summary-card__value summary-card__value--money">
+            {{ formatFcfa(historyTotalFcfa) }}
+          </p>
+          <p class="summary-card__hint">
+            {{ translateTemplate('{n} passage(s) dans l’historique filtré', { n: historyRows.length }) }}
+          </p>
+        </article>
 
-    <GestionnaireDisburseModal
-      :open="showDisburseModal"
-      :detail="disburseDetail"
-      :saving="disburseSaving"
-      @close="showDisburseModal = false"
-      @confirm="confirmDisburse"
-    />
+        <article v-if="historyRows[0]" class="summary-card summary-card--last">
+          <div class="summary-card__top">
+            <span class="summary-card__label">{{ uiText('Dernier passage') }}</span>
+            <History :size="16" class="summary-card__icon" />
+          </div>
+          <p class="summary-card__value summary-card__value--money">
+            {{ formatFcfa(historyRows[0].amountFcfa) }}
+          </p>
+          <p class="summary-card__hint">
+            {{ historyRows[0].cashierName }} → {{ historyRows[0].gestionnaireName }}
+          </p>
+        </article>
+        <article v-else class="summary-card summary-card--last">
+          <div class="summary-card__top">
+            <span class="summary-card__label">{{ uiText('Dernier passage') }}</span>
+            <History :size="16" class="summary-card__icon" />
+          </div>
+          <p class="summary-card__value summary-card__value--muted">—</p>
+          <p class="summary-card__hint">{{ uiText('Validez une clôture pour créer le premier décaissement') }}</p>
+        </article>
+      </section>
+
+      <section class="caisse-boards">
+        <!-- ─── Clôtures de journée ─── -->
+        <UiCard
+          class="caisse-history caisse-board"
+          title="Clôtures de journée"
+          description="Validez → décaissement auto · filtre par utilisateur"
+          :icon="FileCheck"
+          icon-variant="green"
+        >
+          <div class="caisse-history__toolbar">
+            <div class="caisse-history__filters">
+              <UiSelect v-model="dayClosureFilterUser" label="Réceptionniste" class="caisse-history__field">
+                <option value="">{{ uiText('Tous') }}</option>
+                <option v-for="r in dayClosureReceptionists" :key="r.id" :value="r.id">{{ r.name }}</option>
+              </UiSelect>
+              <UiSelect v-model="dayClosureStatus" label="Statut" class="caisse-history__field">
+                <option value="pending">{{ uiText('En attente') }}</option>
+                <option value="validated">{{ uiText('Validées') }}</option>
+                <option value="all">{{ uiText('Toutes') }}</option>
+              </UiSelect>
+              <UiInput v-model="dayClosureFrom" label="Du" type="date" class="caisse-history__field" />
+              <UiInput v-model="dayClosureTo" label="Au" type="date" class="caisse-history__field" />
+              <UiButton size="sm" variant="ghost" @click="loadDayClosures">Filtrer</UiButton>
+            </div>
+            <ExportButtons
+              :disabled="dayClosureLoading || !dayClosures.length"
+              @pdf="exportDayClosuresPdf"
+              @excel="exportDayClosuresExcel"
+            />
+          </div>
+
+          <div v-if="dayClosureLoading" class="caisse-state caisse-state--compact">{{ uiText('Chargement…') }}</div>
+          <div v-else-if="!dayClosures.length" class="caisse-state caisse-state--empty">
+            <FileCheck :size="28" />
+            <p>{{ uiText('Aucune clôture trouvée') }}</p>
+          </div>
+          <div v-else class="caisse-history__table-wrap">
+            <table class="caisse-history__table">
+              <thead>
+                <tr>
+                  <th>{{ uiText('Date') }}</th>
+                  <th>{{ uiText('Réceptionniste') }}</th>
+                  <th>{{ uiText('Statut') }}</th>
+                  <th class="col-amount">{{ uiText('Recettes') }}</th>
+                  <th class="col-amount">{{ uiText('Net') }}</th>
+                  <th class="col-actions"><span class="sr-only">{{ uiText('Actions') }}</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in dayClosures" :key="row.id">
+                  <td>
+                    <span class="caisse-history__date">{{ row.businessDate }}</span>
+                    <span class="caisse-history__time">{{ timeText(row.closedAt) }}</span>
+                  </td>
+                  <td>{{ row.receptionistName }}</td>
+                  <td>
+                    <span
+                      class="status-pill"
+                      :class="row.status === 'validated' ? 'status-pill--ok' : 'status-pill--pending'"
+                    >
+                      {{ uiText(row.status === 'validated' ? 'Validée' : 'En attente') }}
+                    </span>
+                    <span v-if="row.validatedByName" class="caisse-history__time">
+                      {{ row.validatedByName }}
+                    </span>
+                  </td>
+                  <td class="col-amount">{{ formatFcfa(row.collectedFcfa) }}</td>
+                  <td class="col-amount"><strong>{{ formatFcfa(row.netFcfa) }}</strong></td>
+                  <td class="col-actions actions">
+                    <GestionnaireRowActionGroup v-if="row.status === 'pending'">
+                      <GestionnaireRowAction
+                        :icon="CheckCircle2"
+                        label="Valider"
+                        variant="success"
+                        show-label
+                        :disabled="validatingClosureId === row.id"
+                        @click="validateDayClosure(row)"
+                      />
+                    </GestionnaireRowActionGroup>
+                    <span v-else class="validated-check" :title="uiText('Déjà validée')">
+                      <CheckCircle2 :size="16" />
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="3">
+                    <strong>{{ translateTemplate('{n} clôture(s)', { n: dayClosures.length }) }}</strong>
+                  </td>
+                  <td class="col-amount"><strong>{{ formatFcfa(dayClosureTotalCollected) }}</strong></td>
+                  <td class="col-amount"><strong>{{ formatFcfa(dayClosureTotalNet) }}</strong></td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </UiCard>
+
+        <UiCard
+          class="caisse-history caisse-board"
+          title="Historique des décaissements"
+          description="Créés auto à la validation — réceptionniste + gestionnaire"
+          :icon="History"
+          icon-variant="amber"
+        >
+          <div class="caisse-history__toolbar">
+            <div class="caisse-history__filters">
+              <UiInput v-model="historyFrom" label="Du" type="date" class="caisse-history__field" />
+              <UiInput v-model="historyTo" label="Au" type="date" class="caisse-history__field" />
+              <UiButton size="sm" variant="ghost" @click="loadHistory">Filtrer</UiButton>
+            </div>
+            <div class="caisse-history__exports">
+              <ExportButtons
+                :disabled="historyLoading || !historyRows.length"
+                @pdf="exportHistoryPdf"
+                @excel="exportHistoryExcel"
+              />
+            </div>
+          </div>
+
+          <div v-if="historyLoading" class="caisse-state caisse-state--compact">{{ uiText('Chargement…') }}</div>
+          <div v-else-if="!historyRows.length" class="caisse-state caisse-state--empty">
+            <History :size="28" />
+            <p>{{ uiText('Aucun décaissement — validez une clôture') }}</p>
+          </div>
+          <div v-else class="caisse-history__table-wrap">
+            <table class="caisse-history__table">
+              <thead>
+                <tr>
+                  <th>{{ uiText('Date') }}</th>
+                  <th>{{ uiText('Réceptionniste') }}</th>
+                  <th class="col-amount">{{ uiText('Montant') }}</th>
+                  <th>{{ uiText('Gestionnaire') }}</th>
+                  <th class="col-actions"><span class="sr-only">{{ uiText('Actions') }}</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in historyRows" :key="row.id">
+                  <td>
+                    <span class="caisse-history__date">
+                      {{
+                        dateText(row.settledAt, {
+                          weekday: 'short',
+                          day: 'numeric',
+                          month: 'short',
+                        })
+                      }}
+                    </span>
+                    <span class="caisse-history__time">{{ timeText(row.settledAt) }}</span>
+                  </td>
+                  <td>{{ row.cashierName }}</td>
+                  <td class="col-amount">
+                    <strong>{{ formatFcfa(row.amountFcfa) }}</strong>
+                  </td>
+                  <td>{{ row.gestionnaireName }}</td>
+                  <td class="actions">
+                    <GestionnaireRowActionGroup>
+                      <GestionnaireRowAction
+                        :icon="Eye"
+                        label="Voir"
+                        variant="neutral"
+                        @click="openHistoryView(row)"
+                      />
+                    </GestionnaireRowActionGroup>
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="2">
+                    <strong>{{ translateTemplate('{n} passage(s)', { n: historyRows.length }) }}</strong>
+                  </td>
+                  <td class="col-amount"><strong>{{ formatFcfa(historyTotalFcfa) }}</strong></td>
+                  <td colspan="2" />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </UiCard>
+      </section>
+    </template>
 
     <GestionnaireDisburseHistoryModal
       :open="showHistoryModal"
-      :mode="historyModalMode"
       :row="historyTarget"
       :detail="historyDetail"
       :loading="historyDetailLoading"
-      :saving="historySaving"
       @close="closeHistoryModal"
-      @save="saveHistoryComment"
-      @switch-to-edit="switchHistoryToEdit"
     />
   </div>
 </template>
@@ -511,8 +600,9 @@ onMounted(refreshAll)
 .caisse-page {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
-  max-width: 1080px;
+  gap: 1.15rem;
+  max-width: none;
+  width: 100%;
 }
 
 .caisse-hero {
@@ -665,221 +755,117 @@ onMounted(refreshAll)
   gap: 0.5rem;
 }
 
-.caisse-main {
+.caisse-summary {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 1rem 1.1rem;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+  min-height: 7.5rem;
+}
+
+.summary-card--pending {
+  border-color: rgba(37, 99, 235, 0.2);
+  background: linear-gradient(160deg, #eff6ff, #fff);
+}
+
+.summary-card--users {
+  border-color: rgba(22, 163, 74, 0.18);
+  background: linear-gradient(160deg, #f0fdf4, #fff);
+}
+
+.summary-card--history {
+  border-color: rgba(217, 119, 6, 0.2);
+  background: linear-gradient(160deg, #fffbeb, #fff);
+}
+
+.summary-card--last {
+  border-color: rgba(100, 116, 139, 0.18);
+  background: linear-gradient(160deg, #f8fafc, #fff);
+}
+
+.summary-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.summary-card__label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.summary-card__icon {
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.summary-card__badge {
+  display: inline-flex;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.summary-card__badge--info {
+  background: #2563eb;
+}
+
+.summary-card__badge--ok {
+  background: #16a34a;
+}
+
+.summary-card__value {
+  margin: 0.15rem 0 0;
+  font-size: 1.75rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: #0f172a;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-card__value--money {
+  font-size: 1.25rem;
+  color: #15803d;
+}
+
+.summary-card__value--muted {
+  font-size: 1.5rem;
+  color: #cbd5e1;
+}
+
+.summary-card__hint {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #64748b;
+}
+
+.caisse-boards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
   align-items: start;
 }
 
-.caisse-panel {
-  position: relative;
-  overflow: hidden;
-  padding: 1.35rem 1.4rem;
-  border-radius: 16px;
-  border: 1px solid rgba(217, 119, 6, 0.22);
-  background: linear-gradient(155deg, #fffbeb 0%, #fef3c7 42%, #fff 100%);
-  box-shadow: 0 10px 28px rgba(217, 119, 6, 0.1);
-}
-
-.caisse-panel__glow {
-  position: absolute;
-  top: -3rem;
-  right: -2rem;
-  width: 10rem;
-  height: 10rem;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(245, 158, 11, 0.22), transparent 70%);
-  pointer-events: none;
-}
-
-.caisse-panel--overdue {
-  border-color: #fca5a5;
-  background: linear-gradient(155deg, #fff1f2 0%, #ffe4e6 35%, #fff 100%);
-  box-shadow: 0 10px 28px rgba(220, 38, 38, 0.08);
-}
-
-.caisse-panel--during-day {
-  border-color: #93c5fd;
-  background: linear-gradient(155deg, #eff6ff 0%, #dbeafe 35%, #fff 100%);
-}
-
-.caisse-panel--empty {
-  opacity: 0.92;
-}
-
-.caisse-panel__top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.35rem;
-}
-
-.caisse-panel__label {
-  margin: 0;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #92400e;
-}
-
-.caisse-panel--overdue .caisse-panel__label {
-  color: #b91c1c;
-}
-
-.caisse-panel__amount {
-  margin: 0.2rem 0 0;
-  font-size: clamp(1.75rem, 4vw, 2.35rem);
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  color: #78350f;
-  font-variant-numeric: tabular-nums;
-}
-
-.caisse-panel--overdue .caisse-panel__amount {
-  color: #991b1b;
-}
-
-.caisse-panel__badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem 0.55rem;
-  border-radius: 999px;
-  background: #dc2626;
-  color: #fff;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.caisse-panel__badge--info {
-  background: #2563eb;
-}
-
-.caisse-panel__badge--danger {
-  background: #dc2626;
-}
-
-.caisse-panel__status {
-  margin: 0 0 0.85rem;
-  font-size: 0.9375rem;
-  font-weight: 700;
-  color: #44403c;
-}
-
-.caisse-panel__stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.65rem;
-  margin-bottom: 0.85rem;
-}
-
-.caisse-stat {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.65rem 0.75rem;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(180, 83, 9, 0.1);
-  color: #b45309;
-}
-
-.caisse-stat__value {
-  display: block;
-  font-size: 1.125rem;
-  font-weight: 800;
-  color: #78350f;
-  line-height: 1.2;
-}
-
-.caisse-stat__value--text {
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1.35;
-  color: #57534e;
-}
-
-.caisse-stat__label {
-  display: block;
-  font-size: 0.6875rem;
-  color: #78716c;
-  margin-top: 0.1rem;
-}
-
-.caisse-panel__hint {
-  margin: 0 0 1rem;
-  padding: 0.65rem 0.75rem;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.65);
-  border: 1px dashed rgba(180, 83, 9, 0.2);
-  font-size: 0.8125rem;
-  line-height: 1.45;
-  color: #57534e;
-}
-
-.caisse-panel__cta {
-  width: 100%;
-  justify-content: center;
-}
-
-.caisse-aside {
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-}
-
-.caisse-tips {
-  margin: 0;
-  padding-left: 1.1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-  font-size: 0.8125rem;
-  line-height: 1.5;
-  color: #57534e;
-}
-
-.caisse-recent__title {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin: 0 0 0.45rem;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #92400e;
-}
-
-.caisse-recent__card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  padding: 0.85rem 1rem;
-  border-radius: 12px;
-  border: 1px solid rgba(180, 83, 9, 0.15);
-  background: #fff;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
-}
-
-.caisse-recent__card strong {
-  font-size: 1.125rem;
-  color: #15803d;
-}
-
-.caisse-recent__card > span {
-  font-size: 0.8125rem;
-  color: #64748b;
-}
-
-.caisse-recent__meta {
-  margin-top: 0.2rem;
-  font-size: 0.75rem !important;
-  color: #94a3b8 !important;
+.caisse-board {
+  min-width: 0;
 }
 
 .caisse-history__toolbar {
@@ -898,18 +884,31 @@ onMounted(refreshAll)
   gap: 0.5rem;
 }
 
+.caisse-history__exports {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
 .caisse-history__field {
-  min-width: 9.5rem;
+  min-width: 8.5rem;
+}
+
+.caisse-history__field :deep(.ui-field) {
+  margin-bottom: 0;
 }
 
 .caisse-history__table-wrap {
   border-radius: 12px;
   border: 1px solid rgba(15, 23, 42, 0.08);
-  overflow: hidden;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .caisse-history__table {
   width: 100%;
+  min-width: 40rem;
   border-collapse: collapse;
   font-size: 0.875rem;
 }
@@ -959,10 +958,19 @@ onMounted(refreshAll)
 .col-amount {
   text-align: right;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .col-amount strong {
   color: #15803d;
+}
+
+.col-actions,
+.caisse-history__table .actions {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .col-center {
@@ -982,6 +990,30 @@ onMounted(refreshAll)
   font-weight: 700;
 }
 
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+.status-pill--pending {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+}
+
+.status-pill--ok {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+}
+
+.validated-check {
+  display: inline-flex;
+  color: #16a34a;
+}
+
 @media (min-width: 900px) {
   .workflow-step__arrow {
     display: block;
@@ -994,11 +1026,25 @@ onMounted(refreshAll)
   }
 }
 
-@media (max-width: 860px) {
-  .caisse-main {
+@media (max-width: 1280px) {
+  .caisse-boards {
     grid-template-columns: 1fr;
   }
+}
 
+@media (max-width: 1200px) {
+  .caisse-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1100px) {
+  .caisse-boards {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 860px) {
   .workflow-strip {
     grid-template-columns: 1fr;
   }
@@ -1009,7 +1055,7 @@ onMounted(refreshAll)
     flex-direction: column;
   }
 
-  .caisse-panel__stats {
+  .caisse-summary {
     grid-template-columns: 1fr;
   }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ClipboardList, FileText, FolderOpen, Printer, Save } from '@lucide/vue'
 import api from '@/api/client'
@@ -21,6 +21,7 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiTextarea from '@/components/ui/UiTextarea.vue'
 import type { LabsResultsVisitRow } from '@/components/ui/LabsResultsDataTable.vue'
+import { useSilentRefresh } from '@/composables/useSilentRefresh'
 
 type LabPanelDoctorComment = {
   comment: string
@@ -162,10 +163,12 @@ function showMessage(text: string, type: 'success' | 'error' = 'success') {
   messageType.value = type
 }
 
-async function loadDossier() {
+async function loadDossier(opts?: { silent?: boolean }) {
   if (commentDraftDirty.value) return
-  loading.value = true
-  message.value = ''
+  if (!opts?.silent) {
+    loading.value = true
+    message.value = ''
+  }
   try {
     const { data } = await api.get<DossierResponse>(`/consultations/labs-resultats/${visitId.value}`)
     visit.value = data.visit
@@ -177,11 +180,13 @@ async function loadDossier() {
       activePanel.value && data.panelResults[activePanel.value] ? activePanel.value : firstPanel
     selectPanel(nextPanel)
   } catch {
-    visit.value = null
-    selectPanel(null)
-    showMessage('Résultats laboratoire introuvables.', 'error')
+    if (!opts?.silent) {
+      visit.value = null
+      selectPanel(null)
+      showMessage('Résultats laboratoire introuvables.', 'error')
+    }
   } finally {
-    loading.value = false
+    if (!opts?.silent) loading.value = false
   }
 }
 
@@ -222,14 +227,20 @@ async function printAllPanels() {
   printingAll.value = false
 }
 
-const POLL_MS = 30_000
-let pollTimer: ReturnType<typeof setInterval> | null = null
+const { refresh: refreshDossier } = useSilentRefresh(
+  ({ silent }) => loadDossier({ silent }),
+  {
+    intervalMs: 20_000,
+    enabled: () => !commentDraftDirty.value,
+    immediate: false,
+  },
+)
 
 watch(
   () => route.params.visitId,
   () => {
     selectPanel(null)
-    loadDossier()
+    void refreshDossier()
   },
 )
 
@@ -240,11 +251,6 @@ onMounted(async () => {
     // Ne pas bloquer l'ouverture du dossier si les formulaires ne chargent pas
   }
   await loadDossier()
-  pollTimer = setInterval(loadDossier, POLL_MS)
-})
-
-onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
 })
 </script>
 

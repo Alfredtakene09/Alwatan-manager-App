@@ -1,5 +1,6 @@
 import { EXAM_KIND_ORDER, LAB_BILLABLE_EXAM_KINDS, type ExamKindSlug } from '@/lib/exam-catalog/types'
 import type { LabExamLine } from '@/lib/lab-exam-pending'
+import { isClinicalConsultationExamLabel } from '@/lib/lab-notes'
 
 export type ExamKindBlock = {
   lines: LabExamLine[]
@@ -39,6 +40,7 @@ export function emptyExamsByKindBlocks(): ExamsByKindBlocks {
 
 export function emptyExamReductionsByKind(): ExamReductionsByKind {
   return {
+    specialty: 0,
     examen: 0,
     radio: 0,
     echo: 0,
@@ -59,12 +61,14 @@ export function buildExamSheetsFromBlocks(
   return kinds.flatMap((kind) => {
     const block = examsByKind[kind]
     if (!block?.lines.length) return []
-    const grossFcfa = block.grossFcfa
+    const lines = block.lines.filter((line) => !isClinicalConsultationExamLabel(line.label))
+    if (!lines.length) return []
+    const grossFcfa = lines.reduce((sum, line) => sum + line.unitPriceFcfa, 0)
     const reductionFcfa = Math.min(Math.max(0, Number(reductions[kind]) || 0), grossFcfa)
     return [
       {
         kind,
-        lines: block.lines,
+        lines,
         grossFcfa,
         reductionFcfa,
         netFcfa: Math.max(0, grossFcfa - reductionFcfa),
@@ -127,6 +131,7 @@ export function examsByKindFromLines(examLines: LabExamLine[]): ExamsByKindBlock
     blocks[kind] = { lines: [], grossFcfa: 0 }
   }
   for (const line of examLines) {
+    if (isClinicalConsultationExamLabel(line.label)) continue
     const kind = line.kind ?? 'examen'
     blocks[kind].lines.push(line)
     blocks[kind].grossFcfa += line.unitPriceFcfa

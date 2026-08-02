@@ -1,9 +1,25 @@
 import os from "node:os";
 
-/** Première IPv4 LAN utilisable (hors loopback / APIPA / hotspot Windows). */
-export function getLanIpv4(): string | null {
+function isTailscaleCgNat(address: string): boolean {
+  // Tailscale utilise typiquement 100.64.0.0/10
+  const m = /^100\.(\d+)\./.exec(address);
+  if (!m) return false;
+  const second = Number(m[1]);
+  return second >= 64 && second <= 127;
+}
+
+export type NetworkAccessEndpoints = {
+  wifiIp: string | null;
+  hotspotIp: string | null;
+  tailscaleIp: string | null;
+};
+
+/** Adresses d’accès : Wi‑Fi/Ethernet, hotspot Windows, Tailscale (mesh). */
+export function getNetworkAccessEndpoints(): NetworkAccessEndpoints {
   const nets = os.networkInterfaces();
-  const candidates: string[] = [];
+  const preferred: string[] = [];
+  const hotspot: string[] = [];
+  const mesh: string[] = [];
 
   for (const [alias, entries] of Object.entries(nets)) {
     if (!entries?.length) continue;
@@ -18,14 +34,32 @@ export function getLanIpv4(): string | null {
       const address = net.address;
       if (address.startsWith("127.") || address.startsWith("169.254.")) continue;
       if (address.startsWith("192.168.137.")) {
-        candidates.push(address);
+        hotspot.push(address);
         continue;
       }
-      candidates.push(address);
+      if (isTailscaleCgNat(address) || lower.includes("tailscale")) {
+        mesh.push(address);
+        continue;
+      }
+      preferred.push(address);
     }
   }
 
-  return candidates[0] ?? null;
+  return {
+    wifiIp: preferred[0] ?? null,
+    hotspotIp: hotspot[0] ?? null,
+    tailscaleIp: mesh[0] ?? null,
+  };
+}
+
+/** Première IPv4 LAN utilisable (Wi‑Fi / Ethernet, hors hotspot / Tailscale). */
+export function getLanIpv4(): string | null {
+  const { wifiIp, hotspotIp, tailscaleIp } = getNetworkAccessEndpoints();
+  return wifiIp ?? hotspotIp ?? tailscaleIp ?? null;
+}
+
+export function getTailscaleIpv4(): string | null {
+  return getNetworkAccessEndpoints().tailscaleIp;
 }
 
 const PRIVATE_LAN_ORIGIN =

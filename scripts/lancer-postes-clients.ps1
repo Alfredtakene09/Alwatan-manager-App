@@ -57,14 +57,21 @@ npm.cmd run start
     Write-Host 'Serveur déjà actif sur le port 4000.' -ForegroundColor Green
 }
 
-# URL clients : hotspot en priorité (seul chemin fiable si le Wi-Fi clinique isole les PC)
-$clientIps = @('192.168.137.1')
+# URL clients : IP LAN en priorité (même réseau, sans Tailscale) ; hotspot en secours
+$clientIps = @()
 if ($lanIp) { $clientIps += $lanIp }
+$clientIps += '192.168.137.1'
+foreach ($ip in $networkIps) {
+    if ($ip -and ($clientIps -notcontains $ip)) { $clientIps += $ip }
+}
 $clientDir = Publish-AlwatanClientAccess -ServerIps $clientIps -Port 4000 -Root $Root
 
 Open-AlwatanBrowser -Url 'http://127.0.0.1:4000/'
 Show-AlwatanHotspotInstructions -ClientFolder $clientDir
 
 Write-Host 'Serveur local : http://127.0.0.1:4000' -ForegroundColor Green
+if ($lanIp) {
+    Write-Host "Même réseau (sans Tailscale) : http://${lanIp}:4000" -ForegroundColor Green
+}
 Write-Host "Dossier à copier sur les clients : $clientDir" -ForegroundColor Cyan
 Write-Host ''

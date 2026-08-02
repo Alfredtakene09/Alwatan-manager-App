@@ -122,6 +122,7 @@ export type GestionnaireDashboardOverview = {
     cashRegisters: CashRegisterAlert[]
     pendingExpenses: number
     unpaidPayroll: number
+    pendingDayClosures?: number
   }
   recentDisbursements: RecentDisbursement[]
   payroll: {
@@ -133,6 +134,7 @@ export type GestionnaireDashboardOverview = {
   navBadges: {
     depenses: number
     salaires: number
+    caisse?: number
   }
 }
 

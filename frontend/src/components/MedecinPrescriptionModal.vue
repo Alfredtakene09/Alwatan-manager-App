@@ -6,12 +6,17 @@ import { fullName } from '@/lib/roles'
 import { formatAppDateTime } from '@/i18n/locale-format'
 import {
   countNewExamsInAppend,
+  hasClinicalConsultationSelected,
   parsePrescribedExamsByKind,
   parsePrescribedExamCommentsByKind,
   parsePrescribedHospitalisationDays,
+  parsePharmacyOrdonnanceLines,
+  type PharmacyOrdonnanceLine,
 } from '@/lib/lab-notes'
 import MultiExamPrescriptionPicker from '@/components/MultiExamPrescriptionPicker.vue'
+import DoctorPharmacyOrdonnancePicker from '@/components/DoctorPharmacyOrdonnancePicker.vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import UiTextarea from '@/components/ui/UiTextarea.vue'
 import {
   countExamsByKind,
   emptyExamsByKind,
@@ -23,6 +28,7 @@ import {
   type ExamsByKind,
   type ExamCommentsByKind,
 } from '@/lib/exam-catalog'
+import { useAuthStore } from '@/stores/auth'
 
 export type PrescriptionVisit = {
   id: string
@@ -44,7 +50,11 @@ export type PrescriptionVisit = {
     pulseBpm?: number | null
     recordedAt: string
   }>
-  consultation?: { clinicalNotes?: string | null; updatedAt?: string } | null
+  consultation?: {
+    clinicalNotes?: string | null
+    doctorComment?: string | null
+    updatedAt?: string
+  } | null
 }
 
 const props = defineProps<{
@@ -57,6 +67,8 @@ const emit = defineEmits<{
   saved: []
 }>()
 
+const auth = useAuthStore()
+
 /** Visite figée à l'ouverture — évite la perte de sélection lors des rafraîchissements liste. */
 const sessionVisit = ref<PrescriptionVisit | null>(null)
 
@@ -65,8 +77,14 @@ const errorMessage = ref('')
 const selectedExamsByKind = ref<ExamsByKind>(emptyExamsByKind())
 const examCommentsByKind = ref<ExamCommentsByKind>(emptyExamCommentsByKind())
 const hospitalisationDays = ref<number | null>(null)
+const doctorComment = ref('')
+const pharmacyOrdonnance = ref<PharmacyOrdonnanceLine[]>([])
 
 const latestVitals = computed(() => sessionVisit.value?.vitalSigns?.[0] ?? null)
+
+const showConsultationPanel = computed(() =>
+  hasClinicalConsultationSelected(selectedExamsByKind.value),
+)
 
 const existingExamsByKind = computed(() =>
   parsePrescribedExamsByKind(sessionVisit.value?.consultation?.clinicalNotes),
@@ -131,16 +149,22 @@ function resetForm() {
     selectedExamsByKind.value = emptyExamsByKind()
     examCommentsByKind.value = emptyExamCommentsByKind()
     hospitalisationDays.value = null
+    doctorComment.value = ''
+    pharmacyOrdonnance.value = []
     return
   }
   if (props.mode === 'append') {
     selectedExamsByKind.value = emptyExamsByKind()
     examCommentsByKind.value = emptyExamCommentsByKind()
     hospitalisationDays.value = null
+    doctorComment.value = ''
+    pharmacyOrdonnance.value = []
   } else {
     selectedExamsByKind.value = parsePrescribedExamsByKind(sessionVisit.value.consultation?.clinicalNotes)
     examCommentsByKind.value = parsePrescribedExamCommentsByKind(sessionVisit.value.consultation?.clinicalNotes)
     hospitalisationDays.value = parsePrescribedHospitalisationDays(sessionVisit.value.consultation?.clinicalNotes)
+    doctorComment.value = sessionVisit.value.consultation?.doctorComment?.trim() ?? ''
+    pharmacyOrdonnance.value = parsePharmacyOrdonnanceLines(sessionVisit.value.consultation?.clinicalNotes)
   }
   errorMessage.value = ''
 }
@@ -185,8 +209,22 @@ async function submit() {
       examsByKind: selectedExamsByKind.value,
       examCommentsByKind: filterInvoiceExamComments(examCommentsByKind.value),
       hospitalisationDays: hospPrescribed ? hospitalisationDays.value ?? undefined : undefined,
+      doctorComment: doctorComment.value.trim() || undefined,
+      pharmacyOrdonnance: showConsultationPanel.value ? pharmacyOrdonnance.value : undefined,
       append: props.mode === 'append',
     })
+    if (showConsultationPanel.value && pharmacyOrdonnance.value.length) {
+      const { printPharmacyOrdonnance } = await import('@/lib/pharmacy-ordonnance-print')
+      printPharmacyOrdonnance({
+        patient: sessionVisit.value.patient,
+        doctorName: sessionVisit.value.assignedDoctor
+          ? `Dr ${fullName(sessionVisit.value.assignedDoctor.firstName, sessionVisit.value.assignedDoctor.lastName)}`
+          : auth.user
+            ? `Dr ${fullName(auth.user.firstName, auth.user.lastName)}`
+            : null,
+        lines: pharmacyOrdonnance.value,
+      })
+    }
     emit('saved')
     emit('close')
   } catch (error: unknown) {
@@ -297,6 +335,32 @@ async function submit() {
               v-model:comments="examCommentsByKind"
               v-model:hospitalisation-days="hospitalisationDays"
               :exclude-by-kind="excludeByKind"
+              :doctor-id="auth.user?.id"
+            />
+          </section>
+
+          <section v-if="showConsultationPanel" class="info-section info-section--consultation">
+            <h3>Consultation clinique</h3>
+            <p class="section-hint">
+              Paiement déjà effectué à la réception — aucun envoi au laboratoire ni second encaissement examens.
+              Saisissez les informations cliniques et composez l’ordonnance pharmacie.
+            </p>
+            <UiTextarea
+              v-model="doctorComment"
+              label="Informations cliniques"
+              :rows="5"
+              placeholder="Motif, examen clinique, diagnostic, conduite à tenir…"
+            />
+            <DoctorPharmacyOrdonnancePicker
+              v-model="pharmacyOrdonnance"
+              :patient="sessionVisit.patient"
+              :doctor-name="
+                sessionVisit.assignedDoctor
+                  ? `Dr ${fullName(sessionVisit.assignedDoctor.firstName, sessionVisit.assignedDoctor.lastName)}`
+                  : auth.user
+                    ? `Dr ${fullName(auth.user.firstName, auth.user.lastName)}`
+                    : null
+              "
             />
           </section>
         </div>
@@ -347,6 +411,13 @@ async function submit() {
 
 .modal--consult {
   max-width: 42rem;
+}
+
+.info-section--consultation {
+  border: 1px solid var(--primary-200);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+  background: linear-gradient(180deg, var(--primary-50), #fff);
 }
 
 .modal__header {

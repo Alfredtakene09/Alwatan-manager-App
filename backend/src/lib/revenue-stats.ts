@@ -174,6 +174,23 @@ export async function aggregateCollectedBetween(from: Date, to: Date) {
   return sumCollectedBreakdown(invoices);
 }
 
+/** Recettes pharmacie encaissées sur [from, to) — hors totaux caisse réception. */
+export async function aggregatePharmacyBetween(from: Date, to: Date) {
+  const result = await prisma.invoice.aggregate({
+    where: {
+      type: InvoiceType.PHARMACY,
+      status: InvoiceStatus.PAID,
+      paidAt: { gte: from, lt: to },
+    },
+    _sum: { amountFcfa: true },
+    _count: { _all: true },
+  });
+  return {
+    totalFcfa: result._sum.amountFcfa ?? 0,
+    totalCount: result._count._all,
+  };
+}
+
 export async function aggregateCollectedToday() {
   const todayStart = startOfDay(new Date());
   const tomorrowStart = new Date(todayStart);

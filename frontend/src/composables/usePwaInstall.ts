@@ -6,26 +6,47 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const DISMISS_KEY = 'alwatan-pwa-install-dismissed'
+/** Une fois le raccourci Bureau téléchargé, ne plus proposer le bandeau. */
+const SHORTCUT_DONE_KEY = 'alwatan-desktop-shortcut-done'
 
-function readDismissed(): boolean {
+function readFlag(key: string): boolean {
   try {
-    return sessionStorage.getItem(DISMISS_KEY) === '1'
+    return localStorage.getItem(key) === '1' || sessionStorage.getItem(key) === '1'
   } catch {
     return false
   }
 }
 
+function writeFlag(key: string, persistent: boolean) {
+  try {
+    if (persistent) localStorage.setItem(key, '1')
+    else sessionStorage.setItem(key, '1')
+  } catch {
+    /* ignore */
+  }
+}
+
+function isLocalhostHost(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+}
+
 export function usePwaInstall() {
   const deferredPrompt = ref<BeforeInstallPromptEvent | null>(null)
-  const dismissed = ref(readDismissed())
+  const dismissed = ref(readFlag(DISMISS_KEY))
+  const shortcutDone = ref(readFlag(SHORTCUT_DONE_KEY))
   const isStandalone = ref(false)
 
   const canNativeInstall = computed(() => deferredPrompt.value !== null)
+  const isSecureContext = computed(() => window.isSecureContext === true)
+  const isLanHttp = computed(() => {
+    if (typeof window === 'undefined') return false
+    return window.location.protocol === 'http:' && !isLocalhostHost(window.location.hostname)
+  })
 
   const shouldShowBanner = computed(() => {
-    if (isStandalone.value || dismissed.value) return false
-    // Pas de bandeau « télécharger le lanceur » en HTTP LAN — seulement l’install PWA native.
-    return canNativeInstall.value
+    if (isStandalone.value || dismissed.value || shortcutDone.value) return false
+    // Première visite (IP) : proposer le raccourci ; disparaît après téléchargement / « Plus tard ».
+    return true
   })
 
   const onBeforeInstall = (event: Event) => {
@@ -48,11 +69,12 @@ export function usePwaInstall() {
 
   function dismissBanner() {
     dismissed.value = true
-    try {
-      sessionStorage.setItem(DISMISS_KEY, '1')
-    } catch {
-      /* ignore */
-    }
+    writeFlag(DISMISS_KEY, true)
+  }
+
+  function markShortcutDownloaded() {
+    shortcutDone.value = true
+    writeFlag(SHORTCUT_DONE_KEY, true)
   }
 
   async function promptNativeInstall(): Promise<boolean> {
@@ -65,11 +87,19 @@ export function usePwaInstall() {
     return outcome === 'accepted'
   }
 
+  function downloadShortcut() {
+    markShortcutDownloaded()
+    window.location.assign('/api/client-setup/install-desktop-shortcut.cmd')
+  }
+
   return {
     isStandalone,
+    isSecureContext,
+    isLanHttp,
     canNativeInstall,
     shouldShowBanner,
     dismissBanner,
     promptNativeInstall,
+    downloadShortcut,
   }
 }

@@ -8,6 +8,13 @@ import { shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
 import { applyStockMovement, recordDispensationMovement } from "../lib/pharmacy-stock.js";
 import { listPharmacyStockAlerts, listPharmacyExpiryAlerts } from "../lib/pharmacy-alerts.js";
 import { buildPharmacyReport } from "../lib/pharmacy-reports.js";
+import {
+  hasPharmacyOrdonnance,
+  isPharmacyOrdonnanceDispensed,
+  markPharmacyOrdonnanceDispensedInNotes,
+  parsePharmacyOrdonnanceLines,
+  PHARMACY_ORDONNANCE_PREFIX,
+} from "../lib/lab-notes.js";
 import { requireAuth, requireModule, requirePharmacyCatalogAccess } from "../middleware/auth.js";
 
 const router = Router();
@@ -19,7 +26,7 @@ const prescriptionSchema = z
   .object({
     patientId: z.string().optional(),
     externalClientId: z.string().optional(),
-    externalClientName: z.string().min(2).optional(),
+    externalClientName: z.string().optional(),
     externalClientPhone: z.string().optional(),
     visitId: z.string().optional(),
     notes: z.string().optional(),
@@ -30,15 +37,12 @@ const prescriptionSchema = z
   })
   .superRefine((body, ctx) => {
     const hasPatient = Boolean(body.patientId);
-    const hasExternal =
-      Boolean(body.externalClientId) || Boolean(body.externalClientName?.trim());
-    if (!hasPatient && !hasExternal) {
-      ctx.addIssue({ code: "custom", message: "patientId ou client externe requis" });
-    }
-    if (hasPatient && hasExternal) {
+    const hasExternalId = Boolean(body.externalClientId);
+    const hasExternalName = Boolean(body.externalClientName?.trim());
+    if (hasPatient && (hasExternalId || hasExternalName)) {
       ctx.addIssue({ code: "custom", message: "Choisir un patient ou un client externe, pas les deux" });
     }
-    if (body.externalClientId && body.externalClientName) {
+    if (hasExternalId && hasExternalName) {
       ctx.addIssue({ code: "custom", message: "Indiquer un client existant ou un nouveau nom, pas les deux" });
     }
     const reductionFcfa = body.reductionFcfa ?? 0;
@@ -131,6 +135,12 @@ const categorySchema = z.object({
   active: z.boolean().optional(),
 });
 
+const formSchema = z.object({
+  name: z.string().min(2),
+  sortOrder: z.number().int().min(0).optional(),
+  active: z.boolean().optional(),
+});
+
 const supplierSchema = z.object({
   name: z.string().min(2),
   contactName: z.string().optional(),
@@ -176,11 +186,18 @@ function mapStockError(error: unknown, res: import("express").Response) {
     if (error.message === "NO_STOCK_CHANGE") return res.status(400).json({ error: "Aucun changement de stock" });
     if (error.message === "PATIENT_NOT_FOUND") return res.status(404).json({ error: "Patient introuvable" });
     if (error.message === "EXTERNAL_CLIENT_NOT_FOUND") return res.status(404).json({ error: "Client externe introuvable" });
+    if (error.message === "VISIT_NOT_FOUND") return res.status(404).json({ error: "Visite introuvable" });
+    if (error.message === "VISIT_PATIENT_MISMATCH") {
+      return res.status(400).json({ error: "La visite ne correspond pas au patient." });
+    }
+    if (error.message === "ORDONNANCE_ALREADY_DISPENSED") {
+      return res.status(409).json({ error: "Cette ordonnance a déjà été délivrée." });
+    }
   }
   return res.status(500).json({ error: "Erreur serveur" });
 }
 
-router.get("/categories", ...catalogAccess, async (_req, res) => {
+router.get("/categories", async (_req, res) => {
   const items = await prisma.productCategory.findMany({
     orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     include: { _count: { select: { products: true } } },
@@ -246,7 +263,106 @@ router.delete("/categories/:id", ...catalogAccess, async (req, res) => {
   }
 });
 
+router.get("/forms", async (_req, res) => {
+  try {
+    const items = await prisma.productForm.findMany({
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
+    const names = items.map((item) => item.name);
+    const counts =
+      names.length === 0
+        ? []
+        : await prisma.product.groupBy({
+            by: ["pharmaceuticalForm"],
+            where: { pharmaceuticalForm: { in: names } },
+            _count: { _all: true },
+          });
+    const countByName = new Map(
+      counts
+        .filter((row) => row.pharmaceuticalForm)
+        .map((row) => [row.pharmaceuticalForm as string, row._count._all]),
+    );
+    return res.json(
+      items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        sortOrder: item.sortOrder,
+        active: item.active,
+        productsCount: countByName.get(item.name) ?? 0,
+      })),
+    );
+  } catch {
+    return res.status(500).json({ error: "Impossible de charger les formes" });
+  }
+});
+
+router.post("/forms", ...catalogAccess, async (req, res) => {
+  try {
+    const body = formSchema.parse(req.body);
+    const item = await prisma.productForm.create({
+      data: {
+        name: body.name.trim(),
+        sortOrder: body.sortOrder ?? 0,
+        active: body.active ?? true,
+      },
+    });
+    return res.status(201).json(item);
+  } catch {
+    return res.status(400).json({ error: "Création impossible — nom peut-être déjà utilisé" });
+  }
+});
+
+router.put("/forms/:id", ...catalogAccess, async (req, res) => {
+  try {
+    const body = formSchema.partial().parse(req.body);
+    const existing = await prisma.productForm.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: "Forme introuvable" });
+
+    const nextName = body.name !== undefined ? body.name.trim() : undefined;
+    const item = await prisma.$transaction(async (tx) => {
+      const updated = await tx.productForm.update({
+        where: { id: req.params.id },
+        data: {
+          ...(nextName !== undefined ? { name: nextName } : {}),
+          ...(body.sortOrder !== undefined ? { sortOrder: body.sortOrder } : {}),
+          ...(body.active !== undefined ? { active: body.active } : {}),
+        },
+      });
+      if (nextName && nextName !== existing.name) {
+        await tx.product.updateMany({
+          where: { pharmaceuticalForm: existing.name },
+          data: { pharmaceuticalForm: nextName },
+        });
+      }
+      return updated;
+    });
+    return res.json(item);
+  } catch {
+    return res.status(400).json({ error: "Mise à jour impossible" });
+  }
+});
+
+router.delete("/forms/:id", ...catalogAccess, async (req, res) => {
+  try {
+    const existing = await prisma.productForm.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: "Forme introuvable" });
+    const linked = await prisma.product.count({ where: { pharmaceuticalForm: existing.name } });
+    if (linked > 0) {
+      await prisma.productForm.update({
+        where: { id: req.params.id },
+        data: { active: false },
+      });
+      return res.json({ message: "Forme désactivée (produits conservés)" });
+    }
+    await prisma.productForm.delete({ where: { id: req.params.id } });
+    return res.json({ message: "Forme supprimée" });
+  } catch {
+    return res.status(400).json({ error: "Suppression impossible" });
+  }
+});
+
 router.get("/sales", async (req, res) => {
+  const user = req.user!;
   const fromParam = typeof req.query.from === "string" ? req.query.from : undefined;
   const toParam = typeof req.query.to === "string" ? req.query.to : undefined;
   const patientId = typeof req.query.patientId === "string" ? req.query.patientId : undefined;
@@ -260,11 +376,14 @@ router.get("/sales", async (req, res) => {
     createdAt.lt = to;
   }
 
+  const ownSalesOnly = user.role === "PHARMACIEN";
+
   const items = await prisma.prescription.findMany({
     where: {
       ...(Object.keys(createdAt).length ? { createdAt } : {}),
       ...(patientId ? { patientId } : {}),
       ...(productId ? { saleLines: { some: { productId } } } : {}),
+      ...(ownSalesOnly ? { pharmacistId: user.id } : {}),
     },
     orderBy: { createdAt: "desc" },
     take: 200,
@@ -318,10 +437,16 @@ router.get("/sales", async (req, res) => {
 });
 
 router.get("/reports", async (req, res) => {
+  const user = req.user!;
   const period = typeof req.query.period === "string" ? req.query.period : "7d";
   const from = typeof req.query.from === "string" ? req.query.from : undefined;
   const to = typeof req.query.to === "string" ? req.query.to : undefined;
-  const report = await buildPharmacyReport({ period, from, to });
+  const report = await buildPharmacyReport({
+    period,
+    from,
+    to,
+    ...(user.role === "PHARMACIEN" ? { pharmacistId: user.id } : {}),
+  });
   return res.json(report);
 });
 
@@ -343,12 +468,100 @@ router.get("/alerts", async (_req, res) => {
   });
 });
 
-router.get("/products", ...catalogAccess, async (_req, res) => {
+router.get("/products", async (_req, res) => {
   const items = await prisma.product.findMany({
     orderBy: { name: "asc" },
     include: productInclude,
   });
   return res.json(items);
+});
+
+/** Retire du catalogue actif tous les produits dont la date d'expiration est dépassée. */
+router.post("/products/remove-expired", async (req, res) => {
+  const user = req.user!;
+  try {
+    const now = new Date();
+    const expired = await prisma.product.findMany({
+      where: {
+        active: true,
+        noExpiry: false,
+        expiryDate: { not: null, lt: now },
+      },
+      select: { id: true, name: true, quantity: true },
+    });
+
+    if (!expired.length) {
+      return res.json({ removedCount: 0, products: [], message: "Aucun produit expiré à retirer." });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const product of expired) {
+        if (product.quantity > 0) {
+          await applyStockMovement(tx, {
+            productId: product.id,
+            type: "ADJUSTMENT",
+            targetQuantity: 0,
+            notes: "Retrait produit expiré",
+            reference: "EXPIRY-PURGE",
+            userId: user.id,
+          });
+        }
+        await tx.product.update({
+          where: { id: product.id },
+          data: { active: false, quantity: 0 },
+        });
+      }
+    });
+
+    return res.json({
+      removedCount: expired.length,
+      products: expired.map((p) => ({ id: p.id, name: p.name })),
+      message: `${expired.length} produit(s) expiré(s) retiré(s) du catalogue.`,
+    });
+  } catch (error) {
+    return mapStockError(error, res);
+  }
+});
+
+/** Retire un produit expiré précis (désactivation + stock à 0). */
+router.post("/products/:id/retire-expired", async (req, res) => {
+  const user = req.user!;
+  const productId = String(req.params.id);
+  try {
+    const now = new Date();
+    const product = await prisma.product.findUnique({ where: { id: productId } });
+    if (!product) return res.status(404).json({ error: "Produit introuvable" });
+    if (!product.active) {
+      return res.json({ message: "Produit déjà retiré.", product: { id: product.id, name: product.name } });
+    }
+    if (product.noExpiry || !product.expiryDate || product.expiryDate >= now) {
+      return res.status(400).json({ error: "Ce produit n’est pas expiré." });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      if (product.quantity > 0) {
+        await applyStockMovement(tx, {
+          productId: product.id,
+          type: "ADJUSTMENT",
+          targetQuantity: 0,
+          notes: "Retrait produit expiré",
+          reference: "EXPIRY-RETIRE",
+          userId: user.id,
+        });
+      }
+      await tx.product.update({
+        where: { id: product.id },
+        data: { active: false, quantity: 0 },
+      });
+    });
+
+    return res.json({
+      message: `« ${product.name} » retiré (expiré).`,
+      product: { id: product.id, name: product.name },
+    });
+  } catch (error) {
+    return mapStockError(error, res);
+  }
 });
 
 router.post("/products", ...catalogAccess, async (req, res) => {
@@ -417,7 +630,7 @@ router.delete("/products/:id", ...catalogAccess, async (req, res) => {
   }
 });
 
-router.get("/suppliers", ...catalogAccess, async (_req, res) => {
+router.get("/suppliers", async (_req, res) => {
   const items = await prisma.pharmacySupplier.findMany({ orderBy: { name: "asc" } });
   return res.json(items);
 });
@@ -532,7 +745,7 @@ router.delete("/external-clients/:id", async (req, res) => {
   }
 });
 
-router.get("/stock-movements", ...catalogAccess, async (req, res) => {
+router.get("/stock-movements", async (req, res) => {
   const productId = typeof req.query.productId === "string" ? req.query.productId : undefined;
   const items = await prisma.stockMovement.findMany({
     where: productId ? { productId } : undefined,
@@ -582,6 +795,129 @@ router.get("/", async (_req, res) => {
   return res.json({ products, patients });
 });
 
+/** Ordonnances médecin en attente de dispensation / encaissement. */
+router.get("/ordonnances-pending", async (req, res) => {
+  const q = String(req.query.q ?? "").trim();
+  const consultations = await prisma.consultation.findMany({
+    where: {
+      clinicalNotes: { contains: `${PHARMACY_ORDONNANCE_PREFIX} : ` },
+      visit: {
+        prescriptions: { none: {} },
+        ...(q
+          ? {
+              patient: {
+                OR: [
+                  { firstName: { contains: q, mode: "insensitive" } },
+                  { lastName: { contains: q, mode: "insensitive" } },
+                  { code: { contains: q, mode: "insensitive" } },
+                  { phone: { contains: q } },
+                ],
+              },
+            }
+          : {}),
+      },
+    },
+    include: {
+      visit: {
+        include: {
+          patient: {
+            select: {
+              id: true,
+              code: true,
+              firstName: true,
+              lastName: true,
+              phone: true,
+              gender: true,
+            },
+          },
+          assignedDoctor: {
+            select: { id: true, firstName: true, lastName: true },
+          },
+        },
+      },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 80,
+  });
+
+  const productIds = new Set<string>();
+  const pending = consultations
+    .filter((row) => {
+      if (isPharmacyOrdonnanceDispensed(row.clinicalNotes)) return false;
+      return hasPharmacyOrdonnance(row.clinicalNotes);
+    })
+    .map((row) => {
+      const lines = parsePharmacyOrdonnanceLines(row.clinicalNotes);
+      for (const line of lines) {
+        if (line.productId?.trim()) productIds.add(line.productId.trim());
+      }
+      const doctor = row.visit.assignedDoctor;
+      return {
+        consultationId: row.id,
+        visitId: row.visitId,
+        prescribedAt: row.updatedAt,
+        patient: row.visit.patient,
+        doctor: doctor
+          ? {
+              id: doctor.id,
+              firstName: doctor.firstName,
+              lastName: doctor.lastName,
+            }
+          : null,
+        lines,
+      };
+    })
+    .filter((row) => row.lines.length > 0);
+
+  const products = productIds.size
+    ? await prisma.product.findMany({
+        where: { id: { in: [...productIds] } },
+        select: {
+          id: true,
+          name: true,
+          dosage: true,
+          quantity: true,
+          unitPriceFcfa: true,
+          active: true,
+        },
+      })
+    : [];
+  const productMap = new Map(products.map((p) => [p.id, p]));
+
+  const rows = pending.map((row) => {
+    const enrichedLines = row.lines.map((line) => {
+      const productId = line.productId?.trim() || null;
+      const product = productId ? productMap.get(productId) : undefined;
+      const isFreeText = !productId || !product;
+      const unitPriceFcfa = product?.unitPriceFcfa ?? 0;
+      const stock = product?.quantity ?? 0;
+      return {
+        ...line,
+        productId,
+        productName: product?.name ?? line.name,
+        dosage: product?.dosage ?? line.dosage,
+        unitPriceFcfa,
+        stock,
+        lineTotalFcfa: unitPriceFcfa * line.quantity,
+        available: !isFreeText && Boolean(product?.active) && stock >= line.quantity,
+        isFreeText,
+      };
+    });
+    const catalogLines = enrichedLines.filter((line) => !line.isFreeText);
+    const estimatedTotalFcfa = catalogLines.reduce((sum, line) => sum + line.lineTotalFcfa, 0);
+    return {
+      ...row,
+      lines: enrichedLines,
+      estimatedTotalFcfa,
+      allAvailable: catalogLines.length > 0 && catalogLines.every((line) => line.available),
+      hasCatalogLines: catalogLines.length > 0,
+      hasFreeTextLines: enrichedLines.some((line) => line.isFreeText),
+    };
+  });
+
+  return res.json({ rows, count: rows.length });
+});
+
 router.post("/", async (req, res) => {
   const user = req.user!;
   try {
@@ -594,8 +930,19 @@ router.post("/", async (req, res) => {
       if (body.patientId) {
         patient = await tx.patient.findUnique({ where: { id: body.patientId } });
         if (!patient) throw new Error("PATIENT_NOT_FOUND");
-      } else if (body.externalClientName?.trim()) {
-        const { firstName, lastName } = splitPharmacyExternalClientName(body.externalClientName);
+      } else if (body.externalClientId) {
+        externalClient = await tx.pharmacyExternalClient.findFirst({
+          where: { id: body.externalClientId, active: true },
+        });
+        if (!externalClient) throw new Error("EXTERNAL_CLIENT_NOT_FOUND");
+        externalClientId = externalClient.id;
+      } else {
+        // Client externe : nom / téléphone optionnels (vente au comptoir anonyme possible).
+        const rawName = body.externalClientName?.trim() ?? "";
+        const { firstName, lastName } =
+          rawName.length >= 2
+            ? splitPharmacyExternalClientName(rawName)
+            : { firstName: "Client", lastName: "Passage" };
         externalClient = await tx.pharmacyExternalClient.create({
           data: {
             code: await generatePharmacyExternalClientCode(),
@@ -605,12 +952,30 @@ router.post("/", async (req, res) => {
           },
         });
         externalClientId = externalClient.id;
-      } else if (body.externalClientId) {
-        externalClient = await tx.pharmacyExternalClient.findFirst({
-          where: { id: body.externalClientId, active: true },
+      }
+
+      if (body.visitId) {
+        const visit = await tx.visit.findUnique({
+          where: { id: body.visitId },
+          include: { consultation: { select: { id: true, clinicalNotes: true } } },
         });
-        if (!externalClient) throw new Error("EXTERNAL_CLIENT_NOT_FOUND");
-        externalClientId = externalClient.id;
+        if (!visit) throw new Error("VISIT_NOT_FOUND");
+        if (body.patientId && visit.patientId !== body.patientId) {
+          throw new Error("VISIT_PATIENT_MISMATCH");
+        }
+        if (visit.consultation && hasPharmacyOrdonnance(visit.consultation.clinicalNotes)) {
+          if (isPharmacyOrdonnanceDispensed(visit.consultation.clinicalNotes)) {
+            throw new Error("ORDONNANCE_ALREADY_DISPENSED");
+          }
+          await tx.consultation.update({
+            where: { id: visit.consultation.id },
+            data: {
+              clinicalNotes: markPharmacyOrdonnanceDispensedInNotes(
+                visit.consultation.clinicalNotes,
+              ),
+            },
+          });
+        }
       }
 
       const products = await tx.product.findMany({ where: { id: { in: body.items.map((i) => i.productId) } } });

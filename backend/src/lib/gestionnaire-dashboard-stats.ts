@@ -575,6 +575,7 @@ export async function buildGestionnaireDashboardOverview() {
     payrollRows,
     unpaidPayrollCount,
     cashAlerts,
+    pendingDayClosures,
     recentDisbursements,
     dailyFlow90,
     monthExpenseRows,
@@ -597,6 +598,7 @@ export async function buildGestionnaireDashboardOverview() {
       },
     }),
     buildCashAlerts(),
+    prisma.receptionDayClosure.count({ where: { validatedAt: null } }),
     prisma.receptionCashSettlement.findMany({
       where: {
         receptionist: { role: { not: UserRole.RECEPTIONNISTE } },
@@ -647,6 +649,7 @@ export async function buildGestionnaireDashboardOverview() {
       cashRegisters: cashAlerts,
       pendingExpenses: 0,
       unpaidPayroll: unpaidPayrollCount,
+      pendingDayClosures,
     },
     recentDisbursements: recentDisbursements.map((row) => ({
       id: row.id,
@@ -666,18 +669,22 @@ export async function buildGestionnaireDashboardOverview() {
     navBadges: {
       depenses: 0,
       salaires: unpaidPayrollCount,
+      caisse: pendingDayClosures,
     },
   };
 }
 
 export async function buildGestionnaireNavBadges() {
   const { year, month } = currentPayrollPeriod();
-  const unpaidPayroll = await prisma.employeePayroll.count({
-    where: {
-      year,
-      month,
-      status: { in: [PayrollStatus.PENDING, PayrollStatus.LATE] },
-    },
-  });
-  return { depenses: 0, salaires: unpaidPayroll };
+  const [unpaidPayroll, pendingDayClosures] = await Promise.all([
+    prisma.employeePayroll.count({
+      where: {
+        year,
+        month,
+        status: { in: [PayrollStatus.PENDING, PayrollStatus.LATE] },
+      },
+    }),
+    prisma.receptionDayClosure.count({ where: { validatedAt: null } }),
+  ]);
+  return { depenses: 0, salaires: unpaidPayroll, caisse: pendingDayClosures };
 }

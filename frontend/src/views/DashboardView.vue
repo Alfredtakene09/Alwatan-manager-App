@@ -10,9 +10,7 @@ import {
   FlaskConical,
   BedDouble,
   Wallet,
-  Bell,
-  Clock,
-  AlertTriangle,
+  Activity,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
@@ -21,8 +19,6 @@ import type { AdminDashboardOverview } from '@/lib/admin-dashboard'
 import {
   formatMonthLabel,
   formatTrendPercentLocalized,
-  translateCashDelayLabel,
-  translateCashScheduleHint,
   translateDashboardLabel,
   translateTemplate,
 } from '@/lib/dashboard-i18n'
@@ -32,7 +28,6 @@ import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
-import UiFormModal from '@/components/ui/UiFormModal.vue'
 import RoleDashboardShell from '@/components/dashboard/RoleDashboardShell.vue'
 import DashboardLineChart from '@/components/dashboard/DashboardLineChart.vue'
 import DashboardDonutChart from '@/components/dashboard/DashboardDonutChart.vue'
@@ -48,7 +43,6 @@ const gestionnaireOverview = ref<GestionnaireDashboardOverview | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const selectedTrendMonth = ref('')
-const showAlertsModal = ref(false)
 
 const showAdminSection = computed(() =>
   auth.user ? canAccessModule(auth.user.role, 'admin') : false,
@@ -77,6 +71,10 @@ const summaryStats = computed((): SummaryStat[] => {
   void localeCode.value
   const k = gestionnaireOverview.value?.financialKpis ?? overview.value?.financialKpis
   if (!k) return []
+  const cash = gestionnaireOverview.value?.kpis
+  const soldeFcfa = cash
+    ? cash.receptionCashFcfa + cash.comptableCashFcfa
+    : 0
   return [
     {
       id: 'revenue',
@@ -109,6 +107,13 @@ const summaryStats = computed((): SummaryStat[] => {
       icon: Users,
       variant: 'violet',
       trend: formatTrendPercentLocalized(k.payrollChangePercent),
+    },
+    {
+      id: 'balance',
+      label: translateDashboardLabel('Solde'),
+      value: formatFcfa(soldeFcfa),
+      icon: Wallet,
+      variant: 'cyan',
     },
   ]
 })
@@ -210,134 +215,53 @@ const revenueModuleStats = computed(() => {
   })
 })
 
-const pharmacieRevenueFcfa = computed(() => {
-  const rows = overview.value?.revenueBreakdown ?? []
-  const pharmacie = rows.find((row) => row.key.toLowerCase() === 'pharmacie')
-  return pharmacie?.amountFcfa ?? 0
-})
-
-const comptableCashAlert = computed(
-  () => gestionnaireOverview.value?.alerts.cashRegisters.find((row) => row.id === 'comptabilite') ?? null,
+const operationsTotalFcfa = computed(() =>
+  (overview.value?.operationsByService ?? []).reduce((sum, row) => sum + row.amountFcfa, 0),
 )
 
-const dashboardAlerts = computed(() => {
+const operationsTotalCount = computed(() =>
+  (overview.value?.operationsByService ?? []).reduce((sum, row) => sum + row.count, 0),
+)
+
+const operationsCountLabel = computed(() => {
   void localeCode.value
-  const items: Array<{
-    id: string
-    severity: 'danger' | 'warning' | 'info'
-    title: string
-    message: string
-    actionLabel?: string
-    actionTo?: string
-  }> = []
-
-  const cash = comptableCashAlert.value
-  if (cash && cash.pendingFcfa > 0) {
-    const delay = translateCashDelayLabel(cash.hoursSinceLastDisbursement, cash.lastDisbursementAt)
-    const scheduleHint = translateCashScheduleHint(cash.hint ?? cash.workflowHint ?? '')
-    const statusLabel = translateDashboardLabel(cash.disbursementStatusLabel ?? 'Solde comptable en attente')
-    const isDuringDay = cash.disbursementPhase === 'during_day'
-    let cashSeverity: 'danger' | 'warning' | 'info' = 'warning'
-    if (cash.overdue) cashSeverity = 'danger'
-    else if (isDuringDay) cashSeverity = 'info'
-    items.push({
-      id: 'cash-comptable',
-      severity: cashSeverity,
-      title: statusLabel,
-      message: translateTemplate('{amount} en tirelire comptable ({delay}). {hint}', {
-        amount: formatFcfa(cash.pendingFcfa),
-        delay,
-        hint: scheduleHint,
-      }),
-      actionLabel: cash.overdue
-        ? translateDashboardLabel('Récupérer la tirelire')
-        : translateDashboardLabel('Voir la caisse comptable'),
-      actionTo: '/gestionnaire/caisse',
-    })
-  }
-
-  const unpaidPayroll =
-    gestionnaireOverview.value?.alerts.unpaidPayroll ?? overview.value?.alerts.unpaidPayroll ?? 0
-  if (unpaidPayroll > 0) {
-    items.push({
-      id: 'payroll',
-      severity: 'warning',
-      title: translateDashboardLabel('Paie du mois incomplète'),
-      message: unpaidPayroll > 1
-        ? translateTemplate('{n} salaires encore à valider ce mois.', { n: unpaidPayroll })
-        : translateTemplate('{n} salaire encore à valider ce mois.', { n: unpaidPayroll }),
-      actionLabel: translateDashboardLabel('Ouvrir la paie'),
-      actionTo: showGestionnaireSection.value ? '/gestionnaire/salaires' : '/admin/salaires',
-    })
-  }
-
-  const pendingExpenses = overview.value?.alerts.pendingExpenses ?? 0
-  if (pendingExpenses > 0) {
-    items.push({
-      id: 'pending-expenses',
-      severity: 'warning',
-      title: translateDashboardLabel('Dépenses à valider'),
-      message: pendingExpenses > 1
-        ? translateTemplate('{n} dépenses en attente de validation.', { n: pendingExpenses })
-        : translateTemplate('{n} dépense en attente de validation.', { n: pendingExpenses }),
-      actionLabel: translateDashboardLabel('Voir les dépenses'),
-      actionTo: '/admin/depenses',
-    })
-  }
-
-  const lowStock = overview.value?.alerts.lowStock ?? 0
-  if (lowStock > 0) {
-    items.push({
-      id: 'low-stock',
-      severity: 'warning',
-      title: translateDashboardLabel('Stock pharmacie bas'),
-      message: lowStock > 1
-        ? translateTemplate('{n} produits en stock critique.', { n: lowStock })
-        : translateTemplate('{n} produit en stock critique.', { n: lowStock }),
-      actionLabel: translateDashboardLabel('Voir la pharmacie'),
-      actionTo: '/pharmacie/alertes',
-    })
-  }
-
-  return items
+  const n = operationsTotalCount.value
+  return n <= 1
+    ? translateTemplate('{n} opération', { n })
+    : translateTemplate('{n} opérations', { n })
 })
-
-const alertsAriaLabel = computed(() => {
-  void localeCode.value
-  return translateTemplate('Alertes ({n})', { n: alertsCount.value })
-})
-
-const alertsModalSubtitle = computed(() => {
-  void localeCode.value
-  if (!alertsCount.value) return translateDashboardLabel('Aucune alerte')
-  return alertsCount.value > 1
-    ? translateTemplate('{n} alertes à traiter', { n: alertsCount.value })
-    : translateTemplate('{n} alerte à traiter', { n: alertsCount.value })
-})
-
-const alertsCount = computed(() => dashboardAlerts.value.length)
-
-function openAlertTarget(to?: string) {
-  showAlertsModal.value = false
-  if (to) router.push(to)
-}
 
 async function loadOverview() {
   loading.value = true
   loadError.value = ''
   try {
+    const tasks: Promise<void>[] = []
+
     if (showAdminSection.value) {
-      const { data } = await api.get<AdminDashboardOverview>('/dashboard/admin')
-      overview.value = data
-      // Priorité au chargement direction pour afficher rapidement cartes + graphes.
-      gestionnaireOverview.value = null
-    } else if (showGestionnaireSection.value) {
-      const { data } = await api.get<GestionnaireDashboardOverview>('/dashboard/gestionnaire')
-      gestionnaireOverview.value = data
-      overview.value = null
+      tasks.push(
+        api.get<AdminDashboardOverview>('/dashboard/admin').then(({ data }) => {
+          overview.value = data
+        }),
+      )
     } else {
       overview.value = null
+    }
+
+    if (showGestionnaireSection.value) {
+      tasks.push(
+        api.get<GestionnaireDashboardOverview>('/dashboard/gestionnaire').then(({ data }) => {
+          gestionnaireOverview.value = data
+        }),
+      )
+    } else {
       gestionnaireOverview.value = null
+    }
+
+    if (!tasks.length) {
+      overview.value = null
+      gestionnaireOverview.value = null
+    } else {
+      await Promise.all(tasks)
     }
   } catch {
     loadError.value = 'Impossible de charger le tableau de bord.'
@@ -362,16 +286,6 @@ onMounted(loadOverview)
     @refresh="loadOverview"
   >
     <template #actions>
-      <button
-        type="button"
-        class="alerts-bell"
-        :class="{ 'alerts-bell--active': alertsCount > 0 }"
-        :aria-label="alertsAriaLabel"
-        @click="showAlertsModal = true"
-      >
-        <Bell :size="18" />
-        <span v-if="alertsCount > 0" class="alerts-bell__badge">{{ alertsCount }}</span>
-      </button>
       <UiButton
         v-if="showAdminSection"
         variant="ghost"
@@ -407,17 +321,18 @@ onMounted(loadOverview)
 
       <section v-if="showAdminSection" class="clinical-cards">
         <UiStatCard
+          label="Opération"
+          :value="formatFcfa(operationsTotalFcfa)"
+          :trend="operationsCountLabel"
+          :icon="Activity"
+          variant="amber"
+          compact
+        />
+        <UiStatCard
           label="Patients aujourd'hui"
           :value="overview?.clinical.patientsToday ?? 0"
           :icon="Users"
           variant="teal"
-          compact
-        />
-        <UiStatCard
-          label="Entrées pharmacie"
-          :value="formatFcfa(pharmacieRevenueFcfa)"
-          :icon="Wallet"
-          variant="green"
           compact
         />
         <UiStatCard
@@ -473,44 +388,6 @@ onMounted(loadOverview)
         </UiCard>
       </section>
     </div>
-
-    <UiFormModal
-      v-if="showAlertsModal"
-      title="Alertes"
-      :subtitle="alertsModalSubtitle"
-      :icon="Bell"
-      @close="showAlertsModal = false"
-    >
-      <ul v-if="dashboardAlerts.length" class="alerts-list">
-        <li
-          v-for="alert in dashboardAlerts"
-          :key="alert.id"
-          class="alerts-list__item"
-          :class="`alerts-list__item--${alert.severity}`"
-        >
-          <div class="alerts-list__content">
-            <AlertTriangle v-if="alert.severity === 'danger'" :size="18" />
-            <Clock v-else :size="18" />
-            <div>
-              <strong class="alerts-list__title">{{ alert.title }}</strong>
-              <p class="alerts-list__message">{{ alert.message }}</p>
-              <UiButton
-                v-if="alert.actionTo"
-                size="sm"
-                variant="ghost"
-                class="alerts-list__action"
-                @click="openAlertTarget(alert.actionTo)"
-              >
-                {{ alert.actionLabel }}
-              </UiButton>
-            </div>
-          </div>
-        </li>
-      </ul>
-      <p v-else class="alerts-list__item alerts-list__item--ok">
-        Tout est à jour — aucune action urgente sur la caisse comptable, les dépenses ni la paie.
-      </p>
-    </UiFormModal>
   </RoleDashboardShell>
 </template>
 
@@ -551,7 +428,7 @@ onMounted(loadOverview)
 
 .finance-entry-cards {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.75rem;
 }
 
@@ -581,122 +458,26 @@ onMounted(loadOverview)
   max-width: 220px;
 }
 
-.alerts-bell {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-card);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: all 0.18s ease;
-}
-
-.alerts-bell:hover {
-  color: var(--primary-800);
-  border-color: var(--accent-400);
-}
-
-.alerts-bell--active {
-  color: #b45309;
-  border-color: #fcd34d;
-  background: #fffbeb;
-}
-
-.alerts-bell__badge {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  min-width: 1.1rem;
-  height: 1.1rem;
-  padding: 0 0.3rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: #dc2626;
-  color: #fff;
-  border-radius: 999px;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.alerts-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-}
-
-.alerts-list__item {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.65rem 0.75rem;
-  border-radius: 0.65rem;
-  font-size: 0.875rem;
-  line-height: 1.45;
-}
-
-.alerts-list__content {
-  display: flex;
-  gap: 0.65rem;
-  align-items: flex-start;
-}
-
-.alerts-list__title {
-  display: block;
-  margin-bottom: 0.2rem;
-  font-size: 0.9rem;
-}
-
-.alerts-list__message {
-  margin: 0;
-  font-size: 0.8125rem;
-  line-height: 1.45;
-  opacity: 0.95;
-}
-
-.alerts-list__action {
-  margin-top: 0.5rem;
-  padding-left: 0;
-}
-
-.alerts-list__item--danger {
-  background: #fef2f2;
-  color: #991b1b;
-}
-
-.alerts-list__item--warning {
-  background: #fffbeb;
-  color: #92400e;
-}
-
-.alerts-list__item--info {
-  background: #eff6ff;
-  color: #1e40af;
-}
-
-.alerts-list__item--ok {
-  background: #f0fdf4;
-  color: #166534;
-}
-
 @media (max-width: 1100px) {
   .charts-grid,
-  .clinical-cards,
-  .finance-entry-cards {
+  .clinical-cards {
     grid-template-columns: 1fr;
   }
 
   .charts-grid > :first-child {
     grid-column: auto;
+  }
+}
+
+@media (max-width: 800px) {
+  .finance-entry-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .finance-entry-cards {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -23,6 +23,10 @@ if (-not $ServerIp) {
 if (-not $ServerIp) {
     $ServerIp = Read-Host 'IP du serveur Alwatan pour ce package (ex. 192.168.1.50)'
 }
+$TailscaleIp = Get-TailscaleIpv4
+if (-not $TailscaleIp) {
+    $TailscaleIp = Read-AlwatanTailscaleIp
+}
 
 $packageName = 'Alwatan-Manager-Client'
 $packageDir = Join-Path $OutputRoot $packageName
@@ -49,10 +53,52 @@ foreach ($file in $filesFromScripts) {
 }
 Copy-Item $icon (Join-Path $packageDir 'alwatan.ico') -Force
 
-Set-Content -Path (Join-Path $packageDir 'alwatan-server.txt') -Value "SERVER_IP=$ServerIp" -Encoding UTF8
-
+Write-AlwatanServerConfig -ServerIp $ServerIp -TailscaleIp $TailscaleIp -Path (Join-Path $packageDir 'alwatan-server.txt')
 Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-client' -ScriptsDir $packageDir | Out-Null
 
+$url = "http://${ServerIp}:${Port}/"
+$tsUrl = if ($TailscaleIp -and $TailscaleIp -ne $ServerIp) { "http://${TailscaleIp}:${Port}/" } else { $null }
+
+$lienLines = @("Wi-Fi / Ethernet : $($url.TrimEnd('/'))")
+if ($tsUrl) { $lienLines += "Tailscale        : $($tsUrl.TrimEnd('/'))" }
+[System.IO.File]::WriteAllText(
+    (Join-Path $packageDir 'LIEN-SERVEUR.txt'),
+    ($lienLines -join "`r`n"),
+    [System.Text.UTF8Encoding]::new($false)
+)
+
+$ouvrirBat = @"
+@echo off
+title Alwatan Manager
+set "WIFI_URL=$url"
+set "TS_URL=$tsUrl"
+powershell -NoProfile -Command "try { `$r=Invoke-WebRequest -Uri `$env:WIFI_URL -UseBasicParsing -TimeoutSec 3; if (`$r.StatusCode -ge 200) { exit 0 } else { exit 1 } } catch { exit 1 }"
+if not errorlevel 1 (
+  start "" "%WIFI_URL%"
+  exit /b 0
+)
+if defined TS_URL if not "%TS_URL%"=="" (
+  start "" "%TS_URL%"
+  exit /b 0
+)
+start "" "%WIFI_URL%"
+"@
+Set-Content -LiteralPath (Join-Path $packageDir 'Ouvrir Alwatan.bat') -Value $ouvrirBat -Encoding ASCII
+
+$ouvrirUrl = @"
+[InternetShortcut]
+URL=$url
+"@
+Set-Content -LiteralPath (Join-Path $packageDir 'Ouvrir Alwatan.url') -Value $ouvrirUrl -Encoding ASCII
+Set-Content -LiteralPath (Join-Path $packageDir 'Ouvrir Alwatan (Wi-Fi).url') -Value $ouvrirUrl -Encoding ASCII
+
+if ($tsUrl) {
+    $ouvrirTs = @"
+[InternetShortcut]
+URL=$tsUrl
+"@
+    Set-Content -LiteralPath (Join-Path $packageDir 'Ouvrir Alwatan (Tailscale).url') -Value $ouvrirTs -Encoding ASCII
+}
 $installerBat = @"
 @echo off
 title Installation Alwatan Manager (client)
@@ -60,7 +106,7 @@ cd /d "%~dp0"
 echo.
 echo   Clinique Alwatan - Installation poste client
 echo.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer-poste-client.ps1" > "%~dp0INSTALL-LOG.txt" 2>&1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File "%~dp0installer-poste-client.ps1" > "%~dp0INSTALL-LOG.txt" 2>&1
 if errorlevel 1 (
     echo.
     echo Installation echouee.
@@ -71,7 +117,7 @@ if errorlevel 1 (
     exit /b 1
 )
 echo.
-echo Installation OK. Raccourci Bureau : Alwatan Manager
+echo Installation OK. Raccourcis : Alwatan Manager + Alwatan Manager (direct)
 pause
 "@
 Set-Content -Path (Join-Path $packageDir 'INSTALLER.bat') -Value $installerBat -Encoding ASCII
@@ -100,18 +146,21 @@ Sur ce PC (reception, medecin, etc.) - pas le serveur :
 
 1. Copiez tout le dossier « $packageName » (cle USB ou reseau).
 2. Double-cliquez sur INSTALLER.bat
-3. Validez l'IP du serveur si demandee (defaut : $ServerIp)
+3. Validez l'IP Wi-Fi du serveur si demandee (defaut : $ServerIp)
 4. Utilisez le raccourci Bureau « Alwatan Manager »
+   (teste Wi-Fi puis Tailscale automatiquement)
 
-URL apres installation : http://${ServerIp}:${Port}/
+SECOURS immédiat (sans installation) :
+  « Ouvrir Alwatan.bat »  → Wi-Fi puis Tailscale
+  « Ouvrir Alwatan (Wi-Fi).url »
+  « Ouvrir Alwatan (Tailscale).url » (si disponible)
 
-Prerequis : Windows 10/11, Edge ou Chrome, meme reseau local que le serveur.
-Le serveur doit etre allume (service AlwatanManager sur le port $Port).
+Wi-Fi      : $url
+Tailscale  : $(if ($tsUrl) { $tsUrl } else { '(non detecte)' })
 
-Si ca ne marche pas :
-1. Double-cliquez sur DIAGNOSTIC.bat
-2. Un fichier RAPPORT-ALWATAN-CLIENT.txt s'ouvre
-3. Copiez ce fichier sur une cle USB et ouvrez-le sur le serveur
+Prerequis : Windows 10/11, Edge ou Chrome.
+Le serveur doit etre allume (port $Port).
+Acces possible via le Wi-Fi clinique ET/OU via Tailscale.
 "@
 Set-Content -Path (Join-Path $packageDir 'LISEZMOI.txt') -Value $lisezMoi -Encoding UTF8
 
@@ -129,10 +178,14 @@ Write-Host '  Package client prêt' -ForegroundColor Green
 Write-Host "  Dossier : $packageDir"
 Write-Host "  ZIP     : $zipPath"
 Write-Host "  Copie   : $accesDir"
+Write-Host "  Wi-Fi   : $url"
+if ($tsUrl) { Write-Host "  Tailscale : $tsUrl" }
 Write-Host ''
 Write-Host 'Distribuez le ZIP ou le dossier sur les postes clients, puis INSTALLER.bat' -ForegroundColor Cyan
+Write-Host 'Secours : Ouvrir Alwatan.bat (Wi-Fi puis Tailscale)' -ForegroundColor Cyan
 Write-Host ''
 
 if (-not $Quiet) {
-    Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Setup client créé.`n`nZIP :`n$zipPath`n`nCopiez-le sur les autres PC et lancez INSTALLER.bat"
+    $msgTs = if ($tsUrl) { "`nTailscale : $tsUrl" } else { '' }
+    Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Setup client créé.`n`nZIP :`n$zipPath`n`nWi-Fi : $url$msgTs`n`nCopiez-le sur les autres PC et lancez INSTALLER.bat"
 }

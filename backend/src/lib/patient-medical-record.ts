@@ -1,6 +1,13 @@
 import type { VisitStatus } from "@prisma/client";
 import { prisma } from "./db.js";
-import { flattenPrescribedExams, hasLabResults, parsePrescribedExamsByKind } from "./lab-notes.js";
+import {
+  flattenPrescribedExams,
+  hasLabResults,
+  isClinicalConsultationExamLabel,
+  parsePharmacyOrdonnanceLines,
+  parsePrescribedExamsByKind,
+  type PharmacyOrdonnanceLine,
+} from "./lab-notes.js";
 import { medecinMatchWhere } from "./medecin-queues.js";
 import {
   labelForSlug,
@@ -22,7 +29,19 @@ export type MedicalHistoryEntry = {
   prescribedExams: string[];
   labPanels: MedicalHistoryLabPanel[];
   doctorComment: string | null;
+  pharmacyOrdonnance: PharmacyOrdonnanceLine[];
   hasLabResults: boolean;
+};
+
+export type MedicalHistoryPrivacyOptions = {
+  labValidatedOnly?: boolean;
+  /**
+   * Admin / direction / gestionnaire : voient toutes les infos cliniques.
+   * Sinon seules les infos du médecin prescripteur (viewerDoctorId) sont exposées.
+   */
+  canViewAllClinicalDetails?: boolean;
+  /** Id du médecin connecté (pour restreindre comment + ordonnance). */
+  viewerDoctorId?: string | null;
 };
 
 function countFilledValues(values: Record<string, string>) {
@@ -54,6 +73,7 @@ export function buildMedicalHistoryEntry(
     updatedAt: Date;
     status: VisitStatus;
     consultation: {
+      doctorId?: string | null;
       clinicalNotes: string | null;
       doctorComment: string | null;
       completedAt: Date | null;
@@ -61,23 +81,45 @@ export function buildMedicalHistoryEntry(
       doctor: { firstName: string; lastName: string } | null;
     } | null;
   },
-  options?: { labValidatedOnly?: boolean },
+  options?: MedicalHistoryPrivacyOptions,
 ): MedicalHistoryEntry | null {
   const consultation = visit.consultation;
   if (!consultation) return null;
 
-  const prescribedExams = flattenPrescribedExams(parsePrescribedExamsByKind(consultation.clinicalNotes));
+  const canSeeClinical =
+    !!options?.canViewAllClinicalDetails ||
+    (!!options?.viewerDoctorId &&
+      !!consultation.doctorId &&
+      consultation.doctorId === options.viewerDoctorId);
+
+  const allPrescribedExams = flattenPrescribedExams(
+    parsePrescribedExamsByKind(consultation.clinicalNotes),
+  );
+  const prescribedExams = canSeeClinical
+    ? allPrescribedExams
+    : allPrescribedExams.filter((label) => !isClinicalConsultationExamLabel(label));
+
   const labPanels = hasValidatedLabRecord(consultation.clinicalNotes)
     ? buildLabPanels(consultation.clinicalNotes)
     : [];
-  const doctorComment = consultation.doctorComment?.trim() || null;
+  const doctorComment = canSeeClinical
+    ? consultation.doctorComment?.trim() || null
+    : null;
+  const pharmacyOrdonnance = canSeeClinical
+    ? parsePharmacyOrdonnanceLines(consultation.clinicalNotes)
+    : [];
   const hasResults = hasLabResults(consultation.clinicalNotes);
 
   if (options?.labValidatedOnly && !hasValidatedLabRecord(consultation.clinicalNotes)) {
     return null;
   }
 
-  if (!prescribedExams.length && !labPanels.length && !doctorComment) {
+  if (
+    !prescribedExams.length &&
+    !labPanels.length &&
+    !doctorComment &&
+    !pharmacyOrdonnance.length
+  ) {
     return null;
   }
 
@@ -92,11 +134,20 @@ export function buildMedicalHistoryEntry(
     prescribedExams,
     labPanels,
     doctorComment,
+    pharmacyOrdonnance,
     hasLabResults: hasResults,
   };
 }
 
-export async function getPatientMedicalHistory(patientId: string, doctorId?: string) {
+export async function getPatientMedicalHistory(
+  patientId: string,
+  options?: {
+    doctorScope?: string;
+    canViewAllClinicalDetails?: boolean;
+    viewerDoctorId?: string | null;
+  },
+) {
+  const doctorId = options?.doctorScope;
   const visits = await prisma.visit.findMany({
     where: {
       patientId,
@@ -114,7 +165,13 @@ export async function getPatientMedicalHistory(patientId: string, doctorId?: str
   });
 
   return visits
-    .map((visit) => buildMedicalHistoryEntry(visit, { labValidatedOnly: false }))
+    .map((visit) =>
+      buildMedicalHistoryEntry(visit, {
+        labValidatedOnly: false,
+        canViewAllClinicalDetails: options?.canViewAllClinicalDetails,
+        viewerDoctorId: options?.viewerDoctorId ?? doctorId ?? null,
+      }),
+    )
     .filter((entry): entry is MedicalHistoryEntry => entry !== null);
 }
 
@@ -133,6 +190,7 @@ export async function getMedecinDossierPatients(doctorId: string) {
       },
       consultation: {
         select: {
+          doctorId: true,
           clinicalNotes: true,
           doctorComment: true,
           completedAt: true,
@@ -163,6 +221,7 @@ export async function getMedecinDossierPatients(doctorId: string) {
         status: visit.status,
         consultation: visit.consultation
           ? {
+              doctorId: visit.consultation.doctorId,
               clinicalNotes: visit.consultation.clinicalNotes,
               doctorComment: visit.consultation.doctorComment,
               completedAt: visit.consultation.completedAt ?? null,
@@ -171,12 +230,17 @@ export async function getMedecinDossierPatients(doctorId: string) {
             }
           : null,
       },
-      { labValidatedOnly: false },
+      {
+        labValidatedOnly: false,
+        viewerDoctorId: doctorId,
+      },
     );
 
     const validatedAt = visit.consultation?.updatedAt ?? visit.updatedAt;
     const labResultsCount = entry?.labPanels.length ?? 0;
-    const hasComment = Boolean(entry?.doctorComment || visit.consultation?.doctorComment?.trim());
+    const hasComment = Boolean(
+      entry?.doctorComment || (entry?.pharmacyOrdonnance?.length ?? 0) > 0,
+    );
 
     const existing = byPatient.get(visit.patientId);
 

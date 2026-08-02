@@ -37,9 +37,9 @@ function drawArabicClinicName(
 ): boolean {
   if (!ARABIC_FONT_PATH || !fs.existsSync(ARABIC_FONT_PATH)) return false;
   try {
-    doc.font(ARABIC_FONT_PATH).fontSize(9).fillColor("#334155").text(CLINIC.nameAr, x, y, {
+    doc.font(ARABIC_FONT_PATH).fontSize(11).fillColor("#334155").text(CLINIC.nameAr, x, y, {
       width,
-      align: "right",
+      align: "center",
     });
     doc.font("Helvetica");
     return true;
@@ -51,32 +51,35 @@ function drawArabicClinicName(
 
 function drawClinicHeader(doc: PDFKit.PDFDocument, docTitle: string) {
   const leftX = 50;
+  const contentWidth = doc.page.width - leftX * 2;
   let headerBottom = 50;
 
   if (fs.existsSync(LOGO_PATH)) {
-    doc.image(LOGO_PATH, leftX, 45, { width: 58 });
-    headerBottom = 115;
+    doc.image(LOGO_PATH, leftX, 42, { width: 62 });
+    headerBottom = 118;
   }
 
-  const textX = fs.existsSync(LOGO_PATH) ? leftX + 68 : leftX;
   doc
     .fillColor("#0f766e")
-    .fontSize(14)
+    .fontSize(16)
     .font("Helvetica-Bold")
-    .text(CLINIC.nameFr, textX, 48, { width: 430 });
-  doc.fillColor("#334155").fontSize(9).font("Helvetica");
+    .text(CLINIC.nameFr, leftX, 48, { width: contentWidth, align: "center" });
+  doc.fillColor("#334155").fontSize(11).font("Helvetica");
   const arabicY = doc.y + 2;
-  const arabicDrawn = drawArabicClinicName(doc, textX, arabicY, 430);
-  doc.font("Helvetica").fillColor("#334155");
-  doc.text(CLINIC.fullAddress, textX, doc.y + (arabicDrawn ? 4 : 2), { width: 430 });
-  doc.text(CLINIC.phoneLabel, textX, doc.y + 2, { width: 430 });
-  doc.text(`Email : ${CLINIC.email}`, textX, doc.y + 2, { width: 430 });
+  const arabicDrawn = drawArabicClinicName(doc, leftX, arabicY, contentWidth);
+  doc.font("Helvetica").fillColor("#334155").fontSize(11);
+  doc.text(CLINIC.fullAddress, leftX, doc.y + (arabicDrawn ? 4 : 2), {
+    width: contentWidth,
+    align: "center",
+  });
+  doc.text(CLINIC.phoneLabel, leftX, doc.y + 2, { width: contentWidth, align: "center" });
+  doc.text(`Email : ${CLINIC.email}`, leftX, doc.y + 2, { width: contentWidth, align: "center" });
 
   doc
     .fillColor("#0f172a")
-    .fontSize(12)
+    .fontSize(13)
     .font("Helvetica-Bold")
-    .text(docTitle.toUpperCase(), textX, doc.y + 8, { width: 430 });
+    .text(docTitle.toUpperCase(), leftX, doc.y + 8, { width: contentWidth, align: "center" });
 
   doc.y = Math.max(doc.y + 10, headerBottom);
   doc.moveDown(0.5);

@@ -1,7 +1,9 @@
-# Adresse IP du poste serveur (optionnel)
-# Laisser vide pour détection automatique (localhost, nom du PC, IP locale).
-# À renseigner sur les postes clients si la détection automatique échoue.
+# Adresses du poste serveur — les clients utilisent les DEUX si disponibles.
+# SERVER_IP     = Wi-Fi / Ethernet de la clinique (prioritaire)
+# TAILSCALE_IP  = mesh Tailscale (secours / hors site)
 #
 # Exemple :
-# SERVER_IP=192.168.1.50
+# SERVER_IP=192.168.88.161
+# TAILSCALE_IP=100.106.181.115
 SERVER_IP=
+TAILSCALE_IP=

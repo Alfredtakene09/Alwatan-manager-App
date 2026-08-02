@@ -6,6 +6,7 @@ const props = defineProps<{
   label: string
   modelValue: string | number | boolean
   required?: boolean
+  disabled?: boolean
 }>()
 
 defineEmits<{ 'update:modelValue': [value: string] }>()
@@ -18,12 +19,13 @@ const labelText = computed(() => {
 </script>
 
 <template>
-  <label class="ui-field">
+  <label class="ui-field" :class="{ 'ui-field--disabled': disabled }">
     <span class="ui-field__label">{{ labelText }}</span>
     <select
       class="ui-select"
       :value="modelValue"
       :required="required"
+      :disabled="disabled"
       @change="$emit('update:modelValue', ($event.target as HTMLSelectElement).value)"
     >
       <slot />
@@ -35,6 +37,10 @@ const labelText = computed(() => {
 .ui-field {
   display: block;
   margin-bottom: 1rem;
+}
+
+.ui-field--disabled {
+  opacity: 0.75;
 }
 
 .ui-field__label {
@@ -54,6 +60,11 @@ const labelText = computed(() => {
   font-size: 0.875rem;
   color: var(--text);
   background: #fff;
+}
+
+.ui-select:disabled {
+  background: var(--surface-muted, #f8fafc);
+  cursor: not-allowed;
 }
 
 .ui-select:focus {

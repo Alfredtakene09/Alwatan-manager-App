@@ -3,6 +3,7 @@ import { COOKIE_NAME, verifySessionToken, type SessionUser } from "../lib/auth.j
 import { prisma } from "../lib/db.js";
 import {
   canAccessModule,
+  canManageLabStock,
   canManagePharmacyCatalog,
   canManageResources,
   type AppUserRole,
@@ -66,6 +67,16 @@ export function requirePharmacyCatalogAccess(req: Request, res: Response, next: 
   }
   if (!canManagePharmacyCatalog(req.user.role as AppUserRole)) {
     return res.status(403).json({ error: "Accès refusé — catalogue pharmacie réservé à la direction / gestion" });
+  }
+  next();
+}
+
+export function requireLabStockAccess(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({ error: "Non autorisé" });
+  }
+  if (!canManageLabStock(req.user.role as AppUserRole)) {
+    return res.status(403).json({ error: "Accès refusé — stock laboratoire réservé à la direction / gestion" });
   }
   next();
 }

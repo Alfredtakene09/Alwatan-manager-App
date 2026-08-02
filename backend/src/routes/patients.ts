@@ -19,18 +19,26 @@ import {
   consultationInvoiceUpdateData,
 } from "../lib/consultation-invoice.js";
 import {
+  PATIENT_ALREADY_CONSULTED_CODE,
+  PATIENT_ALREADY_CONSULTED_MESSAGE,
   PATIENT_HAS_DATA_CODE,
   PATIENT_HAS_DATA_MESSAGE,
   PATIENT_HAS_PAYMENTS_CODE,
   PATIENT_HAS_PAYMENTS_MESSAGE,
   assertPatientDeletable,
+  findPatientIdsDeletionLocked,
 } from "../lib/patient-payment-guard.js";
 import {
   findDuplicatePatient,
+  findPatientForDossierFusion,
   serializePatientForDuplicate,
 } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
+import {
+  archiveVisitsForReconsultation,
+  planReconsultation,
+} from "../lib/reconsultation.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 /** Réceptionniste : uniquement ses dossiers. Direction / gestionnaire / admin : tout. */
@@ -282,13 +290,38 @@ router.get("/", async (req, res) => {
   const user = req.user!;
   const q = String(req.query.q ?? "").trim();
   const category = req.query.category as string | undefined;
+  const fromParam = String(req.query.from ?? req.query.date ?? "").trim();
+  const toParam = String(req.query.to ?? "").trim();
   const terms = q.split(/\s+/).filter(Boolean);
   const ownScope = receptionistOwnPatientsWhere(user);
+
+  function parseDayStart(value: string): Date | null {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const [year, month, day] = value.split("-").map(Number);
+    const start = new Date();
+    start.setFullYear(year, month - 1, day);
+    start.setHours(0, 0, 0, 0);
+    return start;
+  }
+
+  let createdAtFilter: { gte?: Date; lt?: Date } | undefined;
+  const fromDay = parseDayStart(fromParam);
+  const toDay = parseDayStart(toParam || fromParam);
+  if (fromDay || toDay) {
+    createdAtFilter = {};
+    if (fromDay) createdAtFilter.gte = fromDay;
+    if (toDay) {
+      const end = new Date(toDay);
+      end.setDate(end.getDate() + 1);
+      createdAtFilter.lt = end;
+    }
+  }
 
   const patients = await prisma.patient.findMany({
     where: {
       ...ownScope,
       ...(category ? { category: category as PatientCategory } : {}),
+      ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
       ...(terms.length > 0
         ? {
             AND: terms.map((term) => ({
@@ -304,9 +337,16 @@ router.get("/", async (req, res) => {
     },
     include: { treatingDoctor: { select: treatingDoctorSelect } },
     orderBy: [{ createdAt: "desc" }, { code: "desc" }],
-    take: 50,
+    take: createdAtFilter ? 500 : 50,
   });
-  return res.json(patients);
+
+  const lockedIds = await findPatientIdsDeletionLocked(patients.map((p) => p.id));
+  return res.json(
+    patients.map((patient) => ({
+      ...patient,
+      canDelete: !lockedIds.has(patient.id),
+    })),
+  );
 });
 
 router.get("/reception-stats", requireModule("reception"), async (req, res) => {
@@ -408,10 +448,154 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
       return res.status(400).json({ error: "La réduction ne peut pas dépasser le montant." });
     }
 
+    const fusionPatient = await findPatientForDossierFusion({
+      firstName: body.firstName,
+      lastName: body.lastName,
+      phone: body.phone,
+      gender: body.gender,
+    });
+
+    // Patient déjà connu (nom + prénom + téléphone + genre) → réutiliser le dossier existant
+    if (fusionPatient) {
+      const plan = await planReconsultation(fusionPatient.id);
+
+      let consultationAmountFcfa = billing.consultationAmountFcfa;
+      try {
+        const renewal = await resolveConsultationFeeForPatientDoctor({
+          patientId: fusionPatient.id,
+          doctorId: body.doctorId,
+          requestedAmount: body.consultationAmountFcfa,
+        });
+        consultationAmountFcfa = renewal.amountFcfa;
+      } catch {
+        /* conserver le montant demandé */
+      }
+
+      const linkedCategory = resolvePatientCategory(fusionPatient.category);
+      const linkedBilling = resolveConsultationBilling(
+        linkedCategory,
+        consultationAmountFcfa,
+        body.reductionFcfa,
+      );
+
+      const result = await prisma.$transaction(async (tx) => {
+        const patient = await tx.patient.update({
+          where: { id: fusionPatient.id },
+          data: {
+            ...(body.age != null ? { age: body.age, ageUnit: body.ageUnit } : {}),
+            ...(body.phone && !fusionPatient.phone ? { phone: body.phone } : {}),
+            ...(body.gender && !fusionPatient.gender ? { gender: body.gender } : {}),
+            ...(body.address ? { address: body.address } : {}),
+            ...(body.service !== undefined
+              ? { service: body.service.trim() || null }
+              : {}),
+            ...(treatingDoctorId !== undefined
+              ? { treatingDoctorId: treatingDoctorId ?? null }
+              : {}),
+            recommendedByName:
+              normalizeRecommendedByName(body.recommendedByName) ??
+              fusionPatient.recommendedByName,
+          },
+          include: { treatingDoctor: { select: treatingDoctorSelect } },
+        });
+
+        if (plan.action === "create" && plan.archiveVisitIds.length) {
+          await archiveVisitsForReconsultation(tx, plan.archiveVisitIds);
+        }
+
+        if (plan.action === "update") {
+          const visit = await tx.visit.update({
+            where: { id: plan.visitId },
+            data: {
+              status: VisitStatus.WAITING_CONSULTATION,
+              assignedDoctorId: body.doctorId,
+              consultationFeeFcfa: linkedBilling.consultationAmountFcfa || undefined,
+              reductionFcfa: linkedBilling.reductionFcfa,
+            },
+          });
+
+          let invoiceNumber: string | null = null;
+          if (linkedBilling.billableAmountFcfa > 0) {
+            const existingInvoice = await tx.invoice.findFirst({
+              where: { visitId: visit.id, type: InvoiceType.CONSULTATION },
+            });
+            if (existingInvoice?.status === InvoiceStatus.PAID) {
+              invoiceNumber = existingInvoice.invoiceNumber;
+            } else if (existingInvoice) {
+              const invoice = await tx.invoice.update({
+                where: { id: existingInvoice.id },
+                data: consultationInvoiceUpdateData(
+                  linkedCategory,
+                  linkedBilling.billableAmountFcfa,
+                ),
+              });
+              invoiceNumber = invoice.invoiceNumber;
+            } else {
+              const invoice = await tx.invoice.create({
+                data: consultationInvoiceCreateData(linkedCategory, {
+                  invoiceNumber: await generateInvoiceNumber(),
+                  patientId: patient.id,
+                  visitId: visit.id,
+                  amountFcfa: linkedBilling.billableAmountFcfa,
+                  issuedById: req.user!.id,
+                }),
+              });
+              invoiceNumber = invoice.invoiceNumber;
+            }
+          }
+
+          return {
+            patient,
+            visit,
+            invoiceNumber,
+            totalFcfa: linkedBilling.billableAmountFcfa,
+            billingDeferred: !shouldCreateImmediateInvoice(linkedCategory),
+            linkedExistingDossier: true as const,
+          };
+        }
+
+        const visit = await tx.visit.create({
+          data: {
+            patientId: patient.id,
+            status: VisitStatus.WAITING_CONSULTATION,
+            assignedDoctorId: body.doctorId,
+            consultationFeeFcfa: linkedBilling.consultationAmountFcfa || undefined,
+            reductionFcfa: linkedBilling.reductionFcfa,
+          },
+        });
+
+        let invoiceNumber: string | null = null;
+        if (linkedBilling.billableAmountFcfa > 0) {
+          const invoice = await tx.invoice.create({
+            data: consultationInvoiceCreateData(linkedCategory, {
+              invoiceNumber: await generateInvoiceNumber(),
+              patientId: patient.id,
+              visitId: visit.id,
+              amountFcfa: linkedBilling.billableAmountFcfa,
+              issuedById: req.user!.id,
+            }),
+          });
+          invoiceNumber = invoice.invoiceNumber;
+        }
+
+        return {
+          patient,
+          visit,
+          invoiceNumber,
+          totalFcfa: linkedBilling.billableAmountFcfa,
+          billingDeferred: !shouldCreateImmediateInvoice(linkedCategory),
+          linkedExistingDossier: true as const,
+        };
+      });
+
+      return res.status(201).json(result);
+    }
+
     const duplicatePatient = await findDuplicatePatient({
       firstName: body.firstName,
       lastName: body.lastName,
       phone: body.phone,
+      gender: body.gender,
       age: body.age,
       ageUnit: body.ageUnit,
       dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : null,
@@ -479,6 +663,7 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
         invoiceNumber,
         totalFcfa: billing.billableAmountFcfa,
         billingDeferred: !shouldCreateImmediateInvoice(category),
+        linkedExistingDossier: false as const,
       };
     });
 
@@ -547,6 +732,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
       firstName: body.firstName,
       lastName: body.lastName,
       phone: body.phone,
+      gender: body.gender,
       age: body.age,
       ageUnit: body.ageUnit,
       dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : null,
@@ -606,6 +792,7 @@ router.patch("/:id", requireModule("reception"), async (req, res) => {
       firstName: body.firstName,
       lastName: body.lastName,
       phone: body.phone,
+      gender: body.gender,
       age: body.age,
       ageUnit: body.ageUnit,
       dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : null,
@@ -692,6 +879,9 @@ router.delete("/:id", requireModule("reception"), async (req, res) => {
     if (error instanceof Error) {
       if (error.message === PATIENT_HAS_PAYMENTS_CODE) {
         return res.status(409).json({ error: PATIENT_HAS_PAYMENTS_MESSAGE });
+      }
+      if (error.message === PATIENT_ALREADY_CONSULTED_CODE) {
+        return res.status(409).json({ error: PATIENT_ALREADY_CONSULTED_MESSAGE });
       }
       if (error.message === PATIENT_HAS_DATA_CODE) {
         return res.status(409).json({ error: PATIENT_HAS_DATA_MESSAGE });

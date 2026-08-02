@@ -5,7 +5,9 @@ import {
   buildPrescribedByLabel,
   printLabVisitPanelResults,
 } from '@/lib/lab-panel-print'
-import { fullName, ROLE_LABELS, type SessionUser } from '@/lib/roles'
+import { fullName, type SessionUser } from '@/lib/roles'
+import { formatAppDate } from '@/i18n/locale-format'
+import { translateRole, translateUi } from '@/i18n/translate'
 
 type DossierResponse = {
   panelResults: Partial<Record<LabPanelSlug, Record<string, string>>>
@@ -43,13 +45,13 @@ export async function fetchAndPrintLabVisitResults(
     const panelCount = Object.keys(data.panelResults).length
 
     if (!panelCount) {
-      return { ok: false, error: 'Aucun formulaire enregistré pour ce dossier.' }
+      return { ok: false, error: translateUi('Aucun formulaire enregistré pour ce dossier.') }
     }
 
     const completedAt = parseLabResultsCompletedAt(visit.consultation?.clinicalNotes)
     const validatorLabel = authUser
-      ? `${fullName(authUser.firstName, authUser.lastName)} — ${ROLE_LABELS[authUser.role]}`
-      : 'Laboratoire'
+      ? `${fullName(authUser.firstName, authUser.lastName)} — ${translateRole(authUser.role)}`
+      : translateUi('Laboratoire')
 
     const printed = printLabVisitPanelResults(data.panelResults, {
       patientName: fullName(visit.patient.firstName, visit.patient.lastName),
@@ -58,15 +60,15 @@ export async function fetchAndPrintLabVisitResults(
         visit.consultation?.doctor ?? visit.assignedDoctor ?? null,
       ),
       validatedBy: validatorLabel,
-      date: completedAt?.toLocaleDateString('fr-FR') ?? new Date().toLocaleDateString('fr-FR'),
+      date: formatAppDate(completedAt ?? new Date()),
     })
 
     if (!printed) {
-      return { ok: false, error: 'Impossible de générer les formulaires à imprimer.' }
+      return { ok: false, error: translateUi('Impossible de générer les formulaires à imprimer.') }
     }
 
     return { ok: true }
   } catch {
-    return { ok: false, error: 'Impossible d\'imprimer les résultats.' }
+    return { ok: false, error: translateUi("Impossible d'imprimer les résultats.") }
   }
 }

@@ -20,6 +20,8 @@ import ExportButtons from '@/components/ui/ExportButtons.vue'
 import VisitEtatDataTable from '@/components/ui/VisitEtatDataTable.vue'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
+import { useSilentRefresh } from '@/composables/useSilentRefresh'
 
 type Patient = {
   id: string
@@ -55,7 +57,7 @@ let messageTimer: ReturnType<typeof setTimeout> | undefined
 
 function showAlert(text: string, type: 'success' | 'error' = 'success') {
   if (messageTimer) clearTimeout(messageTimer)
-  message.value = uiText(text)
+  message.value = text
   messageType.value = type
   if (type === 'success') {
     messageTimer = setTimeout(() => {
@@ -96,18 +98,21 @@ const selectedLevel = computed(() =>
 )
 
 const tablePanelTitle = computed(() => {
-  if (!selectedLevel.value) return 'Parcours patient'
-  return selectedLevel.value.label
+  if (!selectedLevel.value) return uiText('Parcours patient')
+  return uiText(selectedLevel.value.label)
 })
 
 const tablePanelSubtitle = computed(() => {
-  if (!filterLevel.value) return 'Sélectionnez un niveau pour afficher les patients'
-  if (loading.value) return 'Chargement…'
+  if (!filterLevel.value) return uiText('Sélectionnez un niveau pour afficher les patients')
+  if (loading.value) return uiText('Chargement…')
   const q = search.value.trim()
   if (q) {
-    return `${filteredVisits.value.length} résultat(s) pour « ${q} »`
+    return translateTemplate('{n} résultat(s) pour « {q} »', {
+      n: filteredVisits.value.length,
+      q,
+    })
   }
-  return `${filteredVisits.value.length} patient(s) à ce niveau`
+  return translateTemplate('{n} patient(s) à ce niveau', { n: filteredVisits.value.length })
 })
 
 function clearSearch() {
@@ -115,15 +120,20 @@ function clearSearch() {
   patients.value = []
 }
 
-async function loadEtat() {
-  loading.value = true
+async function loadEtat(opts?: { silent?: boolean }) {
+  if (!opts?.silent) loading.value = true
   try {
     const { data } = await api.get('/visits/etat-patients')
     visits.value = data
   } finally {
-    loading.value = false
+    if (!opts?.silent) loading.value = false
   }
 }
+
+const { refresh: refreshEtat } = useSilentRefresh(
+  ({ silent }) => loadEtat({ silent }),
+  { intervalMs: 20_000, immediate: false },
+)
 
 async function loadPatients() {
   if (!search.value.trim()) {
@@ -150,7 +160,9 @@ async function newVisit(patientId: string) {
     const patient = patients.value.find((p) => p.id === patientId)
     showAlert(
       patient
-        ? `${fullName(patient.firstName, patient.lastName)} — niveau Réception (attente consultation).`
+        ? translateTemplate('{name} — niveau Réception (attente consultation).', {
+            name: fullName(patient.firstName, patient.lastName),
+          })
         : 'Patient enregistré au niveau Réception.',
     )
     clearSearch()
@@ -180,7 +192,7 @@ const visitExportColumns: ExportColumn<PatientVisit>[] = [
     value: (r) => fullName(r.patient.firstName, r.patient.lastName),
   },
   { header: 'Téléphone', value: (r) => r.patient.phone ?? '—' },
-  { header: 'Statut', value: (r) => getVisitStatusMeta(r.status).label },
+  { header: 'Statut', value: (r) => uiText(getVisitStatusMeta(r.status).label) },
   {
     header: 'Médecin',
     value: (r) =>
@@ -196,16 +208,16 @@ const visitExportColumns: ExportColumn<PatientVisit>[] = [
 
 function exportPdf() {
   exportTablePdf(
-    `État des patients — ${tablePanelTitle.value}`,
-    visitExportColumns,
+    translateTemplate('État des patients — {title}', { title: tablePanelTitle.value }),
+    visitExportColumns.map((col) => ({ ...col, header: uiText(col.header) })),
     filteredVisits.value,
   )
 }
 
 function exportExcel() {
   exportTableExcel(
-    `État des patients — ${tablePanelTitle.value}`,
-    visitExportColumns,
+    translateTemplate('État des patients — {title}', { title: tablePanelTitle.value }),
+    visitExportColumns.map((col) => ({ ...col, header: uiText(col.header) })),
     filteredVisits.value,
   )
 }
@@ -235,7 +247,7 @@ onUnmounted(clearAlert)
             :class="{ 'pipeline-step--active': filterLevel === String(step.level) }"
             @click="filterLevel = filterLevel === String(step.level) ? '' : String(step.level)"
           >
-            <strong>{{ step.label }}</strong>
+            <strong>{{ uiText(step.label) }}</strong>
             <span class="pipeline-step__count">{{ levelCounts[step.level] ?? 0 }}</span>
           </button>
           <UiButton
@@ -244,7 +256,7 @@ onUnmounted(clearAlert)
             :icon="RefreshCw"
             class="pipeline-refresh"
             :loading="loading"
-            @click="loadEtat"
+            @click="refreshEtat()"
           >
             Actualiser
           </UiButton>
@@ -254,8 +266,8 @@ onUnmounted(clearAlert)
       <div class="search-panel-sticky">
         <div class="search-toolbar">
           <div class="search-toolbar__title">
-            <h3>Recherche patient</h3>
-            <p>Matricule, nom ou téléphone — filtre la liste et permet d'enregistrer au niveau Réception</p>
+            <h3>{{ uiText('Recherche patient') }}</h3>
+            <p>{{ uiText("Matricule, nom ou téléphone — filtre la liste et permet d'enregistrer au niveau Réception") }}</p>
           </div>
 
           <div class="search-toolbar__field">
@@ -265,13 +277,13 @@ onUnmounted(clearAlert)
                 v-model="search"
                 type="search"
                 class="search-compact__input"
-                placeholder="Matricule PAT, nom ou téléphone…"
+                :placeholder="uiText('Matricule PAT, nom ou téléphone…')"
               />
               <button
                 v-if="search"
                 type="button"
                 class="search-compact__clear"
-                aria-label="Effacer la recherche"
+                :aria-label="uiText('Effacer la recherche')"
                 @click="clearSearch"
               >
                 <X :size="14" />
@@ -317,13 +329,13 @@ onUnmounted(clearAlert)
 
         <div v-if="!filterLevel" class="empty-state">
           <UserRound :size="32" />
-          <p>Sélectionnez un niveau ci-dessus pour afficher la liste des patients</p>
+          <p>{{ uiText('Sélectionnez un niveau ci-dessus pour afficher la liste des patients') }}</p>
         </div>
 
         <div v-else-if="loading" class="empty-state empty-state--compact">{{ uiText('Chargement…') }}</div>
 
         <div v-else-if="filteredVisits.length" class="table-wrap">
-          <VisitEtatDataTable fill :visits="filteredVisits" :loading="loading" />
+          <VisitEtatDataTable fill :visits="filteredVisits" :loading="loading && !visits.length" />
         </div>
 
         <div v-else class="empty-state empty-state--compact">

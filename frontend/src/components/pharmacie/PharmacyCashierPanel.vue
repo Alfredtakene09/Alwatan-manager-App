@@ -13,11 +13,15 @@ import {
   UserRound,
   FileText,
   PillBottle,
+  ClipboardList,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { CLINIC } from '@/lib/clinic'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { openPrintDocument } from '@/lib/print-document'
+import { translateUi } from '@/i18n/translate'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiTextarea from '@/components/ui/UiTextarea.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -64,6 +68,33 @@ type CheckoutAdjustment = {
   responsible?: string
 }
 
+type PendingOrdonnanceLine = {
+  productId?: string | null
+  name: string
+  productName: string
+  dosage?: string | null
+  quantity: number
+  instructions?: string
+  unitPriceFcfa: number
+  stock: number
+  lineTotalFcfa: number
+  available: boolean
+  isFreeText?: boolean
+}
+
+type PendingOrdonnance = {
+  consultationId: string
+  visitId: string
+  prescribedAt: string
+  patient: CashierPatient & { phone?: string | null; gender?: string | null }
+  doctor: { id: string; firstName: string; lastName: string } | null
+  lines: PendingOrdonnanceLine[]
+  estimatedTotalFcfa: number
+  allAvailable: boolean
+  hasCatalogLines?: boolean
+  hasFreeTextLines?: boolean
+}
+
 const props = defineProps<{
   products: CashierProduct[]
   patients: CashierPatient[]
@@ -75,12 +106,16 @@ const emit = defineEmits<{
   refresh: []
 }>()
 
+const { uiText } = useAppI18n()
+
 const rootRef = ref<HTMLElement | null>(null)
 const searchRef = ref<HTMLInputElement | null>(null)
 const isFullscreen = ref(false)
 const catalogSearch = ref('')
 const buyerType = ref<BuyerType>('external')
 const patientId = ref('')
+const linkedVisitId = ref<string | null>(null)
+const linkedPatient = ref<CashierPatient | null>(null)
 const externalClientName = ref('')
 const externalClientPhone = ref('')
 const notes = ref('')
@@ -96,6 +131,23 @@ const checkoutModalOpen = ref(false)
 const adjustmentMode = ref<CheckoutAdjustmentMode>('none')
 const reductionPercent = ref<string>('5')
 const coveredByName = ref('')
+
+const ordonnancesModalOpen = ref(false)
+const ordonnancesLoading = ref(false)
+const ordonnancesSearch = ref('')
+const ordonnances = ref<PendingOrdonnance[]>([])
+const ordonnancesError = ref('')
+const confirmOrdonnance = ref<PendingOrdonnance | null>(null)
+const confirmNameInput = ref('')
+const pendingOrdonnancesCount = ref(0)
+
+const patientsForSelect = computed(() => {
+  const list = [...props.patients]
+  if (linkedPatient.value && !list.some((p) => p.id === linkedPatient.value!.id)) {
+    list.unshift(linkedPatient.value)
+  }
+  return list
+})
 
 const productsById = computed(() => new Map(props.products.map((p) => [p.id, p])))
 
@@ -142,8 +194,10 @@ const selectedReductionFcfa = computed(() =>
 )
 
 const reductionPercentLabel = computed(() => {
-  if (cartTotalFcfa.value <= 0 || selectedReductionPercent.value <= 0) return 'Réduction (%)'
-  return `Réduction (%) — −${formatFcfa(selectedReductionFcfa.value)}`
+  if (cartTotalFcfa.value <= 0 || selectedReductionPercent.value <= 0) return uiText('Réduction (%)')
+  return translateTemplate('Réduction (%) — −{amount}', {
+    amount: formatFcfa(selectedReductionFcfa.value),
+  })
 })
 
 const selectedCartRow = computed(() =>
@@ -172,7 +226,7 @@ function addToCart(productId: string) {
 
   const current = cartQuantityFor(productId)
   if (current >= product.quantity) {
-    message.value = `Stock insuffisant pour ${product.name}.`
+    message.value = translateTemplate('Stock insuffisant pour {name}.', { name: product.name })
     messageType.value = 'error'
     return
   }
@@ -200,7 +254,10 @@ function changeCartQuantity(index: number, delta: number) {
     return
   }
   if (next > product.quantity) {
-    message.value = `Stock maximum : ${product.quantity} pour ${product.name}.`
+    message.value = translateTemplate('Stock maximum : {qty} pour {name}.', {
+      qty: product.quantity,
+      name: product.name,
+    })
     messageType.value = 'error'
     return
   }
@@ -261,11 +318,19 @@ function saleSuccessMessage(data: {
 }) {
   if (data.invoice) {
     return buyerType.value === 'external'
-      ? `Vente enregistrée — facture ${data.invoice.invoiceNumber} (${formatFcfa(data.total)})`
-      : `Ordonnance enregistrée — facture ${data.invoice.invoiceNumber} (${formatFcfa(data.total)})`
+      ? translateTemplate('Vente enregistrée — facture {invoice} ({total})', {
+          invoice: data.invoice.invoiceNumber,
+          total: formatFcfa(data.total),
+        })
+      : translateTemplate('Ordonnance enregistrée — facture {invoice} ({total})', {
+          invoice: data.invoice.invoiceNumber,
+          total: formatFcfa(data.total),
+        })
   }
   if (data.billingDeferred) {
-    return `Ordonnance enregistrée — facturation différée (${formatFcfa(data.total)})`
+    return translateTemplate('Ordonnance enregistrée — facturation différée ({total})', {
+      total: formatFcfa(data.total),
+    })
   }
   return 'Ordonnance enregistrée — prise en charge gratuite'
 }
@@ -285,6 +350,7 @@ function printReceipt(data: {
   coveredByName?: string | null
   isFree?: boolean
 }) {
+  const t = translateUi
   const clinic = CLINIC
   const thermalRows = data.items
     .map(
@@ -300,23 +366,23 @@ function printReceipt(data: {
   const grossTotal = data.grossTotal ?? data.total
   const reductionFcfa = data.reductionFcfa ?? 0
   const reductionPercent = data.reductionPercent
-  let paymentModeLabel = 'Paiement normal'
-  if (data.isFree) paymentModeLabel = 'Prise en charge gratuite'
+  let paymentModeLabel = t('Paiement normal')
+  if (data.isFree) paymentModeLabel = t('Prise en charge gratuite')
   else if (reductionFcfa > 0) {
     paymentModeLabel = reductionPercent
-      ? `Réduction ${reductionPercent} %`
-      : 'Réduction accordée'
+      ? translateTemplate('Réduction {n} %', { n: reductionPercent })
+      : t('Réduction accordée')
   }
   const coveredByBlock =
     data.coveredByName && (data.isFree || reductionFcfa > 0)
-      ? `<div class="thermal-receipt__row thermal-receipt__row--stack"><span>Responsable</span><strong>${data.coveredByName}</strong></div>`
+      ? `<div class="thermal-receipt__row thermal-receipt__row--stack"><span>${t('Responsable')}</span><strong>${data.coveredByName}</strong></div>`
       : ''
   const reductionLabel = reductionPercent
-    ? `Réduction (${reductionPercent} %)`
-    : 'Réduction'
+    ? translateTemplate('Réduction ({n} %)', { n: reductionPercent })
+    : t('Réduction')
 
   openPrintDocument(
-    `${data.isExternal ? 'Vente' : 'Ordonnance'} ${data.buyerCode}`,
+    `${t(data.isExternal ? 'Vente' : 'Ordonnance')} ${data.buyerCode}`,
     `
 <div class="thermal-receipt">
   <header class="thermal-receipt__head">
@@ -328,31 +394,31 @@ function printReceipt(data: {
   </header>
 
   <hr class="thermal-receipt__rule" />
-  <h1 class="thermal-receipt__title">${data.isExternal ? 'Vente pharmacie' : 'Ordonnance pharmacie'}</h1>
+  <h1 class="thermal-receipt__title">${data.isExternal ? t('Vente pharmacie') : t('Ordonnance pharmacie')}</h1>
   <p class="thermal-receipt__subtitle">${data.invoiceNumber}</p>
   <hr class="thermal-receipt__rule" />
 
   <div class="thermal-receipt__fields">
-    <div class="thermal-receipt__row"><span>Date</span><strong>${data.date}</strong></div>
-    <div class="thermal-receipt__row thermal-receipt__row--stack"><span>Acheteur</span><strong>${data.buyerLabel}</strong></div>
-    <div class="thermal-receipt__row"><span>Référence</span><strong>${data.buyerCode}</strong></div>
-    <div class="thermal-receipt__row"><span>Règlement</span><strong>${paymentModeLabel}</strong></div>
+    <div class="thermal-receipt__row"><span>${t('Date')}</span><strong>${data.date}</strong></div>
+    <div class="thermal-receipt__row thermal-receipt__row--stack"><span>${t('Acheteur')}</span><strong>${data.buyerLabel}</strong></div>
+    <div class="thermal-receipt__row"><span>${t('Référence')}</span><strong>${data.buyerCode}</strong></div>
+    <div class="thermal-receipt__row"><span>${t('Règlement')}</span><strong>${paymentModeLabel}</strong></div>
     ${coveredByBlock}
   </div>
 
   <hr class="thermal-receipt__rule" />
   <table>
-    <thead><tr><th>Produit</th><th>Qté</th><th>Total</th></tr></thead>
+    <thead><tr><th>${t('Produit')}</th><th>${t('Qté')}</th><th>${t('Total')}</th></tr></thead>
     <tbody>${thermalRows}</tbody>
   </table>
   <div class="thermal-receipt__fields">
-    <div class="thermal-receipt__row"><span>Sous-total</span><strong>${formatFcfa(grossTotal)}</strong></div>
+    <div class="thermal-receipt__row"><span>${t('Sous-total')}</span><strong>${formatFcfa(grossTotal)}</strong></div>
     ${reductionFcfa > 0 ? `<div class="thermal-receipt__row"><span>${reductionLabel}</span><strong>- ${formatFcfa(reductionFcfa)}</strong></div>` : ''}
-    <div class="thermal-receipt__row"><span>Total payé</span><strong>${formatFcfa(data.total)}</strong></div>
+    <div class="thermal-receipt__row"><span>${t('Total payé')}</span><strong>${formatFcfa(data.total)}</strong></div>
   </div>
-  ${data.notes ? `<p class="thermal-receipt__note"><strong>Notes:</strong> ${data.notes}</p>` : ''}
+  ${data.notes ? `<p class="thermal-receipt__note"><strong>${t('Notes:')}</strong> ${data.notes}</p>` : ''}
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks">Merci de votre confiance</p>
+  <p class="thermal-receipt__thanks">${t('Merci de votre confiance')}</p>
 </div>
 `,
     { pageSize: '80mm', autoPrint: true },
@@ -362,11 +428,144 @@ function printReceipt(data: {
 function resetBuyerFields() {
   notes.value = ''
   patientId.value = ''
+  linkedVisitId.value = null
+  linkedPatient.value = null
   externalClientName.value = ''
   externalClientPhone.value = ''
   adjustmentMode.value = 'none'
   reductionPercent.value = '5'
   coveredByName.value = ''
+}
+
+function normalizeConfirmName(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+async function loadPendingOrdonnances(search = ordonnancesSearch.value) {
+  ordonnancesLoading.value = true
+  ordonnancesError.value = ''
+  try {
+    const { data } = await api.get<{ rows: PendingOrdonnance[]; count: number }>(
+      '/pharmacie/ordonnances-pending',
+      { params: search.trim() ? { q: search.trim() } : undefined },
+    )
+    ordonnances.value = data.rows
+    pendingOrdonnancesCount.value = data.count
+  } catch {
+    ordonnances.value = []
+    ordonnancesError.value = 'Impossible de charger les ordonnances médecin.'
+  } finally {
+    ordonnancesLoading.value = false
+  }
+}
+
+async function openOrdonnancesModal() {
+  ordonnancesModalOpen.value = true
+  confirmOrdonnance.value = null
+  confirmNameInput.value = ''
+  ordonnancesSearch.value = ''
+  await loadPendingOrdonnances('')
+}
+
+function closeOrdonnancesModal() {
+  ordonnancesModalOpen.value = false
+  confirmOrdonnance.value = null
+  confirmNameInput.value = ''
+}
+
+function startConfirmOrdonnance(row: PendingOrdonnance) {
+  confirmOrdonnance.value = row
+  confirmNameInput.value = ''
+}
+
+function cancelConfirmOrdonnance() {
+  confirmOrdonnance.value = null
+  confirmNameInput.value = ''
+}
+
+function applyOrdonnanceToCart() {
+  const row = confirmOrdonnance.value
+  if (!row) return
+
+  const expected = normalizeConfirmName(fullName(row.patient.firstName, row.patient.lastName))
+  const typed = normalizeConfirmName(confirmNameInput.value)
+  if (!typed || typed !== expected) {
+    message.value = 'Le nom saisi ne correspond pas au patient de l’ordonnance. Vérifiez l’identité.'
+    messageType.value = 'error'
+    return
+  }
+
+  const catalogLines = row.lines.filter((line) => !line.isFreeText && line.productId)
+  const freeTextLines = row.lines.filter((line) => line.isFreeText || !line.productId)
+
+  if (!catalogLines.length) {
+    message.value =
+      'Cette ordonnance ne contient que des médicaments hors stock pharmacie — impression médecin uniquement, rien à encaisser.'
+    messageType.value = 'error'
+    return
+  }
+
+  const unavailable = catalogLines.filter((line) => !line.available)
+  if (unavailable.length) {
+    message.value = translateTemplate('Stock insuffisant pour : {list}.', {
+      list: unavailable.map((l) => l.productName).join(', '),
+    })
+    messageType.value = 'error'
+    return
+  }
+
+  clearCart()
+  for (const line of catalogLines) {
+    const product = productsById.value.get(line.productId!)
+    if (!product || product.quantity < line.quantity) {
+      message.value = translateTemplate('Stock insuffisant pour {name}.', { name: line.productName })
+      messageType.value = 'error'
+      return
+    }
+    cart.value.push({ productId: line.productId!, quantity: line.quantity })
+  }
+
+  buyerType.value = 'patient'
+  patientId.value = row.patient.id
+  linkedVisitId.value = row.visitId
+  linkedPatient.value = {
+    id: row.patient.id,
+    code: row.patient.code,
+    firstName: row.patient.firstName,
+    lastName: row.patient.lastName,
+  }
+  const freeNote = freeTextLines.length
+    ? ` — ${uiText('Hors stock')}: ${freeTextLines.map((l) => l.productName).join(', ')}`
+    : ''
+  notes.value = translateTemplate('Ordonnance médecin — visite {code}', {
+    code: row.patient.code,
+  }) + freeNote
+  selectedCartIndex.value = cart.value.length ? 0 : null
+  message.value = freeTextLines.length
+    ? translateTemplate(
+        'Ordonnance de {name} chargée (produits en stock). Médicaments hors pharmacie déjà sur l’ordonnance imprimée.',
+        { name: fullName(row.patient.firstName, row.patient.lastName) },
+      )
+    : translateTemplate(
+        'Ordonnance de {name} chargée — confirmez l’encaissement.',
+        { name: fullName(row.patient.firstName, row.patient.lastName) },
+      )
+  messageType.value = 'success'
+  closeOrdonnancesModal()
+  checkoutModalOpen.value = true
+}
+
+function doctorLabel(doctor: PendingOrdonnance['doctor']) {
+  if (!doctor) return '—'
+  return fullName(doctor.firstName, doctor.lastName)
+}
+
+function formatOrdonnanceDate(value: string) {
+  try {
+    return new Date(value).toLocaleString('fr-FR')
+  } catch {
+    return value
+  }
 }
 
 function resolveCheckoutAdjustment(): CheckoutAdjustment | null {
@@ -400,14 +599,9 @@ function resolveCheckoutAdjustment(): CheckoutAdjustment | null {
   }
 }
 
-function validateBuyerSelection(externalName: string) {
+function validateBuyerSelection() {
   if (buyerType.value === 'patient' && !patientId.value) {
     message.value = 'Sélectionnez un patient.'
-    messageType.value = 'error'
-    return false
-  }
-  if (buyerType.value === 'external' && externalName.length < 2) {
-    message.value = 'Indiquez le nom du client externe.'
     messageType.value = 'error'
     return false
   }
@@ -415,10 +609,12 @@ function validateBuyerSelection(externalName: string) {
 }
 
 async function submitSale() {
-  const selectedPatient = props.patients.find((p) => p.id === patientId.value)
+  const selectedPatient =
+    props.patients.find((p) => p.id === patientId.value) ??
+    (linkedPatient.value?.id === patientId.value ? linkedPatient.value : null)
   const externalName = externalClientName.value.trim()
 
-  if (!validateBuyerSelection(externalName)) return
+  if (!validateBuyerSelection()) return
   if (!cart.value.length) {
     message.value = 'Le panier est vide.'
     messageType.value = 'error'
@@ -440,10 +636,16 @@ async function submitSale() {
   try {
     const { data } = await api.post('/pharmacie', {
       ...(buyerType.value === 'patient'
-        ? { patientId: patientId.value, notes: notes.value }
+        ? {
+            patientId: patientId.value,
+            notes: notes.value,
+            ...(linkedVisitId.value ? { visitId: linkedVisitId.value } : {}),
+          }
         : {
-            externalClientName: externalName,
-            externalClientPhone: externalClientPhone.value.trim() || undefined,
+            ...(externalName ? { externalClientName: externalName } : {}),
+            ...(externalClientPhone.value.trim()
+              ? { externalClientPhone: externalClientPhone.value.trim() }
+              : {}),
           }),
       reductionFcfa: adjustment.reductionFcfa,
       isFree: adjustment.isFree,
@@ -456,9 +658,16 @@ async function submitSale() {
 
     if (printItems.length && data.invoice) {
       const isExternal = buyerType.value === 'external'
+      const externalLabel =
+        externalName ||
+        (data.externalClient
+          ? data.externalClient.firstName === data.externalClient.lastName
+            ? data.externalClient.firstName
+            : fullName(data.externalClient.firstName, data.externalClient.lastName)
+          : uiText('Client'))
       printReceipt({
         buyerLabel: isExternal
-          ? externalName
+          ? externalLabel
           : fullName(selectedPatient!.firstName, selectedPatient!.lastName),
         buyerCode: isExternal
           ? data.externalClient?.code ?? '—'
@@ -481,9 +690,14 @@ async function submitSale() {
     checkoutModalOpen.value = false
     resetBuyerFields()
     emit('changed')
+    void loadPendingOrdonnances('')
     void nextTick(() => searchRef.value?.focus())
-  } catch {
-    message.value = 'Stock insuffisant ou erreur de saisie.'
+  } catch (error: unknown) {
+    const apiMessage =
+      error && typeof error === 'object' && 'response' in error
+        ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined
+    message.value = apiMessage ?? 'Stock insuffisant ou erreur de saisie.'
     messageType.value = 'error'
   } finally {
     submitting.value = false
@@ -515,6 +729,9 @@ function onFullscreenChange() {
 onMounted(() => {
   document.addEventListener('fullscreenchange', onFullscreenChange)
   searchRef.value?.focus()
+  void loadPendingOrdonnances('').then(() => {
+    /* compteur badge uniquement */
+  })
 })
 
 onUnmounted(() => {
@@ -543,16 +760,20 @@ watch(
           <ShoppingCart :size="22" />
         </div>
         <div>
-          <h2 class="cashier__title">Caisse</h2>
-          <p class="cashier__subtitle">Vente au comptoir et dispensation</p>
+          <h2 class="cashier__title">{{ uiText('Caisse') }}</h2>
+          <p class="cashier__subtitle">{{ uiText('Vente au comptoir et dispensation') }}</p>
         </div>
       </div>
       <div class="cashier__head-actions">
+        <UiButton variant="secondary" size="sm" :icon="ClipboardList" @click="openOrdonnancesModal">
+          {{ uiText('Ordonnances médecin') }}
+          <span v-if="pendingOrdonnancesCount > 0" class="cashier__badge">{{ pendingOrdonnancesCount }}</span>
+        </UiButton>
         <UiButton variant="ghost" size="sm" :icon="isFullscreen ? Minimize2 : Maximize2" @click="toggleFullscreen">
-          {{ isFullscreen ? 'Quitter plein écran' : 'Plein écran' }}
+          {{ isFullscreen ? uiText('Quitter plein écran') : uiText('Plein écran') }}
         </UiButton>
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="emit('refresh')">
-          Actualiser
+          {{ uiText('Actualiser') }}
         </UiButton>
       </div>
     </header>
@@ -564,8 +785,8 @@ watch(
         <header class="cashier-panel__head cashier-panel__head--green">
           <Package :size="18" />
           <div>
-            <h3>Catalogue</h3>
-            <p>{{ filteredCatalog.length }} médicament(s)</p>
+            <h3>{{ uiText('Catalogue') }}</h3>
+            <p>{{ translateTemplate('{n} médicament(s)', { n: filteredCatalog.length }) }}</p>
           </div>
         </header>
 
@@ -576,27 +797,27 @@ watch(
             v-model="catalogSearch"
             type="search"
             class="catalog-search__input"
-            placeholder="Rechercher ou scanner un code-barres…"
-            aria-label="Rechercher dans le catalogue"
+            :placeholder="uiText('Rechercher ou scanner un code-barres…')"
+            :aria-label="uiText('Rechercher dans le catalogue')"
             @keydown="onSearchKeydown"
           />
         </div>
-        <p class="catalog-hint">Saisie : filtre la liste · Lecteur USB : scan + Entrée ajoute au panier</p>
+        <p class="catalog-hint">{{ uiText('Saisie : filtre la liste · Lecteur USB : scan + Entrée ajoute au panier') }}</p>
 
         <div class="catalog-table-wrap">
           <table class="catalog-table">
             <thead>
               <tr>
                 <th>#</th>
-                <th>Code</th>
-                <th>Nom</th>
-                <th>Stock</th>
-                <th>Prix</th>
+                <th>{{ uiText('Code') }}</th>
+                <th>{{ uiText('Nom') }}</th>
+                <th>{{ uiText('Stock') }}</th>
+                <th>{{ uiText('Prix') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!filteredCatalog.length">
-                <td colspan="5" class="catalog-empty">Aucun produit trouvé</td>
+                <td colspan="5" class="catalog-empty">{{ uiText('Aucun produit trouvé') }}</td>
               </tr>
               <tr
                 v-for="(product, index) in filteredCatalog"
@@ -625,8 +846,8 @@ watch(
         <header class="cashier-panel__head cashier-panel__head--blue">
           <ShoppingCart :size="18" />
           <div>
-            <h3>Panier</h3>
-            <p>{{ cartArticlesCount }} article(s)</p>
+            <h3>{{ uiText('Panier') }}</h3>
+            <p>{{ translateTemplate('{n} article(s)', { n: cartArticlesCount }) }}</p>
           </div>
         </header>
 
@@ -635,15 +856,15 @@ watch(
             <thead>
               <tr>
                 <th>#</th>
-                <th>Article</th>
-                <th>Qté</th>
-                <th>Prix unit.</th>
-                <th>Total</th>
+                <th>{{ uiText('Article') }}</th>
+                <th>{{ uiText('Qté') }}</th>
+                <th>{{ uiText('Prix unit.') }}</th>
+                <th>{{ uiText('Total') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!cartRows.length">
-                <td colspan="5" class="cart-empty">Panier vide — cliquez un produit du catalogue</td>
+                <td colspan="5" class="cart-empty">{{ uiText('Panier vide — cliquez un produit du catalogue') }}</td>
               </tr>
               <tr
                 v-for="row in cartRows"
@@ -685,19 +906,19 @@ watch(
               :icon="Trash2"
               @click="removeFromCart(selectedCartRow.index)"
             >
-              Retirer
+              {{ uiText('Retirer') }}
             </UiButton>
           </div>
 
           <div class="cart-total">
-            <span class="cart-total__label">Total à payer</span>
+            <span class="cart-total__label">{{ uiText('Total à payer') }}</span>
             <strong class="cart-total__value">{{ formatFcfa(cartTotalFcfa) }}</strong>
-            <span class="cart-total__meta">{{ cartArticlesCount }} article(s)</span>
+            <span class="cart-total__meta">{{ translateTemplate('{n} article(s)', { n: cartArticlesCount }) }}</span>
           </div>
 
           <div class="cart-actions">
             <UiButton type="button" variant="secondary" :disabled="!cart.length || submitting" @click="clearCart">
-              Vider le panier
+              {{ uiText('Vider le panier') }}
             </UiButton>
             <UiButton
               type="button"
@@ -706,7 +927,13 @@ watch(
               :disabled="!cart.length || submitting"
               @click="openCheckoutModal"
             >
-              {{ submitting ? 'Validation…' : buyerType === 'external' ? 'Valider la vente' : 'Valider la dispensation' }}
+              {{
+                submitting
+                  ? uiText('Validation…')
+                  : buyerType === 'external'
+                    ? uiText('Valider la vente')
+                    : uiText('Valider la dispensation')
+              }}
             </UiButton>
           </div>
         </footer>
@@ -721,41 +948,58 @@ watch(
       @close="checkoutModalOpen = false"
     >
       <div class="buyer-type">
-        <label class="buyer-type__option">
-          <input v-model="buyerType" type="radio" value="external" />
+        <label class="buyer-type__option" :class="{ 'buyer-type__option--locked': Boolean(linkedVisitId) }">
+          <input v-model="buyerType" type="radio" value="external" :disabled="Boolean(linkedVisitId)" />
           <UserRound :size="14" />
-          <span>Client externe</span>
+          <span>{{ uiText('Client externe') }}</span>
         </label>
-        <label class="buyer-type__option">
-          <input v-model="buyerType" type="radio" value="patient" />
+        <label class="buyer-type__option" :class="{ 'buyer-type__option--locked': Boolean(linkedVisitId) }">
+          <input v-model="buyerType" type="radio" value="patient" :disabled="Boolean(linkedVisitId)" />
           <FileText :size="14" />
-          <span>Patient clinique</span>
+          <span>{{ uiText('Patient clinique') }}</span>
         </label>
       </div>
 
       <template v-if="buyerType === 'external'">
         <div class="checkout-form-grid">
-          <UiInput v-model="externalClientName" label="Nom du client" placeholder="Ex. Mahamat Ali" />
-          <UiInput v-model="externalClientPhone" label="Téléphone" placeholder="Optionnel" />
+          <UiInput
+            v-model="externalClientName"
+            label="Nom du client (optionnel)"
+            placeholder="Ex. Mahamat Ali"
+          />
+          <UiInput
+            v-model="externalClientPhone"
+            label="Téléphone (optionnel)"
+            placeholder="Ex. 66 00 00 00"
+          />
         </div>
       </template>
       <template v-else>
-        <div class="checkout-form-grid">
+        <div v-if="linkedVisitId && linkedPatient" class="checkout-linked-patient">
+          <p class="checkout-linked-patient__name">
+            {{ fullName(linkedPatient.firstName, linkedPatient.lastName) }}
+            <span class="checkout-linked-patient__code">{{ linkedPatient.code }}</span>
+          </p>
+          <p class="checkout-ordonnance-hint">
+            {{ uiText('Ordonnance médecin — patient déjà identifié, aucune resélection nécessaire.') }}
+          </p>
+        </div>
+        <div v-else class="checkout-form-grid">
           <UiSelect v-model="patientId" label="Patient">
-            <option value="">Sélectionner un patient</option>
-            <option v-for="p in patients" :key="p.id" :value="p.id">
+            <option value="">{{ uiText('Sélectionner un patient') }}</option>
+            <option v-for="p in patientsForSelect" :key="p.id" :value="p.id">
               {{ p.code }} — {{ fullName(p.firstName, p.lastName) }}
             </option>
           </UiSelect>
-          <UiTextarea v-model="notes" label="Notes ordonnance" :rows="3" />
+          <UiTextarea v-model="notes" :label="uiText('Notes ordonnance')" :rows="3" />
         </div>
       </template>
 
       <div class="checkout-form-grid">
         <UiSelect v-model="adjustmentMode" label="Mode de règlement">
-          <option value="none">Paiement normal</option>
-          <option value="reduction">Réduction</option>
-          <option value="free">Prise en charge gratuite</option>
+          <option value="none">{{ uiText('Paiement normal') }}</option>
+          <option value="reduction">{{ uiText('Réduction') }}</option>
+          <option value="free">{{ uiText('Prise en charge gratuite') }}</option>
         </UiSelect>
         <UiSelect
           v-if="adjustmentMode === 'reduction'"
@@ -776,11 +1020,134 @@ watch(
 
       <template #footer>
         <UiButton type="button" variant="secondary" :disabled="submitting" @click="checkoutModalOpen = false">
-          Annuler
+          {{ uiText('Annuler') }}
         </UiButton>
         <UiButton type="button" variant="primary" :icon="PillBottle" :disabled="submitting" @click="submitSale">
-          {{ submitting ? 'Validation…' : buyerType === 'external' ? 'Valider la vente' : 'Valider la dispensation' }}
+          {{
+            submitting
+              ? uiText('Validation…')
+              : buyerType === 'external'
+                ? uiText('Valider la vente')
+                : uiText('Valider la dispensation')
+          }}
         </UiButton>
+      </template>
+    </UiFormModal>
+
+    <UiFormModal
+      v-if="ordonnancesModalOpen"
+      title="Ordonnances médecin"
+      subtitle="Recherchez le patient par nom, puis confirmez son identité avant d’encaisser."
+      size="wide"
+      @close="closeOrdonnancesModal"
+    >
+      <div v-if="!confirmOrdonnance" class="ord-search">
+        <UiInput
+          v-model="ordonnancesSearch"
+          label="Rechercher un patient"
+          placeholder="Nom, prénom, code ou téléphone…"
+          @keydown.enter.prevent="loadPendingOrdonnances()"
+        />
+        <UiButton type="button" variant="secondary" :icon="Search" :disabled="ordonnancesLoading" @click="loadPendingOrdonnances()">
+          {{ uiText('Chercher') }}
+        </UiButton>
+      </div>
+
+      <UiAlert v-if="ordonnancesError" type="error" :message="ordonnancesError" />
+
+      <template v-if="confirmOrdonnance">
+        <div class="ord-confirm">
+          <p class="ord-confirm__lead">
+            {{ uiText('Confirmez le nom du patient présent à la pharmacie :') }}
+          </p>
+          <p class="ord-confirm__name">
+            {{ fullName(confirmOrdonnance.patient.firstName, confirmOrdonnance.patient.lastName) }}
+            <span class="ord-confirm__code">{{ confirmOrdonnance.patient.code }}</span>
+          </p>
+          <p class="ord-confirm__meta">
+            {{ uiText('Médecin :') }} {{ doctorLabel(confirmOrdonnance.doctor) }} ·
+            {{ formatOrdonnanceDate(confirmOrdonnance.prescribedAt) }} ·
+            {{ formatFcfa(confirmOrdonnance.estimatedTotalFcfa) }}
+          </p>
+          <ul class="ord-confirm__lines">
+            <li v-for="(line, idx) in confirmOrdonnance.lines" :key="`${line.productId ?? 'free'}-${idx}`">
+              {{ line.quantity }}× {{ line.productName }}
+              <span v-if="line.dosage"> — {{ line.dosage }}</span>
+              <span v-if="line.isFreeText" class="ord-confirm__stock-warn">{{ uiText(' (hors pharmacie)') }}</span>
+              <span v-else-if="!line.available" class="ord-confirm__stock-warn">{{ uiText(' (stock insuffisant)') }}</span>
+            </li>
+          </ul>
+          <UiInput
+            v-model="confirmNameInput"
+            label="Saisir le nom complet pour confirmer"
+            :placeholder="fullName(confirmOrdonnance.patient.firstName, confirmOrdonnance.patient.lastName)"
+            @keydown.enter.prevent="applyOrdonnanceToCart"
+          />
+        </div>
+      </template>
+
+      <div v-else class="ord-list-wrap">
+        <p v-if="ordonnancesLoading" class="ord-empty">{{ uiText('Chargement…') }}</p>
+        <p v-else-if="!ordonnances.length" class="ord-empty">{{ uiText('Aucune ordonnance en attente.') }}</p>
+        <table v-else class="ord-table">
+          <thead>
+            <tr>
+              <th>{{ uiText('Patient') }}</th>
+              <th>{{ uiText('Médecin') }}</th>
+              <th>{{ uiText('Médicaments') }}</th>
+              <th>{{ uiText('Total') }}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in ordonnances" :key="row.visitId">
+              <td>
+                <strong>{{ fullName(row.patient.firstName, row.patient.lastName) }}</strong>
+                <div class="ord-table__sub">{{ row.patient.code }}</div>
+              </td>
+              <td>{{ doctorLabel(row.doctor) }}</td>
+              <td>
+                <div class="ord-table__meds">
+                  <span v-for="(line, idx) in row.lines" :key="`${line.productId ?? 'free'}-${idx}`">
+                    {{ line.quantity }}× {{ line.productName }}
+                    <em v-if="line.isFreeText">{{ uiText(' (hors stock)') }}</em>
+                  </span>
+                </div>
+              </td>
+              <td>
+                {{ formatFcfa(row.estimatedTotalFcfa) }}
+                <div v-if="row.hasFreeTextLines && !row.hasCatalogLines" class="ord-table__warn">{{ uiText('Impression seule') }}</div>
+                <div v-else-if="!row.allAvailable" class="ord-table__warn">{{ uiText('Stock partiel') }}</div>
+              </td>
+              <td>
+                <UiButton
+                  type="button"
+                  size="sm"
+                  variant="primary"
+                  :disabled="!row.hasCatalogLines"
+                  @click="startConfirmOrdonnance(row)"
+                >
+                  {{ uiText('Encaisser') }}
+                </UiButton>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <template #footer>
+        <template v-if="confirmOrdonnance">
+          <UiButton type="button" variant="secondary" @click="cancelConfirmOrdonnance">{{ uiText('Retour') }}</UiButton>
+          <UiButton type="button" variant="primary" :icon="PillBottle" @click="applyOrdonnanceToCart">
+            {{ uiText('Confirmer et encaisser') }}
+          </UiButton>
+        </template>
+        <template v-else>
+          <UiButton type="button" variant="secondary" @click="closeOrdonnancesModal">{{ uiText('Fermer') }}</UiButton>
+          <UiButton type="button" variant="ghost" :icon="RefreshCw" :disabled="ordonnancesLoading" @click="loadPendingOrdonnances()">
+            {{ uiText('Actualiser') }}
+          </UiButton>
+        </template>
       </template>
     </UiFormModal>
   </div>
@@ -797,8 +1164,10 @@ watch(
 }
 
 .cashier--fullscreen {
+  position: relative;
   background: #f8faf6;
   padding: 1rem;
+  overflow: auto;
 }
 
 .cashier__head {
@@ -846,8 +1215,154 @@ watch(
   gap: 0.5rem;
 }
 
+.cashier__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.35rem;
+  margin-left: 0.35rem;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
 .cashier__alert {
   margin: 0;
+}
+
+.checkout-ordonnance-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.8125rem;
+  color: #15803d;
+  font-weight: 600;
+}
+
+.checkout-linked-patient {
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: #f0fdf4;
+  border: 1px solid rgba(22, 163, 74, 0.22);
+}
+
+.checkout-linked-patient__name {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.checkout-linked-patient__code {
+  margin-inline-start: 0.45rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.buyer-type__option--locked {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.ord-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+  margin-bottom: 1rem;
+}
+
+.ord-list-wrap {
+  max-height: min(50vh, 28rem);
+  overflow: auto;
+}
+
+.ord-empty {
+  margin: 1rem 0;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.ord-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.ord-table th,
+.ord-table td {
+  padding: 0.65rem 0.5rem;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  text-align: left;
+  vertical-align: top;
+}
+
+.ord-table th {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.ord-table__sub {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin-top: 0.15rem;
+}
+
+.ord-table__meds {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.ord-table__warn {
+  margin-top: 0.2rem;
+  color: #b45309;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.ord-confirm__lead {
+  margin: 0 0 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.ord-confirm__name {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.ord-confirm__code {
+  margin-left: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.ord-confirm__meta {
+  margin: 0.35rem 0 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.ord-confirm__lines {
+  margin: 0 0 1rem;
+  padding-left: 1.1rem;
+  font-size: 0.875rem;
+}
+
+.ord-confirm__stock-warn {
+  color: #b45309;
+  font-weight: 700;
 }
 
 .buyer-type {

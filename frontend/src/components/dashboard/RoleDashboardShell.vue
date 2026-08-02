@@ -44,7 +44,7 @@ const errorText = computed(() => {
     <p v-if="loadError" class="dashboard-error">{{ errorText }}</p>
 
     <div v-if="loading && !stats.length" class="dashboard-cards-skeleton">
-      <div v-for="n in 4" :key="n" class="dashboard-cards-skeleton__cell" />
+      <div v-for="n in 5" :key="n" class="dashboard-cards-skeleton__cell" />
     </div>
 
     <div v-else class="dashboard-cards" :class="{ 'dashboard-cards--loading': loading }">

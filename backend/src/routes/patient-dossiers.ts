@@ -31,7 +31,11 @@ import {
 import { buildPatientPaymentHistory } from "../lib/patient-invoice-payments.js";
 import { medecinMatchWhere } from "../lib/medecin-queues.js";
 import { requireAnyModule, requireAuth, requireManageAccess } from "../middleware/auth.js";
-import { canWriteDossierDocuments, type AppUserRole } from "../lib/roles.js";
+import {
+  canViewClinicalConsultationDetails,
+  canWriteDossierDocuments,
+  type AppUserRole,
+} from "../lib/roles.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -134,7 +138,12 @@ router.get("/:patientId", requireAnyModule(...DOSSIER_MODULES), async (req, res)
     }
   }
 
-  const medicalHistory = await getPatientMedicalHistory(patientId, doctorScope);
+  const canViewAllClinical = canViewClinicalConsultationDetails(req.user!.role);
+  const medicalHistory = await getPatientMedicalHistory(patientId, {
+    doctorScope,
+    canViewAllClinicalDetails: canViewAllClinical,
+    viewerDoctorId: req.user!.role === "MEDECIN" ? req.user!.id : null,
+  });
 
   const dossier = await ensurePatientDossier(patientId);
 

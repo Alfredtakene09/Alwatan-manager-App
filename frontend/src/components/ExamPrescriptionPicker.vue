@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Search, ChevronDown, ShoppingBag, X, Plus } from '@lucide/vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import {
   EXAM_KIND_LABELS,
   HOSPITALISATION_PRESCRIPTION_LABEL,
   getCatalogForKind,
+  getSpecialtyServiceName,
   groupExamsByCategory,
   loadExamCatalog,
   type ExamKindSlug,
 } from '@/lib/exam-catalog'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 const props = defineProps<{
   kind: ExamKindSlug
@@ -17,6 +20,9 @@ const props = defineProps<{
   hospitalisationDays?: number | null
   /** En mode ajout : masquer les examens déjà prescrits sur le dossier. */
   excludeLabels?: string[]
+  /** Filtre le catalogue selon le médecin (service + Laboratoire/Hospitalisation). */
+  doctorId?: string | null
+  serviceId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -24,24 +30,69 @@ const emit = defineEmits<{
   'update:hospitalisationDays': [value: number | null]
 }>()
 
+const { uiText, localeCode } = useAppI18n()
+
 const search = ref('')
 const dropdownOpen = ref(false)
 const rootRef = ref<HTMLElement | null>(null)
 const catalogReady = ref(false)
+const catalogEpoch = ref(0)
+const catalogItems = ref(getCatalogForKind(props.kind, props.doctorId, props.serviceId))
 
 const cart = computed({
   get: () => props.modelValue,
   set: (value: string[]) => emit('update:modelValue', value),
 })
 
-const kindLabel = computed(() => EXAM_KIND_LABELS[props.kind])
+const kindLabel = computed(() => {
+  void localeCode.value
+  void catalogEpoch.value
+  if (props.kind === 'specialty') {
+    const serviceName = getSpecialtyServiceName(props.doctorId, props.serviceId)
+    if (serviceName) return uiText(serviceName)
+  }
+  return uiText(EXAM_KIND_LABELS[props.kind])
+})
 
-const catalog = computed(() => getCatalogForKind(props.kind))
+const addKindLabel = computed(() => {
+  void localeCode.value
+  return translateTemplate('Ajouter — {kind}', { kind: kindLabel.value })
+})
+
+const searchPlaceholder = computed(() => {
+  void localeCode.value
+  return translateTemplate('Rechercher un examen {kind}…', {
+    kind: kindLabel.value.toLowerCase(),
+  })
+})
+
+const catalog = computed(() => {
+  void catalogEpoch.value
+  return catalogItems.value
+})
 
 const availableExams = computed(() =>
   catalog.value.filter(
     (exam) => !cart.value.includes(exam.label) && !props.excludeLabels?.includes(exam.label),
   ),
+)
+
+async function refreshCatalog() {
+  catalogReady.value = false
+  await loadExamCatalog({
+    doctorId: props.doctorId,
+    serviceId: props.serviceId,
+  })
+  catalogItems.value = getCatalogForKind(props.kind, props.doctorId, props.serviceId)
+  catalogEpoch.value += 1
+  catalogReady.value = true
+}
+
+watch(
+  () => [props.doctorId, props.serviceId] as const,
+  () => {
+    void refreshCatalog()
+  },
 )
 
 const filteredExams = computed(() => {
@@ -107,8 +158,7 @@ function onClickOutside(event: MouseEvent) {
 
 onMounted(async () => {
   document.addEventListener('click', onClickOutside)
-  await loadExamCatalog()
-  catalogReady.value = true
+  await refreshCatalog()
 })
 
 onUnmounted(() => document.removeEventListener('click', onClickOutside))
@@ -155,7 +205,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
       <UiInput
         v-if="hospitalisationPrescribed"
         :model-value="hospitalisationDays ?? 1"
-        label="Nombre de jours d'hospitalisation"
+        :label="uiText('Nombre de jours d\'hospitalisation')"
         type="number"
         min="1"
         max="365"
@@ -165,7 +215,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
     </template>
 
     <template v-else>
-    <label class="exam-picker__label">Ajouter — {{ kindLabel }}</label>
+    <label class="exam-picker__label">{{ addKindLabel }}</label>
 
     <div class="exam-picker__search-wrap">
       <button
@@ -181,7 +231,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
           v-model="search"
           type="search"
           class="exam-picker__search-input"
-          :placeholder="`Rechercher un examen ${kindLabel.toLowerCase()}…`"
+          :placeholder="searchPlaceholder"
           @focus="dropdownOpen = true"
           @click.stop
           @keydown.escape="dropdownOpen = false"
@@ -190,7 +240,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
       </button>
 
       <div v-if="dropdownOpen" class="exam-picker__dropdown" role="listbox">
-        <p v-if="!catalogReady" class="exam-picker__empty">Chargement du catalogue…</p>
+        <p v-if="!catalogReady" class="exam-picker__empty">{{ uiText('Chargement du catalogue…') }}</p>
         <template v-else-if="hasResults">
           <div
             v-for="[category, exams] in groupedFiltered"
@@ -212,7 +262,11 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
           </div>
         </template>
         <p v-else class="exam-picker__empty">
-          {{ availableExams.length === 0 ? 'Tous les examens sont déjà sélectionnés.' : 'Aucun examen trouvé.' }}
+          {{
+            availableExams.length === 0
+              ? uiText('Tous les examens sont déjà sélectionnés.')
+              : uiText('Aucun examen trouvé.')
+          }}
         </p>
       </div>
     </div>

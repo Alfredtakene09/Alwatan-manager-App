@@ -1,21 +1,67 @@
 <script setup lang="ts">
-import { computed, ref, watch, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { LogOut, Menu, X } from '@lucide/vue'
 import { useAuthStore } from '@/stores/auth'
-import { fullName } from '@/lib/roles'
+import { fullName, canAccessModule, getDefaultRoute } from '@/lib/roles'
 import { CLINIC } from '@/lib/clinic'
 import { getNavigation, type NavChildItem, type NavItem } from '@/lib/navigation'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import api from '@/api/client'
 import UiButton from '@/components/ui/UiButton.vue'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 import InstallAppBanner from '@/components/pwa/InstallAppBanner.vue'
 import SidebarNavSections from '@/components/layout/SidebarNavSections.vue'
+import ProfileAccountModal from '@/components/ProfileAccountModal.vue'
+import GlobalAlertsBell from '@/components/layout/GlobalAlertsBell.vue'
 
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const { t, isArabic, localeCode, navLabel, roleLabel } = useAppI18n()
+const showProfileModal = ref(false)
+
+type NavBadges = {
+  depenses?: number
+  salaires?: number
+  caisse?: number
+}
+
+const navBadges = ref<NavBadges>({})
+let badgesTimer: ReturnType<typeof setInterval> | undefined
+
+async function loadNavBadges() {
+  if (!auth.user) {
+    navBadges.value = {}
+    return
+  }
+  try {
+    if (canAccessModule(auth.user.role, 'gestionnaire')) {
+      const { data } = await api.get<NavBadges>('/dashboard/gestionnaire/nav-badges')
+      navBadges.value = data
+    } else if (canAccessModule(auth.user.role, 'admin')) {
+      const { data } = await api.get<NavBadges>('/dashboard/admin/nav-badges')
+      navBadges.value = data
+    } else {
+      navBadges.value = {}
+    }
+  } catch {
+    navBadges.value = {}
+  }
+}
+
+onMounted(() => {
+  void loadNavBadges()
+  badgesTimer = setInterval(() => {
+    void loadNavBadges()
+  }, 90_000)
+})
+onUnmounted(() => {
+  if (badgesTimer) clearInterval(badgesTimer)
+})
+watch(() => auth.user?.id, () => {
+  void loadNavBadges()
+})
 
 const navConfig = computed(() =>
   auth.user ? getNavigation(auth.user.role) : { sidebarTitle: 'Navigation', sections: [] },
@@ -91,6 +137,27 @@ async function logout() {
   await auth.logout()
   router.push('/login')
 }
+
+function openProfileModal() {
+  showProfileModal.value = true
+}
+
+function closeProfileModal() {
+  showProfileModal.value = false
+  if (route.name === 'mon-compte' && auth.user) {
+    void router.replace(getDefaultRoute(auth.user.role))
+  }
+}
+
+watch(
+  () => route.name,
+  (name) => {
+    if (name === 'mon-compte') {
+      showProfileModal.value = true
+    }
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -126,6 +193,7 @@ async function logout() {
             :sections="mainNavSections"
             :expanded-groups="expandedGroups"
             :expanded-child-groups="expandedChildGroups"
+            :badges="navBadges"
             @toggle-group="toggleGroup"
             @toggle-child-group="toggleChildGroup"
           />
@@ -137,6 +205,7 @@ async function logout() {
           :sections="pinnedNavSections"
           :expanded-groups="expandedGroups"
           :expanded-child-groups="expandedChildGroups"
+          :badges="navBadges"
           @toggle-group="toggleGroup"
           @toggle-child-group="toggleChildGroup"
         />
@@ -172,21 +241,23 @@ async function logout() {
         </div>
 
         <div class="topbar__right">
+          <GlobalAlertsBell />
           <LanguageSwitcher />
 
-          <RouterLink
+          <button
             v-if="auth.user"
-            to="/mon-compte"
+            type="button"
             class="topbar__user"
             :aria-label="t('common.myAccount')"
             :title="t('common.myAccount')"
+            @click="openProfileModal"
           >
             <div class="topbar__user-avatar">{{ initials }}</div>
             <div class="topbar__user-info">
               <strong>{{ fullName(auth.user.firstName, auth.user.lastName) }}</strong>
               <span :class="{ 'lang-ar': isArabic }" :lang="isArabic ? 'ar' : undefined">{{ roleLabel(auth.user.role) }}</span>
             </div>
-          </RouterLink>
+          </button>
         </div>
       </header>
 
@@ -195,6 +266,8 @@ async function logout() {
         <RouterView />
       </main>
     </div>
+
+    <ProfileAccountModal :open="showProfileModal" @close="closeProfileModal" />
   </div>
 </template>
 
@@ -451,6 +524,8 @@ async function logout() {
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-sm);
   text-decoration: none;
+  text-align: start;
+  font: inherit;
   color: inherit;
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;

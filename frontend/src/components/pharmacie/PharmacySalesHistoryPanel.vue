@@ -1,10 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RefreshCw } from '@lucide/vue'
+import { RefreshCw, Printer } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
+import { CLINIC } from '@/lib/clinic'
 import { formatPatientTableDate } from '@/lib/patient-datatable-columns'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { openPrintDocument } from '@/lib/print-document'
+import { translateUi } from '@/i18n/translate'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
+import { DT_ICONS } from '@/lib/datatable-defaults'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -42,10 +48,26 @@ function saleBuyerLabel(item: SaleRecord) {
       item.externalClient.firstName === item.externalClient.lastName
         ? item.externalClient.firstName
         : fullName(item.externalClient.firstName, item.externalClient.lastName)
-    return `${item.externalClient.code} — ${name} (externe)`
+    return `${item.externalClient.code} — ${name} ${translateUi('(externe)')}`
   }
   if (item.patient) {
     return `${item.patient.code} — ${fullName(item.patient.firstName, item.patient.lastName)}`
+  }
+  return '—'
+}
+
+function saleBuyerCode(item: SaleRecord) {
+  return item.externalClient?.code ?? item.patient?.code ?? '—'
+}
+
+function saleBuyerName(item: SaleRecord) {
+  if (item.externalClient) {
+    return item.externalClient.firstName === item.externalClient.lastName
+      ? item.externalClient.firstName
+      : fullName(item.externalClient.firstName, item.externalClient.lastName)
+  }
+  if (item.patient) {
+    return fullName(item.patient.firstName, item.patient.lastName)
   }
   return '—'
 }
@@ -57,43 +79,60 @@ const filterFrom = ref('')
 const filterTo = ref('')
 const expandedId = ref<string | null>(null)
 
-const tableRows = computed(() =>
-  items.value.map((item) => ({
+const { uiText, localeCode } = useAppI18n()
+
+const tableRows = computed(() => {
+  void localeCode.value
+  return items.value.map((item) => ({
     id: item.id,
     date: formatPatientTableDate(item.createdAt),
     dateSort: new Date(item.createdAt).getTime(),
     patient: saleBuyerLabel(item),
     pharmacist: fullName(item.pharmacist.firstName, item.pharmacist.lastName),
     linesCount: item.lines.length,
-    linesLabel: `${item.lines.length} ligne(s)`,
+    linesLabel: translateTemplate('{n} ligne(s)', { n: item.lines.length }),
     total: formatFcfa(item.totalFcfa),
     totalSort: item.totalFcfa,
     invoice: item.invoiceNumber ?? '—',
-  })),
-)
+  }))
+})
 
-const columns = [
-  { data: 'dateSort', title: 'Date', responsivePriority: 1, render: (_d: number, _t: string, row: { date: string }) => row.date },
-  { data: 'patient', title: 'Acheteur', responsivePriority: 1 },
-  { data: 'pharmacist', title: 'Pharmacien', responsivePriority: 3 },
-  { data: 'linesLabel', title: 'Lignes', responsivePriority: 4 },
-  {
-    data: 'totalSort',
-    title: 'Total',
-    responsivePriority: 2,
-    render: (_d: number, _t: string, row: { total: string }) => `<span class="dt-amount">${row.total}</span>`,
-  },
-  { data: 'invoice', title: 'Facture', responsivePriority: 4 },
-  {
-    data: null,
-    title: '',
-    orderable: false,
-    className: 'dt-actions-col all',
-    responsivePriority: 1,
-    render: (_d: unknown, _t: string, row: { id: string }) =>
-      `<button type="button" class="dt-action-btn" data-action="view" data-id="${row.id}">Détail</button>`,
-  },
-]
+const columns = computed(() => {
+  void localeCode.value
+  return [
+    {
+      data: 'dateSort',
+      title: uiText('Date'),
+      responsivePriority: 1,
+      render: (_d: number, _t: string, row: { date: string }) => row.date,
+    },
+    { data: 'patient', title: uiText('Acheteur'), responsivePriority: 1 },
+    { data: 'pharmacist', title: uiText('Pharmacien'), responsivePriority: 3 },
+    { data: 'linesLabel', title: uiText('Lignes'), responsivePriority: 4 },
+    {
+      data: 'totalSort',
+      title: uiText('Total'),
+      responsivePriority: 2,
+      render: (_d: number, _t: string, row: { total: string }) =>
+        `<span class="dt-amount">${row.total}</span>`,
+    },
+    { data: 'invoice', title: uiText('Facture'), responsivePriority: 4 },
+    {
+      data: null,
+      title: uiText('Actions'),
+      orderable: false,
+      searchable: false,
+      className: 'dt-actions-col dt-actions-col--catalog all',
+      responsivePriority: 1,
+      width: '6.5rem',
+      render: (_d: unknown, _t: string, row: { id: string }) =>
+        `<div class="dt-row-actions" data-id="${row.id}">
+        <button type="button" class="dt-btn dt-btn--icon dt-btn--accent" data-action="print" data-id="${row.id}" title="${uiText('Imprimer')}" aria-label="${uiText('Imprimer')}">${DT_ICONS.print}</button>
+        <button type="button" class="dt-btn dt-btn--icon dt-btn--icon-soft" data-action="view" data-id="${row.id}" title="${uiText('Détail')}" aria-label="${uiText('Détail')}">${DT_ICONS.view}</button>
+      </div>`,
+    },
+  ]
+})
 
 const expandedSale = computed(() => items.value.find((item) => item.id === expandedId.value) ?? null)
 const expandedSaleLabel = computed(() => (expandedSale.value ? saleBuyerLabel(expandedSale.value) : '—'))
@@ -115,50 +154,117 @@ async function loadItems() {
   }
 }
 
+function printSale(sale: SaleRecord) {
+  const t = translateUi
+  const isExternal = Boolean(sale.externalClient) || sale.buyerType === 'external'
+  const buyerLabel = saleBuyerName(sale)
+  const buyerCode = saleBuyerCode(sale)
+  const invoiceNumber = sale.invoiceNumber ?? sale.id.slice(0, 8).toUpperCase()
+  const date = new Date(sale.createdAt).toLocaleString('fr-FR')
+  const thermalRows = sale.lines
+    .map(
+      (line) => `
+    <tr>
+      <td>${line.productName}${line.sku ? ` (${line.sku})` : ''}</td>
+      <td>${line.quantity}</td>
+      <td>${formatFcfa(line.lineTotalFcfa)}</td>
+    </tr>`,
+    )
+    .join('')
+
+  openPrintDocument(
+    `${t(isExternal ? 'Vente' : 'Ordonnance')} ${buyerCode}`,
+    `
+<div class="thermal-receipt">
+  <header class="thermal-receipt__head">
+    <img src="${CLINIC.logo}" alt="${CLINIC.nameFr}" class="thermal-receipt__logo" />
+    <p class="thermal-receipt__name-ar" dir="rtl">${CLINIC.nameAr}</p>
+    <p class="thermal-receipt__name">${CLINIC.nameFr}</p>
+    <p class="thermal-receipt__contact">${CLINIC.fullAddress}</p>
+    <p class="thermal-receipt__contact">${CLINIC.phones}</p>
+  </header>
+
+  <hr class="thermal-receipt__rule" />
+  <h1 class="thermal-receipt__title">${isExternal ? t('Vente pharmacie') : t('Ordonnance pharmacie')}</h1>
+  <p class="thermal-receipt__subtitle">${invoiceNumber}</p>
+  <hr class="thermal-receipt__rule" />
+
+  <div class="thermal-receipt__fields">
+    <div class="thermal-receipt__row"><span>${t('Date')}</span><strong>${date}</strong></div>
+    <div class="thermal-receipt__row thermal-receipt__row--stack"><span>${t('Acheteur')}</span><strong>${buyerLabel}</strong></div>
+    <div class="thermal-receipt__row"><span>${t('Référence')}</span><strong>${buyerCode}</strong></div>
+    <div class="thermal-receipt__row"><span>${t('Pharmacien')}</span><strong>${fullName(sale.pharmacist.firstName, sale.pharmacist.lastName)}</strong></div>
+  </div>
+
+  <hr class="thermal-receipt__rule" />
+  <table>
+    <thead><tr><th>${t('Produit')}</th><th>${t('Qté')}</th><th>${t('Total')}</th></tr></thead>
+    <tbody>${thermalRows}</tbody>
+  </table>
+  <div class="thermal-receipt__fields">
+    <div class="thermal-receipt__row"><span>${t('Total payé')}</span><strong>${formatFcfa(sale.totalFcfa)}</strong></div>
+  </div>
+  ${sale.notes ? `<p class="thermal-receipt__note"><strong>${t('Notes:')}</strong> ${sale.notes}</p>` : ''}
+  <hr class="thermal-receipt__rule" />
+  <p class="thermal-receipt__thanks">${t('Merci de votre confiance')}</p>
+</div>
+`,
+    { pageSize: '80mm', autoPrint: true },
+  )
+}
+
 function onTableAction({ action, id }: { action: string; id: string }) {
   if (action === 'view') {
     expandedId.value = id
+    return
+  }
+  if (action === 'print') {
+    const sale = items.value.find((item) => item.id === id)
+    if (sale) printSale(sale)
   }
 }
 
 type ExportSaleRow = (typeof tableRows.value)[number]
 
-const exportColumns: ExportColumn<ExportSaleRow>[] = [
-  { header: 'Date', value: (r) => r.date },
-  { header: 'Acheteur', value: (r) => r.patient },
-  { header: 'Pharmacien', value: (r) => r.pharmacist },
-  { header: 'Lignes', value: (r) => r.linesCount },
-  { header: 'Total', value: (r) => r.total },
-  { header: 'Facture', value: (r) => r.invoice },
-]
+const exportColumns = computed<ExportColumn<ExportSaleRow>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Date'), value: (r) => r.date },
+    { header: uiText('Acheteur'), value: (r) => r.patient },
+    { header: uiText('Pharmacien'), value: (r) => r.pharmacist },
+    { header: uiText('Lignes'), value: (r) => r.linesCount },
+    { header: uiText('Total'), value: (r) => r.total },
+    { header: uiText('Facture'), value: (r) => r.invoice },
+  ]
+})
 
 function exportCaption() {
-  const fromLabel = filterFrom.value || 'début'
-  const toLabel = filterTo.value || 'aujourd’hui'
+  const fromLabel = filterFrom.value || uiText('début')
+  const toLabel = filterTo.value || uiText("aujourd’hui")
   const totalGlobal = formatFcfa(items.value.reduce((sum, item) => sum + item.totalFcfa, 0))
   return [
-    { label: 'Période', value: `${fromLabel} → ${toLabel}` },
-    { label: 'Nombre de ventes', value: String(items.value.length) },
-    { label: 'Total cumulé', value: totalGlobal },
+    { label: uiText('Période'), value: `${fromLabel} → ${toLabel}` },
+    { label: uiText('Nombre de ventes'), value: String(items.value.length) },
+    { label: uiText('Total cumulé'), value: totalGlobal },
   ]
 }
 
 function exportPdf() {
   if (!tableRows.value.length) {
-    message.value = "Aucune vente à exporter."
+    message.value = 'Aucune vente à exporter.'
     return
   }
-  exportTablePdf('Historique des ventes pharmacie', exportColumns, tableRows.value, {
+  exportTablePdf(uiText('Historique des ventes pharmacie'), exportColumns.value, tableRows.value, {
     captionRows: exportCaption(),
   })
 }
 
 function exportExcel() {
   if (!tableRows.value.length) {
-    message.value = "Aucune vente à exporter."
+    message.value = 'Aucune vente à exporter.'
     return
   }
-  exportTableExcel('Historique des ventes pharmacie', exportColumns, tableRows.value)
+  exportTableExcel(uiText('Historique des ventes pharmacie'), exportColumns.value, tableRows.value)
 }
 
 onMounted(loadItems)
@@ -173,17 +279,17 @@ defineExpose({ reload: loadItems })
       <UiInput v-model="filterFrom" label="Du" type="date" class="filter-field" />
       <UiInput v-model="filterTo" label="Au" type="date" class="filter-field" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">
-        Filtrer
+        {{ uiText('Filtrer') }}
       </UiButton>
     </template>
 
     <UiAlert v-if="message" type="error" :message="message" class="panel-alert" />
 
-    <p v-if="!loading && !items.length" class="empty">Aucune vente enregistrée pour cette période.</p>
+    <p v-if="!loading && !items.length" class="empty">{{ uiText('Aucune vente enregistrée pour cette période.') }}</p>
     <UiDataTable
       v-else
       fill
-      table-key="pharmacy-sales-history"
+      table-key="pharmacy-sales-history-v3"
       compact
       :data="tableRows"
       :columns="columns"
@@ -194,42 +300,48 @@ defineExpose({ reload: loadItems })
   </PageTableSection>
 
   <UiFormModal
-      v-if="expandedSale"
-      title="Détail de la vente"
-      :subtitle="expandedSaleLabel"
-      size="large"
-      @close="expandedId = null"
-    >
-      <div class="sale-detail sale-detail--modal">
-        <p class="sale-meta">
-          <strong>Date :</strong> {{ formatPatientTableDate(expandedSale.createdAt) }} ·
-          <strong>Pharmacien :</strong>
-          {{ fullName(expandedSale.pharmacist.firstName, expandedSale.pharmacist.lastName) }} ·
-          <strong>Facture :</strong> {{ expandedSale.invoiceNumber ?? '—' }}
-        </p>
-        <p v-if="expandedSale.notes" class="sale-notes">{{ expandedSale.notes }}</p>
-        <table class="detail-table">
-          <thead>
-            <tr>
-              <th>Produit</th>
-              <th>Catégorie</th>
-              <th>Qté</th>
-              <th>Prix unit.</th>
-              <th>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="line in expandedSale.lines" :key="line.id">
-              <td>{{ line.productName }} <span class="sku">{{ line.sku }}</span></td>
-              <td>{{ line.categoryName ?? '—' }}</td>
-              <td>{{ line.quantity }}</td>
-              <td>{{ formatFcfa(line.unitPriceFcfa) }}</td>
-              <td>{{ formatFcfa(line.lineTotalFcfa) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </UiFormModal>
+    v-if="expandedSale"
+    title="Détail de la vente"
+    :subtitle="expandedSaleLabel"
+    size="large"
+    @close="expandedId = null"
+  >
+    <div class="sale-detail sale-detail--modal">
+      <p class="sale-meta">
+        <strong>{{ uiText('Date :') }}</strong> {{ formatPatientTableDate(expandedSale.createdAt) }} ·
+        <strong>{{ uiText('Pharmacien :') }}</strong>
+        {{ fullName(expandedSale.pharmacist.firstName, expandedSale.pharmacist.lastName) }} ·
+        <strong>{{ uiText('Facture :') }}</strong> {{ expandedSale.invoiceNumber ?? '—' }}
+      </p>
+      <p v-if="expandedSale.notes" class="sale-notes">{{ expandedSale.notes }}</p>
+      <table class="detail-table">
+        <thead>
+          <tr>
+            <th>{{ uiText('Produit') }}</th>
+            <th>{{ uiText('Catégorie') }}</th>
+            <th>{{ uiText('Qté') }}</th>
+            <th>{{ uiText('Prix unit.') }}</th>
+            <th>{{ uiText('Total') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="line in expandedSale.lines" :key="line.id">
+            <td>{{ line.productName }} <span class="sku">{{ line.sku }}</span></td>
+            <td>{{ line.categoryName ?? '—' }}</td>
+            <td>{{ line.quantity }}</td>
+            <td>{{ formatFcfa(line.unitPriceFcfa) }}</td>
+            <td>{{ formatFcfa(line.lineTotalFcfa) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <template #footer>
+      <UiButton variant="ghost" @click="expandedId = null">{{ uiText('Fermer') }}</UiButton>
+      <UiButton variant="primary" :icon="Printer" @click="printSale(expandedSale)">
+        {{ uiText('Imprimer') }}
+      </UiButton>
+    </template>
+  </UiFormModal>
 </template>
 
 <style scoped>

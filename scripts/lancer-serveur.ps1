@@ -1,6 +1,7 @@
-# Démarre Alwatan en mode cabinet (1 port, accès réseau fiable) ou mode dev (-Dev).
+# Démarre Alwatan en mode hot reload (par defaut) ou mode cabinet (-Production).
 param(
-    [switch]$Dev
+    [switch]$Dev,
+    [switch]$Production
 )
 
 . "$PSScriptRoot\_alwatan-common.ps1"
@@ -10,9 +11,14 @@ $nodeDir = Initialize-NodePath
 $networkIps = Get-AlwatanNetworkIps
 $lanIp = Get-LocalLanIpv4
 
+# Par defaut, on force le mode developpement (hot reload).
+if (-not $Dev -and -not $Production) {
+    $Dev = $true
+}
+
 Write-Host ''
 Write-Host '  Clinique Alwatan — Manager Pro' -ForegroundColor Cyan
-if ($Dev) {
+if ($Dev -and -not $Production) {
     Write-Host '  Mode développement (ports 4000 + 5173)' -ForegroundColor Cyan
 } else {
     Write-Host '  Mode cabinet (port 4000 — recommandé réseau)' -ForegroundColor Cyan
@@ -24,7 +30,7 @@ Sync-AlwatanLanConfig -Root $Root -LanIp $lanIp -LanIps $networkIps
 
 Ensure-AlwatanPrivateNetwork | Out-Null
 
-$fwPorts = if ($Dev) { @(4000, 5173) } else { @(4000) }
+$fwPorts = if ($Dev -and -not $Production) { @(4000, 5173) } else { @(4000) }
 Write-Host "Ouverture du pare-feu (TCP $($fwPorts -join ', '))..."
 $firewallOk = Ensure-AlwatanLanFirewall -Ports $fwPorts
 if (-not $firewallOk) {
@@ -49,7 +55,7 @@ $prodUrl = $null
 if (-not $Dev -and (Test-AlwatanProductionApp -HostName '127.0.0.1' -Port 4000 -TimeoutSec 3)) {
     $prodUrl = 'http://127.0.0.1:4000/'
 }
-if ($prodUrl -and -not $Dev) {
+if ($prodUrl -and -not $Dev -and $Production) {
     $clientDir = Publish-AlwatanClientAccess -ServerIps $networkIps -Port 4000 -Root $Root
     Write-Host "Application déjà active : $prodUrl" -ForegroundColor Green
     Show-AlwatanNetworkUrls -LanIp $lanIp
@@ -57,7 +63,7 @@ if ($prodUrl -and -not $Dev) {
     exit 0
 }
 
-if ($Dev) {
+if ($Dev -and -not $Production) {
     & (Join-Path $PSScriptRoot 'lancer-serveur-dev.ps1')
     exit $LASTEXITCODE
 }

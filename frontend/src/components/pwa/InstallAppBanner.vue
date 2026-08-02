@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { Smartphone, X } from '@lucide/vue'
+import { Download, Smartphone, X } from '@lucide/vue'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiButton from '@/components/ui/UiButton.vue'
 
 const { t } = useAppI18n()
-const { shouldShowBanner, dismissBanner, promptNativeInstall } = usePwaInstall()
+const {
+  shouldShowBanner,
+  canNativeInstall,
+  isLanHttp,
+  dismissBanner,
+  promptNativeInstall,
+  downloadShortcut,
+} = usePwaInstall()
 </script>
 
 <template>
@@ -15,10 +22,21 @@ const { shouldShowBanner, dismissBanner, promptNativeInstall } = usePwaInstall()
     </div>
     <div class="install-banner__body">
       <p class="install-banner__title">{{ t('pwa.installTitle') }}</p>
-      <p class="install-banner__text">{{ t('pwa.installBody') }}</p>
+      <p class="install-banner__text">
+        {{ isLanHttp ? t('pwa.installHttpHint') : t('pwa.installBody') }}
+      </p>
       <div class="install-banner__actions">
-        <UiButton type="button" size="sm" :icon="Smartphone" @click="promptNativeInstall">
+        <UiButton
+          v-if="canNativeInstall"
+          type="button"
+          size="sm"
+          :icon="Smartphone"
+          @click="promptNativeInstall"
+        >
           {{ t('pwa.installButton') }}
+        </UiButton>
+        <UiButton type="button" size="sm" :icon="Download" @click="downloadShortcut">
+          {{ t('pwa.installDesktopShortcut') }}
         </UiButton>
         <UiButton type="button" size="sm" variant="ghost" @click="dismissBanner">
           {{ t('pwa.installDismiss') }}

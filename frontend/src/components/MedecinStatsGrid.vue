@@ -6,20 +6,21 @@ import {
   FlaskConical,
   ClipboardList,
   CheckCircle2,
-  HeartHandshake,
   CircleDollarSign,
   FolderOpen,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
+
+const { uiText } = useAppI18n()
 
 type MedecinStats = {
   consultationToday: number
   dejaConsulteToday: number
   labsWaitingToday: number
   labsResultsToday: number
-  associePatientsToday: number
   hasQuota: boolean
   consultationsTotalToday: number | null
   consultationsGrossFcfa: number | null
@@ -42,7 +43,6 @@ const stats = ref<MedecinStats>({
   dejaConsulteToday: 0,
   labsWaitingToday: 0,
   labsResultsToday: 0,
-  associePatientsToday: 0,
   hasQuota: false,
   consultationsTotalToday: null,
   consultationsGrossFcfa: null,
@@ -70,7 +70,9 @@ async function loadStats() {
     const { data } = await api.get<MedecinStats>('/consultations/medecin-stats')
     stats.value = data
   } catch {
-    loadError.value = 'Impossible de charger les statistiques. Réessayez ou redémarrez le serveur API.'
+    loadError.value = uiText(
+      'Impossible de charger les statistiques. Réessayez ou redémarrez le serveur API.',
+    )
   } finally {
     loading.value = false
   }
@@ -124,13 +126,6 @@ function openDossierPatient() {
         variant="rose"
       />
     </button>
-    <UiStatCard
-      mini
-      label="Associés"
-      :value="stats.associePatientsToday"
-      :icon="HeartHandshake"
-      variant="green"
-    />
     <UiStatCard
       v-if="stats.hasQuota"
       mini

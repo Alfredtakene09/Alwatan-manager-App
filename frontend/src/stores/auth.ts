@@ -2,6 +2,8 @@ import { defineStore } from 'pinia'
 import api from '@/api/client'
 import { getDefaultRoute, type SessionUser } from '@/lib/roles'
 
+let fetchMePromise: Promise<void> | null = null
+
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     user: null as SessionUser | null,
@@ -12,12 +14,21 @@ export const useAuthStore = defineStore('auth', {
   },
   actions: {
     async fetchMe() {
-      try {
-        const { data } = await api.get<SessionUser>('/auth/me')
-        this.user = data
-      } catch {
-        this.user = null
+      if (fetchMePromise) {
+        await fetchMePromise
+        return
       }
+      fetchMePromise = (async () => {
+        try {
+          const { data } = await api.get<SessionUser>('/auth/me')
+          this.user = data
+        } catch {
+          this.user = null
+        } finally {
+          fetchMePromise = null
+        }
+      })()
+      await fetchMePromise
     },
     async login(username: string, password: string) {
       this.loading = true

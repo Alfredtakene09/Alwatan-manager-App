@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, ref } from 'vue'
+import { computed, onActivated, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { CheckCircle2, Eye, Pencil, Plus, Printer, RefreshCw, Search } from '@lucide/vue'
 import api from '@/api/client'
@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import { fetchAndPrintLabVisitResults } from '@/lib/lab-visit-print'
 import { matchesLabVisitSearch } from '@/lib/lab-visit-search'
 import { fullName } from '@/lib/roles'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import {
   countLabPrescribedExams,
   formatLabPrescribedExamsPreview,
@@ -17,11 +18,13 @@ import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
+import { useSilentRefresh } from '@/composables/useSilentRefresh'
 import { type LabsWaitingVisitRow } from '@/components/ui/LabsWaitingDataTable.vue'
 import '@/assets/lab-visit-table.css'
 
 const router = useRouter()
 const auth = useAuthStore()
+const { uiText, dateText, timeText, numberText } = useAppI18n()
 
 const visits = ref<LabsWaitingVisitRow[]>([])
 const listSearch = ref('')
@@ -49,8 +52,8 @@ const rows = computed(() =>
         exams: formatLabPrescribedExamsPreview(notes),
         examsFull: formatLabPrescribedExamsSummary(notes),
         examCount: countLabPrescribedExams(notes),
-        eventDate: eventAt.toLocaleDateString('fr-FR'),
-        eventTime: eventAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        eventDate: dateText(eventAt),
+        eventTime: timeText(eventAt),
         eventSort: eventAt.getTime(),
       }
     })
@@ -59,17 +62,19 @@ const rows = computed(() =>
 
 const hasActiveSearch = computed(() => listSearch.value.trim().length > 0)
 
-async function loadCompleted() {
-  loading.value = true
-  loadError.value = ''
+async function loadCompleted(opts?: { silent?: boolean }) {
+  if (!opts?.silent) loading.value = true
+  if (!opts?.silent) loadError.value = ''
   try {
     const { data } = await api.get<LabsWaitingVisitRow[]>('/laboratoire/completed')
     visits.value = data
   } catch {
-    loadError.value = 'Impossible de charger les examens terminés.'
-    visits.value = []
+    if (!opts?.silent) {
+      loadError.value = 'Impossible de charger les examens terminés.'
+      visits.value = []
+    }
   } finally {
-    loading.value = false
+    if (!opts?.silent) loading.value = false
   }
 }
 
@@ -113,8 +118,14 @@ function resetSearch() {
   listSearch.value = ''
 }
 
-onMounted(loadCompleted)
-onActivated(loadCompleted)
+const { refresh: refreshCompleted } = useSilentRefresh(
+  ({ silent }) => loadCompleted({ silent }),
+  { intervalMs: 30_000 },
+)
+
+onActivated(() => {
+  void refreshCompleted({ silent: true })
+})
 </script>
 
 <template>
@@ -126,7 +137,7 @@ onActivated(loadCompleted)
         :icon="CheckCircle2"
       >
         <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadCompleted">
+          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshCompleted()">
             Actualiser
           </UiButton>
         </template>
@@ -151,39 +162,41 @@ onActivated(loadCompleted)
               <input
                 v-model="listSearch"
                 type="search"
-                placeholder="Patient, matricule, médecin…"
-                aria-label="Rechercher un dossier terminé"
+                :placeholder="uiText('Patient, matricule, médecin…')"
+                :aria-label="uiText('Rechercher un dossier terminé')"
               />
             </label>
             <UiButton v-if="hasActiveSearch" variant="ghost" size="sm" @click="resetSearch">
               Effacer
             </UiButton>
-            <span class="lab-toolbar__count">{{ filteredVisits.length }} dossier(s)</span>
+            <span class="lab-toolbar__count">{{
+              uiText('{n} dossier(s)').replace('{n}', numberText(filteredVisits.length))
+            }}</span>
           </div>
         </template>
 
-        <p v-if="loading && !visits.length" class="empty">Chargement des examens terminés…</p>
+        <p v-if="loading && !visits.length" class="empty">{{ uiText('Chargement des examens terminés…') }}</p>
         <p v-else-if="!loading && !visits.length" class="empty">
-          Aucun examen de laboratoire terminé pour le moment.
+          {{ uiText('Aucun examen de laboratoire terminé pour le moment.') }}
         </p>
         <p v-else-if="!loading && visits.length && !rows.length" class="empty">
-          Aucun dossier ne correspond à votre recherche.
+          {{ uiText('Aucun dossier ne correspond à votre recherche.') }}
         </p>
         <div v-else class="lab-visit-table-wrap">
           <table class="lab-visit-table">
             <thead>
               <tr>
                 <th class="lab-visit-table__num">#</th>
-                <th>Matricule</th>
-                <th>Patient</th>
-                <th>Terminé le</th>
-                <th>Examens</th>
-                <th class="lab-visit-table__actions-head">Actions</th>
+                <th>{{ uiText('Matricule') }}</th>
+                <th>{{ uiText('Patient') }}</th>
+                <th>{{ uiText('Terminé le') }}</th>
+                <th>{{ uiText('Examens') }}</th>
+                <th class="lab-visit-table__actions-head">{{ uiText('Actions') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(row, index) in rows" :key="row.id">
-                <td class="lab-visit-table__num">{{ index + 1 }}</td>
+                <td class="lab-visit-table__num">{{ numberText(index + 1) }}</td>
                 <td>
                   <span class="lab-visit-badge">{{ row.code }}</span>
                 </td>
@@ -197,7 +210,7 @@ onActivated(loadCompleted)
                 </td>
                 <td>
                   <span class="lab-visit-exams" :title="row.examsFull !== row.exams ? row.examsFull : ''">
-                    <span v-if="row.examCount > 0" class="lab-visit-exam-count">{{ row.examCount }}</span>
+                    <span v-if="row.examCount > 0" class="lab-visit-exam-count">{{ numberText(row.examCount) }}</span>
                     <span class="lab-visit-sub lab-visit-sub--truncate">{{ row.exams }}</span>
                   </span>
                 </td>
@@ -206,7 +219,7 @@ onActivated(loadCompleted)
                     <button
                       type="button"
                       class="lab-visit-act lab-visit-act--icon lab-visit-act--accent"
-                      title="Imprimer"
+                      :title="uiText('Imprimer')"
                       :disabled="printingVisitId === row.id"
                       @click="printResults(row.id)"
                     >
@@ -215,7 +228,7 @@ onActivated(loadCompleted)
                     <button
                       type="button"
                       class="lab-visit-act lab-visit-act--icon"
-                      title="Consulter"
+                      :title="uiText('Consulter')"
                       @click="goToResults(row.id)"
                     >
                       <Eye :size="15" />
@@ -223,7 +236,7 @@ onActivated(loadCompleted)
                     <button
                       type="button"
                       class="lab-visit-act lab-visit-act--icon lab-visit-act--edit"
-                      title="Modifier"
+                      :title="uiText('Modifier')"
                       @click="goToEditResults(row.id)"
                     >
                       <Pencil :size="15" />
@@ -231,7 +244,7 @@ onActivated(loadCompleted)
                     <button
                       type="button"
                       class="lab-visit-act lab-visit-act--icon lab-visit-act--add"
-                      title="Ajouter un formulaire"
+                      :title="uiText('Ajouter un formulaire')"
                       @click="goToAddForm(row.id)"
                     >
                       <Plus :size="15" />

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, ref } from 'vue'
+import { computed, onActivated, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   FlaskConical,
@@ -12,6 +12,7 @@ import {
   Pencil,
 } from '@lucide/vue'
 import api from '@/api/client'
+import { useSilentRefresh } from '@/composables/useSilentRefresh'
 import {
   countLabPrescribedExams,
   formatLabPrescribedExamsPreview,
@@ -19,6 +20,7 @@ import {
 } from '@/lib/lab-notes'
 import { matchesLabVisitSearch } from '@/lib/lab-visit-search'
 import { fullName } from '@/lib/roles'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -29,6 +31,7 @@ import LabQueueVisitPanel from '@/components/laboratoire/LabQueueVisitPanel.vue'
 import '@/assets/lab-visit-table.css'
 
 const router = useRouter()
+const { uiText, dateText, timeText, numberText } = useAppI18n()
 const visits = ref<LabsWaitingVisitRow[]>([])
 const completedCount = ref(0)
 const panelVisitId = ref<string | null>(null)
@@ -77,8 +80,8 @@ const rows = computed(() =>
         exams: formatLabPrescribedExamsPreview(notes),
         examsFull: formatLabPrescribedExamsSummary(notes),
         examCount: countLabPrescribedExams(notes),
-        eventDate: eventAt.toLocaleDateString('fr-FR'),
-        eventTime: eventAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        eventDate: dateText(eventAt),
+        eventTime: timeText(eventAt),
         eventSort: eventAt.getTime(),
       }
     })
@@ -87,9 +90,9 @@ const rows = computed(() =>
 
 const hasActiveSearch = computed(() => listSearch.value.trim().length > 0)
 
-async function loadQueue() {
-  loading.value = true
-  loadError.value = ''
+async function loadQueue(opts?: { silent?: boolean }) {
+  if (!opts?.silent) loading.value = true
+  if (!opts?.silent) loadError.value = ''
   try {
     const [queueRes, completedRes] = await Promise.all([
       api.get<LabsWaitingVisitRow[]>('/laboratoire/queue'),
@@ -101,11 +104,13 @@ async function loadQueue() {
       panelVisitId.value = null
     }
   } catch {
-    loadError.value = 'Impossible de charger la file d\'attente laboratoire.'
-    visits.value = []
-    completedCount.value = 0
+    if (!opts?.silent) {
+      loadError.value = 'Impossible de charger la file d\'attente laboratoire.'
+      visits.value = []
+      completedCount.value = 0
+    }
   } finally {
-    loading.value = false
+    if (!opts?.silent) loading.value = false
   }
 }
 
@@ -126,8 +131,17 @@ function resetSearch() {
   listSearch.value = ''
 }
 
-onMounted(loadQueue)
-onActivated(loadQueue)
+const { refresh: refreshQueue } = useSilentRefresh(
+  ({ silent }) => loadQueue({ silent }),
+  {
+    intervalMs: 20_000,
+    enabled: () => !panelVisitId.value,
+  },
+)
+
+onActivated(() => {
+  void refreshQueue({ silent: true })
+})
 </script>
 
 <template>
@@ -139,7 +153,7 @@ onActivated(loadQueue)
         :icon="FlaskConical"
       >
         <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadQueue">
+          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshQueue()">
             Actualiser
           </UiButton>
         </template>
@@ -148,10 +162,10 @@ onActivated(loadQueue)
       <UiAlert v-if="loadError" type="error" :message="loadError" />
 
       <div class="stats-grid" :class="{ 'stats-grid--loading': loading }">
-        <UiStatCard mini label="En attente" :value="stats.pending" :icon="Clock" variant="amber" />
-        <UiStatCard mini label="Examens" :value="stats.totalExams" :icon="FlaskConical" variant="teal" />
-        <UiStatCard mini label="Aujourd'hui" :value="stats.transferredToday" :icon="CalendarDays" variant="blue" />
-        <UiStatCard mini label="Terminés" :value="stats.completed" :icon="CheckCircle2" variant="green" />
+        <UiStatCard mini label="En attente" :value="numberText(stats.pending)" :icon="Clock" variant="amber" />
+        <UiStatCard mini label="Examens" :value="numberText(stats.totalExams)" :icon="FlaskConical" variant="teal" />
+        <UiStatCard mini label="Aujourd'hui" :value="numberText(stats.transferredToday)" :icon="CalendarDays" variant="blue" />
+        <UiStatCard mini label="Terminés" :value="numberText(stats.completed)" :icon="CheckCircle2" variant="green" />
       </div>
     </section>
 
@@ -169,33 +183,35 @@ onActivated(loadQueue)
               <input
                 v-model="listSearch"
                 type="search"
-                placeholder="Patient, matricule, examen…"
-                aria-label="Rechercher un dossier"
+                :placeholder="uiText('Patient, matricule, examen…')"
+                :aria-label="uiText('Rechercher un dossier')"
               />
             </label>
             <UiButton v-if="hasActiveSearch" variant="ghost" size="sm" @click="resetSearch">
               Effacer
             </UiButton>
-            <span class="lab-toolbar__count">{{ filteredVisits.length }} dossier(s)</span>
+            <span class="lab-toolbar__count">{{
+              uiText('{n} dossier(s)').replace('{n}', numberText(filteredVisits.length))
+            }}</span>
           </div>
         </template>
-        <p v-if="loading && !visits.length" class="empty">Chargement des analyses en cours…</p>
+        <p v-if="loading && !visits.length" class="empty">{{ uiText('Chargement des analyses en cours…') }}</p>
         <p v-else-if="!loading && !visits.length" class="empty">
-          Aucun examen de laboratoire en attente pour le moment.
+          {{ uiText('Aucun examen de laboratoire en attente pour le moment.') }}
         </p>
         <p v-else-if="!loading && visits.length && !rows.length" class="empty">
-          Aucun dossier ne correspond à votre recherche.
+          {{ uiText('Aucun dossier ne correspond à votre recherche.') }}
         </p>
         <div v-else class="lab-visit-table-wrap">
           <table class="lab-visit-table">
             <thead>
               <tr>
                 <th class="lab-visit-table__num">#</th>
-                <th>Matricule</th>
-                <th>Patient</th>
-                <th>Examens</th>
-                <th>Transféré le</th>
-                <th class="lab-visit-table__actions-head">Actions</th>
+                <th>{{ uiText('Matricule') }}</th>
+                <th>{{ uiText('Patient') }}</th>
+                <th>{{ uiText('Examens') }}</th>
+                <th>{{ uiText('Transféré le') }}</th>
+                <th class="lab-visit-table__actions-head">{{ uiText('Actions') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -204,7 +220,7 @@ onActivated(loadQueue)
                 :key="row.id"
                 :class="{ 'is-selected': panelVisitId === row.id }"
               >
-                <td class="lab-visit-table__num">{{ index + 1 }}</td>
+                <td class="lab-visit-table__num">{{ numberText(index + 1) }}</td>
                 <td>
                   <span class="lab-visit-badge">{{ row.code }}</span>
                 </td>
@@ -214,7 +230,7 @@ onActivated(loadQueue)
                 </td>
                 <td>
                   <span class="lab-visit-exams" :title="row.examsFull !== row.exams ? row.examsFull : ''">
-                    <span v-if="row.examCount > 0" class="lab-visit-exam-count">{{ row.examCount }}</span>
+                    <span v-if="row.examCount > 0" class="lab-visit-exam-count">{{ numberText(row.examCount) }}</span>
                     <span class="lab-visit-sub lab-visit-sub--truncate">{{ row.exams }}</span>
                   </span>
                 </td>
@@ -227,7 +243,7 @@ onActivated(loadQueue)
                     <button
                       type="button"
                       class="lab-visit-act lab-visit-act--icon lab-visit-act--accent"
-                      title="Saisir les résultats"
+                      :title="uiText('Saisir les résultats')"
                       @click="goToDossier(row.id)"
                     >
                       <Pencil :size="15" />
@@ -235,7 +251,7 @@ onActivated(loadQueue)
                     <button
                       type="button"
                       class="lab-visit-act lab-visit-act--icon"
-                      title="Voir le dossier"
+                      :title="uiText('Voir le dossier')"
                       @click="openPanel(row.id)"
                     >
                       <Eye :size="15" />

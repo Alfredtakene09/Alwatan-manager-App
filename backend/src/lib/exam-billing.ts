@@ -1,9 +1,15 @@
-import { parsePrescribedExamsByKind, type ExamKindSlug, LAB_BILLABLE_EXAM_KINDS } from "./lab-notes.js";
+import {
+  parsePrescribedExamsByKind,
+  type ExamKindSlug,
+  LAB_BILLABLE_EXAM_KINDS,
+  filterCashierBillableExamLabels,
+} from "./lab-notes.js";
 import { getLabExamPriceFcfa } from "./lab-exam-prices.js";
 
 export type { ExamKindSlug };
 
 export const EXAM_KIND_ORDER: ExamKindSlug[] = [
+  "specialty",
   "examen",
   "radio",
   "echo",
@@ -30,6 +36,7 @@ export type ExamReductionsByKind = Record<ExamKindSlug, number>;
 
 export function emptyExamReductionsByKind(): ExamReductionsByKind {
   return {
+    specialty: 0,
     examen: 0,
     radio: 0,
     echo: 0,
@@ -46,7 +53,9 @@ export function buildExamSheetsByKind(
   const byKind = parsePrescribedExamsByKind(notes);
   const kinds = options?.billableOnly ? LAB_BILLABLE_EXAM_KINDS : EXAM_KIND_ORDER;
   return kinds.flatMap((kind) => {
-    const lines = byKind[kind].map((label) => ({
+    // « Consultation » est payée à la création de visite — hors facturation examens.
+    const labels = filterCashierBillableExamLabels(byKind[kind]);
+    const lines = labels.map((label) => ({
       kind,
       label,
       unitPriceFcfa: getLabExamPriceFcfa(label),

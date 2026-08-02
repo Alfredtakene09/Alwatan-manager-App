@@ -67,6 +67,7 @@ export function activeExamKinds(lines: LabExamLine[]): ExamKindSlug[] {
 }
 
 export const EXAM_INVOICE_DOC_TITLES: Record<ExamKindSlug, string> = {
+  specialty: 'Facture — Examens spécialité',
   examen: 'Facture — Examens laboratoire',
   radio: 'Facture — Radiologie',
   echo: 'Facture — Échographie',
@@ -76,6 +77,7 @@ export const EXAM_INVOICE_DOC_TITLES: Record<ExamKindSlug, string> = {
 }
 
 export const EXAM_KIND_REDUCTION_LABELS: Record<ExamKindSlug, string> = {
+  specialty: 'Réduction Spécialité (FCFA)',
   examen: 'Réduction Laboratoire (FCFA)',
   radio: 'Réduction Radio (FCFA)',
   echo: 'Réduction Écho (FCFA)',
@@ -96,6 +98,7 @@ export function resolveSingleExamInvoiceDocTitle(kind?: ExamKindSlug): string {
 
 export function initLabExamReductionsByKind(): Record<ExamKindSlug, number> {
   return {
+    specialty: 0,
     examen: 0,
     radio: 0,
     echo: 0,

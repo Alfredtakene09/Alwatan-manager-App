@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Clock, FlaskConical } from '@lucide/vue'
 import api from '@/api/client'
 import { showApiErrorModal } from '@/lib/api-modal-helper'
 import { useComptabiliteQueue } from '@/composables/useComptabiliteQueue'
+import { useSilentRefresh } from '@/composables/useSilentRefresh'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -136,7 +137,13 @@ async function confirmPayment(payload: LabExamPaymentConfirmPayload) {
   }
 }
 
-onMounted(load)
+const { refresh: refreshQueue } = useSilentRefresh(
+  ({ silent }) => load({ silent }),
+  {
+    intervalMs: 20_000,
+    enabled: () => !selectedId.value && !submitting.value,
+  },
+)
 </script>
 
 <template>
@@ -162,7 +169,7 @@ onMounted(load)
         icon-variant="amber"
       >
         <template #actions>
-          <UiButton variant="ghost" size="sm" :disabled="loading" @click="load">
+          <UiButton variant="ghost" size="sm" :disabled="loading" @click="refreshQueue()">
             Actualiser
           </UiButton>
         </template>
@@ -174,7 +181,7 @@ onMounted(load)
           v-else
           fill
           :items="pendingItems"
-          :loading="loading"
+          :loading="loading && !pendingItems.length"
           @pay="openPay"
           @print="onPrint"
           @hospitalize="goToHospitalization"

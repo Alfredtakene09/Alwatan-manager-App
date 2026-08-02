@@ -9,14 +9,18 @@ import {
   EXAM_CATALOG_KIND_CONFIG,
   EXAM_CATALOG_ADD_LABELS,
   EXAM_CATALOG_FORM_PLACEHOLDERS,
+  EXAM_CATALOG_KIND_SLUGS,
+  examCatalogKindRoute,
   type ExamCatalogKindSlug,
 } from '@/lib/exam-catalog-kinds'
-import ExamCatalogKindTabs from '@/components/comptabilite/ExamCatalogKindTabs.vue'
+import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
+import { suggestExamCatalogKindSlugFromServiceName } from '@/lib/exam-catalog-service-kind'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
+import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
@@ -24,13 +28,19 @@ import UiDataTable from '@/components/ui/UiDataTable.vue'
 
 type CatalogItem = {
   id: string
+  kind?: string
   code: string
   label: string
   category?: string | null
   priceFcfa: number
   active: boolean
   sortOrder: number
+  clinicServiceId?: string | null
+  clinicService?: { id: string; name: string } | null
 }
+
+type ClinicServiceOption = { id: string; name: string; active?: boolean }
+type ServiceTabOption = { id: string; name: string; examCount: number }
 
 const props = defineProps<{
   kind: ExamCatalogKindSlug
@@ -39,20 +49,15 @@ const props = defineProps<{
 const { uiText, localeCode } = useAppI18n()
 
 const config = computed(() => EXAM_CATALOG_KIND_CONFIG[props.kind])
-const addButtonLabel = computed(() => EXAM_CATALOG_ADD_LABELS[props.kind])
 const formPlaceholders = computed(() => EXAM_CATALOG_FORM_PLACEHOLDERS[props.kind])
-const catalogCardTitle = computed(() =>
-  translateTemplate('Nomenclature — {label}', { label: uiText(config.value.label) }),
-)
-const addModalSubtitle = computed(() =>
-  translateTemplate('Ajouter un élément à la nomenclature {kind}', {
-    kind: uiText(config.value.label),
-  }),
-)
-const elementCountLabel = computed(() =>
-  translateTemplate('{n} élément(s)', { n: items.value.length }),
-)
 const items = ref<CatalogItem[]>([])
+const clinicServices = ref<ClinicServiceOption[]>([])
+const activeServiceTabId = ref<string>('all')
+const selectedServiceToAdd = ref<string>('')
+const serviceTabIds = ref<string[]>([])
+const serviceTabExamCounts = ref<Record<string, number>>({})
+const searchQuery = ref('')
+const selectedCategory = ref('')
 const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
@@ -65,6 +70,7 @@ const newItem = ref({
   label: '',
   category: '',
   priceFcfa: '',
+  clinicServiceId: '',
 })
 
 const editForm = ref({
@@ -72,17 +78,94 @@ const editForm = ref({
   label: '',
   category: '',
   priceFcfa: '',
+  clinicServiceId: '',
 })
 
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 
+const dynamicServiceTabs = computed<ServiceTabOption[]>(() => {
+  if (!serviceTabIds.value.length) return []
+  const serviceById = new Map(clinicServices.value.map((service) => [service.id, service]))
+  return serviceTabIds.value
+    .map((id) => {
+      const service = serviceById.get(id)
+      if (!service) return null
+      return {
+        id: service.id,
+        name: service.name,
+        examCount: serviceTabExamCounts.value[id] ?? 0,
+      }
+    })
+    .filter((tab): tab is ServiceTabOption => Boolean(tab))
+})
+const activeServiceTabName = computed(() => {
+  if (activeServiceTabId.value === 'all') return uiText('Tous les services')
+  const service = clinicServices.value.find((item) => item.id === activeServiceTabId.value)
+  return service?.name ?? uiText('Service inconnu')
+})
+const isServiceContext = computed(() => activeServiceTabId.value !== 'all')
+const contextLabel = computed(() =>
+  isServiceContext.value ? activeServiceTabName.value : uiText(config.value.label),
+)
+const pageTitle = computed(() => contextLabel.value)
+const pageSubtitle = computed(() =>
+  isServiceContext.value
+    ? translateTemplate('Nomenclature et tarifs — {service}', {
+        service: activeServiceTabName.value,
+      })
+    : config.value.subtitle,
+)
+const addButtonLabel = computed(() =>
+  isServiceContext.value
+    ? translateTemplate('Ajout {label}', { label: activeServiceTabName.value })
+    : EXAM_CATALOG_ADD_LABELS[props.kind],
+)
+const catalogCardTitle = computed(() =>
+  translateTemplate('Nomenclature — {label}', { label: contextLabel.value }),
+)
+const addModalSubtitle = computed(() =>
+  translateTemplate('Ajouter un élément à la nomenclature {kind}', {
+    kind: contextLabel.value,
+  }),
+)
+
+const categoryOptions = computed(() => {
+  const set = new Set<string>()
+  for (const item of items.value) {
+    const category = item.category?.trim()
+    if (category) set.add(category)
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'fr'))
+})
+
+const filteredItems = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  const category = selectedCategory.value.trim()
+  return items.value
+    .filter((item) => {
+      if (category && (item.category?.trim() || '') !== category) return false
+      if (!query) return true
+      const haystack = [item.label, item.code, item.category ?? '', item.clinicService?.name ?? '']
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(query)
+    })
+    .slice()
+    .sort((a, b) => a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' }))
+})
+
+const elementCountLabel = computed(() =>
+  translateTemplate('{n} élément(s)', { n: filteredItems.value.length }),
+)
+
 const tableRows = computed(() => {
   localeCode.value
-  return items.value.map((item) => ({
+  return filteredItems.value.map((item) => ({
     id: item.id,
     label: item.label,
     code: item.code,
     category: item.category || '—',
+    service: item.clinicService?.name || uiText('Tous les services'),
     price: formatFcfa(item.priceFcfa),
     priceSort: item.priceFcfa,
     statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),
@@ -92,10 +175,16 @@ const tableRows = computed(() => {
   }))
 })
 
+function resetListFilters() {
+  searchQuery.value = ''
+  selectedCategory.value = ''
+}
+
 const columns = [
   { data: 'label', title: 'Libellé', render: (v: string) => `<span class="dt-name">${v}</span>` },
   { data: 'code', title: 'Code' },
   { data: 'category', title: 'Catégorie' },
+  { data: 'service', title: 'Service' },
   {
     data: 'priceSort',
     title: 'Tarif',
@@ -121,12 +210,33 @@ function resetMessages() {
   message.value = ''
 }
 
+async function loadClinicServices() {
+  try {
+    const { data } = await api.get<ClinicServiceOption[]>('/admin/services')
+    clinicServices.value = Array.isArray(data) ? data.filter((s) => s.active !== false) : []
+  } catch {
+    try {
+      const { data } = await api.get<ClinicServiceOption[]>('/gestionnaire/services')
+      clinicServices.value = Array.isArray(data) ? data.filter((s) => s.active !== false) : []
+    } catch {
+      clinicServices.value = []
+    }
+  }
+}
+
 async function loadItems() {
   loading.value = true
   resetMessages()
   try {
-    const { data } = await api.get<CatalogItem[]>(`/comptabilite/exam-types/catalog/${props.kind}`)
-    items.value = data
+    if (activeServiceTabId.value !== 'all') {
+      const { data } = await api.get<CatalogItem[]>(
+        `/comptabilite/exam-types/catalog-by-service/${activeServiceTabId.value}`,
+      )
+      items.value = Array.isArray(data) ? data : []
+    } else {
+      const { data } = await api.get<CatalogItem[]>(`/comptabilite/exam-types/catalog/${props.kind}`)
+      items.value = Array.isArray(data) ? data : []
+    }
   } catch {
     message.value = 'Impossible de charger la nomenclature.'
     messageType.value = 'error'
@@ -135,12 +245,21 @@ async function loadItems() {
   }
 }
 
+function kindSlugForItem(item: CatalogItem): ExamCatalogKindSlug {
+  const raw = String(item.kind ?? '').toLowerCase()
+  if (raw === 'examen' || raw === 'radio' || raw === 'echo' || raw === 'odonto') return raw
+  return props.kind
+}
+
 function resetNewItemForm() {
-  newItem.value = { code: '', label: '', category: '', priceFcfa: '' }
+  newItem.value = { code: '', label: '', category: '', priceFcfa: '', clinicServiceId: '' }
 }
 
 function openAddModal() {
   resetNewItemForm()
+  if (activeServiceTabId.value !== 'all') {
+    newItem.value.clinicServiceId = activeServiceTabId.value
+  }
   showAddModal.value = true
 }
 
@@ -150,8 +269,8 @@ function closeAddModal() {
 }
 
 async function addItem() {
-  if (!newItem.value.code.trim() || !newItem.value.label.trim() || !newItem.value.priceFcfa) {
-    message.value = 'Code, libellé et tarif sont obligatoires.'
+  if (!newItem.value.label.trim() || !newItem.value.priceFcfa) {
+    message.value = 'Libellé et tarif sont obligatoires.'
     messageType.value = 'error'
     return
   }
@@ -159,20 +278,32 @@ async function addItem() {
   saving.value = true
   resetMessages()
   try {
-    await api.post(`/comptabilite/exam-types/catalog/${props.kind}`, {
-      code: newItem.value.code.trim(),
+    // Onglet service => lié à ce service.
+    // Onglet Labo/Radio/Écho/Odonto => nomenclature globale du type (pas de service spécialisé).
+    const serviceId = isServiceContext.value ? activeServiceTabId.value : null
+    const serviceName = serviceId
+      ? clinicServices.value.find((service) => service.id === serviceId)?.name
+      : null
+    const targetKind = serviceId
+      ? suggestExamCatalogKindSlugFromServiceName(serviceName)
+      : props.kind
+
+    await api.post(`/comptabilite/exam-types/catalog/${targetKind}`, {
+      code: newItem.value.code.trim() || undefined,
       label: newItem.value.label.trim(),
       category: newItem.value.category.trim() || undefined,
       priceFcfa: Number(newItem.value.priceFcfa),
+      clinicServiceId: serviceId,
     })
     message.value = 'Élément ajouté à la nomenclature.'
     messageType.value = 'success'
+    invalidateExamCatalogCache()
     closeAddModal()
-    await loadItems()
+    await Promise.all([loadServiceTabs(), loadItems()])
   } catch (error) {
     const shown = await showDuplicateModalFromError(error)
     if (!shown) {
-      message.value = 'Ajout impossible. Vérifiez le code (unique) et les tarifs.'
+      message.value = 'Ajout impossible. Vérifiez le code (unique), le service et les tarifs.'
       messageType.value = 'error'
     }
   } finally {
@@ -189,6 +320,10 @@ function openEditModal(id: string) {
     label: item.label,
     category: item.category ?? '',
     priceFcfa: String(item.priceFcfa),
+    clinicServiceId:
+      activeServiceTabId.value !== 'all'
+        ? activeServiceTabId.value
+        : (item.clinicServiceId ?? item.clinicService?.id ?? ''),
   }
 }
 
@@ -198,19 +333,33 @@ function closeEditModal() {
 
 async function saveEdit() {
   if (!editingId.value) return
+  if (!editForm.value.label.trim() || !editForm.value.priceFcfa) {
+    message.value = 'Libellé et tarif sont obligatoires.'
+    messageType.value = 'error'
+    return
+  }
+  const current = itemsById.value.get(editingId.value)
+  const kindSlug = current ? kindSlugForItem(current) : props.kind
   saving.value = true
   resetMessages()
   try {
-    await api.put(`/comptabilite/exam-types/catalog/${props.kind}/${editingId.value}`, {
-      code: editForm.value.code.trim(),
+    const serviceId = isServiceContext.value
+      ? activeServiceTabId.value
+      : editForm.value.clinicServiceId.trim() || null
+    // Sur un onglet type (Labo/…), on ne rattache jamais à un service spécialisé.
+    const resolvedServiceId = isServiceContext.value ? serviceId : null
+    await api.put(`/comptabilite/exam-types/catalog/${kindSlug}/${editingId.value}`, {
+      code: editForm.value.code.trim() || undefined,
       label: editForm.value.label.trim(),
       category: editForm.value.category.trim() || undefined,
       priceFcfa: Number(editForm.value.priceFcfa),
+      clinicServiceId: resolvedServiceId,
     })
     message.value = 'Élément mis à jour.'
     messageType.value = 'success'
+    invalidateExamCatalogCache()
     closeEditModal()
-    await loadItems()
+    await Promise.all([loadServiceTabs(), loadItems()])
   } catch {
     message.value = 'Mise à jour impossible.'
     messageType.value = 'error'
@@ -224,9 +373,12 @@ async function toggleItem(id: string) {
   if (!item) return
   resetMessages()
   try {
-    await api.put(`/comptabilite/exam-types/catalog/${props.kind}/${id}`, { active: !item.active })
+    await api.put(`/comptabilite/exam-types/catalog/${kindSlugForItem(item)}/${id}`, {
+      active: !item.active,
+    })
     message.value = item.active ? 'Élément désactivé.' : 'Élément réactivé.'
     messageType.value = 'success'
+    invalidateExamCatalogCache()
     await loadItems()
   } catch {
     message.value = 'Action impossible.'
@@ -251,11 +403,12 @@ async function deleteItem(id: string) {
 
   resetMessages()
   try {
-    await api.delete(`/comptabilite/exam-types/catalog/${props.kind}/${id}`)
+    await api.delete(`/comptabilite/exam-types/catalog/${kindSlugForItem(item)}/${id}`)
     message.value = 'Élément supprimé.'
     messageType.value = 'success'
+    invalidateExamCatalogCache()
     if (editingId.value === id) closeEditModal()
-    await loadItems()
+    await Promise.all([loadServiceTabs(), loadItems()])
   } catch {
     message.value = 'Suppression impossible.'
     messageType.value = 'error'
@@ -268,23 +421,195 @@ function onTableAction({ action, id }: { action: string; id: string }) {
   if (action === 'delete') deleteItem(id)
 }
 
+async function loadServiceTabs() {
+  try {
+    const { data } = await api.get<
+      Array<{
+        clinicServiceId: string
+        sortOrder: number
+        examCount?: number
+        clinicService: { id: string; name: string; active?: boolean }
+      }>
+    >(`/comptabilite/exam-types/service-tabs/${props.kind}`)
+    serviceTabIds.value = Array.isArray(data)
+      ? data
+          .map((item) => item.clinicServiceId)
+          .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      : []
+    const counts: Record<string, number> = {}
+    if (Array.isArray(data)) {
+      for (const item of data) {
+        counts[item.clinicServiceId] = Number(item.examCount ?? 0)
+      }
+    }
+    serviceTabExamCounts.value = counts
+
+    if (activeServiceTabId.value !== 'all' && !serviceTabIds.value.includes(activeServiceTabId.value)) {
+      activeServiceTabId.value = 'all'
+    }
+  } catch {
+    serviceTabIds.value = []
+    serviceTabExamCounts.value = {}
+    if (activeServiceTabId.value !== 'all') activeServiceTabId.value = 'all'
+  }
+}
+
+function setActiveServiceTab(serviceId: string) {
+  activeServiceTabId.value = serviceId
+  resetListFilters()
+  loadItems()
+}
+
+function onKindTabClick() {
+  if (activeServiceTabId.value === 'all') return
+  activeServiceTabId.value = 'all'
+  selectedServiceToAdd.value = ''
+  resetListFilters()
+  loadItems()
+}
+
+async function addServiceTab() {
+  const serviceId = selectedServiceToAdd.value.trim()
+  if (!serviceId) return
+  if (serviceTabIds.value.includes(serviceId)) {
+    setActiveServiceTab(serviceId)
+    return
+  }
+  try {
+    await api.post(`/comptabilite/exam-types/service-tabs/${props.kind}`, {
+      clinicServiceId: serviceId,
+    })
+    await loadServiceTabs()
+    selectedServiceToAdd.value = ''
+    setActiveServiceTab(serviceId)
+  } catch {
+    message.value = "Ajout de l'onglet service impossible."
+    messageType.value = 'error'
+  }
+}
+
+async function removeServiceTab(serviceId: string) {
+  const examCount = serviceTabExamCounts.value[serviceId] ?? 0
+  if (examCount > 0) {
+    message.value =
+      "Impossible de retirer cet onglet : supprimez d'abord tous ses examens."
+    messageType.value = 'error'
+    return
+  }
+  try {
+    await api.delete(`/comptabilite/exam-types/service-tabs/${props.kind}/${serviceId}`)
+    await loadServiceTabs()
+    if (activeServiceTabId.value === serviceId) {
+      activeServiceTabId.value = 'all'
+      await loadItems()
+    }
+  } catch {
+    message.value = "Suppression de l'onglet service impossible."
+    messageType.value = 'error'
+  }
+}
+
 watch(
   () => props.kind,
-  () => {
+  async () => {
     closeEditModal()
     closeAddModal()
-    loadItems()
+    // Les onglets service restent affichés, mais le filtre service
+    // est désactivé pour laisser chaque type (Labo/Radio/…) montrer sa nomenclature.
+    activeServiceTabId.value = 'all'
+    selectedServiceToAdd.value = ''
+    resetListFilters()
+    await loadServiceTabs()
+    await loadItems()
   },
 )
 
-onMounted(loadItems)
+watch(categoryOptions, (options) => {
+  if (selectedCategory.value && !options.includes(selectedCategory.value)) {
+    selectedCategory.value = ''
+  }
+})
+
+watch(
+  [activeServiceTabId, showAddModal],
+  ([serviceTabId, isAddModalOpen]) => {
+    if (!isAddModalOpen) return
+    newItem.value.clinicServiceId = serviceTabId === 'all' ? '' : serviceTabId
+  },
+)
+
+onMounted(async () => {
+  await Promise.all([loadClinicServices(), loadServiceTabs(), loadItems()])
+  const activeIds = new Set(clinicServices.value.map((service) => service.id))
+  const filtered = serviceTabIds.value.filter((id) => activeIds.has(id))
+  if (filtered.length !== serviceTabIds.value.length) {
+    serviceTabIds.value = filtered
+    if (activeServiceTabId.value !== 'all' && !activeIds.has(activeServiceTabId.value)) {
+      activeServiceTabId.value = 'all'
+      await loadItems()
+    }
+  }
+})
 </script>
 
 <template>
   <div>
-    <UiPageHeader :title="config.title" :subtitle="config.subtitle" :icon="config.icon" />
+    <UiPageHeader :title="pageTitle" :subtitle="pageSubtitle" :icon="config.icon" />
 
-    <ExamCatalogKindTabs :active-kind="kind" />
+    <nav class="exam-kind-tabs" :aria-label="uiText(`Types d'examen`)">
+      <RouterLink
+        v-for="slug in EXAM_CATALOG_KIND_SLUGS"
+        :key="slug"
+        :to="examCatalogKindRoute(slug)"
+        class="exam-kind-tab"
+        :class="{
+          'exam-kind-tab--muted': isServiceContext,
+          'exam-kind-tab--active': !isServiceContext && kind === slug,
+        }"
+        @click="onKindTabClick"
+      >
+        <component :is="EXAM_CATALOG_KIND_CONFIG[slug].icon" :size="16" />
+        {{ uiText(EXAM_CATALOG_KIND_CONFIG[slug].label) }}
+      </RouterLink>
+      <div
+        v-for="tab in dynamicServiceTabs"
+        :key="tab.id"
+        class="exam-kind-tab exam-kind-tab--service"
+        :class="{
+          'exam-kind-tab--active': activeServiceTabId === tab.id,
+          'exam-kind-tab--service-removable': tab.examCount === 0,
+        }"
+      >
+        <button type="button" class="exam-kind-tab__label" @click="setActiveServiceTab(tab.id)">
+          {{ tab.name }}
+        </button>
+        <button
+          v-if="tab.examCount === 0"
+          type="button"
+          class="exam-kind-tab__remove"
+          :aria-label="`Retirer l'onglet ${tab.name}`"
+          @click="removeServiceTab(tab.id)"
+        >
+          ×
+        </button>
+      </div>
+    </nav>
+
+    <div class="service-tabs-toolbar">
+      <UiSelect v-model="selectedServiceToAdd" label="Ajouter un onglet service">
+        <option value="" disabled>{{ uiText('Sélectionner un service') }}</option>
+        <option
+          v-for="service in clinicServices.filter((s) => !serviceTabIds.includes(s.id))"
+          :key="service.id"
+          :value="service.id"
+        >
+          {{ service.name }}
+        </option>
+      </UiSelect>
+      <UiButton variant="ghost" size="sm" :disabled="!selectedServiceToAdd" @click="addServiceTab">
+        Ajouter onglet
+      </UiButton>
+    </div>
 
     <UiAlert v-if="message" :type="messageType" :message="message" />
 
@@ -305,9 +630,27 @@ onMounted(loadItems)
         <span class="list-count">{{ elementCountLabel }}</span>
       </template>
 
+      <div class="catalog-filters">
+        <UiInput
+          v-model="searchQuery"
+          label="Rechercher"
+          placeholder="Libellé, code, catégorie…"
+        />
+        <UiSelect
+          :key="`category-filter-${kind}-${activeServiceTabId}`"
+          v-model="selectedCategory"
+          label="Catégorie"
+        >
+          <option value="">{{ uiText('Toutes les catégories') }}</option>
+          <option v-for="category in categoryOptions" :key="category" :value="category">
+            {{ category }}
+          </option>
+        </UiSelect>
+      </div>
+
       <div class="table-panel-scroll">
         <UiDataTable
-          :table-key="`exam-catalog-${kind}`"
+          :table-key="`exam-catalog-${kind}-${activeServiceTabId}-${searchQuery}-${selectedCategory}`"
           compact
           :data="tableRows"
           :columns="columns"
@@ -327,12 +670,34 @@ onMounted(loadItems)
       @close="closeAddModal"
     >
       <section class="form-panel">
+        <p class="form-panel__hint">
+          {{ uiText('Service actif') }}: <strong>{{ activeServiceTabName }}</strong>
+        </p>
         <div class="form-grid-2">
-          <UiInput v-model="newItem.code" label="Code" :placeholder="formPlaceholders.code" />
+          <UiInput v-model="newItem.code" label="Code (optionnel)" :placeholder="formPlaceholders.code" />
           <UiInput v-model="newItem.label" label="Libellé" :placeholder="formPlaceholders.label" />
-          <UiInput v-model="newItem.category" label="Catégorie" :placeholder="formPlaceholders.category" />
+          <UiInput v-model="newItem.category" label="Catégorie (optionnel)" :placeholder="formPlaceholders.category" />
           <UiInput v-model="newItem.priceFcfa" label="Tarif (FCFA)" type="number" min="1" />
+          <UiSelect
+            v-if="isServiceContext"
+            :key="`new-item-service-${activeServiceTabId}`"
+            v-model="newItem.clinicServiceId"
+            label="Service"
+            disabled
+          >
+            <option v-for="service in clinicServices" :key="service.id" :value="service.id">
+              {{ service.name }}
+            </option>
+          </UiSelect>
         </div>
+        <p class="form-panel__hint">
+          <template v-if="isServiceContext">
+            Cet examen sera enregistré pour le service {{ activeServiceTabName }}.
+          </template>
+          <template v-else>
+            Cet examen sera ajouté à la nomenclature {{ uiText(config.label) }} (visible sur cet onglet).
+          </template>
+        </p>
       </section>
       <template #footer>
         <UiButton variant="ghost" @click="closeAddModal">Annuler</UiButton>
@@ -352,10 +717,20 @@ onMounted(loadItems)
     >
       <section class="form-panel">
         <div class="form-grid-2">
-          <UiInput v-model="editForm.code" label="Code" />
+          <UiInput v-model="editForm.code" label="Code (optionnel)" />
           <UiInput v-model="editForm.label" label="Libellé" />
-          <UiInput v-model="editForm.category" label="Catégorie" />
+          <UiInput v-model="editForm.category" label="Catégorie (optionnel)" />
           <UiInput v-model="editForm.priceFcfa" label="Tarif (FCFA)" type="number" min="1" />
+          <UiSelect
+            v-if="isServiceContext"
+            v-model="editForm.clinicServiceId"
+            label="Service"
+            disabled
+          >
+            <option v-for="service in clinicServices" :key="service.id" :value="service.id">
+              {{ service.name }}
+            </option>
+          </UiSelect>
         </div>
       </section>
       <template #footer>
@@ -382,5 +757,156 @@ onMounted(loadItems)
 
 .table-panel-scroll {
   overflow: auto;
+}
+
+.service-tabs-toolbar {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: end;
+}
+
+.catalog-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+@media (max-width: 720px) {
+  .catalog-filters {
+    grid-template-columns: 1fr;
+  }
+}
+
+.exam-kind-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 1rem;
+  padding: 0.25rem;
+  border-radius: 12px;
+  background: var(--surface-muted, #eef2e6);
+  border: 1px solid var(--border);
+}
+
+.exam-kind-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: 9px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.exam-kind-tab:hover {
+  color: var(--primary-800);
+}
+
+.exam-kind-tab.router-link-active:not(.exam-kind-tab--muted) {
+  background: #fff;
+  color: var(--primary-800);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+}
+
+.exam-kind-tab--muted.router-link-active {
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.exam-kind-tab--active {
+  background: #fff;
+  color: var(--primary-800);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+}
+
+.exam-kind-tab--service {
+  border: 1px solid var(--border);
+  background: var(--surface-soft, #f7f8f4);
+}
+
+.exam-kind-tab--service-removable {
+  padding: 0.2rem 0.3rem 0.2rem 0.65rem;
+  gap: 0.35rem;
+}
+
+.exam-kind-tab__label {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.exam-kind-tab__remove {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text-muted);
+  line-height: 1;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.service-tabs-row {
+  margin-top: 0.8rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.service-tab {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  background: var(--surface-soft, #f7f8f4);
+  color: var(--text-muted);
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  padding: 0.4rem 0.75rem;
+}
+
+.service-tab--active {
+  border-color: var(--primary-300);
+  color: var(--primary-800);
+  background: var(--primary-50, #eaf8f1);
+}
+
+.service-tab--removable {
+  padding: 0.2rem 0.3rem 0.2rem 0.65rem;
+  gap: 0.35rem;
+}
+
+.service-tab__label {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.service-tab__remove {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text-muted);
+  line-height: 1;
+  font-size: 1rem;
+  cursor: pointer;
 }
 </style>

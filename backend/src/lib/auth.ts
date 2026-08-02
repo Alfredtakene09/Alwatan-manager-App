@@ -5,6 +5,7 @@ const COOKIE_NAME = "alwatan_session";
 
 export type SessionUser = {
   id: string;
+  username: string;
   email: string;
   firstName: string;
   lastName: string;
@@ -29,6 +30,7 @@ export async function verifySessionToken(token: string): Promise<SessionUser> {
   const { payload } = await jwtVerify(token, getSecret());
   return {
     id: String(payload.id),
+    username: String(payload.username ?? ""),
     email: String(payload.email),
     firstName: String(payload.firstName),
     lastName: String(payload.lastName),

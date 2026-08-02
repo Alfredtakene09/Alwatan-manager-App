@@ -23,6 +23,7 @@ import {
   buildGestionnaireNavBadges,
 } from "../lib/gestionnaire-dashboard-stats.js";
 import { countLowStockProducts, listPharmacyStockAlerts } from "../lib/pharmacy-alerts.js";
+import { computePharmacyProfit } from "../lib/pharmacy-profit.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -212,23 +213,41 @@ router.get("/medecin", requireModule("consultation"), async (req, res) => {
   });
 });
 
-router.get("/pharmacie", requireModule("pharmacie"), async (_req, res) => {
+router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
+  const user = req.user!;
+  const ownSalesOnly = user.role === "PHARMACIEN";
+  const pharmacistId = ownSalesOnly ? user.id : undefined;
+  const pharmacistFilter = pharmacistId ? { pharmacistId } : {};
+
   const todayStart = startOfDay(new Date());
   const dayStarts = last7DayStarts();
+  const tomorrow = new Date(todayStart);
+  tomorrow.setDate(tomorrow.getDate() + 1);
 
-  const [products, lowStock, prescriptionsToday, prescriptionsExternalToday, revenueAgg, sales, stockAlerts] =
+  const [products, lowStock, prescriptionsToday, prescriptionsExternalToday, revenueAgg, sales, stockAlerts, profitToday, profitWeek] =
     await Promise.all([
       prisma.product.count({ where: { active: true } }),
       countLowStockProducts(),
-      prisma.prescription.count({ where: { createdAt: { gte: todayStart }, patientId: { not: null } } }),
       prisma.prescription.count({
-        where: { createdAt: { gte: todayStart }, externalClientId: { not: null } },
+        where: {
+          createdAt: { gte: todayStart },
+          patientId: { not: null },
+          ...pharmacistFilter,
+        },
+      }),
+      prisma.prescription.count({
+        where: {
+          createdAt: { gte: todayStart },
+          externalClientId: { not: null },
+          ...pharmacistFilter,
+        },
       }),
       prisma.invoice.aggregate({
         where: {
           type: InvoiceType.PHARMACY,
           status: InvoiceStatus.PAID,
           paidAt: { gte: todayStart },
+          ...(pharmacistId ? { issuedById: pharmacistId } : {}),
         },
         _sum: { amountFcfa: true },
       }),
@@ -237,10 +256,13 @@ router.get("/pharmacie", requireModule("pharmacie"), async (_req, res) => {
           type: InvoiceType.PHARMACY,
           status: InvoiceStatus.PAID,
           paidAt: { gte: dayStarts[0] },
+          ...(pharmacistId ? { issuedById: pharmacistId } : {}),
         },
         select: { paidAt: true, amountFcfa: true, patientId: true, externalClientId: true },
       }),
       listPharmacyStockAlerts(),
+      computePharmacyProfit(todayStart, tomorrow, pharmacistId ? { pharmacistId } : undefined),
+      computePharmacyProfit(dayStarts[0], tomorrow, pharmacistId ? { pharmacistId } : undefined),
     ]);
 
   const topLowStock = stockAlerts.slice(0, 5).map((row) => ({
@@ -281,6 +303,8 @@ router.get("/pharmacie", requireModule("pharmacie"), async (_req, res) => {
     revenueTodayFcfa: revenueAgg._sum.amountFcfa ?? 0,
     salesLast7Days,
     topLowStock,
+    profitToday,
+    profitWeek,
   });
 });
 

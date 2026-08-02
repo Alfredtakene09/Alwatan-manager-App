@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
 import { Tags, Plus, RefreshCw, Save } from '@lucide/vue'
 import api from '@/api/client'
+import { canManagePharmacyCatalog } from '@/lib/roles'
 import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -11,6 +12,9 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
 import { confirmAppModal } from '@/lib/api-modal-helper'
+import { useAuthStore } from '@/stores/auth'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 export type PharmacyCategoryRecord = {
   id: string
@@ -21,6 +25,12 @@ export type PharmacyCategoryRecord = {
 }
 
 const emit = defineEmits<{ changed: [] }>()
+
+const { uiText, localeCode } = useAppI18n()
+const auth = useAuthStore()
+const canManageCatalog = computed(() =>
+  auth.user ? canManagePharmacyCatalog(auth.user.role) : false,
+)
 
 const items = ref<PharmacyCategoryRecord[]>([])
 const loading = ref(false)
@@ -35,50 +45,66 @@ const formSortOrder = ref('0')
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 const isEditing = computed(() => editingId.value !== null)
 
-const tableRows = computed(() =>
-  items.value.map((item) => ({
+const tableRows = computed(() => {
+  void localeCode.value
+  return items.value.map((item) => ({
     id: item.id,
     name: item.name,
     sortOrder: item.sortOrder,
     productsCount: item.productsCount,
-    productsLabel: `${item.productsCount} produit(s)`,
-    statusLabel: item.active ? 'Active' : 'Inactive',
+    productsLabel: translateTemplate('{n} produit(s)', { n: item.productsCount }),
+    statusLabel: item.active ? uiText('Active') : uiText('Inactive'),
     statusVariant: item.active ? 'success' : 'danger',
-    toggleLabel: item.active ? 'Désactiver' : 'Activer',
+    toggleLabel: item.active ? uiText('Désactiver') : uiText('Activer'),
     isActive: item.active,
-    canDelete: true,
-  })),
-)
+    canDelete: canManageCatalog.value,
+    showEdit: canManageCatalog.value,
+    showToggle: canManageCatalog.value,
+  }))
+})
 
-const columns = [
-  {
-    data: 'name',
-    title: 'Catégorie',
-    responsivePriority: 1,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  { data: 'sortOrder', title: 'Ordre', responsivePriority: 3 },
-  { data: 'productsLabel', title: 'Produits', responsivePriority: 2 },
-  {
-    data: 'statusLabel',
-    title: 'Statut',
-    responsivePriority: 3,
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: 'Actions',
-    orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog all',
-    responsivePriority: 1,
-    render: (
-      _d: unknown,
-      _t: string,
-      row: { id: string; toggleLabel: string; isActive: boolean; canDelete: boolean },
-    ) => catalogRowActionsHtml(row),
-  },
-]
+const columns = computed(() => {
+  const cols = [
+    {
+      data: 'name',
+      title: 'Catégorie',
+      responsivePriority: 1,
+      render: (name: string) => `<span class="dt-name">${name}</span>`,
+    },
+    { data: 'sortOrder', title: 'Ordre', responsivePriority: 3 },
+    { data: 'productsLabel', title: 'Produits', responsivePriority: 2 },
+    {
+      data: 'statusLabel',
+      title: 'Statut',
+      responsivePriority: 3,
+      render: (label: string, _t: string, row: { statusVariant: string }) =>
+        statusBadge(label, row.statusVariant as 'success' | 'danger'),
+    },
+  ]
+  if (!canManageCatalog.value) return cols
+  return [
+    ...cols,
+    {
+      data: null,
+      title: 'Actions',
+      orderable: false,
+      className: 'dt-actions-col dt-actions-col--catalog all',
+      responsivePriority: 1,
+      render: (
+        _d: unknown,
+        _t: string,
+        row: {
+          id: string
+          toggleLabel: string
+          isActive: boolean
+          canDelete: boolean
+          showEdit: boolean
+          showToggle: boolean
+        },
+      ) => catalogRowActionsHtml(row),
+    },
+  ]
+})
 
 function apiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error) && typeof error.response?.data?.error === 'string') {
@@ -111,6 +137,7 @@ function resetForm() {
 }
 
 function openCreateModal() {
+  if (!canManageCatalog.value) return
   editingId.value = null
   resetForm()
   modalOpen.value = true
@@ -118,6 +145,7 @@ function openCreateModal() {
 }
 
 function openEditModal(id: string) {
+  if (!canManageCatalog.value) return
   const item = itemsById.value.get(id)
   if (!item) return
   editingId.value = id
@@ -134,6 +162,7 @@ function closeModal() {
 }
 
 async function saveItem() {
+  if (!canManageCatalog.value) return
   const name = formName.value.trim()
   const sortOrder = Number(formSortOrder.value)
   if (name.length < 2) {
@@ -167,6 +196,7 @@ async function saveItem() {
 }
 
 async function toggleItem(id: string) {
+  if (!canManageCatalog.value) return
   const item = itemsById.value.get(id)
   if (!item) return
   try {
@@ -182,12 +212,13 @@ async function toggleItem(id: string) {
 }
 
 async function deleteItem(id: string) {
+  if (!canManageCatalog.value) return
   const item = itemsById.value.get(id)
   if (!item) return
   const confirmed = await confirmAppModal({
     type: 'DELETE',
     title: 'Supprimer la catégorie',
-    message: `Supprimer la catégorie « ${item.name} » ?`,
+    message: translateTemplate('Supprimer la catégorie « {name} » ?', { name: item.name }),
     confirmLabel: 'Supprimer',
   })
   if (!confirmed) return
@@ -218,19 +249,32 @@ defineExpose({ reload: loadItems })
   <PageTableSection embedded>
     <template #toolbar>
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
-        Actualiser
+        {{ uiText('Actualiser') }}
       </UiButton>
-      <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
-        Nouvelle catégorie
+      <UiButton
+        v-if="canManageCatalog"
+        variant="primary"
+        size="sm"
+        :icon="Plus"
+        @click="openCreateModal"
+      >
+        {{ uiText('Nouvelle catégorie') }}
       </UiButton>
     </template>
 
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
 
-    <p v-if="!loading && !items.length" class="empty">Aucune catégorie — créez-en une pour classer vos produits.</p>
+    <p v-if="!loading && !items.length" class="empty">
+      {{
+        canManageCatalog
+          ? uiText('Aucune catégorie — créez-en une pour classer vos produits.')
+          : uiText('Aucune catégorie enregistrée.')
+      }}
+    </p>
     <UiDataTable
       v-else
       fill
+      :key="canManageCatalog ? 'pharmacy-categories-rw' : 'pharmacy-categories-ro'"
       table-key="pharmacy-categories"
       compact
       :data="tableRows"
@@ -255,9 +299,9 @@ defineExpose({ reload: loadItems })
       <UiInput v-model="formSortOrder" label="Ordre d'affichage" type="number" min="0" />
     </section>
     <template #footer>
-      <UiButton variant="ghost" @click="closeModal">Annuler</UiButton>
+      <UiButton variant="ghost" @click="closeModal">{{ uiText('Annuler') }}</UiButton>
       <UiButton variant="primary" :icon="Save" :disabled="saving" @click="saveItem">
-        {{ saving ? 'Enregistrement…' : 'Enregistrer' }}
+        {{ saving ? uiText('Enregistrement…') : uiText('Enregistrer') }}
       </UiButton>
     </template>
   </UiFormModal>

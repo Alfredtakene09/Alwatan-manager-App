@@ -11,6 +11,7 @@ export type SettlementBreakdownLine = {
 
 const CATEGORY_ORDER = [
   "Consultations",
+  "Spécialité",
   "Laboratoire",
   "Radiologie",
   "Échographie",
@@ -20,6 +21,7 @@ const CATEGORY_ORDER = [
 ] as const;
 
 const KIND_TO_LABEL: Record<ExamKindSlug, string> = {
+  specialty: "Spécialité",
   examen: "Laboratoire",
   radio: "Radiologie",
   echo: "Échographie",
@@ -47,7 +49,7 @@ function classifyLabExamInvoice(invoice: InvoiceForBreakdown): string {
   const notes = invoice.visit?.consultation?.clinicalNotes;
   if (!notes) return INVOICE_TYPE_LABELS[InvoiceType.LAB_EXAM];
 
-  const labKinds: ExamKindSlug[] = ["examen", "radio", "echo", "odonto"];
+  const labKinds: ExamKindSlug[] = ["specialty", "examen", "radio", "echo", "odonto"];
   const sheets = buildExamSheetsByKind(notes).filter((sheet) => labKinds.includes(sheet.kind));
 
   if (sheets.length === 1) {

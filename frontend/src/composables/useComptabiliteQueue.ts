@@ -11,8 +11,8 @@ export function useComptabiliteQueue() {
   const deposits = reactive<Record<string, string>>({})
   const dischargeDates = reactive<Record<string, string>>({})
 
-  async function load() {
-    loading.value = true
+  async function load(opts?: { silent?: boolean }) {
+    if (!opts?.silent) loading.value = true
     try {
       const { data: res } = await api.get('/comptabilite')
       data.value = res
@@ -20,7 +20,7 @@ export function useComptabiliteQueue() {
         surgeryForm[s.id] = { interventionTypeId: s.interventionTypeId, surgeonId: s.surgeonId }
       }
     } finally {
-      loading.value = false
+      if (!opts?.silent) loading.value = false
     }
   }
 

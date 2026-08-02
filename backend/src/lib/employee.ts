@@ -18,6 +18,13 @@ export type EmployeeRecord = {
   surgeryQuotaPercent?: number | null;
   fixedSalaryFcfa?: number | null;
   service?: string | null;
+  clinicServiceId?: string | null;
+  clinicService?: { id: string; name: string } | null;
+  clinicServiceLinks?: {
+    clinicServiceId: string;
+    isDefault: boolean;
+    clinicService: { id: string; name: string };
+  }[];
   contractType?: ContractType | null;
   contractStatus?: EmployeeContractStatus;
   bonusFcfa?: number | null;
@@ -36,6 +43,17 @@ export type EmployeeRecord = {
 };
 
 export function serializeEmployee(employee: EmployeeRecord) {
+  const clinicServices = (employee.clinicServiceLinks ?? [])
+    .map((link) => ({
+      id: link.clinicService.id,
+      name: link.clinicService.name,
+      isDefault: link.isDefault,
+    }))
+    .sort((a, b) => {
+      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+      return a.name.localeCompare(b.name, "fr");
+    });
+
   return {
     id: employee.id,
     firstName: employee.firstName,
@@ -52,7 +70,13 @@ export function serializeEmployee(employee: EmployeeRecord) {
     consultationRenewalPolicy: employee.consultationRenewalPolicy,
     surgeryQuotaPercent: employee.surgeryQuotaPercent,
     fixedSalaryFcfa: employee.fixedSalaryFcfa,
-    service: employee.service ?? null,
+    service: employee.clinicService?.name ?? employee.service ?? null,
+    clinicServiceId: employee.clinicServiceId ?? employee.clinicService?.id ?? null,
+    clinicService: employee.clinicService
+      ? { id: employee.clinicService.id, name: employee.clinicService.name }
+      : null,
+    clinicServiceIds: clinicServices.map((s) => s.id),
+    clinicServices,
     contractType: employee.contractType ?? null,
     contractStatus: employee.contractStatus ?? "ACTIF",
     bonusFcfa: employee.bonusFcfa ?? null,
@@ -144,6 +168,25 @@ export const employeeSelect = {
   surgeryQuotaPercent: true,
   fixedSalaryFcfa: true,
   service: true,
+  clinicServiceId: true,
+  clinicService: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+  clinicServiceLinks: {
+    select: {
+      clinicServiceId: true,
+      isDefault: true,
+      clinicService: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  },
   contractType: true,
   contractStatus: true,
   bonusFcfa: true,

@@ -21,6 +21,8 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import DashboardBarChart, { type BarChartDay } from '@/components/dashboard/DashboardBarChart.vue'
 import DashboardPendingBars from '@/components/dashboard/DashboardPendingBars.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 type PharmacyReport = {
   from: string
@@ -38,7 +40,10 @@ const loading = ref(false)
 const message = ref('')
 const period = ref<'7d' | '30d' | 'month'>('7d')
 
+const { uiText, localeCode } = useAppI18n()
+
 const salesChart = computed((): BarChartDay[] => {
+  void localeCode.value
   if (!report.value) return []
   return report.value.salesByDay.map((day) => ({
     date: day.date,
@@ -49,7 +54,7 @@ const salesChart = computed((): BarChartDay[] => {
         key: 'sales',
         value: day.totalFcfa,
         colorClass: 'bar-chart__bar--a',
-        title: `Ventes : ${formatFcfa(day.totalFcfa)}`,
+        title: translateTemplate('Ventes : {amount}', { amount: formatFcfa(day.totalFcfa) }),
       },
     ],
   }))
@@ -90,56 +95,72 @@ async function loadReport() {
 }
 
 const periodLabel = computed(() => {
-  if (period.value === '7d') return '7 derniers jours'
-  if (period.value === '30d') return '30 derniers jours'
-  return 'Mois en cours'
+  void localeCode.value
+  if (period.value === '7d') return uiText('7 derniers jours')
+  if (period.value === '30d') return uiText('30 derniers jours')
+  return uiText('Mois en cours')
+})
+
+const salesLegend = computed(() => {
+  void localeCode.value
+  return [{ key: 'sales', label: uiText('Ventes'), colorClass: 'legend-dot--a' }]
 })
 
 const kpiRows = computed(() => {
+  void localeCode.value
   if (!report.value) return []
   return [
-    { label: 'Ordonnances', value: report.value.prescriptionsCount },
-    { label: 'Unités vendues', value: report.value.totalUnitsSold },
-    { label: "Chiffre d'affaires", value: formatFcfa(report.value.totalRevenueFcfa) },
-    { label: 'Période', value: `${report.value.from} → ${report.value.to}` },
+    { label: uiText('Ordonnances'), value: report.value.prescriptionsCount },
+    { label: uiText('Unités vendues'), value: report.value.totalUnitsSold },
+    { label: uiText("Chiffre d'affaires"), value: formatFcfa(report.value.totalRevenueFcfa) },
+    { label: uiText('Période'), value: `${report.value.from} → ${report.value.to}` },
   ]
 })
 
-const kpiColumns: ExportColumn<(typeof kpiRows.value)[number]>[] = [
-  { header: 'Indicateur', value: (r) => r.label },
-  { header: 'Valeur', value: (r) => r.value },
-]
+const kpiColumns = computed<ExportColumn<(typeof kpiRows.value)[number]>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Indicateur'), value: (r) => r.label },
+    { header: uiText('Valeur'), value: (r) => r.value },
+  ]
+})
 
-const topProductColumns: ExportColumn<PharmacyReport['topProducts'][number]>[] = [
-  { header: 'Produit', value: (r) => r.name },
-  { header: 'Quantité', value: (r) => r.quantity },
-  { header: 'CA', value: (r) => formatFcfa(r.revenueFcfa) },
-]
+const topProductColumns = computed<ExportColumn<PharmacyReport['topProducts'][number]>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Produit'), value: (r) => r.name },
+    { header: uiText('Quantité'), value: (r) => r.quantity },
+    { header: uiText('CA'), value: (r) => formatFcfa(r.revenueFcfa) },
+  ]
+})
 
-const categoryColumns: ExportColumn<PharmacyReport['salesByCategory'][number]>[] = [
-  { header: 'Catégorie', value: (r) => r.name },
-  { header: 'Quantité', value: (r) => r.quantity },
-  { header: 'CA', value: (r) => formatFcfa(r.revenueFcfa) },
-]
+const categoryColumns = computed<ExportColumn<PharmacyReport['salesByCategory'][number]>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Catégorie'), value: (r) => r.name },
+    { header: uiText('Quantité'), value: (r) => r.quantity },
+    { header: uiText('CA'), value: (r) => formatFcfa(r.revenueFcfa) },
+  ]
+})
 
 function exportPdf() {
   if (!report.value) return
-  const body = `${buildClinicPrintHeader('Rapport des ventes pharmacie')}
-<div class="row"><span>Période</span><strong>${escapeHtml(periodLabel.value)}</strong></div>
-${rowsToHtmlTable(kpiColumns, kpiRows.value, { captionRows: [{ label: 'Synthèse', value: 'KPI' }] })}
-<h3>Top produits</h3>
-${rowsToHtmlTable(topProductColumns, report.value.topProducts)}
-<h3>Ventes par catégorie</h3>
-${rowsToHtmlTable(categoryColumns, report.value.salesByCategory)}`
-  openPrintDocument('Rapport des ventes pharmacie', body, { pageSize: 'A4', autoPrint: true })
+  const body = `${buildClinicPrintHeader(uiText('Rapport des ventes pharmacie'))}
+<div class="row"><span>${uiText('Période')}</span><strong>${escapeHtml(periodLabel.value)}</strong></div>
+${rowsToHtmlTable(kpiColumns.value, kpiRows.value, { captionRows: [{ label: uiText('Synthèse'), value: 'KPI' }] })}
+<h3>${uiText('Top produits')}</h3>
+${rowsToHtmlTable(topProductColumns.value, report.value.topProducts)}
+<h3>${uiText('Ventes par catégorie')}</h3>
+${rowsToHtmlTable(categoryColumns.value, report.value.salesByCategory)}`
+  openPrintDocument(uiText('Rapport des ventes pharmacie'), body, { pageSize: 'A4', autoPrint: true })
 }
 
 function exportExcel() {
   if (!report.value) return
   exportWorkbook(exportBasename('rapport-ventes-pharmacie'), [
-    { name: 'KPI', columns: kpiColumns, rows: kpiRows.value },
-    { name: 'Top produits', columns: topProductColumns, rows: report.value.topProducts },
-    { name: 'Catégories', columns: categoryColumns, rows: report.value.salesByCategory },
+    { name: 'KPI', columns: kpiColumns.value, rows: kpiRows.value },
+    { name: uiText('Top produits'), columns: topProductColumns.value, rows: report.value.topProducts },
+    { name: uiText('Catégories'), columns: categoryColumns.value, rows: report.value.salesByCategory },
   ])
 }
 
@@ -156,13 +177,13 @@ onMounted(loadReport)
     >
       <template #actions>
         <UiSelect v-model="period" label="Période" class="period-select" @change="loadReport">
-          <option value="7d">7 derniers jours</option>
-          <option value="30d">30 derniers jours</option>
-          <option value="month">Mois en cours</option>
+          <option value="7d">{{ uiText('7 derniers jours') }}</option>
+          <option value="30d">{{ uiText('30 derniers jours') }}</option>
+          <option value="month">{{ uiText('Mois en cours') }}</option>
         </UiSelect>
         <ExportButtons :disabled="loading || !report" @pdf="exportPdf" @excel="exportExcel" />
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadReport">
-          Actualiser
+          {{ uiText('Actualiser') }}
         </UiButton>
       </template>
 
@@ -170,15 +191,15 @@ onMounted(loadReport)
 
       <div v-if="report" class="report-kpis">
         <div class="kpi">
-          <span>Ordonnances</span>
+          <span>{{ uiText('Ordonnances') }}</span>
           <strong>{{ report.prescriptionsCount }}</strong>
         </div>
         <div class="kpi">
-          <span>Unités vendues</span>
+          <span>{{ uiText('Unités vendues') }}</span>
           <strong>{{ report.totalUnitsSold }}</strong>
         </div>
         <div class="kpi kpi--accent">
-          <span>Chiffre d'affaires</span>
+          <span>{{ uiText("Chiffre d'affaires") }}</span>
           <strong>{{ formatFcfa(report.totalRevenueFcfa) }}</strong>
         </div>
       </div>
@@ -190,17 +211,17 @@ onMounted(loadReport)
           :days="salesChart"
           :loading="loading"
           :format-total="formatFcfa"
-          :legend="[{ key: 'sales', label: 'Ventes', colorClass: 'legend-dot--a' }]"
+          :legend="salesLegend"
         />
       </UiCard>
 
       <UiCard title="Top produits" description="Classement par chiffre d'affaires" :icon="BarChart3" icon-variant="amber">
-        <div v-if="!topProductBars.length" class="chart-empty">Aucune vente sur la période</div>
+        <div v-if="!topProductBars.length" class="chart-empty">{{ uiText('Aucune vente sur la période') }}</div>
         <DashboardPendingBars v-else :items="topProductBars" />
       </UiCard>
 
       <UiCard title="Ventes par catégorie" description="Répartition du CA" :icon="BarChart3" icon-variant="violet">
-        <div v-if="!categoryBars.length" class="chart-empty">Aucune vente sur la période</div>
+        <div v-if="!categoryBars.length" class="chart-empty">{{ uiText('Aucune vente sur la période') }}</div>
         <DashboardPendingBars v-else :items="categoryBars" />
       </UiCard>
     </div>

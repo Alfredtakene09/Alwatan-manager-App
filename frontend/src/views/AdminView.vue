@@ -38,7 +38,6 @@ const interventionRows = computed(() => {
   return interventions.value.map((item) => ({
     id: item.id,
     label: item.label,
-    code: item.code,
     category: categoryLabel(item.category),
     cost: formatFcfa(item.totalCostFcfa),
     costSort: item.totalCostFcfa,
@@ -53,14 +52,13 @@ const interventionRows = computed(() => {
 
 const interventionColumns = [
   { data: 'label', title: 'Libellé', render: (v: string) => `<span class="dt-name">${v}</span>` },
-  { data: 'code', title: 'Code' },
   { data: 'category', title: 'Catégorie' },
   {
     data: 'costSort',
     title: 'Coût',
     render: (_d: number, _t: string, row: { cost: string }) => `<span class="dt-amount">${row.cost}</span>`,
   },
-  { data: 'surgeonPercent', title: '% Chirurgien' },
+  { data: 'surgeonPercent', title: '% Chir.' },
   {
     data: 'statusLabel',
     title: 'Statut',
@@ -168,10 +166,6 @@ onMounted(load)
         @close="closeViewIntervention"
       >
         <dl class="operation-detail">
-          <div class="operation-detail__row">
-            <dt>Code</dt>
-            <dd>{{ viewingIntervention.code }}</dd>
-          </div>
           <div class="operation-detail__row">
             <dt>Libellé</dt>
             <dd>{{ viewingIntervention.label }}</dd>

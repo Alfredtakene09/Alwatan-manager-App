@@ -34,10 +34,14 @@ Adaptez `DATABASE_URL` dans `backend/.env` (base `alwatan`, port `5433`).
 
 ### 2. Lancer l'application
 
-Double-clic **`START.bat`** ou :
+```powershell
+.\scripts\lancer-serveur.ps1
+```
+
+Mode développement (hot reload) :
 
 ```powershell
-.\scripts\start-local.ps1
+.\scripts\lancer-serveur.ps1 -Dev
 ```
 
 - Frontend : http://localhost:5173
@@ -58,19 +62,15 @@ npm install
 npm run dev
 ```
 
-## Comptes de démonstration
+## Comptes par défaut
 
-Mot de passe : `Clinique2026!`
+Créés par `npm run db:seed` — conservés lors d’une réinitialisation de la base.
 
-Noms d'utilisateur :
-
-- `reception`
-- `medecin`
-- `direction` (Direction — gère aussi l’administration)
-- `pharmacie`
-- `laborantin`
-
-(Créés par `npm run db:seed`.)
+| Utilisateur | Mot de passe | Rôle |
+|---|---|---|
+| `Root` | `root@Alwatan2026` | Superadmin |
+| `gestionnaire` | `Clinique2026!` | Gestionnaire |
+| `pharmacie` | `Clinique2026!` | Pharmacien |
 
 ## Modules
 
@@ -79,15 +79,6 @@ Noms d'utilisateur :
 3. **Comptabilité** — Tarification, dispatching, lits VIP/Simple
 4. **Bloc & Salles** — Lecture seule des autorisations
 5. **Pharmacie** — Ordonnances et stocks temps réel
-
-## Sauvegarde (optionnel)
-
-```bash
-chmod +x scripts/export-dev-data.sh scripts/import-dev-data.sh
-./scripts/export-dev-data.sh
-```
-
-**Ne pas mettre les exports sur GitHub** (données patients sensibles).
 
 ## Déploiement production (clinique, réseau local 24/7)
 

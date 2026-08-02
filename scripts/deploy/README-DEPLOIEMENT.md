@@ -49,9 +49,20 @@ Le script :
 | Sur le serveur | http://127.0.0.1:4000 |
 | Sur le réseau | http://IP-DU-SERVEUR:4000 |
 
-Sur les postes clients : installez le **setup client** (voir ci-dessous) ou ouvrez `http://IP-DU-SERVEUR:4000`.
+Sur les postes clients : ouvrez `http://IP-DU-SERVEUR:4000` dans le navigateur (aucune installation obligatoire).  
+Pour un raccourci Bureau : sur la page de connexion, utilisez **Télécharger le raccourci** / **Télécharger l’installeur (ZIP)**.
 
 ### Installer l’app sur les autres PC (réception, médecin…)
+
+**Méthode recommandée (réseau, sans clé USB)**  
+
+1. Connectez le poste client au **même Wi-Fi / Ethernet** que le serveur.  
+2. Ouvrez `http://IP-DU-SERVEUR:4000` (ex. `http://192.168.88.161:4000`).  
+3. Sur la page de connexion, cliquez :
+   - **Télécharger le raccourci (.url)** → déplacez le fichier sur le Bureau ; ou  
+   - **Télécharger l’installeur (ZIP)** → extrayez → double-clic **`INSTALLER.bat`**.
+
+**Méthode classique (ZIP / USB)**  
 
 1. **Sur le serveur**, générez le package (une fois après install ou changement d’IP) :
    - Double-clic **`CREER-SETUP-CLIENT.cmd`** à la racine du projet, ou  
@@ -97,6 +108,6 @@ Aucun Node.js ni copie du projet complet n’est nécessaire sur les clients.
 
 ## Notes
 
-- Mode développement (`start-local.ps1`) reste disponible pour les mises à jour de code.
+- Mode développement (`lancer-serveur.ps1 -Dev`) reste disponible pour les mises à jour de code.
 - Après une mise à jour du code : relancer `installer-production.ps1` (ou `-SkipFirewall -SkipBackupTask`).
 - Recommandé : IP fixe pour le serveur (ex. `192.168.1.50`).

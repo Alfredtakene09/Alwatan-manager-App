@@ -5,6 +5,8 @@ import { getVisitStatusMeta } from '@/lib/visit-status'
 import { sortVisitsByPatientNewestFirst } from '@/lib/patient-sort'
 import { statusBadge } from '@/lib/datatable-defaults'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 type Patient = {
   id: string
@@ -29,12 +31,14 @@ const props = defineProps<{
   fill?: boolean
 }>()
 
+const { uiText } = useAppI18n()
+
 function formatSince(iso: string) {
   const minutes = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000))
-  if (minutes < 1) return "À l'instant"
-  if (minutes < 60) return `${minutes} min`
+  if (minutes < 1) return uiText("À l'instant")
+  if (minutes < 60) return translateTemplate('{n} min', { n: minutes })
   const hours = Math.floor(minutes / 60)
-  return `${hours} h ${minutes % 60} min`
+  return translateTemplate('{h} h {m} min', { h: hours, m: minutes % 60 })
 }
 
 const tableData = computed(() =>
@@ -45,9 +49,9 @@ const tableData = computed(() =>
       code: v.patient.code,
       patientName: fullName(v.patient.firstName, v.patient.lastName),
       patientPhone: v.patient.phone || '',
-      statusLabel: meta.label,
+      statusLabel: uiText(meta.label),
       statusVariant: meta.variant,
-      pole: meta.pole,
+      pole: uiText(meta.pole),
       doctor: v.assignedDoctor
         ? fullName(v.assignedDoctor.firstName, v.assignedDoctor.lastName)
         : '—',

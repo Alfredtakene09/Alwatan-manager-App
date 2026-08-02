@@ -2,14 +2,17 @@
 import { BarChart3 } from '@lucide/vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import PharmacyReportsPanel from '@/components/pharmacie/PharmacyReportsPanel.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+
+const { uiText } = useAppI18n()
 </script>
 
 <template>
   <div class="page-with-table">
     <section class="page-with-table__head">
       <UiPageHeader
-        title="Rapports"
-        subtitle="Synthèse des ventes et performances"
+        :title="uiText('Rapports')"
+        :subtitle="uiText('Synthèse des ventes et performances')"
         :icon="BarChart3"
       />
     </section>

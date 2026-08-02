@@ -13,16 +13,18 @@ const gender = defineModel<string>('gender', { default: 'F' })
 
 const { uiText, localeCode } = useAppI18n()
 
-const activeAgeConfig = computed(
-  () => PATIENT_AGE_UNITS.find((row) => row.value === ageUnit.value) ?? PATIENT_AGE_UNITS[0],
-)
-
 const ageUnits = computed(() => {
   void localeCode.value
   return PATIENT_AGE_UNITS.map((unit) => ({
     ...unit,
     label: uiText(unit.label),
+    placeholder: uiText(unit.placeholder),
   }))
+})
+
+const activeAgeConfig = computed(() => {
+  void localeCode.value
+  return ageUnits.value.find((row) => row.value === ageUnit.value) ?? ageUnits.value[0]
 })
 
 const labels = computed(() => {
@@ -45,13 +47,13 @@ const labels = computed(() => {
       <UiInput
         v-model="fullName"
         :label="labels.fullName"
-        placeholder="Ex. Fatimé Abakar"
+        :placeholder="uiText('Ex. Fatimé Abakar')"
         required
       />
       <UiInput
         v-model="phone"
         :label="labels.phone"
-        placeholder="06 XX XX XX XX"
+        :placeholder="uiText('06 XX XX XX XX')"
         :icon="Phone"
       />
     </div>

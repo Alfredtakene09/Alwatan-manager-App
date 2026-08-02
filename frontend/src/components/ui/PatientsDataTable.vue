@@ -15,6 +15,8 @@ export type PatientRow = {
   service?: string | null
   gender?: string
   createdAt?: string
+  /** false = déjà envoyé / consulté (ou données liées) — pas de bouton supprimer */
+  canDelete?: boolean
 }
 
 const props = withDefaults(
@@ -55,6 +57,7 @@ const tableData = computed(() =>
     genderRaw: p.gender,
     createdAt: formatDate(p.createdAt),
     createdAtSort: p.createdAt ? new Date(p.createdAt).getTime() : 0,
+    canDelete: p.canDelete !== false,
   })),
 )
 
@@ -105,7 +108,7 @@ const columns = computed(() => [
     searchable: false,
     className: 'dt-actions-col dt-actions-col--patients all',
     responsivePriority: 1,
-    render: (_d: unknown, _t: string, row: { id: string }) =>
+    render: (_d: unknown, _t: string, row: { id: string; canDelete?: boolean }) =>
       patientRowActionsHtml(row, { showDelete: props.showDelete }),
   },
 ])

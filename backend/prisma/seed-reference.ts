@@ -5,9 +5,10 @@ import { DEFAULT_EMPLOYEE_JOB_TITLES } from "../src/lib/employee-job-titles-seed
 import { DEFAULT_CLINIC_SERVICES } from "../src/lib/clinic-services-seed.js";
 import { DEFAULT_EXPENSE_INDICES } from "../src/lib/expense-indices-seed.js";
 import { DEFAULT_EXPENSE_CATEGORIES } from "../src/lib/expense-categories-seed.js";
+import { DEFAULT_PRODUCT_FORMS } from "../src/lib/product-forms-seed.js";
 
 /** Comptes créés par le seed — conservés lors d'une réinitialisation de la base. */
-export const DEFAULT_STAFF_USERNAMES = ["Root"] as const;
+export const DEFAULT_STAFF_USERNAMES = ["Root", "gestionnaire", "pharmacie"] as const;
 
 /** Données de référence (catalogues, chambres, stocks initiaux) sans comptes ni démo. */
 export async function seedReferenceData() {
@@ -106,6 +107,14 @@ export async function seedReferenceData() {
     } else {
       await prisma.room.create({ data: room });
     }
+  }
+
+  for (const [index, name] of DEFAULT_PRODUCT_FORMS.entries()) {
+    await prisma.productForm.upsert({
+      where: { name },
+      update: { active: true, sortOrder: index },
+      create: { name, active: true, sortOrder: index },
+    });
   }
 
   const products = [

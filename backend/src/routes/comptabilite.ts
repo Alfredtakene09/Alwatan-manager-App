@@ -28,6 +28,7 @@ import {
   labsPaidExamsWhere,
   parsePaidExamKindsByKind,
   parsePrescribedExamsByKind,
+  prescriptionRequiresLabWork,
   EXAMS_PRESCRIBED_PREFIX,
   LAB_BILLABLE_EXAM_KINDS,
 } from "../lib/lab-notes.js";
@@ -91,6 +92,7 @@ const dischargeSchema = z.object({
 });
 
 const examKindSchema = z.enum([
+  "specialty",
   "examen",
   "radio",
   "echo",
@@ -104,6 +106,7 @@ const payLabExamsSchema = z.object({
   kinds: z.array(examKindSchema).min(1),
   reductionsByKind: z
     .object({
+      specialty: z.number().int().min(0).optional(),
       examen: z.number().int().min(0).optional(),
       radio: z.number().int().min(0).optional(),
       echo: z.number().int().min(0).optional(),
@@ -116,6 +119,7 @@ const payLabExamsSchema = z.object({
   installmentAmountFcfa: z.number().int().positive().optional(),
   installmentsByKind: z
     .object({
+      specialty: z.number().int().positive().optional(),
       examen: z.number().int().positive().optional(),
       radio: z.number().int().positive().optional(),
       echo: z.number().int().positive().optional(),
@@ -878,6 +882,9 @@ router.post("/", cashierAccess, async (req, res) => {
             (LAB_BILLABLE_EXAM_KINDS as readonly ExamKindSlug[]).includes(kind) &&
             fullyPaidKinds.has(kind),
         );
+        const sendToLab =
+          labKindsFullyPaid &&
+          prescriptionRequiresLabWork(parsePrescribedExamsByKind(updatedNotes));
 
         if (operationFullyPaid && surgeryCase) {
           await tx.surgeryCase.update({
@@ -910,7 +917,7 @@ router.post("/", cashierAccess, async (req, res) => {
           data: {
             clinicalNotes: updatedNotes,
             labExamReductionFcfa: existing.labExamReductionFcfa + totalReductionFcfa,
-            ...(labKindsFullyPaid
+            ...(sendToLab
               ? {
                   labSentToLabAt: existing.labSentToLabAt ?? paidAt,
                   labApprovedById: user.id,

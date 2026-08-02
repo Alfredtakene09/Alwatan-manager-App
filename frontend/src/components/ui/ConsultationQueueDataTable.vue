@@ -5,6 +5,7 @@ import { fullName } from '@/lib/roles'
 import { getVisitStatusMeta } from '@/lib/visit-status'
 import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
 import { DT_ICONS, statusBadge } from '@/lib/datatable-defaults'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
 
 export type ConsultationVisitRow = {
@@ -40,8 +41,11 @@ const emit = defineEmits<{
   transfer: [id: string]
 }>()
 
-const tableData = computed(() =>
-  sortByCreatedAtNewestFirst(props.visits).map((v) => {
+const { uiText, localeCode, dateText, timeText } = useAppI18n()
+
+const tableData = computed(() => {
+  void localeCode.value
+  return sortByCreatedAtNewestFirst(props.visits).map((v) => {
     const meta = getVisitStatusMeta(v.status)
     const arrival = new Date(v.createdAt)
     return {
@@ -49,21 +53,24 @@ const tableData = computed(() =>
       code: v.patient.code,
       patientName: fullName(v.patient.firstName, v.patient.lastName),
       patientPhone: v.patient.phone || '',
-      statusLabel: meta.label,
+      statusLabel: uiText(meta.label),
       statusVariant: meta.variant,
-      arrivalDate: arrival.toLocaleDateString('fr-FR'),
-      arrivalTime: arrival.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      arrivalDate: dateText(arrival),
+      arrivalTime: timeText(arrival, { hour: '2-digit', minute: '2-digit' }),
       arrivalSort: arrival.getTime(),
       doctorName: v.assignedDoctor
         ? `Dr ${fullName(v.assignedDoctor.firstName, v.assignedDoctor.lastName)}`
-        : 'Non assigné',
+        : uiText('Non assigné'),
     }
-  }),
-)
+  })
+})
 
 type QueueColumn = ConfigColumns & { responsivePriority?: number }
 
 const columns = computed((): ConfigColumns[] => {
+  void localeCode.value
+  const consultLabel = uiText('Consulter')
+  const transferLabel = uiText('Transférer')
   const base: QueueColumn[] = [
   {
     data: 'code',
@@ -114,11 +121,11 @@ const columns = computed((): ConfigColumns[] => {
     responsivePriority: 1,
     render: (_d: unknown, _t: string, row: { id: string }) => `
       <div class="dt-row-actions" data-id="${row.id}">
-        <button type="button" class="dt-btn dt-btn--text dt-btn--accent" data-action="consult" title="Consulter" aria-label="Consulter">
-          ${DT_ICONS.view} Consulter
+        <button type="button" class="dt-btn dt-btn--text dt-btn--accent" data-action="consult" title="${consultLabel}" aria-label="${consultLabel}">
+          ${DT_ICONS.view} ${consultLabel}
         </button>
-        <button type="button" class="dt-btn dt-btn--text" data-action="transfer" title="Transférer" aria-label="Transférer">
-          ${DT_ICONS.transfer} Transférer
+        <button type="button" class="dt-btn dt-btn--text" data-action="transfer" title="${transferLabel}" aria-label="${transferLabel}">
+          ${DT_ICONS.transfer} ${transferLabel}
         </button>
       </div>
     `,

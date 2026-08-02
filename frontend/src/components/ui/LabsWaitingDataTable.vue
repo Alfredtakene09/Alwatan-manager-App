@@ -11,6 +11,7 @@ import {
 } from '@/lib/lab-notes'
 import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
 import { DT_ICONS, labCompletedRowActionsHtml } from '@/lib/datatable-defaults'
+import { formatAppDate, formatAppTime } from '@/i18n/locale-format'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
 
 export type LabsWaitingVisitRow = {
@@ -113,8 +114,8 @@ const tableData = computed(() =>
       exams,
       examsFull,
       examCount,
-      eventDate: eventAt.toLocaleDateString('fr-FR'),
-      eventTime: eventAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      eventDate: formatAppDate(eventAt),
+      eventTime: formatAppTime(eventAt),
       eventSort: eventAt.getTime(),
     }
   }),

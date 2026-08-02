@@ -4,13 +4,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, CheckCircle2, FlaskConical, Printer, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
-import { fullName, ROLE_LABELS } from '@/lib/roles'
+import { fullName } from '@/lib/roles'
 import { formatLabPrescribedExamsPreview, formatLabPrescribedExamsSummary } from '@/lib/lab-notes'
 import { patientCategoryLabel, type PatientCategory } from '@/lib/patient-category'
 import {
   emptyPanelValues,
   getLabFormPanel,
   labFieldCommentKey,
+  type LabFormField,
   type LabPanelSlug,
 } from '@/lib/lab-form-panels'
 import { useLabPanelsStore } from '@/stores/lab-panels'
@@ -18,6 +19,7 @@ import { buildPrescribedByLabel, printLabPanelResult } from '@/lib/lab-panel-pri
 import { fetchAndPrintLabVisitResults } from '@/lib/lab-visit-print'
 import { panelFormHasValues } from '@/lib/lab-visit-search'
 import { confirmAppModal } from '@/lib/api-modal-helper'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -36,6 +38,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const labPanels = useLabPanelsStore()
+const { uiText, dateTimeText, numberText, roleLabel } = useAppI18n()
 
 const visit = ref<LabsWaitingVisitRow | null>(null)
 const panelResults = ref<DossierResponse['panelResults']>({})
@@ -80,8 +83,8 @@ const doctorLabel = computed(() =>
 )
 
 const validatorLabel = computed(() => {
-  if (!auth.user) return 'Laboratoire'
-  return `${fullName(auth.user.firstName, auth.user.lastName)} — ${ROLE_LABELS[auth.user.role]}`
+  if (!auth.user) return uiText('Laboratoire')
+  return `${fullName(auth.user.firstName, auth.user.lastName)} — ${roleLabel(auth.user.role)}`
 })
 
 function isPanelFilled(slug: LabPanelSlug) {
@@ -100,7 +103,7 @@ const selectablePanels = computed(() => {
     return labPanels.panels
       .filter((panel) => isPanelFilled(panel.slug))
       .slice()
-      .sort((a, b) => a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' }))
+      .sort((a, b) => uiText(a.label).localeCompare(uiText(b.label), undefined, { sensitivity: 'base' }))
   }
   // Tous les formulaires actifs non encore saisis (tri alphabétique)
   return entryPanels.value.filter((panel) => !isPanelFilled(panel.slug))
@@ -114,7 +117,18 @@ const isActivePanelReadOnly = computed(() => {
 })
 
 function panelOptionLabel(slug: LabPanelSlug) {
-  return getLabFormPanel(slug)?.label ?? slug
+  return uiText(getLabFormPanel(slug)?.label ?? slug)
+}
+
+function labFieldDisplayLabel(field: LabFormField) {
+  const label = uiText(field.label)
+  return field.reference ? `${label} (${field.reference})` : label
+}
+
+function labFieldPlaceholder(field: LabFormField) {
+  return field.unit
+    ? uiText('Résultat {unit}').replace('{unit}', field.unit)
+    : uiText('Résultat')
 }
 
 function isLabPanelSlug(value: string): value is LabPanelSlug {
@@ -154,7 +168,7 @@ async function loadDossier() {
     }
   } catch {
     visit.value = null
-    showMessage('Dossier laboratoire introuvable.', 'error')
+    showMessage(uiText('Dossier laboratoire introuvable.'), 'error')
   } finally {
     loading.value = false
   }
@@ -163,7 +177,7 @@ async function loadDossier() {
 async function savePanel() {
   if (!activePanel.value || isActivePanelReadOnly.value) return
   if (!panelFormHasValues(formValues)) {
-    showMessage('Remplissez au moins un résultat avant d\'enregistrer.', 'error')
+    showMessage(uiText("Remplissez au moins un résultat avant d'enregistrer."), 'error')
     return
   }
   saving.value = true
@@ -176,16 +190,16 @@ async function savePanel() {
     dossierCompleted.value = !!data.completed
     if (isEditMode.value) {
       printPanel()
-      showMessage('Formulaire modifié et envoyé à l\'impression.')
+      showMessage(uiText("Formulaire modifié et envoyé à l'impression."))
     } else {
       printPanel()
       const hasRemaining = entryPanels.value.some((panel) => !isPanelFilled(panel.slug))
       showMessage(
         hasRemaining
           ? isAddMode.value
-            ? 'Formulaire ajouté. Sélectionnez un autre type non saisi ou retournez à la liste.'
-            : 'Formulaire enregistré. Sélectionnez le prochain type à compléter.'
-          : 'Tous les formulaires sont enregistrés.',
+            ? uiText('Formulaire ajouté. Sélectionnez un autre type non saisi ou retournez à la liste.')
+            : uiText('Formulaire enregistré. Sélectionnez le prochain type à compléter.')
+          : uiText('Tous les formulaires sont enregistrés.'),
       )
       selectedPanelSlug.value = ''
       activePanel.value = null
@@ -194,7 +208,7 @@ async function savePanel() {
       }
     }
   } catch {
-    showMessage('Erreur lors de l\'enregistrement.', 'error')
+    showMessage(uiText("Erreur lors de l'enregistrement."), 'error')
   } finally {
     saving.value = false
   }
@@ -219,10 +233,10 @@ async function completeDossier() {
   try {
     await api.post(`/laboratoire/visits/${visitId.value}/complete`)
     dossierCompleted.value = true
-    showMessage('Dossier clôturé — résultats transmis au médecin.')
+    showMessage(uiText('Dossier clôturé — résultats transmis au médecin.'))
     setTimeout(() => router.push({ name: 'laboratoire-termines' }), 1200)
   } catch {
-    showMessage('Impossible de clôturer le dossier.', 'error')
+    showMessage(uiText('Impossible de clôturer le dossier.'), 'error')
   } finally {
     completing.value = false
   }
@@ -337,36 +351,38 @@ onMounted(async () => {
       message="Tous les formulaires sont enregistrés. Le dossier est dans Examens terminés."
     />
 
-    <p v-if="loading" class="hint">Chargement du dossier…</p>
+    <p v-if="loading" class="hint">{{ uiText('Chargement du dossier…') }}</p>
 
     <template v-else-if="visit">
       <UiCard title="Informations patient" icon-variant="blue" :padding="true">
         <div class="info-compact">
           <p class="info-compact__row">
             <span class="info-compact__item">
-              <span class="info-compact__label">Matricule</span>
+              <span class="info-compact__label">{{ uiText('Matricule') }}</span>
               <strong>{{ visit.patient.code }}</strong>
             </span>
             <span class="info-compact__sep" aria-hidden="true">·</span>
             <span class="info-compact__item">
-              <span class="info-compact__label">Catégorie</span>
-              <strong>{{ patientCategoryLabel((visit.patient.category ?? 'STANDARD') as PatientCategory) }}</strong>
+              <span class="info-compact__label">{{ uiText('Catégorie') }}</span>
+              <strong>{{
+                uiText(patientCategoryLabel((visit.patient.category ?? 'STANDARD') as PatientCategory))
+              }}</strong>
             </span>
             <span class="info-compact__sep" aria-hidden="true">·</span>
             <span class="info-compact__item">
-              <span class="info-compact__label">Prescripteur</span>
+              <span class="info-compact__label">{{ uiText('Prescripteur') }}</span>
               <strong>{{ doctorLabel }}</strong>
             </span>
             <template v-if="visit.consultation?.labSentToLabAt">
               <span class="info-compact__sep" aria-hidden="true">·</span>
               <span class="info-compact__item">
-                <span class="info-compact__label">Transféré le</span>
-                <strong>{{ new Date(visit.consultation.labSentToLabAt).toLocaleString('fr-FR') }}</strong>
+                <span class="info-compact__label">{{ uiText('Transféré le') }}</span>
+                <strong>{{ dateTimeText(visit.consultation.labSentToLabAt) }}</strong>
               </span>
             </template>
           </p>
           <p class="info-compact__row info-compact__row--exams">
-            <span class="info-compact__label">Examens laboratoire</span>
+            <span class="info-compact__label">{{ uiText('Examens laboratoire') }}</span>
             <strong :title="prescribedExamsFull">{{ prescribedExamsPreview }}</strong>
           </p>
         </div>
@@ -402,12 +418,12 @@ onMounted(async () => {
           <option value="">
             {{
               selectablePanels.length
-                ? '— Choisir un formulaire —'
+                ? uiText('— Choisir un formulaire —')
                 : isEditMode
-                  ? '— Aucun formulaire enregistré —'
+                  ? uiText('— Aucun formulaire enregistré —')
                   : isAddMode
-                    ? '— Tous les types sont déjà saisis —'
-                    : '— Tous les formulaires sont enregistrés —'
+                    ? uiText('— Tous les types sont déjà saisis —')
+                    : uiText('— Tous les formulaires sont enregistrés —')
             }}
           </option>
           <option v-for="panel in selectablePanels" :key="panel.slug" :value="panel.slug">
@@ -416,20 +432,25 @@ onMounted(async () => {
         </UiSelect>
 
         <p v-if="savedPanelCount && (isAddMode || (!isEditMode && !isConsultMode))" class="saved-hint">
-          {{ savedPanelCount }} formulaire(s) déjà enregistré(s) — non proposés dans la liste.
+          {{
+            uiText('{n} formulaire(s) déjà enregistré(s) — non proposés dans la liste.').replace(
+              '{n}',
+              numberText(savedPanelCount),
+            )
+          }}
         </p>
         <p
           v-else-if="!selectablePanels.length && !isEditMode && !isConsultMode && savedPanelCount"
           class="saved-hint saved-hint--completed"
         >
-          Tous les types de formulaire disponibles ont été enregistrés.
+          {{ uiText('Tous les types de formulaire disponibles ont été enregistrés.') }}
         </p>
 
         <template v-if="activePanelConfig">
           <div class="form-divider" />
 
           <div v-for="section in activePanelConfig.sections" :key="section.title ?? 'main'" class="form-section">
-            <h3 v-if="section.title" class="form-section__title">{{ section.title }}</h3>
+            <h3 v-if="section.title" class="form-section__title">{{ uiText(section.title) }}</h3>
             <div
               class="form-grid"
               :class="section.fields.length > 4 ? 'form-grid--cols-4' : 'form-grid--cols-2'"
@@ -438,16 +459,16 @@ onMounted(async () => {
                 <div class="lab-field">
                   <UiInput
                     v-model="formValues[field.key]"
-                    :label="field.reference ? `${field.label} (${field.reference})` : field.label"
-                    :placeholder="field.unit ? `Résultat ${field.unit}` : 'Résultat'"
+                    :label="labFieldDisplayLabel(field)"
+                    :placeholder="labFieldPlaceholder(field)"
                     :disabled="isActivePanelReadOnly"
                   />
                   <label v-if="field.hasComment" class="field-comment">
-                    <span class="field-comment__label">Commentaire</span>
+                    <span class="field-comment__label">{{ uiText('Commentaire') }}</span>
                     <textarea
                       v-model="formValues[labFieldCommentKey(field.key)]"
                       rows="2"
-                      placeholder="Commentaire sur cette ligne…"
+                      :placeholder="uiText('Commentaire sur cette ligne…')"
                       :disabled="isActivePanelReadOnly"
                     />
                   </label>

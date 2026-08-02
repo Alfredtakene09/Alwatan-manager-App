@@ -167,6 +167,7 @@ const patientInfo = computed(() => {
 })
 
 const kindIcons: Record<ExamKindSlug, typeof FlaskConical> = {
+  specialty: Stethoscope,
   examen: FlaskConical,
   radio: ScanLine,
   echo: Waves,

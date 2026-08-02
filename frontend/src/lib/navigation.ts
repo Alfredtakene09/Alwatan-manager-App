@@ -26,13 +26,12 @@ import {
   BarChart3,
   BellRing,
   Building2,
-  ArrowDownUp,
   Warehouse,
   TrendingUp,
-  Eye,
+  ListChecks,
 } from '@lucide/vue'
 import type { AppUserRole } from './roles'
-import { canAccessModule, canManagePharmacyCatalog } from './roles'
+import { canAccessModule, canManageLabStock, canManagePharmacyCatalog } from './roles'
 import {
   EXAM_CATALOG_KIND_CONFIG,
   findExamCatalogKindFromPath,
@@ -46,9 +45,11 @@ export type NavChildItem = {
   icon: Component
   module: string
   description?: string
-  badgeKey?: 'depenses' | 'salaires'
-  /** Catégories / produits / fournisseurs / mouvements pharmacie */
+  badgeKey?: 'depenses' | 'salaires' | 'caisse'
+  /** Catégories / fournisseurs pharmacie — admin & gestionnaire uniquement */
   pharmacyCatalog?: boolean
+  /** Stock laboratoire — gestionnaire & Direction uniquement */
+  labStock?: boolean
   children?: NavChildItem[]
 }
 
@@ -59,8 +60,10 @@ export type NavItem = {
   module: string
   description?: string
   primary?: boolean
-  badgeKey?: 'depenses' | 'salaires'
+  badgeKey?: 'depenses' | 'salaires' | 'caisse'
+  /** Catégories / fournisseurs pharmacie — admin & gestionnaire uniquement */
   pharmacyCatalog?: boolean
+  labStock?: boolean
   children?: NavChildItem[]
 }
 
@@ -107,7 +110,6 @@ const pharmacyNavChildren: NavChildItem[] = [
     label: 'Produits',
     icon: Package,
     module: 'pharmacie',
-    pharmacyCatalog: true,
     description: 'Prix, stock et références',
   },
   {
@@ -139,19 +141,7 @@ const pharmacyNavChildren: NavChildItem[] = [
     pharmacyCatalog: true,
     description: 'Contacts fournisseurs',
   },
-  {
-    to: '/pharmacie/mouvements',
-    label: 'Mouvements',
-    icon: ArrowDownUp,
-    module: 'pharmacie',
-    pharmacyCatalog: true,
-    description: 'Entrées et sorties de stock',
-  },
 ]
-
-const pharmacyCatalogNavChildren: NavChildItem[] = pharmacyNavChildren.filter(
-  (item) => item.pharmacyCatalog,
-)
 
 const logisticsNavChildren: NavChildItem[] = [
   {
@@ -174,20 +164,6 @@ const logisticsNavChildren: NavChildItem[] = [
     icon: Building2,
     module: 'logistique',
     description: 'Partenaires d’approvisionnement',
-  },
-  {
-    to: '/logistique/mouvements',
-    label: 'Mouvements',
-    icon: ArrowDownUp,
-    module: 'logistique',
-    description: 'Entrées, sorties et ajustements',
-  },
-  {
-    to: '/logistique/demandes',
-    label: 'Demandes',
-    icon: ClipboardList,
-    module: 'logistique',
-    description: 'Bons de sortie internes des services',
   },
   {
     to: '/logistique/alertes',
@@ -226,6 +202,14 @@ const laboratoireNavChildren: NavChildItem[] = [
     icon: ClipboardList,
     module: 'laboratoire',
     description: 'Créer et modifier les formulaires de résultats',
+  },
+  {
+    to: '/laboratoire/stock',
+    label: 'Stock laboratoire',
+    icon: Package,
+    module: 'laboratoire',
+    description: 'Réactifs et consommables — gestionnaire & direction',
+    labStock: true,
   },
 ]
 
@@ -351,6 +335,13 @@ const medecinNav: NavSection[] = [
         icon: Scissors,
         module: 'consultation',
         description: 'Suivi et règlement de votre part',
+      },
+      {
+        to: '/medecin/nomenclature',
+        label: 'Ma nomenclature',
+        icon: ListChecks,
+        module: 'consultation',
+        description: 'Examens et tarifs de votre service',
       },
       {
         to: '/dossier-patient',
@@ -495,11 +486,11 @@ const directionOperationalNav: NavSection[] = [
 /** Sous-menus Paramètres partagés (clinique). */
 const clinicParametresChildren = [
   {
-    to: '/admin',
-    label: 'Nomenclatures',
-    icon: Settings,
-    module: 'admin',
-    description: 'Chirurgie et salles',
+    to: '/comptabilite/types-examen/operation',
+    label: 'Types opérations',
+    icon: Scissors,
+    module: 'comptabilite',
+    description: 'Types d’opération, tarifs et parts médecins',
   },
   {
     to: '/comptabilite/types-examen/examen',
@@ -511,12 +502,6 @@ const clinicParametresChildren = [
     to: '/comptabilite/parametres/salles',
     label: 'Salles',
     icon: BedDouble,
-    module: 'comptabilite',
-  },
-  {
-    to: '/comptabilite/types-examen/operation',
-    label: 'Types opérations',
-    icon: Scissors,
     module: 'comptabilite',
   },
 ] as const
@@ -609,9 +594,38 @@ const directionAdminNav: NavSection[] = [
   },
 ]
 
-/** Direction = pages opérationnelles + modules admin. */
+/** Trésorerie gestionnaire — partagée avec Direction. */
+const directionTresorerieNav: NavSection[] = [
+  {
+    label: 'Trésorerie',
+    items: [
+      {
+        to: '/gestionnaire/caisse',
+        label: 'Caisse & décaissement',
+        icon: Banknote,
+        module: 'gestionnaire',
+        badgeKey: 'caisse',
+      },
+      {
+        to: '/gestionnaire/livre-journal',
+        label: 'Livre journal',
+        icon: FileText,
+        module: 'gestionnaire',
+      },
+      {
+        to: '/gestionnaire/finances',
+        label: 'Finances',
+        icon: TrendingUp,
+        module: 'gestionnaire',
+      },
+    ],
+  },
+]
+
+/** Direction & Gestionnaire = opérationnel + trésorerie + modules admin. */
 const directionNav: NavSection[] = [
   ...directionOperationalNav,
+  ...directionTresorerieNav,
   ...directionAdminNav,
 ]
 
@@ -657,97 +671,10 @@ const laborantinNav: NavSection[] = [
   },
 ]
 
-const gestionnaireNav: NavSection[] = [
-  {
-    items: [
-      {
-        to: '/dashboard',
-        label: 'Tableau de bord',
-        icon: LayoutDashboard,
-        module: 'gestionnaire',
-        primary: true,
-      },
-    ],
-  },
-  {
-    label: 'Trésorerie',
-    items: [
-      {
-        to: '/gestionnaire/caisse',
-        label: 'Caisse & décaissement',
-        icon: Banknote,
-        module: 'gestionnaire',
-      },
-      {
-        to: '/gestionnaire/livre-journal',
-        label: 'Livre journal',
-        icon: FileText,
-        module: 'gestionnaire',
-      },
-      {
-        to: '/gestionnaire/finances',
-        label: 'Finances',
-        icon: TrendingUp,
-        module: 'gestionnaire',
-      },
-    ],
-  },
-  {
-    label: 'Charges',
-    items: [
-      {
-        to: '/gestionnaire/depenses',
-        label: 'Dépenses',
-        icon: Receipt,
-        module: 'gestionnaire',
-      },
-    ],
-  },
-  {
-    label: 'Personnel',
-    items: [
-      {
-        to: '/gestionnaire/salaires',
-        label: 'Salaires & paie',
-        icon: Coins,
-        module: 'gestionnaire',
-        badgeKey: 'salaires',
-      },
-    ],
-  },
-  {
-    label: 'Clinique',
-    items: [
-      {
-        to: '/gestionnaire/supervision',
-        label: 'Supervision',
-        icon: Eye,
-        module: 'gestionnaire',
-      },
-      {
-        label: 'Paramètres',
-        icon: Settings,
-        module: 'gestionnaire',
-        children: [...parametresChildren],
-      },
-    ],
-  },
-  {
-    label: 'Pharmacie',
-    items: [
-      {
-        label: 'Catalogue',
-        icon: PillBottle,
-        module: 'pharmacie',
-        children: pharmacyCatalogNavChildren,
-      },
-    ],
-  },
-]
-
 const NAV_BY_ROLE: Partial<Record<AppUserRole, NavSection[]>> = {
   ADMIN: directionNav,
-  GESTIONNAIRE: gestionnaireNav,
+  /** Même menu que Direction — droits et vues unifiés. */
+  GESTIONNAIRE: directionNav,
   RECEPTIONNISTE: receptionNav,
   MEDECIN: medecinNav,
   COMPTABLE: directionNav,
@@ -759,7 +686,7 @@ const NAV_BY_ROLE: Partial<Record<AppUserRole, NavSection[]>> = {
 
 const SIDEBAR_TITLES: Record<AppUserRole, string> = {
   ADMIN: 'Direction',
-  GESTIONNAIRE: 'Gestion',
+  GESTIONNAIRE: 'Direction',
   RECEPTIONNISTE: 'Réception',
   MEDECIN: 'Espace médecin',
   COMPTABLE: 'Direction',
@@ -775,13 +702,20 @@ function filterNavChild(child: NavChildItem, role: AppUserRole): NavChildItem | 
       .map((nested) => filterNavChild(nested, role))
       .filter((nested): nested is NavChildItem => nested !== null)
     if (!children.length) return null
-    if (!canAccessModule(role, child.module)) return null
+    if (child.labStock) {
+      if (!canManageLabStock(role)) return null
+      return { ...child, children }
+    }
     if (child.pharmacyCatalog && !canManagePharmacyCatalog(role)) return null
+    if (!canAccessModule(role, child.module)) return null
     return { ...child, children }
   }
   if (!child.to) return null
-  if (!canAccessModule(role, child.module)) return null
+  if (child.labStock) {
+    return canManageLabStock(role) ? child : null
+  }
   if (child.pharmacyCatalog && !canManagePharmacyCatalog(role)) return null
+  if (!canAccessModule(role, child.module)) return null
   return child
 }
 
@@ -791,13 +725,20 @@ function filterNavItem(item: NavItem, role: AppUserRole): NavItem | null {
       .map((child) => filterNavChild(child, role))
       .filter((child): child is NavChildItem => child !== null)
     if (!children.length) return null
-    if (!canAccessModule(role, item.module)) return null
+    if (item.labStock) {
+      if (!canManageLabStock(role)) return null
+      return { ...item, children }
+    }
     if (item.pharmacyCatalog && !canManagePharmacyCatalog(role)) return null
+    if (!canAccessModule(role, item.module)) return null
     return { ...item, children }
   }
   if (!item.to) return null
-  if (!canAccessModule(role, item.module)) return null
+  if (item.labStock) {
+    return canManageLabStock(role) ? item : null
+  }
   if (item.pharmacyCatalog && !canManagePharmacyCatalog(role)) return null
+  if (!canAccessModule(role, item.module)) return null
   return item
 }
 
@@ -827,7 +768,6 @@ const allNavItems: NavItem[] = [
   ...soignantNav,
   ...pharmacienNav,
   ...laborantinNav,
-  ...gestionnaireNav,
   ...logistiqueNav,
 ].flatMap((s) => s.items)
 

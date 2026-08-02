@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useSilentRefresh } from '@/composables/useSilentRefresh'
 import { useRoute } from 'vue-router'
 import {
   Stethoscope,
@@ -10,6 +11,7 @@ import {
   HeartPulse,
   CheckCircle2,
   ArrowRightLeft,
+  Coffee,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
@@ -23,7 +25,13 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import MultiExamPrescriptionPicker from '@/components/MultiExamPrescriptionPicker.vue'
+import DoctorPharmacyOrdonnancePicker from '@/components/DoctorPharmacyOrdonnancePicker.vue'
 import { emptyExamsByKind, emptyExamCommentsByKind, countExamsByKind, filterInvoiceExamComments, type ExamsByKind, type ExamCommentsByKind } from '@/lib/exam-catalog'
+import {
+  hasClinicalConsultationSelected,
+  isDirectClinicalConsultationPrescription,
+  type PharmacyOrdonnanceLine,
+} from '@/lib/lab-notes'
 import ConsultationQueueDataTable, {
   type ConsultationVisitRow,
 } from '@/components/ui/ConsultationQueueDataTable.vue'
@@ -42,6 +50,14 @@ const selectedExamsByKind = ref<ExamsByKind>(emptyExamsByKind())
 const examCommentsByKind = ref<ExamCommentsByKind>(emptyExamCommentsByKind())
 const hospitalisationDays = ref<number | null>(null)
 const doctorComment = ref('')
+const pharmacyOrdonnance = ref<PharmacyOrdonnanceLine[]>([])
+const acceptingPatients = ref(true)
+const availabilityKnown = ref(false)
+const availabilitySaving = ref(false)
+
+const showConsultationPanel = computed(() =>
+  hasClinicalConsultationSelected(selectedExamsByKind.value),
+)
 
 const modalVisit = computed(() => visits.value.find((v) => v.id === modalVisitId.value) ?? null)
 const transferVisit = computed(() => visits.value.find((v) => v.id === transferVisitId.value) ?? null)
@@ -49,7 +65,10 @@ const route = useRoute()
 const auth = useAuthStore()
 const { uiText, dateTimeText } = useAppI18n()
 const isAdminSupervision = computed(
-  () => auth.user?.role === 'ADMIN' || auth.user?.role === 'COMPTABLE',
+  () =>
+    auth.user?.role === 'ADMIN' ||
+    auth.user?.role === 'COMPTABLE' ||
+    auth.user?.role === 'GESTIONNAIRE',
 )
 const transferDoctorOptions = computed(() => {
   const assignedId = transferVisit.value?.assignedDoctor?.id
@@ -63,12 +82,16 @@ const hospitalisationPrescribed = computed(
 )
 const canSubmitConsultation = computed(() => {
   if (doctorComment.value.trim().length >= 2) return true
+  if (pharmacyOrdonnance.value.length > 0) return true
   if (selectedExamsCount.value <= 0) return false
   if (hospitalisationPrescribed.value && (hospitalisationDays.value ?? 0) < 1) return false
   return true
 })
 const submitConsultationLabel = computed(() => {
   if (submitting.value) return uiText('Enregistrement…')
+  if (showConsultationPanel.value && selectedExamsCount.value > 0) {
+    return uiText('Enregistrer la consultation')
+  }
   if (selectedExamsCount.value > 0) return uiText('Prescrire et enregistrer')
   return uiText('Enregistrer le commentaire')
 })
@@ -88,8 +111,51 @@ async function loadDoctors() {
   }
 }
 
-async function loadVisits() {
-  loading.value = true
+async function loadAvailability() {
+  if (isAdminSupervision.value) {
+    availabilityKnown.value = false
+    return
+  }
+  try {
+    const { data } = await api.get<{ acceptingPatients: boolean }>('/visits/me/availability')
+    acceptingPatients.value = Boolean(data?.acceptingPatients)
+    availabilityKnown.value = true
+  } catch {
+    availabilityKnown.value = false
+  }
+}
+
+async function toggleAvailability() {
+  if (!availabilityKnown.value || availabilitySaving.value) return
+  const next = !acceptingPatients.value
+  availabilitySaving.value = true
+  message.value = ''
+  try {
+    const { data } = await api.patch<{ acceptingPatients: boolean; message?: string }>(
+      '/visits/me/availability',
+      { acceptingPatients: next },
+    )
+    acceptingPatients.value = Boolean(data?.acceptingPatients)
+    message.value = uiText(
+      data?.message ??
+        (acceptingPatients.value
+          ? 'Vous êtes disponible pour de nouveaux patients.'
+          : 'Vous êtes en pause — votre nom n’apparaît plus à la réception.'),
+    )
+    messageType.value = 'success'
+  } catch (error: unknown) {
+    const shown = await showApiErrorModal(error, 'Impossible de mettre à jour la disponibilité.')
+    if (!shown) {
+      message.value = uiText('Impossible de mettre à jour la disponibilité.')
+      messageType.value = 'error'
+    }
+  } finally {
+    availabilitySaving.value = false
+  }
+}
+
+async function loadVisits(opts?: { silent?: boolean }) {
+  if (!opts?.silent) loading.value = true
   try {
     const queue = isAdminSupervision.value ? 'supervision' : 'pending'
     const { data } = await api.get('/visits', { params: { queue } })
@@ -98,10 +164,19 @@ async function loadVisits() {
       closeModal()
     }
   } finally {
-    loading.value = false
-    statsRefreshKey.value += 1
+    if (!opts?.silent) loading.value = false
+    if (!opts?.silent) statsRefreshKey.value += 1
   }
 }
+
+const { refresh: refreshVisits } = useSilentRefresh(
+  ({ silent }) => loadVisits({ silent }),
+  {
+    intervalMs: 20_000,
+    enabled: () => !modalVisitId.value,
+    immediate: false,
+  },
+)
 
 async function ensureVisitAvailable(visitId: string) {
   if (visits.value.some((v) => v.id === visitId)) return true
@@ -117,6 +192,7 @@ function resetExamForm() {
   examCommentsByKind.value = emptyExamCommentsByKind()
   hospitalisationDays.value = null
   doctorComment.value = ''
+  pharmacyOrdonnance.value = []
 }
 
 async function openConsultModal(id: string) {
@@ -214,14 +290,37 @@ async function submitExams() {
         payload.hospitalisationDays = hospitalisationDays.value
       }
     }
+    if (showConsultationPanel.value && pharmacyOrdonnance.value.length > 0) {
+      payload.pharmacyOrdonnance = pharmacyOrdonnance.value
+    }
+    const ordonnanceToPrint = [...pharmacyOrdonnance.value]
+    const patientForPrint = modalVisit.value?.patient
+    const doctorForPrint = modalVisit.value?.assignedDoctor
+      ? `Dr ${fullName(modalVisit.value.assignedDoctor.firstName, modalVisit.value.assignedDoctor.lastName)}`
+      : auth.user
+        ? `Dr ${fullName(auth.user.firstName, auth.user.lastName)}`
+        : null
     await api.post('/consultations/prescribe-exams', payload)
+    if (ordonnanceToPrint.length && patientForPrint) {
+      const { printPharmacyOrdonnance } = await import('@/lib/pharmacy-ordonnance-print')
+      printPharmacyOrdonnance({
+        patient: patientForPrint,
+        doctorName: doctorForPrint,
+        lines: ordonnanceToPrint,
+      })
+    }
     const hasComment = !!doctorComment.value.trim()
+    const consultationOnly = isDirectClinicalConsultationPrescription(selectedExamsByKind.value)
     message.value = uiText(
-      selectedExamsCount.value && hasComment
-        ? 'Examens prescrits — commentaire enregistré pour les résultats de labos.'
-        : selectedExamsCount.value
-          ? 'Examens prescrits — en attente de paiement à la réception.'
-          : 'Commentaire enregistré pour les résultats de labos.',
+      ordonnanceToPrint.length
+        ? 'Consultation enregistrée — ordonnance imprimée.'
+        : consultationOnly
+          ? 'Consultation enregistrée — paiement déjà effectué à la réception, aucun passage labo.'
+          : selectedExamsCount.value && hasComment
+            ? 'Examens prescrits — commentaire enregistré pour les résultats de labos.'
+            : selectedExamsCount.value
+              ? 'Examens prescrits — en attente de paiement à la réception.'
+              : 'Commentaire enregistré pour les résultats de labos.',
     )
     messageType.value = 'success'
     closeModal()
@@ -238,7 +337,7 @@ async function submitExams() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadVisits(), loadDoctors()])
+  await Promise.all([loadVisits(), loadDoctors(), loadAvailability()])
   if (isAdminSupervision.value) return
   const visitId = route.query.visit
   if (typeof visitId === 'string' && (await ensureVisitAvailable(visitId))) {
@@ -251,20 +350,35 @@ onMounted(async () => {
   <div class="page-with-table page-with-table--medecin">
     <section class="page-with-table__head">
       <UiPageHeader
-        :title="
-          uiText(
-            isAdminSupervision ? 'Supervision — file de consultation' : 'Consultation médicale',
-          )
-        "
+        :title="isAdminSupervision ? 'Supervision — file de consultation' : 'Consultation médicale'"
         :subtitle="
-          uiText(
-            isAdminSupervision
-              ? 'Vue lecture seule — tous les patients en attente ou en cours de consultation'
-              : 'Patients assignés à votre compte ou transférés vers vous',
-          )
+          isAdminSupervision
+            ? 'Vue lecture seule — tous les patients en attente ou en cours de consultation'
+            : 'Patients assignés à votre compte ou transférés vers vous'
         "
         :icon="Stethoscope"
-      />
+      >
+        <template v-if="availabilityKnown" #actions>
+          <UiButton
+            :variant="acceptingPatients ? 'success' : 'outline'"
+            size="sm"
+            :icon="acceptingPatients ? CheckCircle2 : Coffee"
+            :loading="availabilitySaving"
+            :disabled="availabilitySaving"
+            @click="toggleAvailability"
+          >
+            {{ uiText(acceptingPatients ? 'Disponible' : 'En pause') }}
+          </UiButton>
+        </template>
+      </UiPageHeader>
+
+      <p v-if="availabilityKnown && !acceptingPatients" class="availability-hint">
+        {{
+          uiText(
+            'Vous êtes en pause — votre nom n’apparaît pas dans la liste médecins à la réception.',
+          )
+        }}
+      </p>
 
       <UiAlert v-if="message" :type="messageType" :message="message" />
 
@@ -273,21 +387,19 @@ onMounted(async () => {
 
     <section class="page-with-table__body">
       <UiCard
-        :title="uiText(isAdminSupervision ? 'Patients en file d\'attente' : 'Patients à consulter')"
+        :title="isAdminSupervision ? 'Patients en file d\'attente' : 'Patients à consulter'"
         :description="
-          uiText(
-            isAdminSupervision
-              ? 'Supervision clinique — aucune action médicale depuis ce compte Direction'
-              : 'Cliquez sur Consulter pour voir le dossier et prescrire les examens',
-          )
+          isAdminSupervision
+            ? 'Supervision clinique — aucune action médicale depuis ce compte Direction'
+            : 'Cliquez sur Consulter pour voir le dossier et prescrire les examens'
         "
         class="ui-card--table-panel consultation-queue-panel"
         :icon="ClipboardList"
         icon-variant="blue"
       >
         <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadVisits">
-            Actualiser
+          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshVisits()">
+            {{ uiText('Actualiser') }}
           </UiButton>
         </template>
 
@@ -305,7 +417,7 @@ onMounted(async () => {
           fill
           :visits="visits"
           :selected-id="modalVisitId"
-          :loading="loading"
+          :loading="loading && !visits.length"
           :read-only="isAdminSupervision"
           @consult="openConsultModal"
           @transfer="openTransferModal"
@@ -385,19 +497,40 @@ onMounted(async () => {
                 v-model="selectedExamsByKind"
                 v-model:comments="examCommentsByKind"
                 v-model:hospitalisation-days="hospitalisationDays"
+                :doctor-id="auth.user?.id"
               />
             </section>
 
             <section class="info-section info-section--comment">
-              <h3>Commentaire médecin</h3>
+              <h3>{{ showConsultationPanel ? 'Consultation clinique' : 'Commentaire médecin' }}</h3>
               <p class="comment-hint">
-                Observations, conduite à tenir… Visible dans les résultats de labos (bouton Voir).
+                {{
+                  showConsultationPanel
+                    ? 'Paiement déjà effectué à la réception — aucun envoi au laboratoire ni second encaissement examens. Saisissez les informations cliniques et composez l’ordonnance pharmacie.'
+                    : 'Observations, conduite à tenir… Visible dans les résultats de labos (bouton Voir).'
+                }}
               </p>
               <textarea
                 v-model="doctorComment"
                 class="doctor-comment"
-                rows="4"
-                placeholder="Ex. Patient stable, repos recommandé, contrôle dans 15 jours…"
+                rows="5"
+                :placeholder="
+                  showConsultationPanel
+                    ? 'Motif, examen clinique, diagnostic, conduite à tenir…'
+                    : 'Ex. Patient stable, repos recommandé, contrôle dans 15 jours…'
+                "
+              />
+              <DoctorPharmacyOrdonnancePicker
+                v-if="showConsultationPanel"
+                v-model="pharmacyOrdonnance"
+                :patient="modalVisit?.patient"
+                :doctor-name="
+                  modalVisit?.assignedDoctor
+                    ? `Dr ${fullName(modalVisit.assignedDoctor.firstName, modalVisit.assignedDoctor.lastName)}`
+                    : auth.user
+                      ? `Dr ${fullName(auth.user.firstName, auth.user.lastName)}`
+                      : null
+                "
               />
             </section>
           </div>
@@ -468,6 +601,13 @@ onMounted(async () => {
   color: var(--text-light);
   padding: 2rem 1rem;
   font-size: 0.875rem;
+}
+
+.availability-hint {
+  margin: -0.35rem 0 0.65rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.35;
 }
 
 .consultation-queue-panel :deep(.ui-card__header) {

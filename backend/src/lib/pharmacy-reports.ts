@@ -30,12 +30,19 @@ export async function buildPharmacyReport(options?: {
   period?: string;
   from?: string;
   to?: string;
+  pharmacistId?: string;
 }) {
   const { from, to } = parsePeriod(options?.period, options?.from, options?.to);
+  const pharmacistFilter = options?.pharmacistId
+    ? { pharmacistId: options.pharmacistId }
+    : {};
 
   const saleLines = await prisma.pharmacySaleLine.findMany({
     where: {
-      prescription: { createdAt: { gte: from, lt: to } },
+      prescription: {
+        createdAt: { gte: from, lt: to },
+        ...pharmacistFilter,
+      },
     },
     select: {
       quantity: true,
@@ -52,7 +59,10 @@ export async function buildPharmacyReport(options?: {
   });
 
   const prescriptions = await prisma.prescription.findMany({
-    where: { createdAt: { gte: from, lt: to } },
+    where: {
+      createdAt: { gte: from, lt: to },
+      ...pharmacistFilter,
+    },
     select: { id: true, createdAt: true },
   });
 

@@ -4,9 +4,11 @@ import { Plus, RefreshCw, Stethoscope, Syringe, Eye, Pencil } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa, fullName } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth'
 import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import { clinicPercentFromSplits, validateInterventionPercents } from '@/lib/intervention-splits'
 import { OPERATION_KIND_CONFIG } from '@/lib/exam-catalog-kinds'
+import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -24,6 +26,12 @@ type DoctorOption = {
   lastName: string
 }
 
+type ClinicServiceOption = {
+  id: string
+  name: string
+  active?: boolean
+}
+
 type InterventionItem = {
   id: string
   code: string
@@ -37,8 +45,10 @@ type InterventionItem = {
   surgeonName?: string | null
   anesthesiologistId?: string | null
   anesthesiologistName?: string | null
+  clinicServiceId?: string | null
   surgeon?: DoctorOption | null
   anesthesiologist?: DoctorOption | null
+  clinicService?: { id: string; name: string } | null
   active: boolean
 }
 
@@ -47,6 +57,7 @@ const addButtonLabel = 'Ajout'
 const { uiText, localeCode } = useAppI18n()
 const items = ref<InterventionItem[]>([])
 const doctors = ref<DoctorOption[]>([])
+const clinicServices = ref<ClinicServiceOption[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
@@ -55,15 +66,17 @@ const showAddModal = ref(false)
 const editingId = ref<string | null>(null)
 const viewModalOpen = ref(false)
 const viewingItem = ref<InterventionItem | null>(null)
+const searchQuery = ref('')
+const serviceFilterId = ref('')
 const medecinRole = ref<'surgeon' | 'anesthesiologist'>('surgeon')
 const surgeonInputMode = ref<'select' | 'custom'>('select')
 const assistantInputMode = ref<'select' | 'custom'>('select')
 
 const newItem = ref({
-  code: '',
   label: '',
-  category: 'MAJEURE_A',
+  category: 'MAJEURE_A' as InterventionItem['category'],
   totalCostFcfa: '',
+  clinicServiceId: '',
   surgeonId: '',
   surgeonName: '',
   withAnesthesiologist: false,
@@ -73,21 +86,61 @@ const newItem = ref({
   anesthesiologistPercent: '',
 })
 
-const CATEGORY_KEYS: Record<string, string> = {
-  MAJEURE_A: 'Majeure (A)',
-  MOYENNE_B: 'Moyenne (B)',
-  PETITE_C: 'Petite (C)',
-}
-
-function categoryLabel(category: string) {
-  return uiText(CATEGORY_KEYS[category] ?? category)
-}
-
 const operationCountLabel = computed(() =>
-  translateTemplate('{n} opération(s)', { n: items.value.length }),
+  translateTemplate('{n} opération(s)', { n: filteredItems.value.length }),
 )
 
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
+
+const filteredItems = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  const serviceId = serviceFilterId.value.trim()
+  return items.value.filter((item) => {
+    const itemServiceId = item.clinicServiceId ?? item.clinicService?.id ?? ''
+    if (serviceId && itemServiceId !== serviceId) return false
+    if (!q) return true
+    const service = item.clinicService?.name ?? ''
+    const surgeon =
+      item.surgeon
+        ? fullName(item.surgeon.firstName, item.surgeon.lastName)
+        : (item.surgeonName ?? '')
+    return (
+      item.label.toLowerCase().includes(q) ||
+      service.toLowerCase().includes(q) ||
+      surgeon.toLowerCase().includes(q)
+    )
+  })
+})
+
+const filterServices = computed(() => {
+  const counts = new Map<string, { id: string; name: string; count: number }>()
+  for (const item of items.value) {
+    const id = item.clinicServiceId ?? item.clinicService?.id
+    const name = item.clinicService?.name?.trim()
+    if (!id || !name) continue
+    const existing = counts.get(id)
+    if (existing) {
+      existing.count += 1
+    } else {
+      counts.set(id, { id, name, count: 1 })
+    }
+  }
+  return [...counts.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+})
+
+const selectedServiceCount = computed(() => filteredItems.value.length)
+
+const serviceFilterCountLabel = computed(() => {
+  if (!serviceFilterId.value) {
+    return translateTemplate('{n} opération(s) · tous services', { n: selectedServiceCount.value })
+  }
+  const service = filterServices.value.find((item) => item.id === serviceFilterId.value)
+  const name = service?.name ?? 'Service'
+  return translateTemplate('{n} opération(s) — {service}', {
+    n: selectedServiceCount.value,
+    service: name,
+  })
+})
 
 const surgeonPercentValue = computed(() => Number(newItem.value.surgeonPercent) || 0)
 const anesthesiologistPercentValue = computed(() =>
@@ -104,11 +157,10 @@ const splitPreviewValid = computed(() => {
 
 const tableRows = computed(() => {
   localeCode.value
-  return items.value.map((item) => ({
+  return filteredItems.value.map((item) => ({
     id: item.id,
     label: item.label,
-    code: item.code,
-    category: categoryLabel(item.category),
+    service: item.clinicService?.name || '—',
     cost: formatFcfa(item.totalCostFcfa),
     costSort: item.totalCostFcfa,
     surgeonPercent: `${item.surgeonPercent}%`,
@@ -154,6 +206,12 @@ const viewingAnesthesiologistLabel = computed(() => {
   return '—'
 })
 
+const viewingServiceLabel = computed(() => {
+  const item = viewingItem.value
+  if (!item) return '—'
+  return item.clinicService?.name || '—'
+})
+
 const columns = [
   {
     data: 'label',
@@ -161,16 +219,15 @@ const columns = [
     render: (v: string, _t: string, row: { medecins: string }) =>
       `<span class="dt-name">${v}</span><span class="dt-muted">${row.medecins}</span>`,
   },
-  { data: 'code', title: 'Code' },
-  { data: 'category', title: 'Catégorie' },
+  { data: 'service', title: 'Service' },
   {
     data: 'costSort',
     title: 'Coût',
     render: (_d: number, _t: string, row: { cost: string }) => `<span class="dt-amount">${row.cost}</span>`,
   },
-  { data: 'surgeonPercent', title: '% Chirurgien' },
-  { data: 'anesthesiologistPercent', title: '% Assistant chirurgie' },
-  { data: 'clinicPercent', title: '% Clinique' },
+  { data: 'surgeonPercent', title: '% Chir.' },
+  { data: 'anesthesiologistPercent', title: '% Ass.' },
+  { data: 'clinicPercent', title: '% Clin.' },
   {
     data: 'statusLabel',
     title: 'Statut',
@@ -200,10 +257,10 @@ const formModalSubtitle = computed(() =>
 
 function resetNewItemForm() {
   newItem.value = {
-    code: '',
     label: '',
     category: 'MAJEURE_A',
     totalCostFcfa: '',
+    clinicServiceId: '',
     surgeonId: '',
     surgeonName: '',
     withAnesthesiologist: false,
@@ -237,6 +294,7 @@ function onAssistantInputModeChange(mode: 'select' | 'custom') {
 
 function openAddModal() {
   editingId.value = null
+  message.value = ''
   resetNewItemForm()
   showAddModal.value = true
 }
@@ -252,15 +310,16 @@ function openEditModal(id: string) {
   if (!item) return
 
   editingId.value = id
+  message.value = ''
   const hasAssistant = item.anesthesiologistPercent > 0
   const surgeonFromList = Boolean(item.surgeonId)
   const assistantFromList = Boolean(item.anesthesiologistId)
 
   newItem.value = {
-    code: item.code,
     label: item.label,
     category: item.category,
     totalCostFcfa: String(item.totalCostFcfa),
+    clinicServiceId: item.clinicServiceId ?? item.clinicService?.id ?? '',
     surgeonId: item.surgeonId ?? '',
     surgeonName: item.surgeonName ?? '',
     withAnesthesiologist: hasAssistant,
@@ -295,18 +354,61 @@ async function loadDoctors() {
   }
 }
 
+async function loadClinicServices() {
+  const auth = useAuthStore()
+  const preferred =
+    auth.user?.role === 'GESTIONNAIRE' ? '/gestionnaire/services' : '/admin/services'
+  const fallback = preferred.startsWith('/gestionnaire') ? '/admin/services' : '/gestionnaire/services'
+  try {
+    const { data } = await api.get<ClinicServiceOption[]>(preferred)
+    clinicServices.value = Array.isArray(data) ? data.filter((s) => s.active !== false) : []
+  } catch {
+    try {
+      const { data } = await api.get<ClinicServiceOption[]>(fallback)
+      clinicServices.value = Array.isArray(data) ? data.filter((s) => s.active !== false) : []
+    } catch {
+      clinicServices.value = []
+    }
+  }
+}
+
 async function loadItems() {
   loading.value = true
-  message.value = ''
   try {
-    const { data } = await api.get<InterventionItem[]>('/comptabilite/exam-types/operations')
-    items.value = data
+    const { data } = await api.get<InterventionItem[] | { items?: InterventionItem[] }>(
+      '/comptabilite/exam-types/operations',
+    )
+    const list = Array.isArray(data)
+      ? data
+      : Array.isArray((data as { items?: InterventionItem[] })?.items)
+        ? (data as { items: InterventionItem[] }).items
+        : null
+    if (list) {
+      items.value = list
+      if (
+        serviceFilterId.value &&
+        !list.some(
+          (item) => (item.clinicServiceId ?? item.clinicService?.id ?? '') === serviceFilterId.value,
+        )
+      ) {
+        serviceFilterId.value = ''
+      }
+    } else {
+      message.value = 'Réponse invalide du serveur (liste des opérations).'
+      messageType.value = 'error'
+    }
   } catch {
     message.value = 'Impossible de charger les opérations.'
     messageType.value = 'error'
   } finally {
     loading.value = false
   }
+}
+
+async function refreshItems() {
+  searchQuery.value = ''
+  serviceFilterId.value = ''
+  await loadItems()
 }
 
 function buildOperationPayload() {
@@ -321,17 +423,17 @@ function buildOperationPayload() {
       : Boolean(newItem.value.surgeonName.trim())
 
   if (
-    !newItem.value.code.trim() ||
     !newItem.value.label.trim() ||
     !newItem.value.totalCostFcfa ||
+    !newItem.value.clinicServiceId.trim() ||
     !newItem.value.surgeonPercent ||
     !hasSurgeon
   ) {
     return {
       error:
         surgeonInputMode.value === 'select'
-          ? 'Code, libellé, coût, médecin chirurgien (liste) et % chirurgien sont obligatoires.'
-          : 'Code, libellé, coût, nom du chirurgien (saisie libre) et % chirurgien sont obligatoires.',
+          ? 'Libellé, service, coût, médecin chirurgien (liste) et % chirurgien sont obligatoires.'
+          : 'Libellé, service, coût, nom du chirurgien (saisie libre) et % chirurgien sont obligatoires.',
     }
   }
 
@@ -358,10 +460,10 @@ function buildOperationPayload() {
 
   return {
     payload: {
-      code: newItem.value.code.trim(),
       label: newItem.value.label.trim(),
-      category: newItem.value.category,
+      category: newItem.value.category || 'MOYENNE_B',
       totalCostFcfa: Number(newItem.value.totalCostFcfa),
+      clinicServiceId: newItem.value.clinicServiceId.trim() || null,
       surgeonId: surgeonInputMode.value === 'select' ? newItem.value.surgeonId : null,
       surgeonName: surgeonInputMode.value === 'custom' ? newItem.value.surgeonName.trim() : null,
       anesthesiologistId:
@@ -392,14 +494,24 @@ async function saveItem() {
   message.value = ''
   try {
     if (editing) {
-      await api.put(`/comptabilite/exam-types/operations/${editing}`, built.payload)
+      const { data } = await api.put<InterventionItem>(
+        `/comptabilite/exam-types/operations/${editing}`,
+        built.payload,
+      )
+      items.value = items.value.map((item) => (item.id === data.id ? data : item))
       message.value = 'Opération mise à jour.'
     } else {
-      await api.post('/comptabilite/exam-types/operations', built.payload)
+      const { data } = await api.post<InterventionItem>(
+        '/comptabilite/exam-types/operations',
+        built.payload,
+      )
+      items.value = [data, ...items.value.filter((item) => item.id !== data.id)]
       message.value = 'Opération ajoutée à la nomenclature.'
     }
     messageType.value = 'success'
+    invalidateExamCatalogCache()
     closeAddModal()
+    searchQuery.value = ''
     await loadItems()
   } catch (error: unknown) {
     const shown = await showDuplicateModalFromError(error)
@@ -409,11 +521,11 @@ async function saveItem() {
       error && typeof error === 'object' && 'response' in error
         ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
         : undefined
-    message.value =
-      apiMessage ??
-      (editing
-        ? 'Mise à jour impossible. Vérifiez le code et les montants.'
-        : 'Ajout impossible. Vérifiez le code et les montants.')
+      message.value =
+        apiMessage ??
+        (editing
+          ? 'Mise à jour impossible. Vérifiez le libellé et les montants.'
+          : 'Ajout impossible. Vérifiez le libellé et les montants.')
     messageType.value = 'error'
   } finally {
     saving.value = false
@@ -428,6 +540,7 @@ async function toggleItem(id: string) {
     await api.put(`/comptabilite/exam-types/operations/${id}`, { active: !item.active })
     message.value = item.active ? 'Opération désactivée.' : 'Opération réactivée.'
     messageType.value = 'success'
+    invalidateExamCatalogCache()
     await loadItems()
   } catch {
     message.value = 'Action impossible.'
@@ -455,6 +568,7 @@ async function deleteItem(id: string) {
     await api.delete(`/comptabilite/exam-types/operations/${id}`)
     message.value = 'Opération supprimée.'
     messageType.value = 'success'
+    invalidateExamCatalogCache()
     await loadItems()
   } catch (error: unknown) {
     const apiMessage =
@@ -493,7 +607,7 @@ function onTableAction({ action, id }: { action: string; id: string }) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadDoctors(), loadItems()])
+  await Promise.all([loadDoctors(), loadClinicServices(), loadItems()])
 })
 </script>
 
@@ -503,9 +617,9 @@ onMounted(async () => {
 
     <UiAlert v-if="message && !showAddModal && !viewModalOpen" :type="messageType" :message="message" />
 
-    <UiCard
-      title="Nomenclature chirurgicale"
-      description="Tarifs, médecins et répartition chirurgien / assistant chirurgie / clinique"
+      <UiCard
+      title="Types opérations"
+      description="Tarifs, service, médecins et répartition — gestion des types d’opération"
       :icon="config.icon"
       :icon-variant="config.iconVariant"
       class="section"
@@ -514,16 +628,36 @@ onMounted(async () => {
         <UiButton variant="primary" size="sm" :icon="Plus" @click="openAddModal">
           {{ uiText(addButtonLabel) }}
         </UiButton>
-        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">
+        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshItems">
           Actualiser
         </UiButton>
         <span class="list-count">{{ operationCountLabel }}</span>
       </template>
 
+      <div class="catalog-filters">
+        <div class="catalog-filters__service">
+          <UiSelect v-model="serviceFilterId" label="Service">
+            <option value="">Tous les services ({{ items.length }})</option>
+            <option v-for="service in filterServices" :key="service.id" :value="service.id">
+              {{ service.name }} ({{ service.count }})
+            </option>
+          </UiSelect>
+          <span class="catalog-filters__count" :title="serviceFilterCountLabel">
+            {{ selectedServiceCount }}
+          </span>
+        </div>
+        <UiInput
+          v-model="searchQuery"
+          label="Rechercher"
+          placeholder="Libellé ou chirurgien…"
+        />
+      </div>
+
       <div class="table-panel-scroll">
         <UiDataTable
-          table-key="exam-catalog-operations"
+          table-key="exam-catalog-operations-v4"
           compact
+          :scrollable="false"
           :data="tableRows"
           :columns="columns"
           :loading="loading"
@@ -543,16 +677,12 @@ onMounted(async () => {
     >
       <dl class="operation-detail">
         <div class="operation-detail__row">
-          <dt>Code</dt>
-          <dd>{{ viewingItem.code }}</dd>
-        </div>
-        <div class="operation-detail__row">
           <dt>Libellé</dt>
           <dd>{{ viewingItem.label }}</dd>
         </div>
         <div class="operation-detail__row">
-          <dt>Catégorie</dt>
-          <dd>{{ categoryLabel(viewingItem.category) }}</dd>
+          <dt>Service</dt>
+          <dd>{{ viewingServiceLabel }}</dd>
         </div>
         <div class="operation-detail__row">
           <dt>Coût total</dt>
@@ -600,17 +730,21 @@ onMounted(async () => {
       size="wide"
       @close="closeAddModal"
     >
+      <UiAlert v-if="message && showAddModal" :type="messageType" :message="message" />
       <section class="form-panel">
         <div class="form-grid-2">
-          <UiInput v-model="newItem.code" label="Code" placeholder="CHIR-D" />
           <UiInput v-model="newItem.label" label="Libellé" placeholder="Chirurgie moyenne" />
-          <UiSelect v-model="newItem.category" label="Catégorie">
-            <option value="MAJEURE_A">Majeure (A)</option>
-            <option value="MOYENNE_B">Moyenne (B)</option>
-            <option value="PETITE_C">Petite (C)</option>
+          <UiSelect v-model="newItem.clinicServiceId" label="Service" required>
+            <option value="">— Sélectionner un service —</option>
+            <option v-for="service in clinicServices" :key="service.id" :value="service.id">
+              {{ service.name }}
+            </option>
           </UiSelect>
           <UiInput v-model="newItem.totalCostFcfa" label="Coût (FCFA)" type="number" min="1" />
         </div>
+        <p v-if="clinicServices.length === 0" class="form-panel__hint form-panel__hint--warn">
+          Aucun service disponible. Créez d’abord un service dans Paramètres → Services.
+        </p>
       </section>
 
       <section class="form-panel form-panel--accent medecin-section">
@@ -778,6 +912,16 @@ onMounted(async () => {
   margin-top: 1rem;
 }
 
+.form-panel__hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.form-panel__hint--warn {
+  color: #b45309;
+}
+
 .list-count {
   font-size: 0.8125rem;
   font-weight: 600;
@@ -787,6 +931,55 @@ onMounted(async () => {
 
 .table-panel-scroll {
   overflow: auto;
+  max-height: min(70dvh, 720px);
+}
+
+.table-panel-scroll :deep(.ui-dt-shell),
+.table-panel-scroll :deep(.ui-dt-scroll) {
+  display: block;
+  flex: none;
+  height: auto;
+  max-height: none;
+  min-height: unset;
+  overflow: visible;
+}
+
+.catalog-filters {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1.1fr) minmax(14rem, 1.4fr);
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+  align-items: end;
+}
+
+.catalog-filters__service {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: end;
+}
+
+.catalog-filters__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.5rem;
+  height: 2.45rem;
+  margin-bottom: 1rem;
+  padding: 0 0.65rem;
+  border-radius: 999px;
+  background: var(--primary-50, #eff6ff);
+  border: 1px solid var(--primary-100, #dbeafe);
+  color: var(--primary-800, #1e3a5f);
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+@media (max-width: 720px) {
+  .catalog-filters {
+    grid-template-columns: 1fr;
+  }
 }
 
 .form-grid {

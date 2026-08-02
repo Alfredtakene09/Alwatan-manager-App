@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { Package, Plus, RefreshCw, Save } from '@lucide/vue'
+import { Package, Plus, RefreshCw, Save, Search } from '@lucide/vue'
 import api from '@/api/client'
-import { formatFcfa } from '@/lib/roles'
-import { PHARMACEUTICAL_FORMS, defaultExpiryDateInput } from '@/lib/pharmacy-product-forms'
+import { canManagePharmacyCatalog, formatFcfa } from '@/lib/roles'
+import { defaultExpiryDateInput, PHARMACEUTICAL_FORMS } from '@/lib/pharmacy-product-forms'
 import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
+import type { PharmacyFormRecord } from '@/components/pharmacie/PharmacyFormsPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -17,6 +18,9 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
 import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
+import { useAuthStore } from '@/stores/auth'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 export type PharmacyCategoryOption = { id: string; name: string; active?: boolean }
 
@@ -45,8 +49,15 @@ export type PharmacyProductRecord = {
 
 const emit = defineEmits<{ changed: [] }>()
 
+const { uiText, localeCode } = useAppI18n()
+const auth = useAuthStore()
+const canManageCatalog = computed(() =>
+  auth.user ? canManagePharmacyCatalog(auth.user.role) : false,
+)
+
 const items = ref<PharmacyProductRecord[]>([])
 const categories = ref<PharmacyCategoryOption[]>([])
+const forms = ref<PharmacyFormRecord[]>([])
 const suppliers = ref<PharmacySupplierRecord[]>([])
 const loading = ref(false)
 const saving = ref(false)
@@ -71,74 +82,160 @@ const formSachetsPerBox = ref('1')
 const formSachetPrice = ref('')
 const formSellBySachet = ref(false)
 
+const filterQuery = ref('')
+const filterForm = ref('')
+const filterCategoryId = ref('')
+const appliedQuery = ref('')
+const appliedForm = ref('')
+const appliedCategoryId = ref('')
+
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 const isEditing = computed(() => editingId.value !== null)
 const activeSuppliers = computed(() => suppliers.value.filter((s) => s.active))
 const activeCategories = computed(() => categories.value.filter((c) => c.active !== false))
+const filterFormOptions = computed(() => forms.value.filter((f) => f.active))
+const activeForms = computed(() => {
+  const active = forms.value.filter((f) => f.active)
+  const selected = formPharmaceuticalForm.value.trim()
+  if (selected && !active.some((f) => f.name === selected)) {
+    const orphan = forms.value.find((f) => f.name === selected)
+    if (orphan) return [...active, orphan]
+    return [...active, { id: `legacy-${selected}`, name: selected, sortOrder: 999, active: false, productsCount: 0 }]
+  }
+  return active
+})
 
-const tableRows = computed(() =>
-  items.value.map((item) => ({
-    id: item.id,
-    name: item.dosage ? `${item.name} — ${item.dosage}` : item.name,
-    form: item.pharmaceuticalForm || '—',
-    category: item.category?.name ?? '—',
-    price: formatFcfa(item.unitPriceFcfa),
-    priceSort: item.unitPriceFcfa,
-    quantity: item.quantity,
-    minStock: item.minStock,
-    stockLabel: `${item.quantity} en stock`,
-    stockVariant: item.quantity <= item.minStock ? 'danger' : 'success',
-    statusLabel: item.active ? 'Actif' : 'Inactif',
-    statusVariant: item.active ? 'success' : 'danger',
-    toggleLabel: item.active ? 'Désactiver' : 'Activer',
-    isActive: item.active,
-    canDelete: true,
-  })),
-)
+const filteredItems = computed(() => {
+  const q = appliedQuery.value.toLowerCase()
+  return items.value.filter((item) => {
+    if (appliedCategoryId.value && item.categoryId !== appliedCategoryId.value) return false
+    if (appliedForm.value && (item.pharmaceuticalForm || '') !== appliedForm.value) return false
+    if (q) {
+      const hay = [
+        item.name,
+        item.dosage,
+        item.sku,
+        item.barcode,
+        item.category?.name,
+        item.pharmaceuticalForm,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+      if (!hay.includes(q)) return false
+    }
+    return true
+  })
+})
 
-const columns = [
-  {
-    data: 'name',
-    title: 'Médicament',
-    responsivePriority: 1,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  { data: 'category', title: 'Catégorie', responsivePriority: 3 },
-  { data: 'form', title: 'Forme', responsivePriority: 3 },
-  {
-    data: 'priceSort',
-    title: 'Prix vente',
-    responsivePriority: 3,
-    render: (_d: number, _t: string, row: { price: string }) => `<span class="dt-amount">${row.price}</span>`,
-  },
-  { data: 'minStock', title: 'Seuil', responsivePriority: 4 },
-  {
-    data: 'quantity',
-    title: 'Disponible',
-    responsivePriority: 3,
-    render: (_d: number, _t: string, row: { stockLabel: string; stockVariant: string }) =>
-      statusBadge(row.stockLabel, row.stockVariant as 'success' | 'danger'),
-  },
-  {
-    data: 'statusLabel',
-    title: 'Statut',
-    responsivePriority: 4,
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: 'Actions',
-    orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog all',
-    responsivePriority: 1,
-    render: (
-      _d: unknown,
-      _t: string,
-      row: { id: string; toggleLabel: string; isActive: boolean; canDelete: boolean },
-    ) => catalogRowActionsHtml(row),
-  },
-]
+const tableRows = computed(() => {
+  void localeCode.value
+  return filteredItems.value.map((item) => {
+    const purchase = item.purchasePriceFcfa
+    const hasPurchase = purchase != null && purchase > 0
+    const profitFcfa = hasPurchase ? item.unitPriceFcfa - purchase : null
+    return {
+      id: item.id,
+      name: item.dosage ? `${item.name} — ${item.dosage}` : item.name,
+      form: item.pharmaceuticalForm || '—',
+      category: item.category?.name ?? '—',
+      price: formatFcfa(item.unitPriceFcfa),
+      priceSort: item.unitPriceFcfa,
+      purchasePrice: hasPurchase ? formatFcfa(purchase) : '—',
+      purchasePriceSort: hasPurchase ? purchase : -1,
+      profit: profitFcfa != null ? formatFcfa(profitFcfa) : '—',
+      profitSort: profitFcfa ?? Number.NEGATIVE_INFINITY,
+      quantity: item.quantity,
+      minStock: item.minStock,
+      stockLabel: translateTemplate('{n} en stock', { n: item.quantity }),
+      stockVariant: item.quantity <= item.minStock ? 'danger' : 'success',
+      statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),
+      statusVariant: item.active ? 'success' : 'danger',
+      toggleLabel: item.active ? uiText('Désactiver') : uiText('Activer'),
+      isActive: item.active,
+      canDelete: canManageCatalog.value,
+      showEdit: canManageCatalog.value,
+      showToggle: canManageCatalog.value,
+    }
+  })
+})
+
+function applyFilters() {
+  appliedQuery.value = filterQuery.value.trim()
+  appliedForm.value = filterForm.value
+  appliedCategoryId.value = filterCategoryId.value
+}
+
+const columns = computed(() => {
+  const cols = [
+    {
+      data: 'name',
+      title: 'Médicament',
+      responsivePriority: 1,
+      render: (name: string) => `<span class="dt-name">${name}</span>`,
+    },
+    { data: 'category', title: 'Catégorie', responsivePriority: 3 },
+    { data: 'form', title: 'Forme', responsivePriority: 3 },
+    {
+      data: 'priceSort',
+      title: 'Prix vente',
+      responsivePriority: 3,
+      render: (_d: number, _t: string, row: { price: string }) => `<span class="dt-amount">${row.price}</span>`,
+    },
+    {
+      data: 'purchasePriceSort',
+      title: "Prix d'achat",
+      responsivePriority: 4,
+      render: (_d: number, _t: string, row: { purchasePrice: string }) =>
+        `<span class="dt-amount">${row.purchasePrice}</span>`,
+    },
+    {
+      data: 'profitSort',
+      title: 'Bénéfice',
+      responsivePriority: 4,
+      render: (_d: number, _t: string, row: { profit: string }) =>
+        `<span class="dt-amount">${row.profit}</span>`,
+    },
+    { data: 'minStock', title: 'Seuil', responsivePriority: 4 },
+    {
+      data: 'quantity',
+      title: 'Disponible',
+      responsivePriority: 3,
+      render: (_d: number, _t: string, row: { stockLabel: string; stockVariant: string }) =>
+        statusBadge(row.stockLabel, row.stockVariant as 'success' | 'danger'),
+    },
+    {
+      data: 'statusLabel',
+      title: 'Statut',
+      responsivePriority: 4,
+      render: (label: string, _t: string, row: { statusVariant: string }) =>
+        statusBadge(label, row.statusVariant as 'success' | 'danger'),
+    },
+  ]
+  if (!canManageCatalog.value) return cols
+  return [
+    ...cols,
+    {
+      data: null,
+      title: 'Actions',
+      orderable: false,
+      className: 'dt-actions-col dt-actions-col--catalog all',
+      responsivePriority: 1,
+      render: (
+        _d: unknown,
+        _t: string,
+        row: {
+          id: string
+          toggleLabel: string
+          isActive: boolean
+          canDelete: boolean
+          showEdit: boolean
+          showToggle: boolean
+        },
+      ) => catalogRowActionsHtml(row),
+    },
+  ]
+})
 
 function apiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error) && typeof error.response?.data?.error === 'string') {
@@ -173,11 +270,35 @@ async function loadCategories() {
   }
 }
 
+async function loadForms() {
+  try {
+    const { data } = await api.get<PharmacyFormRecord[]>('/pharmacie/forms')
+    const rows = data.filter((row) => row.id && row.name)
+    if (rows.length) {
+      forms.value = rows
+      return
+    }
+  } catch {
+    /* repli ci-dessous */
+  }
+  forms.value = PHARMACEUTICAL_FORMS.map((name, index) => ({
+    id: `default-${index}`,
+    name,
+    sortOrder: index,
+    active: true,
+    productsCount: 0,
+  }))
+}
+
+async function loadCatalogLookups() {
+  await Promise.all([loadCategories(), loadForms(), loadSuppliers()])
+}
+
 async function loadItems() {
   loading.value = true
   message.value = ''
   try {
-    await loadCategories()
+    await Promise.all([loadCategories(), loadForms()])
     const { data } = await api.get<PharmacyProductRecord[]>('/pharmacie/products')
     items.value = data
   } catch {
@@ -207,16 +328,20 @@ function resetForm() {
   formSellBySachet.value = false
 }
 
-function openCreateModal() {
+async function openCreateModal() {
+  if (!canManageCatalog.value) return
   editingId.value = null
+  await loadCatalogLookups()
   resetForm()
   modalOpen.value = true
   message.value = ''
 }
 
-function openEditModal(id: string) {
+async function openEditModal(id: string) {
+  if (!canManageCatalog.value) return
   const item = itemsById.value.get(id)
   if (!item) return
+  await loadCatalogLookups()
   editingId.value = id
   formName.value = item.name
   formDosage.value = item.dosage ?? ''
@@ -267,6 +392,7 @@ function buildPayload() {
 }
 
 async function saveItem() {
+  if (!canManageCatalog.value) return
   const name = formName.value.trim()
   const unitPriceFcfa = Number(formUnitPrice.value)
   const purchasePriceFcfa = Number(formPurchasePrice.value)
@@ -312,6 +438,7 @@ async function saveItem() {
 }
 
 async function toggleItem(id: string) {
+  if (!canManageCatalog.value) return
   const item = itemsById.value.get(id)
   if (!item) return
   try {
@@ -327,12 +454,13 @@ async function toggleItem(id: string) {
 }
 
 async function deleteItem(id: string) {
+  if (!canManageCatalog.value) return
   const item = itemsById.value.get(id)
   if (!item) return
   const confirmed = await confirmAppModal({
     type: 'DELETE',
     title: 'Supprimer le produit',
-    message: `Supprimer le produit « ${item.name} » ?`,
+    message: translateTemplate('Supprimer le produit « {name} » ?', { name: item.name }),
     confirmLabel: 'Supprimer',
   })
   if (!confirmed) return
@@ -361,22 +489,27 @@ onMounted(async () => {
 
 type ProductExportRow = (typeof tableRows.value)[number]
 
-const productExportColumns: ExportColumn<ProductExportRow>[] = [
-  { header: 'Médicament', value: (r) => r.name },
-  { header: 'Catégorie', value: (r) => r.category },
-  { header: 'Forme', value: (r) => r.form },
-  { header: 'Prix vente', value: (r) => r.price },
-  { header: 'Seuil', value: (r) => r.minStock },
-  { header: 'Disponible', value: (r) => r.quantity },
-  { header: 'Statut', value: (r) => r.statusLabel },
-]
+const productExportColumns = computed<ExportColumn<ProductExportRow>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Médicament'), value: (r) => r.name },
+    { header: uiText('Catégorie'), value: (r) => r.category },
+    { header: uiText('Forme'), value: (r) => r.form },
+    { header: uiText('Prix vente'), value: (r) => r.price },
+    { header: uiText("Prix d'achat"), value: (r) => r.purchasePrice },
+    { header: uiText('Bénéfice'), value: (r) => r.profit },
+    { header: uiText('Seuil'), value: (r) => r.minStock },
+    { header: uiText('Disponible'), value: (r) => r.quantity },
+    { header: uiText('Statut'), value: (r) => r.statusLabel },
+  ]
+})
 
 function exportPdf() {
-  exportTablePdf('Produits pharmacie', productExportColumns, tableRows.value)
+  exportTablePdf(uiText('Produits pharmacie'), productExportColumns.value, tableRows.value)
 }
 
 function exportExcel() {
-  exportTableExcel('Produits pharmacie', productExportColumns, tableRows.value)
+  exportTableExcel(uiText('Produits pharmacie'), productExportColumns.value, tableRows.value)
 }
 
 defineExpose({ reload: loadItems })
@@ -385,21 +518,50 @@ defineExpose({ reload: loadItems })
 <template>
   <PageTableSection embedded>
     <template #toolbar>
+      <input
+        v-model="filterQuery"
+        class="filter-input"
+        type="search"
+        :placeholder="uiText('Rechercher un produit…')"
+        :aria-label="uiText('Rechercher un produit')"
+        @keydown.enter.prevent="applyFilters"
+      />
+      <select v-model="filterForm" class="filter-select" :aria-label="uiText('Filtrer par forme')">
+        <option value="">{{ uiText('Toutes les formes') }}</option>
+        <option v-for="form in filterFormOptions" :key="form.id" :value="form.name">{{ form.name }}</option>
+      </select>
+      <select v-model="filterCategoryId" class="filter-select" :aria-label="uiText('Filtrer par catégorie')">
+        <option value="">{{ uiText('Toutes les catégories') }}</option>
+        <option v-for="category in activeCategories" :key="category.id" :value="category.id">
+          {{ category.name }}
+        </option>
+      </select>
+      <UiButton variant="ghost" size="sm" :icon="Search" :disabled="loading" @click="applyFilters">
+        {{ uiText('Rechercher') }}
+      </UiButton>
       <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
-        Actualiser
+        {{ uiText('Actualiser') }}
       </UiButton>
-      <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
-        Nouveau produit
+      <UiButton
+        v-if="canManageCatalog"
+        variant="primary"
+        size="sm"
+        :icon="Plus"
+        @click="openCreateModal"
+      >
+        {{ uiText('Nouveau produit') }}
       </UiButton>
     </template>
 
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
 
-    <p v-if="!loading && !items.length" class="empty">Aucun produit enregistré</p>
+    <p v-if="!loading && !items.length" class="empty">{{ uiText('Aucun produit enregistré') }}</p>
+    <p v-else-if="!loading && !tableRows.length" class="empty">{{ uiText('Aucun produit ne correspond à la recherche.') }}</p>
     <UiDataTable
       v-else
       fill
+      :key="canManageCatalog ? 'pharmacy-products-rw' : 'pharmacy-products-ro'"
       table-key="pharmacy-products"
       compact
       :data="tableRows"
@@ -429,7 +591,7 @@ defineExpose({ reload: loadItems })
       <div class="product-form__row product-form__row--2">
         <UiInput v-model="formBarcode" label="Code-barres" placeholder="Scan ou saisie manuelle" />
         <UiSelect v-model="formCategoryId" label="Catégorie">
-          <option value="">Sans catégorie</option>
+          <option value="">{{ uiText('Sans catégorie') }}</option>
           <option v-for="category in activeCategories" :key="category.id" :value="category.id">
             {{ category.name }}
           </option>
@@ -438,11 +600,11 @@ defineExpose({ reload: loadItems })
 
       <div class="product-form__row product-form__row--2">
         <UiSelect v-model="formPharmaceuticalForm" label="Forme">
-          <option value="">Sélectionner une forme</option>
-          <option v-for="form in PHARMACEUTICAL_FORMS" :key="form" :value="form">{{ form }}</option>
+          <option value="">{{ uiText('Sélectionner une forme') }}</option>
+          <option v-for="form in activeForms" :key="form.id" :value="form.name">{{ form.name }}</option>
         </UiSelect>
         <UiSelect v-model="formSupplierId" label="Fournisseur">
-          <option value="">Sélectionner un fournisseur</option>
+          <option value="">{{ uiText('Sélectionner un fournisseur') }}</option>
           <option v-for="s in activeSuppliers" :key="s.id" :value="s.id">{{ s.name }}</option>
         </UiSelect>
       </div>
@@ -457,11 +619,11 @@ defineExpose({ reload: loadItems })
           />
           <label class="checkbox-field">
             <input v-model="formNoExpiry" type="checkbox" />
-            <span>Aucune</span>
+            <span>{{ uiText('Aucune') }}</span>
           </label>
         </div>
         <div class="amount-field">
-          <span class="amount-field__label">Prix d'achat</span>
+          <span class="amount-field__label">{{ uiText("Prix d'achat") }}</span>
           <div class="amount-field__wrap">
             <input
               v-model="formPurchasePrice"
@@ -484,7 +646,7 @@ defineExpose({ reload: loadItems })
           min="0"
         />
         <div class="amount-field">
-          <span class="amount-field__label">Prix de vente <span class="req">*</span></span>
+          <span class="amount-field__label">{{ uiText('Prix de vente') }} <span class="req">*</span></span>
           <div class="amount-field__wrap">
             <input
               v-model="formUnitPrice"
@@ -500,12 +662,12 @@ defineExpose({ reload: loadItems })
         <UiInput v-model="formMinStock" label="Seuil d'alerte" type="number" min="0" />
       </div>
 
-      <div class="product-form__section">Configuration des sachets</div>
+      <div class="product-form__section">{{ uiText('Configuration des sachets') }}</div>
 
       <div class="product-form__row product-form__row--2">
         <UiInput v-model="formSachetsPerBox" label="Sachets par boîte" type="number" min="1" />
         <div class="amount-field">
-          <span class="amount-field__label">Prix par sachet</span>
+          <span class="amount-field__label">{{ uiText('Prix par sachet') }}</span>
           <div class="amount-field__wrap">
             <input
               v-model="formSachetPrice"
@@ -521,14 +683,14 @@ defineExpose({ reload: loadItems })
 
       <label class="checkbox-field checkbox-field--block">
         <input v-model="formSellBySachet" type="checkbox" />
-        <span>Vente par sachet</span>
+        <span>{{ uiText('Vente par sachet') }}</span>
       </label>
     </section>
 
     <template #footer>
-      <UiButton variant="ghost" @click="closeModal">Annuler</UiButton>
+      <UiButton variant="ghost" @click="closeModal">{{ uiText('Annuler') }}</UiButton>
       <UiButton variant="primary" :icon="Save" :disabled="saving" @click="saveItem">
-        {{ saving ? 'Enregistrement…' : 'Enregistrer' }}
+        {{ saving ? uiText('Enregistrement…') : uiText('Enregistrer') }}
       </UiButton>
     </template>
   </UiFormModal>
@@ -537,6 +699,28 @@ defineExpose({ reload: loadItems })
 <style scoped>
 .panel-alert {
   margin-bottom: 1rem;
+}
+
+.filter-input,
+.filter-select {
+  min-width: 9rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.filter-input {
+  min-width: 12rem;
+  flex: 1 1 12rem;
+  max-width: 18rem;
+}
+
+.filter-select {
+  min-width: 10rem;
 }
 
 .empty {

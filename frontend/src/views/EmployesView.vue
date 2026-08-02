@@ -78,6 +78,10 @@ type Employee = {
   fixedSalaryFcfa?: number | null
   bonusFcfa?: number | null
   service?: string | null
+  clinicServiceId?: string | null
+  clinicService?: { id: string; name: string } | null
+  clinicServiceIds?: string[]
+  clinicServices?: { id: string; name: string; isDefault?: boolean }[]
   contractType?: string | null
   contractStatus?: string
   active: boolean
@@ -108,6 +112,10 @@ const SERVICE_SUGGESTIONS = [
   'Administration',
   'Entretien',
 ]
+
+type ClinicServiceOption = { id: string; name: string; active?: boolean }
+
+const clinicServices = ref<ClinicServiceOption[]>([])
 
 const route = useRoute()
 const { uiText, localeCode } = useAppI18n()
@@ -153,6 +161,8 @@ const form = ref({
   consultationValidityDays: '30',
   consultationRenewalPolicy: 'FULL' as ConsultationRenewalPolicy,
   service: '',
+  clinicServiceId: '',
+  clinicServiceIds: [] as string[],
   fixedSalaryFcfa: '',
   bonusFcfa: '',
   contractType: 'CDI',
@@ -482,11 +492,22 @@ function resetForm() {
     consultationValidityDays: '30',
     consultationRenewalPolicy: 'FULL',
     service: '',
+    clinicServiceId: '',
+    clinicServiceIds: [],
     fixedSalaryFcfa: '',
     bonusFcfa: '',
     contractType: 'CDI',
     contractStatus: 'ACTIF',
     active: true,
+  }
+}
+
+async function loadClinicServices() {
+  try {
+    const { data } = await api.get<ClinicServiceOption[]>(`${apiBase.value}/services`)
+    clinicServices.value = Array.isArray(data) ? data.filter((s) => s.active !== false) : []
+  } catch {
+    clinicServices.value = []
   }
 }
 
@@ -543,6 +564,15 @@ function openEditModal(id: string) {
         : '30',
     consultationRenewalPolicy: employee.consultationRenewalPolicy ?? 'FULL',
     service: employee.service ?? '',
+    clinicServiceId: employee.clinicServiceId ?? employee.clinicService?.id ?? '',
+    clinicServiceIds: (() => {
+      const ids =
+        employee.clinicServiceIds?.length
+          ? [...employee.clinicServiceIds]
+          : (employee.clinicServices ?? []).map((s) => s.id)
+      const defaultId = employee.clinicServiceId ?? employee.clinicService?.id ?? ''
+      return ids.filter((id) => id && id !== defaultId)
+    })(),
     fixedSalaryFcfa:
       employee.fixedSalaryFcfa != null ? String(employee.fixedSalaryFcfa) : '',
     bonusFcfa: employee.bonusFcfa != null ? String(employee.bonusFcfa) : '',
@@ -594,8 +624,21 @@ function compensationPayload() {
 
 function payrollPayload() {
   const payload: Record<string, unknown> = {}
-  if (showPayrollSection.value) {
+  if (isMedecinProfile.value) {
+    payload.clinicServiceId = form.value.clinicServiceId.trim() || null
+    const extra = form.value.clinicServiceIds.filter(
+      (id) => id && id !== form.value.clinicServiceId.trim(),
+    )
+    payload.clinicServiceIds = [
+      ...(form.value.clinicServiceId.trim() ? [form.value.clinicServiceId.trim()] : []),
+      ...extra,
+    ]
+  } else if (showPayrollSection.value) {
     payload.service = form.value.service.trim() || undefined
+    payload.clinicServiceId = null
+    payload.clinicServiceIds = []
+  }
+  if (showPayrollSection.value) {
     payload.contractType = form.value.contractType || undefined
     payload.contractStatus = form.value.contractStatus
     const bonus = Number(form.value.bonusFcfa)
@@ -607,6 +650,21 @@ function payrollPayload() {
     if (Number.isFinite(salary) && salary >= 0) payload.fixedSalaryFcfa = salary
   }
   return payload
+}
+
+watch(
+  () => form.value.clinicServiceId,
+  (serviceId) => {
+    if (!serviceId) return
+    form.value.clinicServiceIds = form.value.clinicServiceIds.filter((id) => id !== serviceId)
+  },
+)
+
+function toggleExtraClinicService(serviceId: string) {
+  const set = new Set(form.value.clinicServiceIds)
+  if (set.has(serviceId)) set.delete(serviceId)
+  else set.add(serviceId)
+  form.value.clinicServiceIds = [...set]
 }
 
 function onDoctorCompensationTypeChange(type: DoctorCompensationType) {
@@ -624,6 +682,8 @@ function onProfileChange(profile: 'STAFF' | 'MEDECIN') {
     }
   } else {
     form.value.specialty = ''
+    form.value.clinicServiceId = ''
+    form.value.clinicServiceIds = []
     form.value.availabilitySlots = []
   }
   if (
@@ -731,6 +791,11 @@ async function saveEmployee() {
     return
   }
   if (isMedecinProfile.value) {
+    if (!form.value.clinicServiceId.trim()) {
+      message.value = 'Sélectionnez le service clinique du médecin.'
+      messageType.value = 'error'
+      return
+    }
     for (const slot of form.value.availabilitySlots) {
       if (slot.startTime >= slot.endTime) {
         message.value = 'Vérifiez les horaires de disponibilité (fin après début).'
@@ -836,7 +901,7 @@ function onTableAction({ action, id }: { action: string; id: string }) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadEmployees(), loadJobTitleLabels()])
+  await Promise.all([loadEmployees(), loadJobTitleLabels(), loadClinicServices()])
 })
 </script>
 
@@ -1118,6 +1183,44 @@ onMounted(async () => {
           </datalist>
         </div>
 
+        <UiSelect v-model="form.clinicServiceId" label="Service par défaut (consultation)" required>
+          <option value="" disabled>
+            {{
+              clinicServices.length
+                ? uiText('Sélectionner le service principal')
+                : uiText('Aucun service disponible')
+            }}
+          </option>
+          <option v-for="service in clinicServices" :key="service.id" :value="service.id">
+            {{ service.name }}
+          </option>
+        </UiSelect>
+        <p class="form-panel__hint">
+          Service principal pour la consultation et le catalogue d’examens (Laboratoire et Hospitalisation restent toujours disponibles).
+        </p>
+
+        <div v-if="form.clinicServiceId" class="extra-services">
+          <p class="extra-services__label">{{ uiText('Services additionnels (réception)') }}</p>
+          <p class="form-panel__hint">
+            Le médecin apparaîtra aussi pour ces services à la réception, sans quitter son service par défaut.
+          </p>
+          <ul class="extra-services__list">
+            <li
+              v-for="service in clinicServices.filter((s) => s.id !== form.clinicServiceId)"
+              :key="service.id"
+            >
+              <label class="extra-services__option">
+                <input
+                  type="checkbox"
+                  :checked="form.clinicServiceIds.includes(service.id)"
+                  @change="toggleExtraClinicService(service.id)"
+                />
+                <span>{{ service.name }}</span>
+              </label>
+            </li>
+          </ul>
+        </div>
+
         <div class="availability-grid" role="group" :aria-label="uiText('Disponibilités')">
           <div
             v-for="day in DOCTOR_WEEKDAY_OPTIONS"
@@ -1337,6 +1440,7 @@ onMounted(async () => {
         </p>
 
         <UiInput
+          v-if="!isMedecinProfile"
           v-model="form.service"
           label="Service"
           placeholder="Ex. Laboratoire"
@@ -1579,6 +1683,37 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+}
+
+.extra-services {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.extra-services__label {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.extra-services__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.35rem 0.75rem;
+}
+
+.extra-services__option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.875rem;
+  cursor: pointer;
 }
 
 .specialty-field__label {

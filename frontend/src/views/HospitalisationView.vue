@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { BedDouble, Plus, RefreshCw, Save, ShieldCheck } from '@lucide/vue'
+import { BedDouble, RefreshCw, ShieldCheck } from '@lucide/vue'
 import api from '@/api/client'
-import { useAuthStore } from '@/stores/auth'
-import { formatFcfa, fullName, canManageResources } from '@/lib/roles'
+import { formatFcfa, fullName } from '@/lib/roles'
 import { printHospitalizationAdmission, type HospitalizationAdmissionForm } from '@/lib/hospitalization-admission'
 import HospitalizationAdmissionModal, {
   type AdmissionRoomTypeOption,
@@ -13,11 +12,10 @@ import HospitalizationDischargeModal from '@/components/hospitalisation/Hospital
 import HospitalizationsQueueDataTable from '@/components/ui/HospitalizationsQueueDataTable.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
-import UiSelect from '@/components/ui/UiSelect.vue'
-import UiInput from '@/components/ui/UiInput.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiBadge from '@/components/ui/UiBadge.vue'
+import { useSilentRefresh } from '@/composables/useSilentRefresh'
 import '@/assets/comptabilite-section.css'
 
 type HospRow = {
@@ -77,13 +75,10 @@ const data = ref<{
   }
 } | null>(null)
 
-const auth = useAuthStore()
-const canManage = computed(() => (auth.user ? canManageResources(auth.user.role) : false))
-
 const loading = ref(false)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
-const tab = ref<'plan' | 'rooms' | 'queue' | 'hospitalized'>('queue')
+const tab = ref<'plan' | 'queue' | 'hospitalized'>('queue')
 const admissionHospId = ref<string | null>(null)
 const admissionMode = ref<'create' | 'edit' | 'view'>('create')
 const admissionSubmitting = ref(false)
@@ -111,8 +106,6 @@ function applyRouteQuery() {
   const qTab = route.query.tab
   if (qTab === 'queue' || qTab === 'plan' || qTab === 'hospitalized' || qTab === 'hospitaliser') {
     tab.value = qTab === 'hospitaliser' ? 'hospitalized' : (qTab as typeof tab.value)
-  } else if (qTab === 'rooms' && canManage.value) {
-    tab.value = 'rooms'
   }
 
   const visitId = typeof route.query.visitId === 'string' ? route.query.visitId : null
@@ -130,13 +123,6 @@ async function scrollToFocusedVisit() {
     .querySelector(`[data-visit-id="${focusedVisitId.value}"]`)
     ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
-
-const newRoom = ref({
-  name: '',
-  type: 'SIMPLE',
-  description: '',
-  dailyRateFcfa: '25000',
-})
 
 const admissionRoomTypeOptions = computed((): AdmissionRoomTypeOption[] => {
   const availability = data.value?.roomAvailability
@@ -225,8 +211,8 @@ function closeDischarge() {
   dischargeSubmitting.value = false
 }
 
-async function load() {
-  loading.value = true
+async function load(opts?: { silent?: boolean }) {
+  if (!opts?.silent) loading.value = true
   try {
     const visitId = focusedVisitId.value
     const { data: res } = await api.get('/hospitalisation', {
@@ -234,27 +220,9 @@ async function load() {
     })
     data.value = res
     applyRouteQuery()
-    await scrollToFocusedVisit()
+    if (!opts?.silent) await scrollToFocusedVisit()
   } finally {
-    loading.value = false
-  }
-}
-
-async function addRoom() {
-  try {
-    await api.post('/hospitalisation/rooms', {
-      name: newRoom.value.name.trim(),
-      type: newRoom.value.type,
-      description: newRoom.value.description.trim() || undefined,
-      dailyRateFcfa: Number(newRoom.value.dailyRateFcfa),
-    })
-    message.value = 'Salle créée avec succès.'
-    messageType.value = 'success'
-    newRoom.value = { name: '', type: 'SIMPLE', description: '', dailyRateFcfa: '25000' }
-    await load()
-  } catch {
-    message.value = 'Impossible de créer la salle.'
-    messageType.value = 'error'
+    if (!opts?.silent) loading.value = false
   }
 }
 
@@ -336,10 +304,15 @@ async function confirmDischarge(payload: { hospitalizationId: string; endDate: s
   }
 }
 
-onMounted(() => {
-  applyRouteQuery()
-  load()
-})
+const { refresh: refreshData } = useSilentRefresh(
+  ({ silent }) => load({ silent }),
+  {
+    intervalMs: 30_000,
+    enabled: () => !admissionHospId.value && !dischargeHospId.value,
+  },
+)
+
+applyRouteQuery()
 
 watch(() => route.query, () => {
   applyRouteQuery()
@@ -351,11 +324,7 @@ watch(() => route.query, () => {
   <div>
     <UiPageHeader
       title="Hospitalisation"
-      :subtitle="
-        canManage
-          ? 'Gestion des salles, plan des salles et attribution des hospitalisations'
-          : 'Plan des salles, attribution et clôture des hospitalisations prescrites'
-      "
+      subtitle="Plan des salles, attribution et clôture des hospitalisations prescrites"
       :icon="BedDouble"
     />
 
@@ -383,9 +352,6 @@ watch(() => route.query, () => {
 
     <div class="tabs">
       <button :class="{ active: tab === 'plan' }" @click="tab = 'plan'">Plan des salles</button>
-      <button v-if="canManage" :class="{ active: tab === 'rooms' }" @click="tab = 'rooms'">
-        Gestion des salles
-      </button>
       <button :class="{ active: tab === 'queue' }" @click="tab = 'queue'">
         Hospitalisations
         <span v-if="pendingHospitalizations.length" class="tab-count">{{ pendingHospitalizations.length }}</span>
@@ -399,7 +365,7 @@ watch(() => route.query, () => {
     <template v-if="tab === 'plan'">
       <UiCard title="Plan des salles" description="Suivi en temps réel — [LIBRE] / [OCCUPÉ]" :icon="BedDouble" icon-variant="blue" class="compta-section">
         <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">Actualiser</UiButton>
+          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshData()">Actualiser</UiButton>
         </template>
         <div class="rooms-grid">
           <div
@@ -423,39 +389,6 @@ watch(() => route.query, () => {
       </UiCard>
     </template>
 
-    <template v-if="tab === 'rooms'">
-      <UiCard title="Salles enregistrées" description="Tarifs nuitée et statut" :icon="BedDouble" icon-variant="blue" class="compta-section">
-        <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">Actualiser</UiButton>
-        </template>
-        <div v-for="room in data.rooms" :key="room.id" class="room-block">
-          <div class="room-block__head">
-            <div>
-              <strong>{{ room.name }}</strong>
-              <UiBadge :variant="room.type === 'VIP' ? 'primary' : 'info'">{{ room.type }}</UiBadge>
-              <UiBadge :variant="room.status === 'LIBRE' ? 'success' : 'danger'">{{ room.status }}</UiBadge>
-              <span class="room-rate">{{ formatFcfa(room.dailyRateFcfa) }}/nuit</span>
-            </div>
-          </div>
-          <p v-if="room.description" class="room-desc">{{ room.description }}</p>
-        </div>
-        <p v-if="!data.rooms.length" class="compta-empty">Aucune salle enregistrée</p>
-      </UiCard>
-
-      <UiCard title="Nouvelle salle" description="Création d'une nouvelle salle" :icon="Plus" icon-variant="violet" class="compta-section">
-        <div class="form-grid-2">
-          <UiInput v-model="newRoom.name" label="Nom de la salle" placeholder="Ex. VIP 103" />
-          <UiSelect v-model="newRoom.type" label="Type">
-            <option value="VIP">VIP</option>
-            <option value="SIMPLE">Simple</option>
-          </UiSelect>
-          <UiInput v-model="newRoom.dailyRateFcfa" label="Tarif nuitée (FCFA)" type="number" />
-          <UiInput v-model="newRoom.description" label="Description" class="span-2" />
-        </div>
-        <UiButton variant="primary" :icon="Save" @click="addRoom">Enregistrer la salle</UiButton>
-      </UiCard>
-    </template>
-
     <template v-if="tab === 'queue'">
       <UiCard
         title="Hospitalisations en attente"
@@ -465,7 +398,7 @@ watch(() => route.query, () => {
         class="compta-section"
       >
         <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">Actualiser</UiButton>
+          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshData()">Actualiser</UiButton>
         </template>
 
         <p v-if="!loading && !pendingHospitalizations.length" class="compta-empty">
@@ -475,7 +408,7 @@ watch(() => route.query, () => {
           v-else
           fill
           :items="pendingHospitalizations"
-          :loading="loading"
+          :loading="loading && !pendingHospitalizations.length"
           :focused-visit-id="focusedVisitId"
           @admit="openAdmission"
           @view="openView"
@@ -494,7 +427,7 @@ watch(() => route.query, () => {
         class="compta-section"
       >
         <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">Actualiser</UiButton>
+          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshData()">Actualiser</UiButton>
         </template>
 
         <p v-if="!loading && !hospitalizedPatients.length" class="compta-empty">
@@ -504,7 +437,7 @@ watch(() => route.query, () => {
           v-else
           fill
           :items="hospitalizedPatients"
-          :loading="loading"
+          :loading="loading && !hospitalizedPatients.length"
           :focused-visit-id="focusedVisitId"
           @admit="openAdmission"
           @view="openView"
@@ -646,57 +579,9 @@ watch(() => route.query, () => {
   color: var(--text-muted);
 }
 
-.room-block {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 1rem;
-  margin-bottom: 0.75rem;
-}
-
-.room-block__head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.room-block__head strong {
-  margin-right: 0.5rem;
-}
-
-.room-rate {
-  margin-left: 0.5rem;
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-}
-
-.room-desc {
-  margin: 0.5rem 0 0;
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-}
-
-.form-grid-2 {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 1rem;
-}
-
-.span-2 {
-  grid-column: span 2;
-}
-
 @media (max-width: 768px) {
   .stats-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .form-grid-2,
-  .span-2 {
-    grid-template-columns: 1fr;
-    grid-column: auto;
   }
 }
 </style>

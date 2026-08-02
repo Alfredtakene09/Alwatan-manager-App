@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { confirmAppModal } from '@/lib/api-modal-helper'
-import { Users, Plus, RefreshCw, Save, Eye } from '@lucide/vue'
+import { Users, Plus, RefreshCw, Save, Eye, Search } from '@lucide/vue'
 import api from '@/api/client'
 import {
   fullName,
@@ -11,7 +11,7 @@ import {
   type AppUserRole,
   type AdminAssignableUserRole,
 } from '@/lib/roles'
-import { employeeNeedsAppAccount, isHiddenPlatformAdminEmployee } from '@/lib/employee-app-account'
+import { isHiddenPlatformAdminEmployee } from '@/lib/employee-app-account'
 import { catalogRowActionsHtml, statusBadge } from '@/lib/datatable-defaults'
 import { shiftButtonLabel, type ShiftSlot } from '@/lib/cash-shift'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -35,6 +35,7 @@ type LinkedEmployee = {
 
 type EmployeeOption = LinkedEmployee & {
   hasUserAccount?: boolean
+  active?: boolean
 }
 
 type PlatformUser = {
@@ -63,6 +64,9 @@ const modalOpen = ref(false)
 const viewModalOpen = ref(false)
 const editingId = ref<string | null>(null)
 const viewingUser = ref<PlatformUser | null>(null)
+const employeeFilter = ref<'ALL' | 'MEDECINS'>('ALL')
+const searchQuery = ref('')
+const roleFilter = ref<'ALL' | AppUserRole>('ALL')
 
 const form = ref({
   employeeId: '',
@@ -72,8 +76,11 @@ const form = ref({
   password: '',
   passwordConfirm: '',
   cashShiftSlot: '' as '' | ShiftSlot,
-  active: true,
+  /** String pour UiSelect (évite le faux conflit booléen / "true"). */
+  active: 'true' as 'true' | 'false',
 })
+/** Employé lié au moment de l’ouverture de l’édition (filet de sécurité). */
+const editingOriginalEmployeeId = ref<string | null>(null)
 
 const { uiText, localeCode } = useAppI18n()
 
@@ -81,14 +88,40 @@ function roleLabel(role: AppUserRole) {
   return uiText(ROLE_LABELS[role] ?? role)
 }
 
+function employeeMatchesDoctorProfile(employee: Pick<EmployeeOption, 'isMedecin' | 'jobTitle'>) {
+  if (employee.isMedecin) return true
+  const normalizedTitle = (employee.jobTitle ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+  if (!normalizedTitle) return false
+  if (
+    /assistant|techni|infirm|aide[- ]?soign|laborantin|pharmacien|reception|hygien|securit|entretien/.test(
+      normalizedTitle,
+    )
+  ) {
+    return false
+  }
+  return /medecin|docteur|doctor|chirurgien|gynecolog|ophtalmolog|radiolog|anesthes|pediatr|cardiolog|dermatolog|psychiatr|neurolog|urolog|rhumatolog|gastro|generaliste|specialiste/.test(
+    normalizedTitle,
+  )
+}
+
 const usersById = computed(() => new Map(users.value.map((user) => [user.id, user])))
 
-/** Employés vraiment sélectionnables selon le rôle (évite les options grisées). */
+/** Employés sélectionnables : non liés (+ l’employé courant en édition). */
 const selectableEmployees = computed(() => {
-  const list =
-    form.value.role === 'MEDECIN'
-      ? employeeOptions.value.filter((employee) => employee.isMedecin)
-      : employeeOptions.value
+  const currentEmployeeId = form.value.employeeId || editingOriginalEmployeeId.value
+  const list = employeeOptions.value.filter((employee) => {
+    const isCurrentLinked =
+      Boolean(editingId.value) && currentEmployeeId != null && employee.id === currentEmployeeId
+    // En édition, ne pas proposer les autres comptes déjà liés (évite un mauvais id envoyé).
+    if (employee.hasUserAccount && !isCurrentLinked) return false
+    if (isCurrentLinked) return true
+    if (employeeFilter.value === 'MEDECINS') return employeeMatchesDoctorProfile(employee)
+    return true
+  })
   return [...list].sort((a, b) =>
     fullName(a.firstName, a.lastName).localeCompare(fullName(b.firstName, b.lastName), 'fr', {
       sensitivity: 'base',
@@ -100,6 +133,16 @@ const selectableEmployees = computed(() => {
 const selectedEmployee = computed(() =>
   selectableEmployees.value.find((employee) => employee.id === form.value.employeeId),
 )
+
+const selectableDoctorsCount = computed(
+  () => selectableEmployees.value.filter((employee) => employeeMatchesDoctorProfile(employee)).length,
+)
+
+const doctorAvailabilityHint = computed(() => {
+  if (form.value.role !== 'MEDECIN') return ''
+  if (selectableDoctorsCount.value === 0) return ''
+  return translateTemplate('{n} médecin(s) disponible(s).', { n: selectableDoctorsCount.value })
+})
 
 const employeeEmptyHint = computed(() => {
   if (form.value.role === 'MEDECIN') {
@@ -115,9 +158,39 @@ const employeeEmptyHint = computed(() => {
   return ''
 })
 
+const filteredUsers = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  const role = roleFilter.value
+  return users.value
+    .filter((user) => {
+      if (role !== 'ALL' && user.role !== role) return false
+      if (!q) return true
+      const haystack = [
+        user.firstName,
+        user.lastName,
+        fullName(user.firstName, user.lastName),
+        user.username,
+        user.email,
+        ROLE_LABELS[user.role] ?? user.role,
+        user.employee ? fullName(user.employee.firstName, user.employee.lastName) : '',
+        user.employee?.jobTitle ?? '',
+        user.active ? 'actif' : 'inactif',
+      ]
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(q)
+    })
+    .sort((a, b) =>
+      fullName(a.firstName, a.lastName).localeCompare(fullName(b.firstName, b.lastName), 'fr', {
+        sensitivity: 'base',
+        numeric: true,
+      }),
+    )
+})
+
 const tableRows = computed(() => {
   localeCode.value
-  return users.value.map((user) => ({
+  return filteredUsers.value.map((user) => ({
     id: user.id,
     name: fullName(user.firstName, user.lastName),
     username: user.username,
@@ -206,18 +279,41 @@ function resetForm() {
     password: '',
     passwordConfirm: '',
     cashShiftSlot: '',
-    active: true,
+    active: 'true',
   }
+  editingOriginalEmployeeId.value = null
+  employeeFilter.value = 'ALL'
 }
 
-async function loadEmployeeOptions(currentEmployeeId?: string) {
-  const { data } = await api.get<EmployeeOption[]>('/admin/employees', { params: { active: true } })
-  employeeOptions.value = data.filter(
-    (employee) =>
-      !isHiddenPlatformAdminEmployee(employee) &&
-      employeeNeedsAppAccount(employee.jobTitle) &&
-      (!employee.hasUserAccount || employee.id === currentEmployeeId),
+async function loadEmployeeOptions(
+  currentEmployeeId?: string,
+  currentEmployee?: LinkedEmployee | null,
+) {
+  const { data } = await api.get<EmployeeOption[]>('/admin/employees', {
+    // Inclure les inactifs pour ne pas perdre l'employé déjà lié.
+    params: { active: false },
+  })
+  let options = data.filter(
+    (employee) => employee.active !== false && !isHiddenPlatformAdminEmployee(employee),
   )
+
+  // Remettre l'employé lié même s'il est inactif / hors filtre.
+  if (currentEmployeeId && !options.some((employee) => employee.id === currentEmployeeId)) {
+    const fromList = data.find((employee) => employee.id === currentEmployeeId)
+    if (fromList) {
+      options = [...options, fromList]
+    } else if (currentEmployee) {
+      options = [
+        ...options,
+        {
+          ...currentEmployee,
+          hasUserAccount: true,
+        },
+      ]
+    }
+  }
+
+  employeeOptions.value = options
 }
 
 async function loadUsers() {
@@ -239,6 +335,7 @@ async function loadUsers() {
 async function openCreateModal() {
   editingId.value = null
   resetForm()
+  if (form.value.role === 'MEDECIN') employeeFilter.value = 'MEDECINS'
   await loadEmployeeOptions()
   modalOpen.value = true
   message.value = ''
@@ -248,7 +345,8 @@ async function openEditModal(id: string) {
   const user = usersById.value.get(id)
   if (!user) return
   editingId.value = id
-  await loadEmployeeOptions(user.employeeId)
+  editingOriginalEmployeeId.value = user.employeeId
+  await loadEmployeeOptions(user.employeeId, user.employee)
   form.value = {
     employeeId: user.employeeId,
     username: user.username,
@@ -257,8 +355,9 @@ async function openEditModal(id: string) {
     password: '',
     passwordConfirm: '',
     cashShiftSlot: user.cashShiftSlot ?? '',
-    active: user.active,
+    active: user.active ? 'true' : 'false',
   }
+  employeeFilter.value = form.value.role === 'MEDECIN' ? 'MEDECINS' : 'ALL'
   modalOpen.value = true
   message.value = ''
 }
@@ -303,7 +402,18 @@ function formatCreatedAt(value: string) {
 }
 
 async function saveUser() {
-  if (!form.value.employeeId) {
+  const isEditing = Boolean(editingId.value)
+  const currentId = editingId.value
+  // Filet : si le select a perdu l’employé lié, reprendre l’original.
+  const employeeId =
+    form.value.employeeId ||
+    (isEditing ? editingOriginalEmployeeId.value : null) ||
+    ''
+  if (employeeId && employeeId !== form.value.employeeId) {
+    form.value.employeeId = employeeId
+  }
+
+  if (!employeeId) {
     message.value = 'Sélectionnez un employé à lier au compte.'
     messageType.value = 'error'
     return
@@ -324,27 +434,31 @@ async function saveUser() {
     messageType.value = 'error'
     return
   }
-  if (form.value.role === 'MEDECIN' && selectedEmployee.value && !selectedEmployee.value.isMedecin) {
+  if (
+    form.value.role === 'MEDECIN' &&
+    selectedEmployee.value &&
+    !employeeMatchesDoctorProfile(selectedEmployee.value)
+  ) {
     message.value = 'Un compte médecin doit être lié à un employé médecin.'
     messageType.value = 'error'
     return
   }
-  if (!editingId.value && form.value.password.length < 6) {
+  if (!isEditing && form.value.password.length < 6) {
     message.value = 'Le mot de passe doit contenir au moins 6 caractères.'
     messageType.value = 'error'
     return
   }
-  if (!editingId.value && form.value.password !== form.value.passwordConfirm) {
+  if (!isEditing && form.value.password !== form.value.passwordConfirm) {
     message.value = 'La confirmation du mot de passe ne correspond pas.'
     messageType.value = 'error'
     return
   }
-  if (editingId.value && form.value.password.trim() && form.value.password !== form.value.passwordConfirm) {
+  if (isEditing && form.value.password.trim() && form.value.password !== form.value.passwordConfirm) {
     message.value = 'La confirmation du mot de passe ne correspond pas.'
     messageType.value = 'error'
     return
   }
-  if (editingId.value && form.value.password.trim() && form.value.password.length < 6) {
+  if (isEditing && form.value.password.trim() && form.value.password.length < 6) {
     message.value = 'Le nouveau mot de passe doit contenir au moins 6 caractères.'
     messageType.value = 'error'
     return
@@ -354,17 +468,18 @@ async function saveUser() {
   try {
     const cashShiftSlot =
       form.value.role === 'RECEPTIONNISTE' ? form.value.cashShiftSlot || null : null
-    if (editingId.value) {
+    const active = form.value.active === 'true'
+    if (isEditing && currentId) {
       const payload: Record<string, string | boolean | null | undefined> = {
         username: form.value.username.trim(),
         role: form.value.role,
-        employeeId: form.value.employeeId,
+        employeeId,
         cashShiftSlot,
-        active: form.value.active,
+        active,
       }
       if (email) payload.email = email
       if (form.value.password.trim()) payload.password = form.value.password
-      await api.put(`/admin/users/${editingId.value}`, payload)
+      await api.put(`/admin/users/${currentId}`, payload)
       message.value = 'Utilisateur mis à jour.'
     } else {
       await api.post('/admin/users', {
@@ -372,9 +487,9 @@ async function saveUser() {
         ...(email ? { email } : {}),
         role: form.value.role,
         password: form.value.password,
-        employeeId: form.value.employeeId,
+        employeeId,
         cashShiftSlot,
-        active: form.value.active,
+        active: true,
       })
       message.value = 'Utilisateur créé avec succès.'
     }
@@ -388,7 +503,7 @@ async function saveUser() {
         : null
     message.value =
       apiMessage ??
-      (editingId.value
+      (isEditing
         ? 'Impossible de mettre à jour cet utilisateur.'
         : 'Impossible de créer cet utilisateur (nom d\'utilisateur ou employé déjà utilisé).')
     messageType.value = 'error'
@@ -493,11 +608,13 @@ function onTableAction({ action, id }: { action: string; id: string }) {
 watch(
   () => form.value.role,
   () => {
-    if (
-      form.value.role === 'MEDECIN' &&
-      selectedEmployee.value &&
-      !selectedEmployee.value.isMedecin
-    ) {
+    if (form.value.role === 'MEDECIN') {
+      employeeFilter.value = 'MEDECINS'
+    } else if (employeeFilter.value === 'MEDECINS') {
+      employeeFilter.value = 'ALL'
+    }
+    // Ne pas effacer l'employé lié pendant une modification (évite faux « déjà lié »).
+    if (!editingId.value && form.value.employeeId && !selectedEmployee.value) {
       form.value.employeeId = ''
     }
   },
@@ -535,7 +652,33 @@ onMounted(loadUsers)
           </UiButton>
         </template>
 
-        <p v-if="!loading && !users.length" class="empty">Aucun utilisateur</p>
+        <div class="users-filters">
+          <label class="users-search">
+            <Search :size="16" class="users-search__icon" aria-hidden="true" />
+            <input
+              v-model="searchQuery"
+              type="search"
+              class="users-search__input"
+              :placeholder="uiText('Rechercher un utilisateur…')"
+              :aria-label="uiText('Rechercher un utilisateur')"
+            />
+          </label>
+          <select
+            v-model="roleFilter"
+            class="users-role-filter"
+            :aria-label="uiText('Filtrer par rôle')"
+          >
+            <option value="ALL">{{ uiText('Tous les rôles') }}</option>
+            <option v-for="role in ADMIN_ASSIGNABLE_USER_ROLES" :key="role" :value="role">
+              {{ ROLE_LABELS[role] ? uiText(ROLE_LABELS[role]) : role }}
+            </option>
+          </select>
+        </div>
+
+        <p v-if="!loading && !users.length" class="empty">{{ uiText('Aucun utilisateur') }}</p>
+        <p v-else-if="!loading && users.length && !filteredUsers.length" class="empty">
+          {{ uiText('Aucun utilisateur pour ce filtre') }}
+        </p>
         <UiDataTable
           v-else
           fill
@@ -579,13 +722,39 @@ onMounted(loadUsers)
           >
             {{ fullName(employee.firstName, employee.lastName) }}
             {{ employee.jobTitle ? ` — ${employee.jobTitle}` : '' }}
-            {{ employee.isMedecin ? uiText(' (médecin)') : '' }}
+            {{ employeeMatchesDoctorProfile(employee) ? uiText(' (médecin)') : '' }}
+            {{
+              editingId && employee.id === (form.employeeId || editingOriginalEmployeeId)
+                ? uiText(' (lié à ce compte)')
+                : ''
+            }}
           </option>
         </UiSelect>
+        <div class="employee-filter-toggle" role="group" :aria-label="uiText('Filtre employés')">
+          <button
+            type="button"
+            class="employee-filter-toggle__btn"
+            :class="{ 'employee-filter-toggle__btn--active': employeeFilter === 'ALL' }"
+            @click="employeeFilter = 'ALL'"
+          >
+            {{ uiText('Tous') }}
+          </button>
+          <button
+            type="button"
+            class="employee-filter-toggle__btn"
+            :class="{ 'employee-filter-toggle__btn--active': employeeFilter === 'MEDECINS' }"
+            @click="employeeFilter = 'MEDECINS'"
+          >
+            {{ uiText('Médecins') }}
+          </button>
+        </div>
 
         <p v-if="selectedEmployee" class="employee-preview">
           Nom sur le compte :
           <strong>{{ fullName(selectedEmployee.firstName, selectedEmployee.lastName) }}</strong>
+        </p>
+        <p v-else-if="doctorAvailabilityHint" class="employee-hint employee-hint--inline employee-hint--available">
+          {{ doctorAvailabilityHint }}
         </p>
         <p v-else-if="employeeEmptyHint" class="employee-hint employee-hint--inline">
           {{ employeeEmptyHint }}
@@ -611,8 +780,8 @@ onMounted(loadUsers)
 
         <div v-if="editingId" class="form-grid-2">
           <UiSelect v-model="form.active" label="Statut du compte" required>
-            <option :value="true">{{ uiText('Actif') }}</option>
-            <option :value="false">{{ uiText('Inactif') }}</option>
+            <option value="true">{{ uiText('Actif') }}</option>
+            <option value="false">{{ uiText('Inactif') }}</option>
           </UiSelect>
         </div>
 
@@ -717,15 +886,99 @@ onMounted(loadUsers)
   font-size: 0.875rem;
 }
 
+.users-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+
+.users-search {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1 1 14rem;
+  min-width: 12rem;
+  max-width: 28rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid rgba(27, 79, 156, 0.18);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.users-search__icon {
+  flex-shrink: 0;
+  color: #1b4f9c;
+  opacity: 0.75;
+}
+
+.users-search__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--text);
+}
+
+.users-search__input::placeholder {
+  color: var(--text-light, #94a3b8);
+}
+
+.users-role-filter {
+  flex: 0 1 13rem;
+  min-width: 10rem;
+  max-width: 16rem;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid rgba(27, 79, 156, 0.18);
+  border-radius: 10px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
 .employee-hint--inline {
   text-align: left;
   padding: 0 0 1rem;
+}
+
+.employee-hint--available {
+  color: var(--success-700, #15803d);
 }
 
 .employee-preview {
   margin: 0 0 1rem;
   font-size: 0.8125rem;
   color: var(--text-muted);
+}
+
+.employee-filter-toggle {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  margin: -0.35rem 0 0.55rem;
+}
+
+.employee-filter-toggle__btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  padding: 0.38rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.employee-filter-toggle__btn--active {
+  border-color: var(--primary-500);
+  background: var(--primary-50);
+  color: var(--primary-800);
 }
 
 .user-detail {

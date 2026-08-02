@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import {
   Clock,
   Scissors,
@@ -18,6 +18,7 @@ import {
 } from '@/lib/surgery-case'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
+import { useSilentRefresh } from '@/composables/useSilentRefresh'
 import UiButton from '@/components/ui/UiButton.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
@@ -40,9 +41,11 @@ const stats = computed(() => {
   return { total: surgeries.value.length, scheduled }
 })
 
-async function load() {
-  loading.value = true
-  message.value = ''
+async function load(opts?: { silent?: boolean }) {
+  if (!opts?.silent) {
+    loading.value = true
+    message.value = ''
+  }
   try {
     const { data } = await api.get<SurgeryCaseRow[]>('/surgeries', {
       params: { scope: 'awaiting' },
@@ -57,11 +60,13 @@ async function load() {
       }
     }
   } catch {
-    message.value = 'Impossible de charger les opérations en attente.'
-    messageType.value = 'error'
-    surgeries.value = []
+    if (!opts?.silent) {
+      message.value = 'Impossible de charger les opérations en attente.'
+      messageType.value = 'error'
+      surgeries.value = []
+    }
   } finally {
-    loading.value = false
+    if (!opts?.silent) loading.value = false
   }
 }
 
@@ -196,7 +201,13 @@ function exportExcel() {
   exportTableExcel('Opérations en attente', surgeryExportColumns, surgeries.value)
 }
 
-onMounted(load)
+const { refresh: refreshList } = useSilentRefresh(
+  ({ silent }) => load({ silent }),
+  {
+    intervalMs: 20_000,
+    enabled: () => !actionId.value,
+  },
+)
 </script>
 
 <template>
@@ -224,7 +235,7 @@ onMounted(load)
       >
         <template #actions>
           <ExportButtons :disabled="loading || !surgeries.length" @pdf="exportPdf" @excel="exportExcel" />
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">
+          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshList()">
             Actualiser
           </UiButton>
         </template>

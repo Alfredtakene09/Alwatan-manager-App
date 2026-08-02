@@ -31,7 +31,7 @@ function formatValue(value: number) {
   <div v-if="loading && !days.length" class="chart-empty">Chargement…</div>
   <div v-else-if="!days.length" class="chart-empty">Aucune donnée sur la période</div>
   <template v-else>
-    <div class="bar-chart">
+    <div class="bar-chart" :style="{ '--bar-cols': String(days.length || 1) }">
       <div v-for="day in days" :key="day.date" class="bar-chart__column">
         <div class="bar-chart__bars">
           <div

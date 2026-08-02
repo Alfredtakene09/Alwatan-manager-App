@@ -43,12 +43,21 @@ export function isMedecin(user: DoctorProfile) {
   return user.role === UserRole.MEDECIN || Boolean(user.employee?.isMedecin);
 }
 
-/** Filtre Prisma : tous les comptes médecins sélectionnables (réception / consultation). */
+/** Filtre Prisma : médecins sélectionnables et disponibles (réception / transfert). */
 export const selectableDoctorWhere: Prisma.UserWhereInput = {
+  active: true,
+  acceptingPatients: true,
+  role: { not: UserRole.ADMIN },
+  employee: { is: { active: true } },
+  OR: [{ role: UserRole.MEDECIN }, { employee: { is: { isMedecin: true } } }],
+};
+
+/** Médecins du référentiel (actifs), y compris en pause — admin / stats. */
+export const selectableDoctorIncludingPausedWhere: Prisma.UserWhereInput = {
   active: true,
   role: { not: UserRole.ADMIN },
   employee: { is: { active: true } },
-  OR: [{ role: UserRole.MEDECIN }, { employee: { isMedecin: true } }],
+  OR: [{ role: UserRole.MEDECIN }, { employee: { is: { isMedecin: true } } }],
 };
 
 export function selectableDoctorByIdWhere(doctorId: string) {

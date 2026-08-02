@@ -455,6 +455,171 @@ export async function disburseCashRegister(params: {
   };
 }
 
+export async function disburseFromDayClosure(params: {
+  closure: {
+    id: string;
+    receptionistId: string;
+    businessDate: Date;
+    shiftSlot: ReceptionShiftSlot | null;
+    collectedFcfa: number;
+    expensesFcfa: number;
+    netFcfa: number;
+    closedAt: Date;
+    comment: string | null;
+  };
+  gestionnaireId: string;
+  validationComment?: string;
+}) {
+  const shiftSlot =
+    params.closure.shiftSlot ??
+    inferShiftSlotFromDate(params.closure.closedAt) ??
+    ReceptionShiftSlot.MORNING;
+
+  const dayStart = startOfDay(params.closure.businessDate);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+
+  const unsettled = await prisma.invoice.findMany({
+    where: {
+      issuedById: params.closure.receptionistId,
+      type: { in: COLLECTED_INVOICE_TYPES },
+      status: { not: InvoiceStatus.CANCELLED },
+      cashSettlementLine: null,
+      ...comptabiliteInvoicePatientWhere(),
+      OR: [
+        { status: InvoiceStatus.PAID, paidAt: { gte: dayStart, lt: dayEnd } },
+        {
+          type: InvoiceType.CONSULTATION,
+          status: InvoiceStatus.PENDING,
+          createdAt: { gte: dayStart, lt: dayEnd },
+        },
+      ],
+    },
+    select: { id: true, amountFcfa: true },
+  });
+
+  const systemTotalFcfa =
+    unsettled.length > 0
+      ? unsettled.reduce((sum, row) => sum + row.amountFcfa, 0)
+      : params.closure.collectedFcfa;
+  const disbursementFcfa = Math.max(0, params.closure.netFcfa);
+  const physicalCashFcfa = disbursementFcfa;
+
+  const comment = [
+    `Clôture de journée validée — ${formatBusinessDate(params.closure.businessDate)}`,
+    params.closure.comment?.trim(),
+    params.validationComment?.trim(),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.receptionCashSettlement.findUnique({
+      where: {
+        receptionistId_businessDate_shiftSlot: {
+          receptionistId: params.closure.receptionistId,
+          businessDate: params.closure.businessDate,
+          shiftSlot,
+        },
+      },
+    });
+
+    let settlementId: string;
+
+    if (existing) {
+      await tx.receptionCashSettlement.update({
+        where: { id: existing.id },
+        data: {
+          accountantId: params.gestionnaireId,
+          systemTotalFcfa: Math.max(existing.systemTotalFcfa, systemTotalFcfa),
+          physicalCashFcfa: existing.physicalCashFcfa + physicalCashFcfa,
+          disbursementFcfa: existing.disbursementFcfa + disbursementFcfa,
+          varianceFcfa:
+            existing.disbursementFcfa +
+            disbursementFcfa -
+            Math.max(existing.systemTotalFcfa, systemTotalFcfa),
+          comment: [existing.comment, comment].filter(Boolean).join(" · ") || null,
+          settledAt: new Date(),
+        },
+      });
+      settlementId = existing.id;
+
+      if (unsettled.length) {
+        const fresh = await tx.invoice.findMany({
+          where: {
+            id: { in: unsettled.map((row) => row.id) },
+            cashSettlementLine: null,
+          },
+          select: { id: true },
+        });
+        if (fresh.length) {
+          await tx.receptionCashSettlementLine.createMany({
+            data: fresh.map((invoice) => ({
+              settlementId,
+              invoiceId: invoice.id,
+            })),
+          });
+        }
+      }
+    } else {
+      const settlement = await tx.receptionCashSettlement.create({
+        data: {
+          receptionistId: params.closure.receptionistId,
+          accountantId: params.gestionnaireId,
+          businessDate: params.closure.businessDate,
+          shiftSlot,
+          systemTotalFcfa,
+          physicalCashFcfa,
+          disbursementFcfa,
+          varianceFcfa: disbursementFcfa - systemTotalFcfa,
+          isCoherent:
+            params.closure.expensesFcfa === 0 && disbursementFcfa === systemTotalFcfa,
+          comment: comment || null,
+        },
+      });
+      settlementId = settlement.id;
+
+      if (unsettled.length) {
+        await tx.receptionCashSettlementLine.createMany({
+          data: unsettled.map((invoice) => ({
+            settlementId,
+            invoiceId: invoice.id,
+          })),
+        });
+      }
+    }
+
+    await tx.receptionDayClosure.update({
+      where: { id: params.closure.id },
+      data: {
+        validatedAt: new Date(),
+        validatedById: params.gestionnaireId,
+        validationComment: params.validationComment?.trim() || null,
+        settlementId,
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        userId: params.gestionnaireId,
+        action: "RECEPTION_DAY_CLOSURE_VALIDATED",
+        entity: "ReceptionDayClosure",
+        entityId: params.closure.id,
+        metadata: {
+          settlementId,
+          businessDate: formatBusinessDate(params.closure.businessDate),
+          receptionistId: params.closure.receptionistId,
+          netFcfa: disbursementFcfa,
+          collectedFcfa: params.closure.collectedFcfa,
+          autoDisbursement: true,
+        },
+      },
+    });
+
+    return { settlementId, disbursedFcfa: disbursementFcfa };
+  });
+}
+
 export async function listDisbursementHistory(filters: {
   registerId?: CashRegisterId;
   from?: string;

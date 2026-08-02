@@ -3,12 +3,14 @@ import {
   ClinicExpenseStatus,
   HospitalizationStatus,
   PayrollStatus,
+  SurgeryStatus,
   VisitStatus,
 } from "@prisma/client";
 import { prisma } from "./db.js";
 import { labsPendingApprovalWhere } from "./lab-notes.js";
 import {
   aggregateCollectedBetween,
+  aggregatePharmacyBetween,
   sumCollectedBreakdown,
   collectedInvoicesWhere,
   startOfDay,
@@ -21,6 +23,80 @@ import {
 } from "./admin-payroll.js";
 
 export type MonthPeriod = { year: number; month: number };
+
+export type OperationsByServiceRow = {
+  serviceId: string | null;
+  serviceName: string;
+  count: number;
+  amountFcfa: number;
+};
+
+async function buildOperationsByService(
+  from: Date,
+  to: Date,
+): Promise<OperationsByServiceRow[]> {
+  const [services, cases] = await Promise.all([
+    prisma.clinicService.findMany({
+      where: { active: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: { id: true, name: true },
+    }),
+    prisma.surgeryCase.findMany({
+      where: {
+        status: { not: SurgeryStatus.CANCELLED },
+        createdAt: { gte: from, lt: to },
+      },
+      select: {
+        totalCostFcfa: true,
+        interventionType: {
+          select: {
+            clinicServiceId: true,
+            clinicService: { select: { id: true, name: true } },
+          },
+        },
+      },
+    }),
+  ]);
+
+  const byService = new Map<string | null, OperationsByServiceRow>();
+  for (const service of services) {
+    byService.set(service.id, {
+      serviceId: service.id,
+      serviceName: service.name,
+      count: 0,
+      amountFcfa: 0,
+    });
+  }
+  byService.set(null, {
+    serviceId: null,
+    serviceName: "Sans service",
+    count: 0,
+    amountFcfa: 0,
+  });
+
+  for (const row of cases) {
+    const serviceId = row.interventionType.clinicServiceId;
+    const key = serviceId ?? null;
+    const current = byService.get(key) ?? {
+      serviceId: key,
+      serviceName: row.interventionType.clinicService?.name ?? "Sans service",
+      count: 0,
+      amountFcfa: 0,
+    };
+    current.count += 1;
+    current.amountFcfa += row.totalCostFcfa;
+    byService.set(key, current);
+  }
+
+  const rows = [...byService.values()].filter(
+    (row) => row.serviceId !== null || row.count > 0,
+  );
+  rows.sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count;
+    return a.serviceName.localeCompare(b.serviceName, "fr");
+  });
+  return rows;
+}
 
 function percentChange(current: number, previous: number) {
   if (previous === 0) return current > 0 ? 100 : 0;
@@ -71,6 +147,15 @@ async function sumPayrollPaidBetween(from: Date, to: Date) {
   return rows.reduce((sum, row) => sum + row.grossFcfa, 0);
 }
 
+/** Somme totale des salaires bruts du mois (tous statuts). */
+async function sumPayrollMonthGross(year: number, month: number) {
+  const rows = await prisma.employeePayroll.findMany({
+    where: { year, month },
+    select: { grossFcfa: true },
+  });
+  return rows.reduce((sum, row) => sum + row.grossFcfa, 0);
+}
+
 function mapExpenseBreakdown(
   rows: Array<{ amountFcfa: number; category: ClinicExpenseCategory }>,
   payrollSalariesFcfa: number,
@@ -109,7 +194,10 @@ function mapExpenseBreakdown(
   ];
 }
 
-function mapRevenueBreakdown(breakdown: ReturnType<typeof sumCollectedBreakdown>) {
+function mapRevenueBreakdown(
+  breakdown: ReturnType<typeof sumCollectedBreakdown>,
+  pharmacyFcfa = 0,
+) {
   const hospitalizationFcfa =
     breakdown.hospitalizationFcfa;
   const items = [
@@ -117,13 +205,18 @@ function mapRevenueBreakdown(breakdown: ReturnType<typeof sumCollectedBreakdown>
     { key: "examens", label: "Examens", amountFcfa: breakdown.examsFcfa },
     { key: "operations", label: "Opérations", amountFcfa: breakdown.surgeryFcfa },
     { key: "hospitalisation", label: "Hospitalisation", amountFcfa: hospitalizationFcfa },
+    { key: "pharmacie", label: "Pharmacie", amountFcfa: pharmacyFcfa },
   ];
-  const knownTotal = items.reduce((sum, row) => sum + row.amountFcfa, 0);
+  const knownTotal =
+    breakdown.consultationsFcfa +
+    breakdown.examsFcfa +
+    breakdown.surgeryFcfa +
+    hospitalizationFcfa;
   const autres = Math.max(0, breakdown.totalFcfa - knownTotal);
   if (autres > 0) {
     items.push({ key: "autres", label: "Autres", amountFcfa: autres });
   }
-  const total = breakdown.totalFcfa;
+  const total = breakdown.totalFcfa + pharmacyFcfa;
   return items.map((row) => ({
     ...row,
     percent: total > 0 ? Math.round((row.amountFcfa / total) * 100) : 0,
@@ -182,6 +275,8 @@ export async function buildFinancialKpis(now = new Date()): Promise<FinancialKpi
     prevExpenses,
     currentPayrollPaid,
     prevPayrollPaid,
+    currentPayrollGross,
+    prevPayrollGross,
   ] = await Promise.all([
     aggregateCollectedBetween(currentBounds.start, currentBounds.end),
     aggregateCollectedBetween(prevBounds.start, prevBounds.end),
@@ -189,6 +284,8 @@ export async function buildFinancialKpis(now = new Date()): Promise<FinancialKpi
     sumValidatedExpensesBetween(prevBounds.start, prevBounds.end),
     sumPayrollPaidBetween(currentBounds.start, currentBounds.end),
     sumPayrollPaidBetween(prevBounds.start, prevBounds.end),
+    sumPayrollMonthGross(year, month),
+    sumPayrollMonthGross(prev.year, prev.month),
   ]);
 
   const currentExpensesTotal = currentExpenses.totalFcfa + currentPayrollPaid;
@@ -203,8 +300,8 @@ export async function buildFinancialKpis(now = new Date()): Promise<FinancialKpi
     expensesChangePercent: percentChange(currentExpensesTotal, prevExpensesTotal),
     netMonthFcfa: currentNet,
     netChangePercent: percentChange(currentNet, prevNet),
-    payrollMonthFcfa: currentPayrollPaid,
-    payrollChangePercent: percentChange(currentPayrollPaid, prevPayrollPaid),
+    payrollMonthFcfa: currentPayrollGross,
+    payrollChangePercent: percentChange(currentPayrollGross, prevPayrollGross),
   };
 }
 
@@ -225,7 +322,10 @@ export async function buildAdminDashboardOverview() {
     prevExpenses,
     currentPayrollPaid,
     prevPayrollPaid,
+    currentPayrollGross,
+    prevPayrollGross,
     monthInvoices,
+    pharmacyMonth,
     recentExpenses,
     employees,
     payrollRows,
@@ -233,6 +333,7 @@ export async function buildAdminDashboardOverview() {
     pendingExpensesCount,
     unpaidPayrollCount,
     lowStock,
+    pendingDayClosures,
     recentValidations,
     activityLogs,
   ] = await Promise.all([
@@ -242,6 +343,8 @@ export async function buildAdminDashboardOverview() {
     sumValidatedExpensesBetween(prevBounds.start, prevBounds.end),
     sumPayrollPaidBetween(currentBounds.start, currentBounds.end),
     sumPayrollPaidBetween(prevBounds.start, prevBounds.end),
+    sumPayrollMonthGross(year, month),
+    sumPayrollMonthGross(prev.year, prev.month),
     prisma.invoice.findMany({
       where: collectedInvoicesWhere(currentBounds.start, currentBounds.end),
       select: {
@@ -252,6 +355,7 @@ export async function buildAdminDashboardOverview() {
         createdAt: true,
       },
     }),
+    aggregatePharmacyBetween(currentBounds.start, currentBounds.end),
     prisma.clinicExpense.findMany({
       orderBy: { createdAt: "desc" },
       take: 20,
@@ -297,6 +401,7 @@ export async function buildAdminDashboardOverview() {
       },
     }),
     prisma.product.count({ where: { quantity: { lte: 5 }, active: true } }),
+    prisma.receptionDayClosure.count({ where: { validatedAt: null } }),
     prisma.clinicExpense.findMany({
       where: { status: ClinicExpenseStatus.VALIDATED, validatedAt: { not: null } },
       orderBy: { validatedAt: "desc" },
@@ -326,6 +431,10 @@ export async function buildAdminDashboardOverview() {
 
   const monthBreakdown = sumCollectedBreakdown(monthInvoices);
   const expenseBreakdown = mapExpenseBreakdown(currentExpenses.rows, currentPayrollPaid);
+  const operationsByService = await buildOperationsByService(
+    currentBounds.start,
+    currentBounds.end,
+  );
 
   const monthlyTrend = await Promise.all(
     lastNMonths(12).map(async (period) => {
@@ -384,12 +493,13 @@ export async function buildAdminDashboardOverview() {
       expensesChangePercent: percentChange(currentExpensesTotal, prevExpensesTotal),
       netMonthFcfa: currentNet,
       netChangePercent: percentChange(currentNet, prevNet),
-      payrollMonthFcfa: currentPayrollPaid,
-      payrollChangePercent: percentChange(currentPayrollPaid, prevPayrollPaid),
+      payrollMonthFcfa: currentPayrollGross,
+      payrollChangePercent: percentChange(currentPayrollGross, prevPayrollGross),
     },
     monthlyTrend,
-    revenueBreakdown: mapRevenueBreakdown(monthBreakdown),
+    revenueBreakdown: mapRevenueBreakdown(monthBreakdown, pharmacyMonth.totalFcfa),
     expenseBreakdown,
+    operationsByService,
     recentExpenses: recentExpenses.map((row) => ({
       id: row.id,
       date: row.businessDate.toISOString().slice(0, 10),
@@ -422,6 +532,7 @@ export async function buildAdminDashboardOverview() {
       pendingExpenses: pendingExpensesCount,
       unpaidPayroll: unpaidPayrollCount,
       lowStock,
+      pendingDayClosures,
       recentValidations: recentValidations.map((row) => ({
         id: row.id,
         label: row.label,
@@ -440,6 +551,7 @@ export async function buildAdminDashboardOverview() {
     navBadges: {
       depenses: pendingExpensesCount,
       salaires: unpaidPayrollCount,
+      caisse: pendingDayClosures,
     },
   };
 }
@@ -477,7 +589,7 @@ async function buildClinicalSupervision(now: Date) {
 
 export async function buildAdminNavBadges() {
   const { year, month } = currentPayrollPeriod();
-  const [pendingExpenses, unpaidPayroll] = await Promise.all([
+  const [pendingExpenses, unpaidPayroll, pendingDayClosures] = await Promise.all([
     prisma.clinicExpense.count({ where: { status: ClinicExpenseStatus.PENDING } }),
     prisma.employeePayroll.count({
       where: {
@@ -486,6 +598,7 @@ export async function buildAdminNavBadges() {
         status: { in: [PayrollStatus.PENDING, PayrollStatus.LATE] },
       },
     }),
+    prisma.receptionDayClosure.count({ where: { validatedAt: null } }),
   ]);
-  return { depenses: pendingExpenses, salaires: unpaidPayroll };
+  return { depenses: pendingExpenses, salaires: unpaidPayroll, caisse: pendingDayClosures };
 }

@@ -17,7 +17,12 @@ const loginSchema = z.object({
 const profileSchema = z.object({
   firstName: z.string().trim().min(2, "Le prénom doit contenir au moins 2 caractères."),
   lastName: z.string().trim().min(2, "Le nom doit contenir au moins 2 caractères."),
-  email: z.string().trim().email("Adresse e-mail invalide."),
+  username: z
+    .string()
+    .trim()
+    .min(2, "Le nom d'utilisateur doit contenir au moins 2 caractères.")
+    .max(50)
+    .regex(/^[a-zA-Z0-9._-]+$/, "Caractères autorisés : lettres, chiffres, . _ -"),
 });
 
 const passwordSchema = z.object({
@@ -34,6 +39,7 @@ const SESSION_COOKIE_OPTIONS = {
 
 function toSessionUser(user: {
   id: string;
+  username: string;
   email: string;
   firstName: string;
   lastName: string;
@@ -41,6 +47,7 @@ function toSessionUser(user: {
 }): SessionUser {
   return {
     id: user.id,
+    username: user.username,
     email: user.email,
     firstName: user.firstName,
     lastName: user.lastName,
@@ -104,6 +111,7 @@ router.get("/me", async (req, res) => {
       where: { id: sessionUser.id },
       select: {
         id: true,
+        username: true,
         email: true,
         firstName: true,
         lastName: true,
@@ -131,10 +139,33 @@ router.patch("/profile", requireAuth, async (req, res) => {
       return res.status(404).json({ error: "Compte introuvable." });
     }
 
-    if (body.email !== existing.email) {
-      const emailTaken = await prisma.user.findUnique({ where: { email: body.email } });
-      if (emailTaken) {
-        return res.status(409).json({ error: "Cet e-mail est déjà utilisé par un autre compte." });
+    const usernameChanged = body.username.toLowerCase() !== existing.username.toLowerCase();
+    if (usernameChanged) {
+      const usernameTaken = await prisma.user.findFirst({
+        where: {
+          username: { equals: body.username, mode: "insensitive" },
+          NOT: { id: currentUser.id },
+        },
+        select: { id: true },
+      });
+      if (usernameTaken) {
+        return res.status(409).json({ error: "Ce nom d'utilisateur est déjà utilisé." });
+      }
+    }
+
+    // E-mail technique auto (@alwatan.local) : rester aligné sur le nom d'utilisateur.
+    let nextEmail = existing.email;
+    if (usernameChanged && existing.email.toLowerCase().endsWith("@alwatan.local")) {
+      const candidate = `${body.username}@alwatan.local`;
+      const emailTaken = await prisma.user.findFirst({
+        where: {
+          email: { equals: candidate, mode: "insensitive" },
+          NOT: { id: currentUser.id },
+        },
+        select: { id: true },
+      });
+      if (!emailTaken) {
+        nextEmail = candidate;
       }
     }
 
@@ -144,7 +175,8 @@ router.patch("/profile", requireAuth, async (req, res) => {
         data: {
           firstName: body.firstName,
           lastName: body.lastName,
-          email: body.email,
+          username: body.username,
+          email: nextEmail,
         },
       });
 

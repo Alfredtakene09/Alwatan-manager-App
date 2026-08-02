@@ -17,17 +17,22 @@ import { showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { parsePatientAge, splitPatientFullName, formatPatientAge } from '@/lib/patient-name'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
-import { doctorSelectSuffix, type DoctorOption } from '@/lib/doctor-compensation'
 import { computeGrossFcfaFromExamsByKind, getLabExamPriceFcfa } from '@/lib/lab-exams'
 import { CLINIC } from '@/lib/clinic'
 import { buildClinicPrintHeader, buildLabExamThermalReceiptHtml, openPrintDocument } from '@/lib/print-document'
 import MultiExamPrescriptionPicker from '@/components/MultiExamPrescriptionPicker.vue'
-import { emptyExamsByKind, countExamsByKind, type ExamsByKind } from '@/lib/exam-catalog'
+import {
+  emptyExamsByKind,
+  countExamsByKind,
+  LAB_BILLABLE_EXAM_KINDS,
+  EXAM_KIND_LABELS,
+  type ExamKindSlug,
+  type ExamsByKind,
+} from '@/lib/exam-catalog'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
-import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
@@ -60,11 +65,6 @@ type QueuePatient = {
   ageUnit?: PatientAgeUnit | null
 }
 
-type ServiceOption = {
-  id: string
-  name: string
-}
-
 type ExternalQueueRow = {
   id: string
   visitId: string
@@ -88,14 +88,10 @@ type DraftNewPatient = {
   ageUnit: PatientAgeUnit
   phone: string
   gender: string
-  service: string
-  doctorId: string
 }
 
-const { uiText, localeCode } = useAppI18n()
+const { uiText, dateTimeText, localeCode } = useAppI18n()
 
-const doctors = ref<DoctorOption[]>([])
-const services = ref<ServiceOption[]>([])
 const search = ref('')
 const searchResults = ref<PatientRow[]>([])
 const showNewPatientModal = ref(false)
@@ -113,8 +109,6 @@ const patientForm = ref<DraftNewPatient>({
   ageUnit: 'YEARS',
   phone: '',
   gender: 'F',
-  service: '',
-  doctorId: '',
 })
 
 const editForm = ref({
@@ -140,15 +134,17 @@ const editParsedAge = computed(() => parsePatientAge(editForm.value.age, editFor
 const grossFcfa = computed(() => computeGrossFcfaFromExamsByKind(examsByKind.value))
 const netFcfa = computed(() => Math.max(0, grossFcfa.value - (Number(reductionFcfa.value) || 0)))
 
+const newPatientExamCount = computed(() => countExamsByKind(examsByKind.value))
+
 const canConfirmNewPatient = computed(() => {
   const { firstName, lastName } = parsedName.value
-  return (
-    firstName.length >= 2 &&
-    lastName.length >= 2 &&
-    parsedAge.value !== null &&
-    !!patientForm.value.service
-  )
+  return firstName.length >= 2 && lastName.length >= 2 && parsedAge.value !== null
 })
+
+/** Enregistrement + prescription directe (paiement) en une étape. */
+const canConfirmNewPatientWithExams = computed(
+  () => canConfirmNewPatient.value && newPatientExamCount.value > 0 && netFcfa.value > 0,
+)
 
 const canSaveEdit = computed(() => {
   const { firstName, lastName } = editParsedName.value
@@ -158,6 +154,25 @@ const canSaveEdit = computed(() => {
 const canSubmitExams = computed(
   () => !!activeRow.value && countExamsByKind(examsByKind.value) > 0 && netFcfa.value > 0,
 )
+
+const externalExamKinds = LAB_BILLABLE_EXAM_KINDS
+
+function destinationServicesLabel(byKind: ExamsByKind): string {
+  const labels = (LAB_BILLABLE_EXAM_KINDS as ExamKindSlug[])
+    .filter((kind) => (byKind[kind]?.length ?? 0) > 0)
+    .map((kind) => uiText(EXAM_KIND_LABELS[kind]))
+  if (!labels.length) return uiText('laboratoire')
+  if (labels.length === 1) return labels[0]
+  return `${labels.slice(0, -1).join(', ')} ${uiText('et')} ${labels[labels.length - 1]}`
+}
+
+/** Service dérivé des types d'examens choisis (plus de champ Service manuel). */
+function serviceFromExams(byKind: ExamsByKind): string | undefined {
+  const labels = (LAB_BILLABLE_EXAM_KINDS as ExamKindSlug[])
+    .filter((kind) => (byKind[kind]?.length ?? 0) > 0)
+    .map((kind) => EXAM_KIND_LABELS[kind])
+  return labels.length ? labels.join(', ') : undefined
+}
 
 const activePatientLabel = computed(() => {
   if (!activeRow.value) return ''
@@ -199,12 +214,14 @@ const tableHeaders = computed(() => {
 const formLabels = computed(() => {
   void localeCode.value
   return {
-    prescription: uiText('Prescription'),
+    prescription: uiText('Prescrire des examens'),
     netDue: uiText('Net à payer'),
     registering: uiText('Enregistrement…'),
+    savePending: uiText('Enregistrer sans examen'),
+    saveAndSend: uiText('Valider et envoyer au service'),
     save: uiText('Enregistrer'),
     validating: uiText('Validation…'),
-    validate: uiText('Valider'),
+    validate: uiText('Valider et envoyer au service'),
   }
 })
 
@@ -220,19 +237,18 @@ function resetPatientForm() {
     ageUnit: 'YEARS',
     phone: '',
     gender: 'F',
-    service: services.value[0]?.name ?? '',
-    doctorId: '',
   }
 }
 
-async function openNewPatientModal() {
-  await loadServices()
+function openNewPatientModal() {
   resetPatientForm()
+  resetExamsForm()
   showNewPatientModal.value = true
 }
 
 function closeNewPatientModal() {
   showNewPatientModal.value = false
+  resetExamsForm()
 }
 
 function resetExamsForm() {
@@ -283,18 +299,34 @@ function queueStatusVariant(row: ExternalQueueRow): 'success' | 'warning' | 'inf
 }
 
 function externalRowActions(row: ExternalQueueRow): QueueRowAction[] {
+  void localeCode.value
   return [
     {
       key: 'exams',
-      label: 'Examens',
+      label: uiText('Examens'),
       icon: FlaskConical,
       variant: 'accent',
       disabled: row.hasExams,
-      disabledReason: row.hasExams ? 'Examens déjà prescrits' : undefined,
+      disabledReason: row.hasExams ? uiText('Examens déjà prescrits') : undefined,
     },
-    { key: 'edit', label: 'Modifier', icon: Pencil },
-    { key: 'print', label: 'Imprimer', icon: Printer },
+    { key: 'edit', label: uiText('Modifier'), icon: Pencil },
+    { key: 'print', label: uiText('Imprimer'), icon: Printer },
   ]
+}
+
+function examsSummaryLabel(row: ExternalQueueRow) {
+  if (!row.hasExams || row.examsSummary === 'Examens en attente') {
+    return uiText('Examens en attente')
+  }
+  return row.examsSummary
+}
+
+function serviceDisplayLabel(service: string | null | undefined) {
+  if (!service) return ''
+  return service
+    .split(', ')
+    .map((part) => uiText(part.trim()))
+    .join(', ')
 }
 
 function onExternalRowAction(key: string, row: ExternalQueueRow) {
@@ -317,11 +349,11 @@ function printRow(row: ExternalQueueRow) {
       `Fiche patient ${patient.code}`,
       `
 ${buildClinicPrintHeader(uiText('Fiche patient externe'))}
-  <div class="row"><span>Date</span><strong>${new Date(row.updatedAt).toLocaleString('fr-FR')}</strong></div>
-  <div class="row"><span>Patient</span><strong>${patientName}</strong></div>
-  <div class="row"><span>Matricule</span><strong>${patient.code}</strong></div>
-  ${patient.phone ? `<div class="row"><span>Téléphone</span><strong>${patient.phone}</strong></div>` : ''}
-  ${patient.age != null ? `<div class="row"><span>Âge</span><strong>${formatPatientAge(patient.age, normalizePatientAgeUnit(patient.ageUnit))}</strong></div>` : ''}
+  <div class="row"><span>${uiText('Date')}</span><strong>${dateTimeText(row.updatedAt)}</strong></div>
+  <div class="row"><span>${uiText('Patient')}</span><strong>${patientName}</strong></div>
+  <div class="row"><span>${uiText('Matricule')}</span><strong>${patient.code}</strong></div>
+  ${patient.phone ? `<div class="row"><span>${uiText('Téléphone')}</span><strong>${patient.phone}</strong></div>` : ''}
+  ${patient.age != null ? `<div class="row"><span>${uiText('Âge')}</span><strong>${formatPatientAge(patient.age, normalizePatientAgeUnit(patient.ageUnit))}</strong></div>` : ''}
   <p style="margin-top:1rem;color:#64748b;font-size:0.875rem;">${uiText('Dossier enregistré — examens en attente de prescription.')}</p>
   <div class="footer">${CLINIC.fullAddress}<br>${CLINIC.phoneLabel} — ${CLINIC.email}</div>
 `,
@@ -354,27 +386,6 @@ ${buildClinicPrintHeader(uiText('Fiche patient externe'))}
     }),
     { pageSize: '80mm' },
   )
-}
-
-async function loadDoctors() {
-  try {
-    const { data } = await api.get<DoctorOption[]>('/visits/doctors')
-    doctors.value = Array.isArray(data) ? data : []
-  } catch {
-    doctors.value = []
-  }
-}
-
-async function loadServices() {
-  try {
-    const { data } = await api.get<ServiceOption[]>('/visits/external-services')
-    services.value = Array.isArray(data) ? data : []
-    if (!patientForm.value.service) {
-      patientForm.value.service = services.value[0]?.name ?? ''
-    }
-  } catch {
-    services.value = []
-  }
 }
 
 async function loadQueue() {
@@ -410,7 +421,7 @@ async function registerPatient(payload: Record<string, unknown>) {
     const { data } = await api.post<{ alreadyRegistered?: boolean }>('/visits/external-patient', payload)
     message.value = data.alreadyRegistered
       ? uiText('Patient déjà dans la liste des dossiers externes.')
-      : uiText('Patient enregistré. Ajoutez les examens depuis la liste ci-dessous.')
+      : uiText('Patient enregistré. Prescrivez les examens pour l’envoyer au service.')
     messageType.value = 'success'
     await loadQueue()
   } catch (error: unknown) {
@@ -431,16 +442,57 @@ async function confirmNewPatient() {
   if (!canConfirmNewPatient.value) return
   const { firstName, lastName } = parsedName.value
   const age = parsePatientAge(patientForm.value.age, patientForm.value.ageUnit)
-  await registerPatient({
+  const basePayload = {
     firstName,
     lastName,
     age: age ?? undefined,
     ageUnit: patientForm.value.ageUnit,
     phone: patientForm.value.phone.trim() || undefined,
     gender: patientForm.value.gender,
-    service: patientForm.value.service,
-    doctorId: patientForm.value.doctorId || undefined,
-  })
+  }
+
+  if (newPatientExamCount.value > 0) {
+    if (!canConfirmNewPatientWithExams.value) return
+    registering.value = true
+    message.value = ''
+    try {
+      const { data } = await api.post('/visits/external-lab-order', {
+        ...basePayload,
+        service: serviceFromExams(examsByKind.value),
+        examsByKind: examsByKind.value,
+        reductionFcfa: Number(reductionFcfa.value) || 0,
+      })
+      const destination = destinationServicesLabel(examsByKind.value)
+      message.value = data.invoice
+        ? translateTemplate(
+            'Paiement validé — {invoice}. Patient envoyé vers {destination} (sans consultation médecin).',
+            { invoice: data.invoice.invoiceNumber, destination },
+          )
+        : translateTemplate(
+            'Examens enregistrés. Patient envoyé vers {destination} (sans consultation médecin).',
+            { destination },
+          )
+      messageType.value = 'success'
+      closeNewPatientModal()
+      resetPatientForm()
+      resetExamsForm()
+      await loadQueue()
+    } catch (error: unknown) {
+      const shown = await showDuplicateModalFromError(error)
+      if (shown) return
+      const apiMessage =
+        error && typeof error === 'object' && 'response' in error
+          ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
+          : undefined
+      message.value = apiMessage ?? uiText("Erreur lors de l'enregistrement.")
+      messageType.value = 'error'
+    } finally {
+      registering.value = false
+    }
+    return
+  }
+
+  await registerPatient(basePayload)
   closeNewPatientModal()
   resetPatientForm()
 }
@@ -448,23 +500,31 @@ async function confirmNewPatient() {
 async function selectPatient(patient: PatientRow) {
   await registerPatient({ patientId: patient.id })
   clearSearch()
+  const pending = queue.value.find((row) => row.patientId === patient.id && !row.hasExams)
+  if (pending) openExamsModal(pending)
 }
 
 async function submitExams() {
   if (!canSubmitExams.value || !activeRow.value) return
   submitting.value = true
   message.value = ''
+  const destination = destinationServicesLabel(examsByKind.value)
   try {
     const { data } = await api.post('/visits/external-lab-order', {
       patientId: activeRow.value.patientId,
       examsByKind: examsByKind.value,
       reductionFcfa: Number(reductionFcfa.value) || 0,
+      service: serviceFromExams(examsByKind.value) ?? activeRow.value.service ?? undefined,
     })
     message.value = data.invoice
-      ? translateTemplate('Paiement validé — {invoice}. Patient envoyé au laboratoire.', {
-          invoice: data.invoice.invoiceNumber,
-        })
-      : uiText('Examens enregistrés et patient envoyé au laboratoire.')
+      ? translateTemplate(
+          'Paiement validé — {invoice}. Patient envoyé vers {destination} (sans consultation médecin).',
+          { invoice: data.invoice.invoiceNumber, destination },
+        )
+      : translateTemplate(
+          'Examens enregistrés. Patient envoyé vers {destination} (sans consultation médecin).',
+          { destination },
+        )
     messageType.value = 'success'
     closeExamsModal()
     resetExamsForm()
@@ -517,26 +577,20 @@ async function saveEdit() {
 
 onMounted(() => {
   loadQueue()
-  loadDoctors()
-  loadServices().then(() => {
-    if (!patientForm.value.service) {
-      patientForm.value.service = services.value[0]?.name ?? ''
-    }
-  })
 })
 </script>
 
 <template>
   <div>
     <UiPageHeader
-      title="Patient externe"
-      subtitle="Enregistrez le patient, puis ajoutez les examens depuis la liste"
+      :title="uiText('Patient externe')"
+      :subtitle="uiText('Prescrivez labo, radio, écho… directement — le patient part au service sans passer par un médecin')"
       :icon="UserRound"
     />
 
     <UiAlert v-if="message" :type="messageType" :message="message" />
 
-    <UiCard title="Rechercher un patient existant" :icon="UserRound" icon-variant="teal" class="patient-card">
+    <UiCard :title="uiText('Rechercher un patient existant')" :icon="UserRound" icon-variant="teal" class="patient-card">
       <div class="search-block">
         <div class="search-compact">
           <Search :size="16" class="search-compact__icon" />
@@ -544,14 +598,14 @@ onMounted(() => {
             v-model="search"
             type="search"
             class="search-compact__input"
-            placeholder="Rechercher par matricule, nom ou téléphone…"
+            :placeholder="uiText('Rechercher par matricule, nom ou téléphone…')"
             @keydown.enter.prevent="searchPatients"
           />
           <button
             v-if="search"
             type="button"
             class="search-compact__clear"
-            aria-label="Effacer la recherche"
+            :aria-label="uiText('Effacer la recherche')"
             @click="clearSearch"
           >
             <X :size="14" />
@@ -560,7 +614,7 @@ onMounted(() => {
         <div class="search-actions">
           <span class="search-count">{{ searchLabel }}</span>
           <UiButton variant="ghost" size="sm" @click="searchPatients">
-            Chercher
+            {{ uiText('Chercher') }}
           </UiButton>
         </div>
 
@@ -575,18 +629,20 @@ onMounted(() => {
       </div>
     </UiCard>
 
-    <UiCard title="Patients externes enregistrés" class="queue-card" :icon="UserRound" icon-variant="blue">
+    <UiCard :title="uiText('Patients externes enregistrés')" class="queue-card" :icon="UserRound" icon-variant="blue">
       <template #actions>
         <UiButton variant="primary" size="sm" @click="openNewPatientModal">
-          Nouveau
+          {{ uiText('Nouveau') }}
         </UiButton>
         <UiButton variant="ghost" size="sm" :disabled="loadingQueue" @click="loadQueue">
-          Actualiser
+          {{ uiText('Actualiser') }}
         </UiButton>
         <span class="list-count">{{ queueCountLabel }}</span>
       </template>
 
-      <p v-if="!loadingQueue && !queue.length" class="empty">Aucun patient externe enregistré pour le moment</p>
+      <p v-if="!loadingQueue && !queue.length" class="empty">
+        {{ uiText('Aucun patient externe enregistré pour le moment') }}
+      </p>
       <div v-else class="queue-table-wrap">
         <table class="queue-table">
           <thead>
@@ -603,9 +659,9 @@ onMounted(() => {
               <td>
                 <strong>{{ fullName(row.patient.firstName, row.patient.lastName) }}</strong>
                 <span class="sub">{{ row.patient.code }}</span>
-                <span v-if="row.service" class="sub">{{ row.service }}</span>
+                <span v-if="row.service" class="sub">{{ serviceDisplayLabel(row.service) }}</span>
               </td>
-              <td>{{ row.examsSummary }}</td>
+              <td>{{ examsSummaryLabel(row) }}</td>
               <td>{{ row.hasExams ? formatFcfa(row.netFcfa) : '—' }}</td>
               <td>
                 <UiBadge :variant="queueStatusVariant(row)">
@@ -627,9 +683,10 @@ onMounted(() => {
     <UiFormModal
       v-if="showNewPatientModal"
       title-id="external-modal-title"
-      title="Nouveau patient externe"
-      subtitle="Patient payant directement à la clinique"
+      :title="uiText('Nouveau patient externe')"
+      :subtitle="uiText('Identité + prescription directe — labo, radio, écho, odonto')"
       :icon="UserPlus"
+      size="wide"
       @close="closeNewPatientModal"
     >
       <form
@@ -637,40 +694,80 @@ onMounted(() => {
         class="ui-form-modal__form reception-modal-form"
         @submit.prevent="confirmNewPatient"
       >
-        <ReceptionPatientIdentityFields
-          v-model:full-name="patientForm.fullName"
-          v-model:age="patientForm.age"
-          v-model:age-unit="patientForm.ageUnit"
-          v-model:phone="patientForm.phone"
-          v-model:gender="patientForm.gender"
-        />
-        <UiSelect v-model="patientForm.service" label="Service" required>
-          <option value="" disabled>
-            {{ services.length ? 'Sélectionner un service' : 'Aucun service disponible' }}
-          </option>
-          <option v-for="service in services" :key="service.id" :value="service.name">
-            {{ service.name }}
-          </option>
-        </UiSelect>
-        <UiSelect v-model="patientForm.doctorId" label="Médecin / prescripteur">
-          <option value="">Aucun (optionnel)</option>
-          <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
-            Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ doctorSelectSuffix(doctor) }}
-          </option>
-        </UiSelect>
+        <section class="form-panel">
+          <h3 class="form-panel__title">
+            <UserRound :size="14" />
+            {{ uiText('Informations patient') }}
+          </h3>
+          <ReceptionPatientIdentityFields
+            v-model:full-name="patientForm.fullName"
+            v-model:age="patientForm.age"
+            v-model:age-unit="patientForm.ageUnit"
+            v-model:phone="patientForm.phone"
+            v-model:gender="patientForm.gender"
+          />
+        </section>
+
+        <section class="form-panel form-panel--accent">
+          <h3 class="form-panel__title">
+            <FlaskConical :size="14" />
+            {{ formLabels.prescription }}
+          </h3>
+          <p class="form-panel__hint">
+            {{
+              uiText(
+                'Choisissez le service (Laboratoire, Radio, Écho, Odonto) puis les examens — le patient y est envoyé sans consultation médecin.',
+              )
+            }}
+          </p>
+          <MultiExamPrescriptionPicker
+            v-model="examsByKind"
+            :kinds="externalExamKinds"
+            :show-comments="false"
+          />
+          <div class="form-grid-2">
+            <UiInput
+              v-model="reductionFcfa"
+              :label="uiText('Réduction (FCFA)')"
+              type="number"
+              min="0"
+              :max="grossFcfa"
+              placeholder="0"
+              :icon="Percent"
+            />
+            <div class="total-preview">
+              <span>{{ formLabels.netDue }}</span>
+              <strong>{{ formatFcfa(netFcfa) }}</strong>
+              <small>{{ subtotalLabel }}</small>
+            </div>
+          </div>
+        </section>
       </form>
 
       <template #footer>
-        <UiButton type="button" variant="ghost" @click="closeNewPatientModal">Annuler</UiButton>
-        <UiButton type="button" variant="ghost" :icon="RotateCcw" @click="resetPatientForm">Effacer</UiButton>
+        <UiButton type="button" variant="ghost" @click="closeNewPatientModal">{{ uiText('Annuler') }}</UiButton>
+        <UiButton type="button" variant="ghost" :icon="RotateCcw" @click="resetPatientForm(); resetExamsForm()">
+          {{ uiText('Effacer') }}
+        </UiButton>
         <UiButton
+          v-if="newPatientExamCount === 0"
           type="submit"
           form="external-new-patient-form"
           variant="primary"
           :icon="UserPlus"
           :disabled="!canConfirmNewPatient || registering"
         >
-          {{ registering ? formLabels.registering : formLabels.save }}
+          {{ registering ? formLabels.registering : formLabels.savePending }}
+        </UiButton>
+        <UiButton
+          v-else
+          type="submit"
+          form="external-new-patient-form"
+          variant="success"
+          :icon="CreditCard"
+          :disabled="!canConfirmNewPatientWithExams || registering"
+        >
+          {{ registering ? formLabels.validating : formLabels.saveAndSend }}
         </UiButton>
       </template>
     </UiFormModal>
@@ -678,7 +775,7 @@ onMounted(() => {
     <UiFormModal
       v-if="showEditModal"
       title-id="edit-modal-title"
-      title="Modifier le patient"
+      :title="uiText('Modifier le patient')"
       :icon="Pencil"
       @close="closeEditModal"
     >
@@ -697,7 +794,7 @@ onMounted(() => {
       </form>
 
       <template #footer>
-        <UiButton type="button" variant="ghost" @click="closeEditModal">Annuler</UiButton>
+        <UiButton type="button" variant="ghost" @click="closeEditModal">{{ uiText('Annuler') }}</UiButton>
         <UiButton
           type="submit"
           form="external-edit-patient-form"
@@ -713,23 +810,34 @@ onMounted(() => {
     <UiFormModal
       v-if="showExamsModal"
       title-id="exams-modal-title"
-      title="Examens à réaliser"
+      :title="uiText('Prescrire des examens')"
       :subtitle="examsModalSubtitle"
       :icon="FlaskConical"
       size="wide"
       @close="closeExamsModal"
     >
-      <section class="form-panel">
+      <section class="form-panel form-panel--accent">
         <h3 class="form-panel__title">
           <FlaskConical :size="14" />
           {{ formLabels.prescription }}
         </h3>
-        <MultiExamPrescriptionPicker v-model="examsByKind" />
+        <p class="form-panel__hint">
+          {{
+            uiText(
+              'Choisissez le service (Laboratoire, Radio, Écho, Odonto) puis les examens — le patient y est envoyé sans consultation médecin.',
+            )
+          }}
+        </p>
+        <MultiExamPrescriptionPicker
+          v-model="examsByKind"
+          :kinds="externalExamKinds"
+          :show-comments="false"
+        />
 
         <div class="form-grid-2">
           <UiInput
             v-model="reductionFcfa"
-            label="Réduction (FCFA)"
+            :label="uiText('Réduction (FCFA)')"
             type="number"
             min="0"
             :max="grossFcfa"
@@ -745,7 +853,7 @@ onMounted(() => {
       </section>
 
       <template #footer>
-        <UiButton type="button" variant="ghost" @click="closeExamsModal">Annuler</UiButton>
+        <UiButton type="button" variant="ghost" @click="closeExamsModal">{{ uiText('Annuler') }}</UiButton>
         <UiButton
           variant="success"
           :icon="CreditCard"

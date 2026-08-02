@@ -3,6 +3,7 @@ import { computed, useId } from 'vue'
 import type { Component } from 'vue'
 import { X } from '@lucide/vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import { useModalTeleportTarget } from '@/composables/useModalTeleportTarget'
 
 const props = withDefaults(
   defineProps<{
@@ -22,6 +23,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{ close: [] }>()
 const { uiText, localeCode, isArabic } = useAppI18n()
+const teleportTarget = useModalTeleportTarget()
 
 const fallbackTitleId = useId()
 const ariaTitleId = computed(() => props.titleId ?? fallbackTitleId)
@@ -36,7 +38,7 @@ const subtitleText = computed(() => {
 </script>
 
 <template>
-  <Teleport to="body">
+  <Teleport :to="teleportTarget">
     <div v-if="open" class="ui-form-modal-overlay" @click.self="emit('close')">
       <div
         class="ui-form-modal"

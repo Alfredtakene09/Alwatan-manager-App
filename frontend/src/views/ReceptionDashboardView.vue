@@ -29,7 +29,6 @@ import {
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
 import { sortPatientsNewestFirst } from '@/lib/patient-sort'
 import {
-  PATIENT_CATEGORIES,
   isExemptCategory,
   showConsultationBillingSummary,
   type PatientCategory,
@@ -41,6 +40,7 @@ import {
   doctorNeedsConsultationAmountInput,
   doctorQuotaHint,
   doctorSelectSuffix,
+  doctorMatchesService,
   doctorShowsFixedConsultationPrice,
   resolveConsultationAmountForDoctor,
   showDoctorConsultationBilling,
@@ -52,6 +52,7 @@ import {
   buildDayClosureReceiptHtml,
   openPrintDocument,
 } from '@/lib/print-document'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -92,6 +93,7 @@ type Patient = {
   treatingDoctorId?: string | null
   treatingDoctor?: Doctor | null
   createdAt?: string
+  canDelete?: boolean
 }
 
 type Doctor = DoctorOption
@@ -156,16 +158,26 @@ type DayClosureStatus = {
   } | null
 }
 
-const { uiText } = useAppI18n()
+const { uiText, dateText } = useAppI18n()
 const auth = useAuthStore()
 
 function currentReceptionistName() {
   return auth.user ? fullName(auth.user.firstName, auth.user.lastName) : undefined
 }
 
+function todayInputValue() {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 const patients = ref<Patient[]>([])
 const doctors = ref<Doctor[]>([])
 const services = ref<ServiceOption[]>([])
+const listFrom = ref(todayInputValue())
+const listTo = ref(todayInputValue())
 const sortedDoctors = computed(() =>
   [...doctors.value].sort((a, b) => {
     const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
@@ -173,6 +185,12 @@ const sortedDoctors = computed(() =>
     return a.firstName.localeCompare(b.firstName, 'fr', { sensitivity: 'base' })
   }),
 )
+function filteredDoctorsByService(serviceName: string) {
+  if (!serviceName) return sortedDoctors.value
+  return sortedDoctors.value.filter((doctor) => doctorMatchesService(doctor, serviceName))
+}
+const formServiceDoctors = computed(() => filteredDoctorsByService(form.value.service))
+const editServiceDoctors = computed(() => filteredDoctorsByService(editForm.value.service))
 const stats = ref<ReceptionStats>({
   registeredToday: 0,
   femalePatients: 0,
@@ -351,15 +369,54 @@ const canSubmitReconsult = computed(() => {
 })
 
 const searchLabel = computed(() =>
-  search.value.trim() ? `${patients.value.length} résultat(s)` : `${patients.value.length} dossier(s) affiché(s)`,
+  search.value.trim()
+    ? translateTemplate('{n} résultat(s)', { n: patients.value.length })
+    : translateTemplate('{n} dossier(s) affiché(s)', { n: patients.value.length }),
 )
+
+const listDateLabel = computed(() => {
+  const formatOne = (value: string) => {
+    if (!value) return uiText("Aujourd'hui")
+    const [y, m, d] = value.split('-').map(Number)
+    if (!y || !m || !d) return value
+    return dateText(new Date(y, m - 1, d), {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    })
+  }
+  const from = listFrom.value || todayInputValue()
+  const to = listTo.value || from
+  if (from === to) return formatOne(from)
+  return translateTemplate('du {from} au {to}', {
+    from: formatOne(from),
+    to: formatOne(to),
+  })
+})
+
+const patientsPanelSubtitle = computed(() => {
+  const scope =
+    auth.user?.role === 'RECEPTIONNISTE'
+      ? uiText('Vos dossiers créés à la réception')
+      : uiText('Liste des dossiers créés à la réception')
+  return translateTemplate('{scope} — {date}', {
+    scope,
+    date: listDateLabel.value,
+  })
+})
+
+const isListDateToday = computed(() => {
+  const today = todayInputValue()
+  return listFrom.value === today && listTo.value === today
+})
 
 const dashboardStats = computed(() => [
   {
     id: 'today',
     label: 'Inscrits aujourd\'hui',
     value: stats.value.registeredToday,
-    hint: `${stats.value.visitsToday} passage(s) enregistré(s)`,
+    hint: translateTemplate('{n} passage(s) enregistré(s)', { n: stats.value.visitsToday }),
     icon: CalendarDays,
     variant: 'amber' as const,
   },
@@ -385,7 +442,10 @@ const dashboardStats = computed(() => [
     value: formatFcfaCompact(stats.value.netTodayFcfa ?? stats.value.revenueTodayFcfa),
     hint: stats.value.isPersonalScope
       ? stats.value.expensesTodayFcfa
-        ? `Brut ${formatFcfaCompact(stats.value.revenueTodayFcfa)} − dépenses ${formatFcfaCompact(stats.value.expensesTodayFcfa ?? 0)}`
+        ? translateTemplate('Brut {gross} − dépenses {expenses}', {
+            gross: formatFcfaCompact(stats.value.revenueTodayFcfa),
+            expenses: formatFcfaCompact(stats.value.expensesTodayFcfa ?? 0),
+          })
         : 'Uniquement vos encaissements'
       : 'Consultations, examens, opérations, hospitalisation (hors associés)',
     icon: Banknote,
@@ -447,18 +507,22 @@ async function closeReceptionDay() {
   const collected = snapshot?.collectedFcfa ?? stats.value.revenueTodayFcfa
   const expenses = snapshot?.expensesFcfa ?? stats.value.expensesTodayFcfa ?? 0
   const net = snapshot?.netFcfa ?? stats.value.netTodayFcfa ?? collected
-  const shiftHint = snapshot?.shiftLabel ? `\nCréneau : ${snapshot.shiftLabel}` : ''
+  const shiftHint = snapshot?.shiftLabel
+    ? ` ${translateTemplate('Créneau : {slot}', { slot: snapshot.shiftLabel })}`
+    : ''
 
   const confirmed = await confirmAppModal({
     type: 'WARNING',
     title: 'Clôturer la journée',
-    message:
-      `Confirmer la clôture de la journée ?\n\n` +
-      `Encaissements : ${formatFcfa(collected)}\n` +
-      `Dépenses : ${formatFcfa(expenses)}\n` +
-      `Net à remettre : ${formatFcfa(net)}` +
-      shiftHint +
-      `\n\nRemettez ensuite la caisse à la comptabilité.`,
+    message: translateTemplate(
+      'Confirmer la clôture de la journée ? Encaissements : {collected} Dépenses : {expenses} Net à remettre : {net}{shiftHint} Remettez ensuite la caisse à la comptabilité.',
+      {
+        collected: formatFcfa(collected),
+        expenses: formatFcfa(expenses),
+        net: formatFcfa(net),
+        shiftHint,
+      },
+    ),
     confirmLabel: 'Clôturer',
     cancelLabel: 'Annuler',
   })
@@ -470,7 +534,7 @@ async function closeReceptionDay() {
     dayClosure.value = data
     await showSuccessModal(
       'Journée clôturée',
-      data.message ?? 'Remettez la caisse à la comptabilité.',
+      'Remettez la caisse à la comptabilité.',
     )
     printDayClosure(data)
     await loadReceptionStats()
@@ -485,7 +549,20 @@ async function closeReceptionDay() {
 async function loadPatients() {
   loadingPatients.value = true
   try {
-    const { data } = await api.get('/patients', { params: { q: search.value.trim() || undefined } })
+    let from = listFrom.value || todayInputValue()
+    let to = listTo.value || from
+    if (from > to) {
+      ;[from, to] = [to, from]
+      listFrom.value = from
+      listTo.value = to
+    }
+    const { data } = await api.get('/patients', {
+      params: {
+        q: search.value.trim() || undefined,
+        from,
+        to,
+      },
+    })
     patients.value = sortPatientsNewestFirst(data)
   } finally {
     loadingPatients.value = false
@@ -496,6 +573,8 @@ async function loadDoctors() {
   try {
     const { data } = await api.get('/visits/doctors')
     doctors.value = Array.isArray(data) ? data : []
+    syncDoctorForService('form')
+    syncDoctorForService('edit')
   } catch {
     doctors.value = []
   }
@@ -507,6 +586,8 @@ async function loadServices() {
     services.value = Array.isArray(data) ? data : []
     if (!form.value.service) form.value.service = services.value[0]?.name ?? ''
     if (!editForm.value.service) editForm.value.service = services.value[0]?.name ?? ''
+    syncDoctorForService('form')
+    syncDoctorForService('edit')
   } catch {
     services.value = []
   }
@@ -531,11 +612,12 @@ function resetForm() {
     service: services.value[0]?.name ?? '',
     gender: 'F',
     category: 'STANDARD',
-    doctorId: doctors.value[0]?.id ?? '',
+    doctorId: '',
     treatingDoctorId: '',
     consultationAmount: '',
     reduction: '0',
   }
+  syncDoctorForService('form')
 }
 
 async function refreshReconsultFee() {
@@ -566,7 +648,24 @@ async function refreshReconsultFee() {
   }
 }
 
+function syncDoctorForService(target: 'form' | 'edit') {
+  const state = target === 'form' ? form.value : editForm.value
+  const allowed = target === 'form' ? formServiceDoctors.value : editServiceDoctors.value
+  if (!allowed.length) {
+    state.doctorId = ''
+    if (state.treatingDoctorId && !findDoctor(state.treatingDoctorId)) state.treatingDoctorId = ''
+    return
+  }
+  if (!allowed.some((doctor) => doctor.id === state.doctorId)) {
+    state.doctorId = allowed[0]?.id ?? ''
+  }
+  if (state.treatingDoctorId && !allowed.some((doctor) => doctor.id === state.treatingDoctorId)) {
+    state.treatingDoctorId = ''
+  }
+}
+
 function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
+  if (target === 'form' || target === 'edit') syncDoctorForService(target)
   if (target === 'form') {
     const doctor = findDoctor(form.value.doctorId)
     if (isExemptCategory(form.value.category)) {
@@ -643,7 +742,7 @@ function getDoctorName(doctorId: string) {
 }
 
 function printReceipt(r: ReceiptData) {
-  openPrintDocument(`Reçu ${r.patientCode}`, buildConsultationReceiptHtml(r), {
+  openPrintDocument(translateTemplate('Reçu {code}', { code: r.patientCode }), buildConsultationReceiptHtml(r), {
     pageSize: '80mm',
     autoPrint: true,
   })
@@ -706,6 +805,7 @@ async function createPatientAndVisit() {
       invoiceNumber?: string | null
       totalFcfa: number
       billingDeferred?: boolean
+      linkedExistingDossier?: boolean
     }>('/patients/register-consultation', {
       firstName,
       lastName,
@@ -714,7 +814,7 @@ async function createPatientAndVisit() {
       phone: form.value.phone.trim() || undefined,
       service: form.value.service || undefined,
       gender: form.value.gender,
-      category: form.value.category,
+      category: 'STANDARD',
       doctorId: form.value.doctorId,
       treatingDoctorId: form.value.treatingDoctorId || null,
       consultationAmountFcfa: formBillingExempt.value ? 0 : amount,
@@ -731,9 +831,9 @@ async function createPatientAndVisit() {
       total,
       invoiceNumber: data.invoiceNumber
         ?? (formBillingExempt.value
-          ? 'Exonéré'
+          ? uiText('Exonéré')
           : data.billingDeferred
-            ? 'Facturation différée'
+            ? uiText('Facturation différée')
             : undefined),
       date: new Date().toLocaleString('fr-FR'),
       age: formAge.value,
@@ -742,8 +842,26 @@ async function createPatientAndVisit() {
       phone: form.value.phone.trim() || undefined,
       processedBy: currentReceptionistName(),
     })
-    showAlert(`Dossier ${patient.code} enregistré — ${fullName(patient.firstName, patient.lastName)} est en attente de consultation.`)
+    showAlert(
+      data.linkedExistingDossier
+        ? translateTemplate(
+            'Dossier existant {code} réutilisé — {name} est en attente de consultation (historique conservé).',
+            {
+              code: patient.code,
+              name: fullName(patient.firstName, patient.lastName),
+            },
+          )
+        : translateTemplate(
+            'Dossier {code} enregistré — {name} est en attente de consultation.',
+            {
+              code: patient.code,
+              name: fullName(patient.firstName, patient.lastName),
+            },
+          ),
+    )
     closeModal()
+    listFrom.value = todayInputValue()
+    listTo.value = todayInputValue()
     await refreshAll()
   } catch (error) {
     const shown = await showDuplicateModalFromError(error, {
@@ -773,11 +891,22 @@ function printPatientReceipt(patient: Patient) {
 }
 
 async function deletePatient(patient: Patient) {
+  if (patient.canDelete === false) {
+    showAlert(
+      'Impossible de supprimer : ce patient a déjà été envoyé et consulté.',
+      'error',
+    )
+    return
+  }
+
   const patientName = fullName(patient.firstName, patient.lastName)
   const confirmed = await confirmAppModal({
     type: 'DELETE',
     title: 'Supprimer le patient',
-    message: `Supprimer le dossier ${patient.code} — ${patientName} ? Cette action est irréversible.`,
+    message: translateTemplate(
+      'Supprimer le dossier {code} — {name} ? Cette action est irréversible.',
+      { code: patient.code, name: patientName },
+    ),
     confirmLabel: 'Supprimer',
   })
   if (!confirmed) return
@@ -786,7 +915,7 @@ async function deletePatient(patient: Patient) {
   clearAlert()
   try {
     await api.delete(`/patients/${patient.id}`)
-    showAlert(`Dossier ${patient.code} supprimé.`)
+    showAlert(translateTemplate('Dossier {code} supprimé.', { code: patient.code }))
     await refreshAll()
   } catch (error: unknown) {
     await showApiErrorModal(
@@ -822,6 +951,7 @@ async function openEditModal(patient: Patient) {
         ? String(detail.waitingVisit.reductionFcfa)
         : '0',
     }
+    syncDoctorForService('edit')
     applyCategoryBillingDefaults('edit')
   } catch {
     showAlert('Impossible de charger le dossier patient.', 'error')
@@ -853,6 +983,7 @@ function resetEditForm() {
       ? String(selectedPatient.value.waitingVisit.reductionFcfa)
       : '0',
   }
+  syncDoctorForService('edit')
 }
 
 function closeEditModal() {
@@ -899,10 +1030,14 @@ async function submitReconsultation() {
       consultationAmountFcfa: amount,
     })
     const hint = (data as { renewalHint?: string }).renewalHint
+    const patientName = fullName(selectedPatient.value.firstName, selectedPatient.value.lastName)
     showAlert(
       hint
-        ? `${fullName(selectedPatient.value.firstName, selectedPatient.value.lastName)} remis en consultation — ${hint}`
-        : `${fullName(selectedPatient.value.firstName, selectedPatient.value.lastName)} remis en consultation.`,
+        ? translateTemplate('{name} remis en consultation — {hint}', {
+            name: patientName,
+            hint: uiText(hint),
+          })
+        : translateTemplate('{name} remis en consultation.', { name: patientName }),
     )
     closeReconsultModal()
     await refreshAll()
@@ -941,13 +1076,13 @@ async function saveEdit() {
       phone: editForm.value.phone.trim() || undefined,
       service: editForm.value.service || undefined,
       gender: editForm.value.gender,
-      category: editForm.value.category,
+      category: 'STANDARD',
       doctorId: editForm.value.doctorId,
       treatingDoctorId: editForm.value.treatingDoctorId || null,
       consultationAmountFcfa: amount || undefined,
       reductionFcfa: reduction,
     })
-    showAlert(`Dossier ${data.code} mis à jour.`)
+    showAlert(translateTemplate('Dossier {code} mis à jour.', { code: data.code }))
     closeEditModal()
     await refreshAll()
   } catch (error: unknown) {
@@ -965,11 +1100,29 @@ function clearSearch() {
   loadPatients()
 }
 
+function resetListDateToToday() {
+  const today = todayInputValue()
+  listFrom.value = today
+  listTo.value = today
+}
+
 watch(search, () => {
   clearTimeout(searchTimer)
   searchTimer = setTimeout(loadPatients, 300)
 })
 
+watch([listFrom, listTo], () => {
+  loadPatients()
+})
+
+watch(() => form.value.service, () => {
+  syncDoctorForService('form')
+  applyDoctorBillingDefaults('form')
+})
+watch(() => editForm.value.service, () => {
+  syncDoctorForService('edit')
+  applyDoctorBillingDefaults('edit')
+})
 watch(() => form.value.category, () => applyCategoryBillingDefaults('form'))
 watch(() => editForm.value.category, () => applyCategoryBillingDefaults('edit'))
 watch(() => form.value.doctorId, () => applyDoctorBillingDefaults('form'))
@@ -1040,34 +1193,63 @@ onUnmounted(clearAlert)
         <div class="table-toolbar">
           <div class="table-toolbar__title">
             <h3>{{ uiText('Patients enregistrés') }}</h3>
-            <p>{{
-              auth.user?.role === 'RECEPTIONNISTE'
-                ? uiText('Vos dossiers créés à la réception')
-                : uiText('Liste des dossiers créés à la réception')
-            }}</p>
+            <p>{{ patientsPanelSubtitle }}</p>
           </div>
 
-          <div class="table-toolbar__search">
-            <div class="search-compact">
-              <Search :size="16" class="search-compact__icon" />
-              <input
-                v-model="search"
-                type="search"
-                class="search-compact__input"
-                :placeholder="uiText('Rechercher par matricule, nom ou téléphone…')"
-                @keydown.enter.prevent="loadPatients"
-              />
+          <div class="table-toolbar__filters">
+            <div class="date-range-filter">
+              <label class="date-filter">
+                <span class="date-filter__label">{{ uiText('Du') }}</span>
+                <input
+                  v-model="listFrom"
+                  type="date"
+                  class="date-filter__input"
+                  :max="listTo || undefined"
+                  :aria-label="uiText('Du')"
+                />
+              </label>
+              <label class="date-filter">
+                <span class="date-filter__label">{{ uiText('Au') }}</span>
+                <input
+                  v-model="listTo"
+                  type="date"
+                  class="date-filter__input"
+                  :min="listFrom || undefined"
+                  :aria-label="uiText('Au')"
+                />
+              </label>
               <button
-                v-if="search"
+                v-if="!isListDateToday"
                 type="button"
-                class="search-compact__clear"
-                :aria-label="uiText('Effacer la recherche')"
-                @click="clearSearch"
+                class="date-filter__today"
+                @click="resetListDateToToday"
               >
-                <X :size="14" />
+                {{ uiText("Aujourd'hui") }}
               </button>
             </div>
-            <span class="search-count">{{ searchLabel }}</span>
+
+            <div class="table-toolbar__search">
+              <div class="search-compact">
+                <Search :size="16" class="search-compact__icon" />
+                <input
+                  v-model="search"
+                  type="search"
+                  class="search-compact__input"
+                  :placeholder="uiText('Rechercher par matricule, nom ou téléphone…')"
+                  @keydown.enter.prevent="loadPatients"
+                />
+                <button
+                  v-if="search"
+                  type="button"
+                  class="search-compact__clear"
+                  :aria-label="uiText('Effacer la recherche')"
+                  @click="clearSearch"
+                >
+                  <X :size="14" />
+                </button>
+              </div>
+              <span class="search-count">{{ searchLabel }}</span>
+            </div>
           </div>
 
           <UiButton variant="primary" class="table-toolbar__new" @click="openModal">
@@ -1114,18 +1296,12 @@ onUnmounted(clearAlert)
           v-model:gender="form.gender"
         />
 
-        <UiSelect
-          v-model="form.category"
-          label="Type de patient"
-          @update:model-value="applyCategoryBillingDefaults('form')"
-        >
-          <option v-for="cat in PATIENT_CATEGORIES" :key="cat.value" :value="cat.value">
-            {{ uiText(cat.label) }}
-          </option>
-        </UiSelect>
-
         <div class="form-grid-2">
-          <UiSelect v-model="form.service" label="Service" required>
+          <UiSelect
+            v-model="form.service"
+            label="Service"
+            required
+          >
             <option value="" disabled>
               {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
             </option>
@@ -1139,20 +1315,21 @@ onUnmounted(clearAlert)
               {{ service.name }}
             </option>
           </UiSelect>
-
           <UiSelect v-model="form.doctorId" label="Médecin" required>
-            <option value="" disabled>{{ sortedDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin disponible') }}</option>
-            <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
+            <option value="" disabled>{{
+              formServiceDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin sur ce service')
+            }}</option>
+            <option v-for="doctor in formServiceDoctors" :key="doctor.id" :value="doctor.id">
               Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
             </option>
           </UiSelect>
         </div>
 
-        <UiAlert v-if="!sortedDoctors.length" type="warning" message="Aucun médecin sélectionnable. Les médecins du personnel doivent être en profil Médecin et avoir un compte utilisateur (rôle Médecin)." />
-        <p v-if="!sortedDoctors.length" class="doctors-empty-alert__links">
-          <RouterLink to="/admin/utilisateurs">Utilisateurs</RouterLink>
+        <UiAlert v-if="!formServiceDoctors.length" type="warning" message="Aucun médecin lié à ce service. Affectez les médecins au service depuis la page Services." />
+        <p v-if="!formServiceDoctors.length" class="doctors-empty-alert__links">
+          <RouterLink to="/admin/services">{{ uiText('Services') }}</RouterLink>
           <span aria-hidden="true"> · </span>
-          <RouterLink to="/admin/employes">Employés</RouterLink>
+          <RouterLink to="/admin/employes">{{ uiText('Employés') }}</RouterLink>
         </p>
 
         <div class="form-grid-2">
@@ -1235,18 +1412,12 @@ onUnmounted(clearAlert)
           v-model:gender="editForm.gender"
         />
 
-        <UiSelect
-          v-model="editForm.category"
-          label="Type de patient"
-          @update:model-value="applyCategoryBillingDefaults('edit')"
-        >
-          <option v-for="cat in PATIENT_CATEGORIES" :key="cat.value" :value="cat.value">
-            {{ uiText(cat.label) }}
-          </option>
-        </UiSelect>
-
         <div class="form-grid-2">
-          <UiSelect v-model="editForm.service" label="Service" required>
+          <UiSelect
+            v-model="editForm.service"
+            label="Service"
+            required
+          >
             <option value="" disabled>
               {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
             </option>
@@ -1260,10 +1431,11 @@ onUnmounted(clearAlert)
               {{ service.name }}
             </option>
           </UiSelect>
-
           <UiSelect v-model="editForm.doctorId" label="Médecin" required>
-            <option value="" disabled>{{ sortedDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin disponible') }}</option>
-            <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
+            <option value="" disabled>{{
+              editServiceDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin sur ce service')
+            }}</option>
+            <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
               Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
             </option>
           </UiSelect>
@@ -1271,7 +1443,7 @@ onUnmounted(clearAlert)
 
         <UiSelect v-model="editForm.treatingDoctorId" label="Médecin traitant (dossier)">
           <option value="">{{ uiText('Aucun (optionnel)') }}</option>
-          <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
+          <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
             Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
           </option>
         </UiSelect>
@@ -1284,11 +1456,11 @@ onUnmounted(clearAlert)
           Dr {{ fullName(selectedPatient.treatingDoctor.firstName, selectedPatient.treatingDoctor.lastName) }}
         </p>
 
-        <UiAlert v-if="!sortedDoctors.length" type="warning" message="Aucun médecin sélectionnable. Les médecins du personnel doivent être en profil Médecin et avoir un compte utilisateur (rôle Médecin)." />
-        <p v-if="!sortedDoctors.length" class="doctors-empty-alert__links">
-          <RouterLink to="/admin/utilisateurs">Utilisateurs</RouterLink>
+        <UiAlert v-if="!editServiceDoctors.length" type="warning" message="Aucun médecin lié à ce service. Affectez les médecins au service depuis la page Services." />
+        <p v-if="!editServiceDoctors.length" class="doctors-empty-alert__links">
+          <RouterLink to="/admin/services">{{ uiText('Services') }}</RouterLink>
           <span aria-hidden="true"> · </span>
-          <RouterLink to="/admin/employes">Employés</RouterLink>
+          <RouterLink to="/admin/employes">{{ uiText('Employés') }}</RouterLink>
         </p>
 
         <div class="form-grid-2">
@@ -1369,20 +1541,22 @@ onUnmounted(clearAlert)
         @submit.prevent="submitReconsultation"
       >
         <p class="reconsult-hint">
-          Nouvelle visite de consultation — examens, opérations et hospitalisation peuvent être prescrits à chaque passage.
-          Si la validité du médecin est encore active, la consultation est gratuite (0 FCFA).
-          L'historique précédent reste enregistré dans le dossier patient.
+          {{
+            uiText(
+              'Nouvelle visite de consultation — examens, opérations et hospitalisation peuvent être prescrits à chaque passage. Si la validité du médecin est encore active, la consultation est gratuite (0 FCFA). L\'historique précédent reste enregistré dans le dossier patient.',
+            )
+          }}
         </p>
 
         <p v-if="renewalPreview" class="renewal-banner" :class="{ 'renewal-banner--free': renewalPreview.withinValidity }">
           {{ renewalPreview.message }}
         </p>
-        <p v-else-if="loadingRenewalPreview" class="doctor-hint">Calcul du tarif…</p>
+        <p v-else-if="loadingRenewalPreview" class="doctor-hint">{{ uiText('Calcul du tarif…') }}</p>
 
         <section class="form-panel">
           <h3 class="form-panel__title">
             <Stethoscope :size="14" />
-            Consultation
+            {{ uiText('Consultation') }}
           </h3>
           <div class="form-grid-2">
             <UiSelect v-model="reconsultForm.doctorId" label="Médecin" required>
@@ -1639,7 +1813,7 @@ onUnmounted(clearAlert)
 
 .table-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 22rem) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 28rem) auto;
   align-items: center;
   gap: 0.75rem 1rem;
   margin-bottom: 0;
@@ -1672,13 +1846,72 @@ onUnmounted(clearAlert)
   justify-self: end;
 }
 
+.table-toolbar__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.date-range-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.date-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  flex-shrink: 0;
+}
+
+.date-filter__label {
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.date-filter__input {
+  height: 2.25rem;
+  padding: 0 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+.date-filter__today {
+  margin-bottom: 0.35rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--primary-600, #0d9488);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: start;
+  white-space: nowrap;
+}
+
+.date-filter__today:hover {
+  text-decoration: underline;
+}
+
 .table-toolbar__search {
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 0.2rem;
-  width: 100%;
-  min-width: 0;
+  flex: 1;
+  min-width: 10rem;
   padding: 0;
 }
 

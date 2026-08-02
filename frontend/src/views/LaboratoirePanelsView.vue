@@ -11,6 +11,7 @@ import {
   type LabPanelDto,
   type LabPanelFieldDto,
 } from '@/stores/lab-panels'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -32,6 +33,7 @@ type FieldForm = {
 }
 
 const labPanels = useLabPanelsStore()
+const { uiText, numberText } = useAppI18n()
 const panels = ref<LabPanelDto[]>([])
 const loading = ref(false)
 const saving = ref(false)
@@ -61,7 +63,9 @@ const form = ref<{ label: string; isEntry: boolean; active: boolean; fields: Fie
 
 const panelsById = computed(() => new Map(panels.value.map((panel) => [panel.id, panel])))
 
-const modalTitle = computed(() => (editingId.value ? 'Modifier le formulaire' : 'Nouveau formulaire'))
+const modalTitle = computed(() =>
+  editingId.value ? uiText('Modifier le formulaire') : uiText('Nouveau formulaire'),
+)
 
 const isEntryModel = computed({
   get: () => (form.value.isEntry ? 'entry' : 'consult'),
@@ -73,10 +77,10 @@ const isEntryModel = computed({
 const tableRows = computed(() =>
   panels.value.map((panel) => ({
     id: panel.id,
-    label: panel.label,
+    label: uiText(panel.label),
     slug: panel.slug,
     fieldCount: panel.fields.length,
-    statusLabel: panel.active ? 'Actif' : 'Inactif',
+    statusLabel: uiText(panel.active ? 'Actif' : 'Inactif'),
     statusVariant: panel.active ? 'success' : 'danger',
     toggleLabel: panel.active ? 'Désactiver' : 'Activer',
     isActive: panel.active,
@@ -392,7 +396,9 @@ onMounted(loadPanels)
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadPanels">
           Actualiser
         </UiButton>
-        <span class="list-count">{{ panels.length }} formulaire(s)</span>
+        <span class="list-count">{{
+          uiText('{n} formulaire(s)').replace('{n}', numberText(panels.length))
+        }}</span>
       </template>
 
       <div class="panels-table-wrap">
@@ -401,23 +407,23 @@ onMounted(loadPanels)
             <div class="ui-dt ui-dt--compact" @click="onTableClick">
               <div v-if="loading" class="ui-dt__overlay" role="status" aria-live="polite">
                 <span class="ui-dt__spinner" />
-                Chargement des formulaires…
+                {{ uiText('Chargement des formulaires…') }}
               </div>
 
               <table class="dataTable stripe hover row-border ui-dt__table panels-table">
                 <thead>
                   <tr>
                     <th class="dt-num-col">#</th>
-                    <th>Formulaire</th>
-                    <th>Identifiant</th>
-                    <th>Champs</th>
-                    <th>Statut</th>
-                    <th class="dt-actions-col dt-actions-col--catalog">Actions</th>
+                    <th>{{ uiText('Formulaire') }}</th>
+                    <th>{{ uiText('Identifiant') }}</th>
+                    <th>{{ uiText('Champs') }}</th>
+                    <th>{{ uiText('Statut') }}</th>
+                    <th class="dt-actions-col dt-actions-col--catalog">{{ uiText('Actions') }}</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-if="!loading && !tableRows.length">
-                    <td colspan="6" class="panels-table-empty">Aucun formulaire enregistré.</td>
+                    <td colspan="6" class="panels-table-empty">{{ uiText('Aucun formulaire enregistré.') }}</td>
                   </tr>
                   <tr
                     v-for="(row, index) in tableRows"
@@ -425,10 +431,10 @@ onMounted(loadPanels)
                     :key="row.id"
                     :class="index % 2 === 0 ? 'odd' : 'even'"
                   >
-                    <td class="dt-num-col">{{ index + 1 }}</td>
+                    <td class="dt-num-col">{{ numberText(index + 1) }}</td>
                     <td><span class="dt-name">{{ row.label }}</span></td>
                     <td><code class="panels-table-slug">{{ row.slug }}</code></td>
-                    <td><span class="dt-amount">{{ row.fieldCount }}</span></td>
+                    <td><span class="dt-amount">{{ numberText(row.fieldCount) }}</span></td>
                     <td v-html="statusBadge(row.statusLabel, row.statusVariant as 'success' | 'danger')" />
                     <td
                       class="dt-actions-col dt-actions-col--catalog"
@@ -456,19 +462,19 @@ onMounted(loadPanels)
         <div class="form-grid-2">
           <UiInput v-model="form.label" label="Nom du formulaire" placeholder="Ex. Bilan rénal" />
           <UiSelect v-model="isEntryModel" label="Usage">
-            <option value="entry">Saisie (proposé au laboratoire)</option>
-            <option value="consult">Consultation seule</option>
+            <option value="entry">{{ uiText('Saisie (proposé au laboratoire)') }}</option>
+            <option value="consult">{{ uiText('Consultation seule') }}</option>
           </UiSelect>
         </div>
 
         <div class="fields-header">
-          <h4 class="fields-title">Champs du formulaire</h4>
+          <h4 class="fields-title">{{ uiText('Champs du formulaire') }}</h4>
           <UiButton variant="outline" size="sm" :icon="Plus" @click="insertFieldAfter()">
             Ajouter un champ
           </UiButton>
         </div>
 
-        <p v-if="!form.fields.length" class="fields-empty">Aucun champ — ajoutez-en au moins un.</p>
+        <p v-if="!form.fields.length" class="fields-empty">{{ uiText('Aucun champ — ajoutez-en au moins un.') }}</p>
 
         <div v-for="(field, index) in form.fields" :key="field.uid" class="field-block">
           <div class="field-row">
@@ -480,14 +486,14 @@ onMounted(loadPanels)
               <UiInput v-model="field.defaultValue" label="Texte par défaut (optionnel)" placeholder="Ex. Normal" />
               <label class="field-comment-toggle">
                 <input v-model="field.hasComment" type="checkbox" />
-                <span>Activer le commentaire (textarea) pour ce champ</span>
+                <span>{{ uiText('Activer le commentaire (textarea) pour ce champ') }}</span>
               </label>
             </div>
             <button
               type="button"
               class="field-row__remove"
-              title="Supprimer le champ"
-              aria-label="Supprimer le champ"
+              :title="uiText('Supprimer le champ')"
+              :aria-label="uiText('Supprimer le champ')"
               @click="removeField(index)"
             >
               <Trash2 :size="16" />
@@ -496,12 +502,12 @@ onMounted(loadPanels)
           <button
             type="button"
             class="field-insert"
-            title="Insérer un champ ici"
-            aria-label="Insérer un champ ici"
+            :title="uiText('Insérer un champ ici')"
+            :aria-label="uiText('Insérer un champ ici')"
             @click="insertFieldAfter(index)"
           >
             <Plus :size="14" />
-            <span>Insérer un champ</span>
+            <span>{{ uiText('Insérer un champ') }}</span>
           </button>
         </div>
       </section>
@@ -538,7 +544,7 @@ onMounted(loadPanels)
           :key="section.title ?? 'main'"
           class="form-section"
         >
-          <h3 v-if="section.title" class="form-section__title">{{ section.title }}</h3>
+          <h3 v-if="section.title" class="form-section__title">{{ uiText(section.title) }}</h3>
           <div
             class="form-grid"
             :class="section.fields.length > 4 ? 'form-grid--cols-4' : 'form-grid--cols-2'"
@@ -547,24 +553,32 @@ onMounted(loadPanels)
               <div class="preview-field">
                 <UiInput
                   v-model="previewValues[field.key]"
-                  :label="field.reference ? `${field.label} (${field.reference})` : field.label"
-                  :placeholder="field.unit ? `Résultat ${field.unit}` : 'Résultat'"
+                  :label="
+                    field.reference
+                      ? `${uiText(field.label)} (${field.reference})`
+                      : uiText(field.label)
+                  "
+                  :placeholder="
+                    field.unit
+                      ? uiText('Résultat {unit}').replace('{unit}', field.unit)
+                      : uiText('Résultat')
+                  "
                   readonly
                 />
                 <label v-if="field.hasComment" class="field-comment">
-                  <span class="field-comment__label">Commentaire</span>
+                  <span class="field-comment__label">{{ uiText('Commentaire') }}</span>
                   <textarea
                     v-model="previewValues[labFieldCommentKey(field.key)]"
                     rows="2"
-                    placeholder="Commentaire sur cette ligne…"
+                    :placeholder="uiText('Commentaire sur cette ligne…')"
                     readonly
                   />
                 </label>
                 <button
                   type="button"
                   class="preview-field__remove"
-                  title="Retirer ce champ"
-                  aria-label="Retirer ce champ"
+                  :title="uiText('Retirer ce champ')"
+                  :aria-label="uiText('Retirer ce champ')"
                   @click="removePreviewField(field.key)"
                 >
                   <Trash2 :size="14" />

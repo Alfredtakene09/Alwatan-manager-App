@@ -2,6 +2,10 @@ import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
 import { CLINIC } from '@/lib/clinic'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { parsePrescribedHospitalisationDays } from '@/lib/lab-notes'
+import { translateUi } from '@/i18n/translate'
+import { translateTemplate } from '@/lib/dashboard-i18n'
+
+const t = translateUi
 
 export type HospitalizationAdmissionForm = {
   patientName: string
@@ -463,46 +467,46 @@ export function buildHospitalizationInvoiceHtml(form: HospitalizationAdmissionFo
     form.reductionFcfa,
   )
   const isVip = form.roomType === 'VIP'
-  const roomTypeLabel = isVip ? 'VIP' : form.roomType === 'SIMPLE' ? 'Simple' : form.roomType || '—'
-  const serviceLabel = `Hospitalisation — chambre ${roomTypeLabel}`
+  const roomTypeLabel = isVip ? 'VIP' : form.roomType === 'SIMPLE' ? t('Simple') : form.roomType || '—'
+  const serviceLabel = translateTemplate('Hospitalisation — chambre {room}', { room: roomTypeLabel })
   const reductionRow =
     billing.reductionFcfa > 0
       ? `<tr class="receipt-invoice__summary receipt-invoice__summary--discount">
-          <td colspan="3">Réduction</td>
+          <td colspan="3">${t('Réduction')}</td>
           <td>- ${formatFcfa(billing.reductionFcfa)}</td>
         </tr>`
       : ''
 
   const patientFields = [
-    invoiceField('Patient', form.patientName),
-    invoiceField('Matricule', form.patientCode ?? '—'),
-    invoiceField('Médecin', form.attendingDoctor || '—'),
+    invoiceField(t('Patient'), form.patientName),
+    invoiceField(t('Matricule'), form.patientCode ?? '—'),
+    invoiceField(t('Médecin'), form.attendingDoctor || '—'),
   ].join('')
 
   const stayFields = [
-    invoiceField('Date d\'entrée', formatDateFr(form.startDate) || '—'),
-    invoiceField('Nombre de jours', `${billing.nights}`),
-    invoiceField('Chambre', roomTypeLabel),
+    invoiceField(t('Date d\'entrée'), formatDateFr(form.startDate) || '—'),
+    invoiceField(t('Nombre de jours'), `${billing.nights}`),
+    invoiceField(t('Chambre'), roomTypeLabel),
   ].join('')
 
   return `
   <div class="receipt-invoice print-invoice-page">
-    ${buildClinicPrintHeader('Facture — Hospitalisation')}
+    ${buildClinicPrintHeader(t('Facture — Hospitalisation'))}
 
     <div class="receipt-invoice__cols">
       <div class="receipt-invoice__box">${patientFields}</div>
       <div class="receipt-invoice__box">${stayFields}</div>
     </div>
 
-    <h2 class="receipt-invoice__doc-title">Facture d'hospitalisation</h2>
+    <h2 class="receipt-invoice__doc-title">${t('Facture d\'hospitalisation')}</h2>
 
     <table class="receipt-invoice__table">
       <thead>
         <tr>
-          <th>Description</th>
-          <th>Qté</th>
-          <th>Prix / nuit</th>
-          <th>Total</th>
+          <th>${t('Description')}</th>
+          <th>${t('Qté')}</th>
+          <th>${t('Prix / nuit')}</th>
+          <th>${t('Total')}</th>
         </tr>
       </thead>
       <tbody>
@@ -517,11 +521,11 @@ export function buildHospitalizationInvoiceHtml(form: HospitalizationAdmissionFo
     </table>
 
     <div class="receipt-invoice__total-bar">
-      <span>Total à payer</span>
+      <span>${t('Total à payer')}</span>
       <strong>${formatFcfa(billing.netFcfa)}</strong>
     </div>
 
-    <p class="receipt-invoice__thanks">Merci de votre confiance</p>
+    <p class="receipt-invoice__thanks">${t('Merci de votre confiance')}</p>
   </div>`
 }
 
@@ -546,8 +550,8 @@ export function printHospitalizationAdmission(
 
   openPrintDocument(
     pages === 'invoice'
-      ? `Facture hospitalisation — ${form.patientName}`
-      : `Admission — ${form.patientName}`,
+      ? `${t('Facture hospitalisation')} — ${form.patientName}`
+      : `${t('Admission')} — ${form.patientName}`,
     bodyHtml,
     { pageSize: 'A4', autoPrint: options?.autoPrint !== false },
   )

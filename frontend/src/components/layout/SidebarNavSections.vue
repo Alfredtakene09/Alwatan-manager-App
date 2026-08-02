@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ChevronRight, ChevronDown } from '@lucide/vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   hasNavChildChildren,
   hasNavChildren,
@@ -11,12 +11,14 @@ import {
   type NavItem,
   type NavSection,
 } from '@/lib/navigation'
+import { prefetchRoute } from '@/lib/prefetch-route'
 import { useAppI18n } from '@/i18n/useAppI18n'
 
 const props = defineProps<{
   sections: NavSection[]
   expandedGroups: Set<string>
   expandedChildGroups: Set<string>
+  badges?: Partial<Record<'depenses' | 'salaires' | 'caisse', number>>
 }>()
 
 const emit = defineEmits<{
@@ -25,14 +27,50 @@ const emit = defineEmits<{
 }>()
 
 const route = useRoute()
+const router = useRouter()
 const { navLabel } = useAppI18n()
+
+function prefetch(to?: string) {
+  if (to) prefetchRoute(router, to)
+}
+
+function prefetchGroup(item: NavItem) {
+  if (!item.children) return
+  for (const child of item.children) {
+    if (child.to) prefetch(child.to)
+    if (child.children) {
+      for (const nested of child.children) {
+        if (nested.to) prefetch(nested.to)
+      }
+    }
+  }
+}
+
+function onToggleGroup(item: NavItem) {
+  emit('toggleGroup', item)
+  prefetchGroup(item)
+}
+
+function onToggleChildGroup(parentLabel: string, child: NavChildItem) {
+  emit('toggleChildGroup', parentLabel, child)
+  if (child.children) {
+    for (const nested of child.children) {
+      if (nested.to) prefetch(nested.to)
+    }
+  }
+}
+
+function badgeCount(key?: 'depenses' | 'salaires' | 'caisse') {
+  if (!key || !props.badges) return 0
+  return props.badges[key] ?? 0
+}
 
 function groupKey(item: NavItem) {
   return item.label
 }
 
 function isGroupExpanded(item: NavItem) {
-  return props.expandedGroups.has(groupKey(item))
+  return props.expandedGroups.has(groupKey(item)) || isNavGroupActive(route.path, item)
 }
 
 function childGroupKey(parentLabel: string, child: NavChildItem) {
@@ -61,7 +99,7 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
               'nav-item--group-open': isGroupExpanded(item),
               'nav-item--group-active': isNavGroupActive(route.path, item),
             }"
-            @click="emit('toggleGroup', item)"
+            @click="onToggleGroup(item)"
           >
             <span class="nav-item__icon">
               <component :is="item.icon" :size="18" />
@@ -86,7 +124,7 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
                     'nav-item--group-open': isChildGroupExpanded(item.label, child),
                     'nav-item--group-active': isNavChildGroupActive(route.path, child),
                   }"
-                  @click="emit('toggleChildGroup', item.label, child)"
+                  @click="onToggleChildGroup(item.label, child)"
                 >
                   <span class="nav-item__icon nav-item__icon--child">
                     <component :is="child.icon" :size="16" />
@@ -111,6 +149,8 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
                     :to="nested.to!"
                     class="nav-item nav-item--child nav-item--nested ui-card-frame ui-card-frame--menu ui-card-frame--compact"
                     :class="{ 'nav-item--active': isNavItemActive(route.path, nested.to!) }"
+                    @mouseenter="prefetch(nested.to)"
+                    @focus="prefetch(nested.to)"
                   >
                     <span class="nav-item__icon nav-item__icon--child">
                       <component :is="nested.icon" :size="14" />
@@ -132,6 +172,8 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
                 :to="child.to"
                 class="nav-item nav-item--child ui-card-frame ui-card-frame--menu ui-card-frame--compact"
                 :class="{ 'nav-item--active': isNavItemActive(route.path, child.to) }"
+                @mouseenter="prefetch(child.to)"
+                @focus="prefetch(child.to)"
               >
                 <span class="nav-item__icon nav-item__icon--child">
                   <component :is="child.icon" :size="16" />
@@ -139,7 +181,10 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
                 <span class="nav-item__text">
                   <span class="nav-item__label">{{ navLabel(child.label) }}</span>
                 </span>
-                <ChevronRight v-if="isNavItemActive(route.path, child.to)" :size="14" class="nav-item__chevron" />
+                <span v-if="badgeCount(child.badgeKey) > 0" class="nav-item__badge">
+                  {{ badgeCount(child.badgeKey) }}
+                </span>
+                <ChevronRight v-else-if="isNavItemActive(route.path, child.to)" :size="14" class="nav-item__chevron" />
               </RouterLink>
             </template>
           </div>
@@ -153,6 +198,8 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
             'nav-item--active': isNavItemActive(route.path, item.to),
             'nav-item--primary': item.primary && !isNavItemActive(route.path, item.to),
           }"
+          @mouseenter="prefetch(item.to)"
+          @focus="prefetch(item.to)"
         >
           <span class="nav-item__icon" :class="{ 'nav-item__icon--primary': item.primary }">
             <component :is="item.icon" :size="18" />
@@ -160,7 +207,10 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
           <span class="nav-item__text">
             <span class="nav-item__label">{{ navLabel(item.label) }}</span>
           </span>
-          <ChevronRight v-if="isNavItemActive(route.path, item.to)" :size="14" class="nav-item__chevron" />
+          <span v-if="badgeCount(item.badgeKey) > 0" class="nav-item__badge">
+            {{ badgeCount(item.badgeKey) }}
+          </span>
+          <ChevronRight v-else-if="isNavItemActive(route.path, item.to)" :size="14" class="nav-item__chevron" />
         </RouterLink>
       </template>
     </div>
@@ -261,6 +311,23 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
   opacity: 1;
   color: var(--menu-btn-text);
   transition: transform 0.2s ease;
+}
+
+.nav-item__badge {
+  margin-inline-start: auto;
+  min-width: 1.2rem;
+  height: 1.2rem;
+  padding: 0 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  line-height: 1;
+  flex-shrink: 0;
 }
 
 .nav-item__toggle--collapsed {

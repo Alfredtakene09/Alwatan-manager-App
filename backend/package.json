@@ -12,6 +12,7 @@
     "db:push": "prisma db push",
     "db:migrate:doctor-fields": "tsx scripts/_migrate-doctor-fields.ts",
     "db:seed": "tsx prisma/seed.ts",
+    "db:restore-users": "tsx scripts/restore-users.ts",
     "db:superadmin-only": "tsx scripts/ensure-superadmin-only.ts",
     "db:split-routine-hormones": "tsx scripts/_split-routine-hormones-panel.ts",
     "db:seed:demo": "SEED_DEMO_RESET=1 npm run db:seed",
@@ -20,7 +21,8 @@
     "db:docker:up": "docker compose -f ../docker-compose.yml up -d postgres",
     "db:docker:down": "docker compose -f ../docker-compose.yml down",
     "db:docker:logs": "docker compose -f ../docker-compose.yml logs -f postgres",
-    "db:docker:setup": "npm run db:docker:up && npx prisma db push && npm run db:seed"
+    "db:docker:setup": "npm run db:docker:up && npx prisma db push && npm run db:seed",
+    "db:import-pharmacy": "tsx scripts/import-syntalsoft-pharmacy.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -28,6 +30,7 @@
   "dependencies": {
     "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
+    "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
@@ -35,10 +38,12 @@
     "jose": "^6.2.3",
     "multer": "^2.2.0",
     "pdfkit": "^0.19.1",
+    "xlsx": "^0.18.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",

@@ -18,6 +18,14 @@ import {
 } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
+import { resolveEmployeeClinicServiceLink } from "../lib/clinic-service-exam.js";
+import {
+  getClinicServiceWithDoctors,
+  listAssignableClinicDoctors,
+  listClinicServicesWithDoctors,
+  syncClinicServiceDoctors,
+  syncEmployeeClinicServices,
+} from "../lib/clinic-service-doctors.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 import { employeeCompensationData } from "../lib/doctor-compensation.js";
 import {
@@ -28,6 +36,7 @@ import {
 import { buildGestionnaireDashboardOverview, buildGestionnaireNavBadges } from "../lib/gestionnaire-dashboard-stats.js";
 import {
   disburseCashRegister,
+  disburseFromDayClosure,
   getCashRegisterDetail,
   getCashRegistersOverview,
   listDisbursementHistory,
@@ -118,6 +127,8 @@ const gestionnaireEmployeeSchema = z
     specialty: z.string().max(120).optional().nullable(),
     availabilitySlots: doctorAvailabilitySlotsSchema,
     service: z.string().optional(),
+    clinicServiceId: z.string().min(1).optional().nullable(),
+    clinicServiceIds: z.array(z.string().min(1)).optional().nullable(),
     address: z.string().optional(),
     birthDate: z.string().optional(),
     hiredAt: z.string().optional(),
@@ -139,9 +150,16 @@ const clinicServiceSchema = z.object({
     .union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")])
     .optional(),
   sortOrder: z.coerce.number().int().min(0).optional(),
+  doctorIds: z.array(z.string().min(1)).optional(),
 });
 
 function employeeValidationMessage(error: unknown) {
+  if (error instanceof Error && error.message === "DOCTOR_SERVICE_REQUIRED") {
+    return "Sélectionnez le service clinique du médecin.";
+  }
+  if (error instanceof Error && error.message === "SERVICE_INVALID") {
+    return "Service clinique introuvable ou inactif.";
+  }
   if (error instanceof z.ZodError) {
     const issue = error.issues[0];
     if (issue?.path.join(".") === "firstName" || issue?.path.join(".") === "lastName") {
@@ -410,9 +428,9 @@ router.get("/cash/history/export.csv", async (req, res) => {
   const registerId =
     req.query.register === "reception" || req.query.register === "comptabilite"
       ? (req.query.register as CashRegisterId)
-      : "comptabilite";
+      : undefined;
   const rows = await listDisbursementHistory({ registerId });
-  const header = "Date;Caisse;Caissier;Montant;Transactions;Gestionnaire";
+  const header = "Date;Caisse;Réceptionniste;Montant;Transactions;Gestionnaire";
   const lines = rows.map((row) =>
     [
       new Date(row.settledAt).toLocaleString("fr-FR"),
@@ -822,13 +840,20 @@ router.post("/employees", async (req, res) => {
     const jobTitle = body.jobTitle?.trim() || null;
     const isMedecin = resolveEmployeeIsMedecin(body.isMedecin, jobTitle);
     const availabilitySlots = normalizeAvailabilitySlots(body.availabilitySlots, isMedecin);
+    const serviceLink = await resolveEmployeeClinicServiceLink({
+      isMedecin,
+      clinicServiceId: body.clinicServiceId,
+      clinicServiceIds: body.clinicServiceIds,
+      service: body.service,
+    });
     const row = await prisma.employee.create({
       data: {
         firstName: body.firstName.trim(),
         lastName: body.lastName.trim(),
         phone: body.phone?.trim() || null,
         jobTitle,
-        service: body.service?.trim() || null,
+        service: serviceLink.service,
+        clinicServiceId: serviceLink.clinicServiceId,
         address: body.address?.trim() || null,
         birthDate: body.birthDate ? parseBusinessDate(body.birthDate) : null,
         hiredAt: body.hiredAt ? parseBusinessDate(body.hiredAt) : new Date(),
@@ -843,7 +868,17 @@ router.post("/employees", async (req, res) => {
       },
       select: employeeSelect,
     });
-    return res.status(201).json(serializeEmployee(row));
+    if (isMedecin && serviceLink.clinicServiceId) {
+      await syncEmployeeClinicServices(row.id, {
+        defaultClinicServiceId: serviceLink.clinicServiceId,
+        clinicServiceIds: serviceLink.clinicServiceIds,
+      });
+    }
+    const refreshed = await prisma.employee.findUnique({
+      where: { id: row.id },
+      select: employeeSelect,
+    });
+    return res.status(201).json(serializeEmployee(refreshed ?? row));
   } catch (error) {
     return res.status(400).json({ error: employeeValidationMessage(error) });
   }
@@ -894,6 +929,33 @@ router.put("/employees/:id", async (req, res) => {
           )
         : undefined;
 
+    const shouldUpdateService =
+      body.clinicServiceId !== undefined ||
+      body.clinicServiceIds !== undefined ||
+      body.service !== undefined ||
+      body.isMedecin !== undefined ||
+      body.jobTitle !== undefined;
+    const existingServiceIds = (
+      await prisma.clinicServiceDoctor.findMany({
+        where: { employeeId },
+        select: { clinicServiceId: true },
+      })
+    ).map((link) => link.clinicServiceId);
+    const serviceLink = shouldUpdateService
+      ? await resolveEmployeeClinicServiceLink({
+          isMedecin: nextIsMedecin,
+          clinicServiceId:
+            body.clinicServiceId !== undefined
+              ? body.clinicServiceId
+              : existing.clinicServiceId,
+          clinicServiceIds:
+            body.clinicServiceIds !== undefined
+              ? body.clinicServiceIds
+              : existingServiceIds,
+          service: body.service !== undefined ? body.service : existing.service,
+        })
+      : null;
+
     const row = await prisma.employee.update({
       where: { id: employeeId },
       data: {
@@ -901,7 +963,9 @@ router.put("/employees/:id", async (req, res) => {
         ...(body.lastName ? { lastName: body.lastName.trim() } : {}),
         ...(body.phone !== undefined ? { phone: body.phone?.trim() || null } : {}),
         ...(body.jobTitle !== undefined ? { jobTitle: nextJobTitle } : {}),
-        ...(body.service !== undefined ? { service: body.service?.trim() || null } : {}),
+        ...(serviceLink
+          ? { service: serviceLink.service, clinicServiceId: serviceLink.clinicServiceId }
+          : {}),
         ...(body.address !== undefined ? { address: body.address?.trim() || null } : {}),
         ...(body.birthDate !== undefined
           ? { birthDate: body.birthDate ? parseBusinessDate(body.birthDate) : null }
@@ -930,6 +994,20 @@ router.put("/employees/:id", async (req, res) => {
       select: employeeSelect,
     });
 
+    if (serviceLink) {
+      if (nextIsMedecin && serviceLink.clinicServiceId) {
+        await syncEmployeeClinicServices(employeeId, {
+          defaultClinicServiceId: serviceLink.clinicServiceId,
+          clinicServiceIds: serviceLink.clinicServiceIds,
+        });
+      } else {
+        await syncEmployeeClinicServices(employeeId, {
+          defaultClinicServiceId: null,
+          clinicServiceIds: [],
+        });
+      }
+    }
+
     if (body.firstName || body.lastName) {
       await prisma.user.updateMany({
         where: { employeeId },
@@ -940,7 +1018,11 @@ router.put("/employees/:id", async (req, res) => {
       });
     }
 
-    return res.json(serializeEmployee(row));
+    const refreshed = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: employeeSelect,
+    });
+    return res.json(serializeEmployee(refreshed ?? row));
   } catch (error) {
     return res.status(400).json({ error: employeeValidationMessage(error) });
   }
@@ -1265,29 +1347,37 @@ router.get("/supervision", async (_req, res) => {
   return res.json(overview.clinical);
 });
 
+router.get("/services/doctors", async (_req, res) => {
+  const doctors = await listAssignableClinicDoctors();
+  return res.json(doctors);
+});
+
 router.get("/services", async (req, res) => {
   await ensureDefaultClinicServices(prisma);
 
   const activeOnly = req.query.activeOnly === "true";
-  const items = await prisma.clinicService.findMany({
-    where: activeOnly ? { active: true } : undefined,
-    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-  });
-  return res.json(items);
+  return res.json(await listClinicServicesWithDoctors(activeOnly));
 });
 
 router.post("/services", async (req, res) => {
   try {
     const body = clinicServiceSchema.parse(req.body);
-    const item = await prisma.clinicService.create({
+    const created = await prisma.clinicService.create({
       data: {
         name: body.name.trim(),
         active: body.active ?? true,
         sortOrder: body.sortOrder ?? 0,
       },
     });
+    if (body.doctorIds) {
+      await syncClinicServiceDoctors(created.id, body.doctorIds);
+    }
+    const item = await getClinicServiceWithDoctors(created.id);
     return res.status(201).json(item);
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === "DOCTORS_INVALID") {
+      return res.status(400).json({ error: "Un ou plusieurs médecins sont invalides." });
+    }
     return res.status(400).json({ error: "Service invalide ou déjà existant." });
   }
 });
@@ -1299,7 +1389,7 @@ router.put("/services/:id", async (req, res) => {
     const existing = await prisma.clinicService.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ error: "Service introuvable." });
 
-    const item = await prisma.clinicService.update({
+    await prisma.clinicService.update({
       where: { id },
       data: {
         ...(body.name !== undefined ? { name: body.name.trim() } : {}),
@@ -1307,9 +1397,215 @@ router.put("/services/:id", async (req, res) => {
         sortOrder: body.sortOrder,
       },
     });
+    if (body.doctorIds !== undefined) {
+      await syncClinicServiceDoctors(id, body.doctorIds);
+    }
+    const item = await getClinicServiceWithDoctors(id);
     return res.json(item);
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === "DOCTORS_INVALID") {
+      return res.status(400).json({ error: "Un ou plusieurs médecins sont invalides." });
+    }
     return res.status(400).json({ error: "Mise à jour impossible — nom invalide ou déjà utilisé." });
+  }
+});
+
+// ─── Clôtures de journée des réceptionnistes ───────────────────────
+
+router.get("/day-closures", async (req, res) => {
+  try {
+    const from = typeof req.query.from === "string" ? req.query.from : undefined;
+    const to = typeof req.query.to === "string" ? req.query.to : undefined;
+    const userId = typeof req.query.userId === "string" ? req.query.userId : undefined;
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+
+    const where: Record<string, unknown> = {};
+    if (userId) where.receptionistId = userId;
+    if (status === "pending") where.validatedAt = null;
+    if (status === "validated") where.validatedAt = { not: null };
+    if (from || to) {
+      const dateFilter: Record<string, Date> = {};
+      if (from) dateFilter.gte = new Date(from);
+      if (to) {
+        const end = new Date(to);
+        end.setDate(end.getDate() + 1);
+        dateFilter.lt = end;
+      }
+      where.businessDate = dateFilter;
+    }
+
+    const closures = await prisma.receptionDayClosure.findMany({
+      where,
+      include: {
+        receptionist: { select: { id: true, firstName: true, lastName: true } },
+        validatedBy: { select: { id: true, firstName: true, lastName: true } },
+      },
+      orderBy: [{ closedAt: "desc" }],
+      take: 500,
+    });
+
+    const sorted = [...closures].sort((a, b) => {
+      const aPending = a.validatedAt ? 1 : 0;
+      const bPending = b.validatedAt ? 1 : 0;
+      if (aPending !== bPending) return aPending - bPending;
+      return b.closedAt.getTime() - a.closedAt.getTime();
+    });
+
+    // Réceptionnistes actifs + auteurs de clôtures (historique)
+    const [activeReceptionists, closureAuthors] = await Promise.all([
+      prisma.user.findMany({
+        where: {
+          role: UserRole.RECEPTIONNISTE,
+          active: true,
+        },
+        select: { id: true, firstName: true, lastName: true },
+        orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+      }),
+      prisma.receptionDayClosure.findMany({
+        distinct: ["receptionistId"],
+        select: {
+          receptionistId: true,
+          receptionist: { select: { id: true, firstName: true, lastName: true } },
+        },
+        orderBy: { receptionistId: "asc" },
+      }),
+    ]);
+
+    const receptionistMap = new Map<string, { id: string; name: string }>();
+    for (const r of activeReceptionists) {
+      receptionistMap.set(r.id, {
+        id: r.id,
+        name: `${r.firstName} ${r.lastName}`.trim(),
+      });
+    }
+    for (const row of closureAuthors) {
+      if (!receptionistMap.has(row.receptionist.id)) {
+        receptionistMap.set(row.receptionist.id, {
+          id: row.receptionist.id,
+          name: `${row.receptionist.firstName} ${row.receptionist.lastName}`.trim(),
+        });
+      }
+    }
+    const receptionists = [...receptionistMap.values()].sort((a, b) =>
+      a.name.localeCompare(b.name, "fr"),
+    );
+
+    const pendingCount = await prisma.receptionDayClosure.count({ where: { validatedAt: null } });
+
+    return res.json({
+      closures: sorted.map((c) => ({
+        id: c.id,
+        receptionistId: c.receptionistId,
+        receptionistName: `${c.receptionist.firstName} ${c.receptionist.lastName}`.trim(),
+        businessDate: c.businessDate.toISOString().slice(0, 10),
+        shiftSlot: c.shiftSlot,
+        collectedFcfa: c.collectedFcfa,
+        expensesFcfa: c.expensesFcfa,
+        netFcfa: c.netFcfa,
+        visitsToday: c.visitsToday,
+        registeredToday: c.registeredToday,
+        comment: c.comment,
+        closedAt: c.closedAt.toISOString(),
+        validatedAt: c.validatedAt?.toISOString() ?? null,
+        validatedById: c.validatedById,
+        validatedByName: c.validatedBy
+          ? `${c.validatedBy.firstName} ${c.validatedBy.lastName}`.trim()
+          : null,
+        validationComment: c.validationComment,
+        status: c.validatedAt ? "validated" : "pending",
+      })),
+      receptionists,
+      pendingCount,
+    });
+  } catch (error) {
+    console.error("[gestionnaire/day-closures]", error);
+    return res.status(500).json({ error: "Impossible de charger les clôtures." });
+  }
+});
+
+router.post("/day-closures/:id/validate", async (req, res) => {
+  const user = req.user!;
+  try {
+    const id = String(req.params.id);
+    const body = z
+      .object({
+        comment: z.string().max(500).optional(),
+      })
+      .parse(req.body ?? {});
+
+    const existing = await prisma.receptionDayClosure.findUnique({
+      where: { id },
+      include: {
+        receptionist: { select: { firstName: true, lastName: true } },
+      },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: "Clôture introuvable." });
+    }
+    if (existing.validatedAt) {
+      return res.status(409).json({ error: "Cette clôture est déjà validée." });
+    }
+
+    const result = await disburseFromDayClosure({
+      closure: {
+        id: existing.id,
+        receptionistId: existing.receptionistId,
+        businessDate: existing.businessDate,
+        shiftSlot: existing.shiftSlot,
+        collectedFcfa: existing.collectedFcfa,
+        expensesFcfa: existing.expensesFcfa,
+        netFcfa: existing.netFcfa,
+        closedAt: existing.closedAt,
+        comment: existing.comment,
+      },
+      gestionnaireId: user.id,
+      validationComment: body.comment,
+    });
+
+    const updated = await prisma.receptionDayClosure.findUniqueOrThrow({
+      where: { id },
+      include: {
+        receptionist: { select: { id: true, firstName: true, lastName: true } },
+        validatedBy: { select: { id: true, firstName: true, lastName: true } },
+      },
+    });
+
+    const receptionistName =
+      `${existing.receptionist.firstName} ${existing.receptionist.lastName}`.trim();
+
+    return res.json({
+      message: `Clôture validée — décaissement automatique de ${result.disbursedFcfa.toLocaleString("fr-FR")} FCFA (${receptionistName})`,
+      settlementId: result.settlementId,
+      disbursedFcfa: result.disbursedFcfa,
+      closure: {
+        id: updated.id,
+        receptionistId: updated.receptionistId,
+        receptionistName: `${updated.receptionist.firstName} ${updated.receptionist.lastName}`.trim(),
+        businessDate: updated.businessDate.toISOString().slice(0, 10),
+        shiftSlot: updated.shiftSlot,
+        collectedFcfa: updated.collectedFcfa,
+        expensesFcfa: updated.expensesFcfa,
+        netFcfa: updated.netFcfa,
+        visitsToday: updated.visitsToday,
+        registeredToday: updated.registeredToday,
+        comment: updated.comment,
+        closedAt: updated.closedAt.toISOString(),
+        validatedAt: updated.validatedAt?.toISOString() ?? null,
+        validatedById: updated.validatedById,
+        validatedByName: updated.validatedBy
+          ? `${updated.validatedBy.firstName} ${updated.validatedBy.lastName}`.trim()
+          : null,
+        validationComment: updated.validationComment,
+        settlementId: updated.settlementId,
+        status: "validated",
+      },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: "Données invalides.", details: error.flatten() });
+    }
+    console.error("[gestionnaire/day-closures/validate]", error);
+    return res.status(500).json({ error: "Impossible de valider la clôture." });
   }
 });
 
@@ -1318,6 +1614,11 @@ router.delete("/services/:id", async (req, res) => {
   const item = await prisma.clinicService.findUnique({ where: { id } });
   if (!item) return res.status(404).json({ error: "Service introuvable." });
 
+  await prisma.employee.updateMany({
+    where: { clinicServiceId: id },
+    data: { clinicServiceId: null, service: null },
+  });
+  await prisma.clinicServiceDoctor.deleteMany({ where: { clinicServiceId: id } });
   await prisma.clinicService.delete({ where: { id } });
   return res.json({ ok: true, message: `Le service « ${item.name} » a été supprimé.` });
 });

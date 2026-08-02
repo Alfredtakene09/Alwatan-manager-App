@@ -2,10 +2,42 @@ import bcrypt from "bcryptjs";
 import { DoctorCompensationType, UserRole } from "@prisma/client";
 import { prisma } from "../src/lib/db.js";
 import { seedDemoData } from "./seed-demo-data.js";
-import { seedReferenceData } from "./seed-reference.js";
+import { DEFAULT_STAFF_USERNAMES, seedReferenceData } from "./seed-reference.js";
 
 const SUPERADMIN_USERNAME = "Root";
 const SUPERADMIN_PASSWORD = "root@Alwatan2026";
+/** Mot de passe partagé des comptes métier par défaut (gestionnaire, pharmacie). */
+const DEFAULT_STAFF_PASSWORD = "Clinique2026!";
+
+type StaffSeed = {
+  username: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  role: UserRole;
+  jobTitle: string;
+  fixedSalaryFcfa?: number | null;
+};
+
+const DEFAULT_STAFF: StaffSeed[] = [
+  {
+    username: "gestionnaire",
+    email: "gestionnaire@alwatan.local",
+    firstName: "Mahamat",
+    lastName: "Hassan",
+    role: UserRole.GESTIONNAIRE,
+    jobTitle: "Gestionnaire financier",
+    fixedSalaryFcfa: 350000,
+  },
+  {
+    username: "pharmacie",
+    email: "pharmacie@alwatan.local",
+    firstName: "Saleh",
+    lastName: "Youssouf",
+    role: UserRole.PHARMACIEN,
+    jobTitle: "Pharmacien",
+  },
+];
 
 async function ensureSuperadmin(passwordHash: string) {
   const existingUser = await prisma.user.findUnique({
@@ -67,10 +99,73 @@ async function ensureSuperadmin(passwordHash: string) {
   });
 }
 
-/** Désactive / supprime tous les comptes sauf Root (historique FK conservé si nécessaire). */
+async function upsertStaffMember(row: StaffSeed, passwordHash: string) {
+  const existingUser = await prisma.user.findUnique({
+    where: { username: row.username },
+    select: { id: true, employeeId: true },
+  });
+
+  let employeeId = existingUser?.employeeId;
+  if (employeeId) {
+    await prisma.employee.update({
+      where: { id: employeeId },
+      data: {
+        firstName: row.firstName,
+        lastName: row.lastName,
+        jobTitle: row.jobTitle,
+        isMedecin: false,
+        fixedSalaryFcfa: row.fixedSalaryFcfa ?? undefined,
+        active: true,
+        doctorCompensationType: DoctorCompensationType.QUOTA,
+        consultationTotalFcfa: null,
+        consultationQuotaPercent: null,
+        surgeryQuotaPercent: null,
+      },
+    });
+  } else {
+    const employee = await prisma.employee.create({
+      data: {
+        firstName: row.firstName,
+        lastName: row.lastName,
+        jobTitle: row.jobTitle,
+        isMedecin: false,
+        fixedSalaryFcfa: row.fixedSalaryFcfa ?? undefined,
+        active: true,
+        doctorCompensationType: DoctorCompensationType.QUOTA,
+      },
+    });
+    employeeId = employee.id;
+  }
+
+  await prisma.user.upsert({
+    where: { username: row.username },
+    update: {
+      email: row.email,
+      passwordHash,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      role: row.role,
+      employeeId,
+      active: true,
+    },
+    create: {
+      username: row.username,
+      email: row.email,
+      passwordHash,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      role: row.role,
+      employeeId,
+      active: true,
+    },
+  });
+}
+
+/** Désactive / supprime les comptes hors liste par défaut (historique FK conservé si nécessaire). */
 async function removeOtherUsers() {
+  const keep = [...DEFAULT_STAFF_USERNAMES];
   const others = await prisma.user.findMany({
-    where: { username: { not: SUPERADMIN_USERNAME } },
+    where: { username: { notIn: keep } },
     select: { id: true, username: true },
   });
 
@@ -99,10 +194,15 @@ async function removeOtherUsers() {
 }
 
 async function main() {
-  const passwordHash = await bcrypt.hash(SUPERADMIN_PASSWORD, 10);
+  const rootHash = await bcrypt.hash(SUPERADMIN_PASSWORD, 10);
+  const staffHash = await bcrypt.hash(DEFAULT_STAFF_PASSWORD, 10);
 
-  await ensureSuperadmin(passwordHash);
-  const removed = await removeOtherUsers();
+  await ensureSuperadmin(rootHash);
+  for (const member of DEFAULT_STAFF) {
+    await upsertStaffMember(member, staffHash);
+  }
+  const shouldPruneUsers = process.env.SEED_PRUNE_USERS === "1";
+  const removed = shouldPruneUsers ? await removeOtherUsers() : null;
 
   await seedReferenceData();
 
@@ -112,9 +212,16 @@ async function main() {
 
   console.log("Seed terminé.");
   console.log(`  Superadmin : ${SUPERADMIN_USERNAME} / ${SUPERADMIN_PASSWORD}`);
-  console.log(
-    `  Autres comptes : ${removed.total} traités (${removed.deleted} supprimés, ${removed.disabled} désactivés)`,
-  );
+  for (const member of DEFAULT_STAFF) {
+    console.log(`  ${member.role} : ${member.username} / ${DEFAULT_STAFF_PASSWORD}`);
+  }
+  if (removed) {
+    console.log(
+      `  Autres comptes : ${removed.total} traités (${removed.deleted} supprimés, ${removed.disabled} désactivés)`,
+    );
+  } else {
+    console.log("  Autres comptes : conservés (SEED_PRUNE_USERS=1 pour nettoyer).");
+  }
   if (process.env.SEED_DEMO_RESET !== "1") {
     console.log("  Données démo non régénérées (SEED_DEMO_RESET=1 pour forcer).");
   }

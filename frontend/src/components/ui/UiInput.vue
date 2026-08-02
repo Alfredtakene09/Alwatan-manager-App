@@ -79,7 +79,7 @@ defineExpose({
         v-if="revealable && isPasswordField"
         type="button"
         class="ui-field__reveal"
-        :aria-label="passwordVisible ? 'Masquer le mot de passe' : 'Afficher le mot de passe'"
+        :aria-label="passwordVisible ? uiText('Masquer le mot de passe') : uiText('Afficher le mot de passe')"
         :title="passwordVisible ? 'Masquer' : 'Voir'"
         tabindex="-1"
         @click="togglePasswordVisibility"

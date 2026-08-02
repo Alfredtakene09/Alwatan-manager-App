@@ -52,54 +52,54 @@ onMounted(async () => {
       <LanguageSwitcher />
     </div>
 
-    <div class="login__install">
+    <div class="login__stack">
       <InstallAppBanner />
-    </div>
 
-    <form
-      class="login__card"
-      :class="{ 'lang-ar': isArabic }"
-      :lang="isArabic ? 'ar' : undefined"
-      @submit.prevent="submit"
-    >
-      <header class="login__brand">
-        <h1 class="login__title">{{ t('login.title') }}</h1>
-        <img class="login__logo" :src="CLINIC.logo" :alt="CLINIC.nameFr" />
-      </header>
-
-      <UiInput
-        ref="usernameInputRef"
-        v-model="username"
-        :label="t('login.username')"
-        type="text"
-        :placeholder="t('login.username')"
-        :icon="User"
-        autocomplete="username"
-        required
-      />
-      <UiInput
-        v-model="password"
-        :label="t('login.password')"
-        type="password"
-        placeholder="••••••••"
-        :icon="Lock"
-        revealable
-        required
-      />
-
-      <UiAlert v-if="error" type="error" :message="error" />
-
-      <UiButton
-        type="submit"
-        variant="primary"
-        size="lg"
-        block
-        :loading="auth.loading"
-        class="login__submit"
+      <form
+        class="login__card"
+        :class="{ 'lang-ar': isArabic }"
+        :lang="isArabic ? 'ar' : undefined"
+        @submit.prevent="submit"
       >
-        {{ t('login.submit') }}
-      </UiButton>
-    </form>
+        <header class="login__brand">
+          <h1 class="login__title">{{ t('login.title') }}</h1>
+          <img class="login__logo" :src="CLINIC.logo" :alt="CLINIC.nameFr" />
+        </header>
+
+        <UiInput
+          ref="usernameInputRef"
+          v-model="username"
+          :label="t('login.username')"
+          type="text"
+          :placeholder="t('login.username')"
+          :icon="User"
+          autocomplete="username"
+          required
+        />
+        <UiInput
+          v-model="password"
+          :label="t('login.password')"
+          type="password"
+          placeholder="••••••••"
+          :icon="Lock"
+          revealable
+          required
+        />
+
+        <UiAlert v-if="error" type="error" :message="error" />
+
+        <UiButton
+          type="submit"
+          variant="primary"
+          size="lg"
+          block
+          :loading="auth.loading"
+          class="login__submit"
+        >
+          {{ t('login.submit') }}
+        </UiButton>
+      </form>
+    </div>
   </div>
 </template>
 
@@ -128,19 +128,18 @@ onMounted(async () => {
   z-index: 2;
 }
 
-.login__install {
-  position: absolute;
-  left: 1rem;
-  right: 1rem;
-  bottom: max(1rem, env(safe-area-inset-bottom, 0px));
-  z-index: 2;
+.login__stack {
+  width: 100%;
   max-width: 32rem;
-  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
 }
 
 .login__card {
   width: 100%;
   max-width: 26rem;
+  margin: 0 auto;
   padding: 2rem 1.75rem 1.75rem;
   background: #fff;
   border: 1px solid rgba(27, 79, 156, 0.12);

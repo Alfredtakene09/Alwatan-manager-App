@@ -7,6 +7,7 @@ export const LAB_RESULTS_PREFIX = "Résultats laboratoire";
 export const LAB_RESULTS_COMPLETION_MARKER = `${LAB_RESULTS_PREFIX} — validé le `;
 
 export const EXAM_KIND_SECTION_LABELS = {
+  specialty: "Spécialité",
   examen: "Laboratoire",
   radio: "Radio",
   echo: "Écho",
@@ -18,6 +19,7 @@ export const EXAM_KIND_SECTION_LABELS = {
 export type ExamKindSlug = keyof typeof EXAM_KIND_SECTION_LABELS;
 
 export const EXAM_KIND_ORDER: ExamKindSlug[] = [
+  "specialty",
   "examen",
   "radio",
   "echo",
@@ -26,7 +28,171 @@ export const EXAM_KIND_ORDER: ExamKindSlug[] = [
   "hospitalisation",
 ];
 
-export const LAB_BILLABLE_EXAM_KINDS: ExamKindSlug[] = ["examen", "radio", "echo", "odonto"];
+export const LAB_BILLABLE_EXAM_KINDS: ExamKindSlug[] = [
+  "specialty",
+  "examen",
+  "radio",
+  "echo",
+  "odonto",
+];
+
+/** Types qui alimentent la file / le dossier laboratoire (hors examens de spécialité). */
+export const LAB_QUEUE_EXAM_KINDS: ExamKindSlug[] = ["examen", "radio", "echo", "odonto"];
+
+/** Types encaissables à la réception / comptabilité (hors hospitalisation, gérée à part). */
+export const CASHIER_PAYMENT_QUEUE_KINDS: ExamKindSlug[] = [
+  ...LAB_BILLABLE_EXAM_KINDS,
+  "operation",
+];
+
+/** Acte clinique de nomenclature (ex. Ophtalmologie) — pas d'envoi labo. */
+export const CLINICAL_CONSULTATION_EXAM_LABEL = "Consultation";
+
+export const PHARMACY_ORDONNANCE_PREFIX = "Ordonnance pharmacie";
+export const PHARMACY_ORDONNANCE_DISPENSED_PREFIX = "Ordonnance pharmacie délivrée";
+
+export type PharmacyOrdonnanceLine = {
+  /** Absent / vide = médicament saisi librement (hors catalogue pharmacie). */
+  productId?: string | null;
+  name: string;
+  dosage?: string | null;
+  quantity: number;
+  instructions?: string;
+};
+
+export function isPharmacyCatalogLine(line: PharmacyOrdonnanceLine): boolean {
+  return Boolean(line.productId?.trim());
+}
+
+export function isClinicalConsultationExamLabel(label: string | null | undefined): boolean {
+  return String(label ?? "").trim().toLowerCase() === CLINICAL_CONSULTATION_EXAM_LABEL.toLowerCase();
+}
+
+export function hasClinicalConsultationSelected(
+  examsByKind?: Partial<Record<ExamKindSlug, string[]>> | null,
+): boolean {
+  if (!examsByKind) return false;
+  return Object.values(examsByKind).some((labels) =>
+    (labels ?? []).some((label) => isClinicalConsultationExamLabel(label)),
+  );
+}
+
+/** Labels facturables à la file examens (hors acte « Consultation », déjà payé à la création de visite). */
+export function filterCashierBillableExamLabels(labels: string[] | null | undefined): string[] {
+  return (labels ?? []).filter((label) => !isClinicalConsultationExamLabel(label));
+}
+
+export function kindHasCashierBillableExams(labels: string[] | null | undefined): boolean {
+  return filterCashierBillableExamLabels(labels).length > 0;
+}
+
+/** True si la prescription contient des examens à traiter au laboratoire / imagerie. */
+export function prescriptionRequiresLabWork(
+  examsByKind?: Partial<Record<ExamKindSlug, string[]>> | null,
+): boolean {
+  if (!examsByKind) return false;
+  for (const kind of LAB_QUEUE_EXAM_KINDS) {
+    if (kindHasCashierBillableExams(examsByKind[kind])) return true;
+  }
+  return false;
+}
+
+/** Prescription sans file examens ni labo (ex. seule « Consultation »). */
+export function isDirectClinicalConsultationPrescription(
+  examsByKind?: Partial<Record<ExamKindSlug, string[]>> | null,
+): boolean {
+  if (!examsByKind) return false;
+  if (!hasClinicalConsultationSelected(examsByKind)) return false;
+  if (prescriptionRequiresLabWork(examsByKind)) return false;
+  for (const kind of CASHIER_PAYMENT_QUEUE_KINDS) {
+    if (kindHasCashierBillableExams(examsByKind[kind])) return false;
+  }
+  // Hors hospitalisation / opération (parcours séparés)
+  if ((examsByKind.hospitalisation?.length ?? 0) > 0) return false;
+  if ((examsByKind.operation?.length ?? 0) > 0) return false;
+  return true;
+}
+
+function parsePharmacyOrdonnanceLine(line: string): PharmacyOrdonnanceLine[] | null {
+  const trimmed = line.trim();
+  const prefix = `${PHARMACY_ORDONNANCE_PREFIX} : `;
+  if (!trimmed.startsWith(prefix)) return null;
+  const raw = trimmed.slice(prefix.length).trim();
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const lines: PharmacyOrdonnanceLine[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const row = item as Record<string, unknown>;
+      const productId = String(row.productId ?? "").trim();
+      const name = String(row.name ?? "").trim();
+      const quantity = Number(row.quantity);
+      if (!name || !Number.isFinite(quantity) || quantity < 1) continue;
+      lines.push({
+        productId: productId || null,
+        name,
+        dosage: typeof row.dosage === "string" ? row.dosage : null,
+        quantity: Math.floor(quantity),
+        instructions: typeof row.instructions === "string" ? row.instructions.trim() : undefined,
+      });
+    }
+    return lines;
+  } catch {
+    return null;
+  }
+}
+
+export function parsePharmacyOrdonnanceLines(notes?: string | null): PharmacyOrdonnanceLine[] {
+  if (!notes) return [];
+  for (const line of notes.split("\n")) {
+    const parsed = parsePharmacyOrdonnanceLine(line);
+    if (parsed) return parsed;
+  }
+  return [];
+}
+
+export function hasPharmacyOrdonnance(notes?: string | null): boolean {
+  return parsePharmacyOrdonnanceLines(notes).length > 0;
+}
+
+export function isPharmacyOrdonnanceDispensed(notes?: string | null): boolean {
+  if (!notes) return false;
+  return notes.includes(`${PHARMACY_ORDONNANCE_DISPENSED_PREFIX} : `);
+}
+
+/** Marque l'ordonnance médecin comme délivrée à la pharmacie. */
+export function markPharmacyOrdonnanceDispensedInNotes(
+  notes: string | null | undefined,
+  dispensedAt: Date = new Date(),
+): string {
+  const base = (notes ?? "").trim();
+  if (isPharmacyOrdonnanceDispensed(base)) return base;
+  const marker = `${PHARMACY_ORDONNANCE_DISPENSED_PREFIX} : ${dispensedAt.toISOString()}`;
+  return base ? `${base}\n${marker}` : marker;
+}
+
+export function mergePharmacyOrdonnanceInNotes(
+  notes: string | null | undefined,
+  lines: PharmacyOrdonnanceLine[],
+): string {
+  const kept = (notes ?? "")
+    .split("\n")
+    .filter((line) => !parsePharmacyOrdonnanceLine(line))
+    .join("\n")
+    .trim();
+  if (!lines.length) return kept;
+  const payload = lines.map((line) => ({
+    ...(line.productId?.trim() ? { productId: line.productId.trim() } : { productId: null }),
+    name: line.name,
+    dosage: line.dosage ?? null,
+    quantity: line.quantity,
+    ...(line.instructions?.trim() ? { instructions: line.instructions.trim() } : {}),
+  }));
+  const ordonnanceLine = `${PHARMACY_ORDONNANCE_PREFIX} : ${JSON.stringify(payload)}`;
+  return kept ? `${kept}\n${ordonnanceLine}` : ordonnanceLine;
+}
 
 /** Commentaires par type conservés sur les factures examens. */
 export const INVOICE_EXAM_COMMENT_KINDS: ExamKindSlug[] = ["radio", "echo", "odonto"];
@@ -46,7 +212,9 @@ export function hasLabResults(notes?: string | null): boolean {
 }
 
 function allPrescriptionOrClauses() {
-  return EXAM_KIND_ORDER.map((kind) => ({
+  // File d'attente paiement / labo : pas les examens de spécialité ni hospit/opération seules.
+  const kinds: ExamKindSlug[] = [...LAB_QUEUE_EXAM_KINDS, "specialty", "operation"];
+  return kinds.map((kind) => ({
     clinicalNotes: { contains: `${EXAMS_PRESCRIBED_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]})` },
   }));
 }
@@ -86,7 +254,7 @@ export function labsWaitingWhere(doctorId?: string) {
     ...(doctorId ? { doctorId } : {}),
     OR: [
       { labSentToLabAt: { not: null } },
-      ...LAB_BILLABLE_EXAM_KINDS.map((kind) => ({
+      ...LAB_QUEUE_EXAM_KINDS.map((kind) => ({
         clinicalNotes: { contains: `${EXAMS_PAID_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]})` },
       })),
     ],
@@ -147,7 +315,8 @@ function isStructuredExamNoteLine(line: string) {
     !!parseExamLine(line) ||
     !!parseExamCommentLine(line) ||
     !!parsePaidKindLine(line) ||
-    !!parseHospitalisationDaysLine(line)
+    !!parseHospitalisationDaysLine(line) ||
+    !!parsePharmacyOrdonnanceLine(line)
   );
 }
 
@@ -190,16 +359,13 @@ export function hasUnpaidPrescribedExams(notes?: string | null): boolean {
   return getUnpaidPrescribedExamKinds(notes).length > 0;
 }
 
-/** Types encaissables à la réception / comptabilité (hors hospitalisation, gérée à part). */
-export const CASHIER_PAYMENT_QUEUE_KINDS: ExamKindSlug[] = [
-  ...LAB_BILLABLE_EXAM_KINDS,
-  "operation",
-];
-
 export function getUnpaidCashierQueueKinds(notes?: string | null): ExamKindSlug[] {
-  return getUnpaidPrescribedExamKinds(notes).filter((kind) =>
-    CASHIER_PAYMENT_QUEUE_KINDS.includes(kind),
-  );
+  const prescribed = parsePrescribedExamsByKind(notes);
+  const paid = parsePaidExamKindsByKind(notes);
+  return CASHIER_PAYMENT_QUEUE_KINDS.filter((kind) => {
+    if (paid[kind]) return false;
+    return kindHasCashierBillableExams(prescribed[kind]);
+  });
 }
 
 export function hasUnpaidCashierQueueExams(notes?: string | null): boolean {
@@ -216,13 +382,13 @@ export function hasPaidLabWorkPending(
   labSentToLabAt?: Date | null,
 ): boolean {
   const prescribed = parsePrescribedExamsByKind(notes);
-  const hasBillableExams = LAB_BILLABLE_EXAM_KINDS.some(
+  const hasQueueExams = LAB_QUEUE_EXAM_KINDS.some(
     (kind) => (prescribed[kind]?.length ?? 0) > 0,
   );
-  if (!hasBillableExams) return false;
+  if (!hasQueueExams) return false;
 
   const paid = parsePaidExamKindsByKind(notes);
-  if (LAB_BILLABLE_EXAM_KINDS.some((kind) => (prescribed[kind]?.length ?? 0) > 0 && paid[kind])) {
+  if (LAB_QUEUE_EXAM_KINDS.some((kind) => (prescribed[kind]?.length ?? 0) > 0 && paid[kind])) {
     return true;
   }
 
@@ -299,6 +465,7 @@ function parseExamLine(line: string): { kind: ExamKindSlug; exams: string[] } | 
 
 export function parsePrescribedExamsByKind(notes?: string | null): Record<ExamKindSlug, string[]> {
   const result: Record<ExamKindSlug, string[]> = {
+    specialty: [],
     examen: [],
     radio: [],
     echo: [],
@@ -319,6 +486,7 @@ export function parsePrescribedExamsByKind(notes?: string | null): Record<ExamKi
 
 export function parsePrescribedExamCommentsByKind(notes?: string | null): Record<ExamKindSlug, string> {
   const result: Record<ExamKindSlug, string> = {
+    specialty: "",
     examen: "",
     radio: "",
     echo: "",
@@ -419,6 +587,7 @@ function preserveNonPrescriptionClinicalLines(notes?: string | null): string[] {
     const trimmed = line.trim();
     if (!trimmed) return false;
     if (parsePaidKindLine(trimmed)) return true;
+    if (parsePharmacyOrdonnanceLine(trimmed)) return true;
     if (trimmed.startsWith(LAB_RESULTS_PREFIX)) return true;
     if (trimmed.startsWith("Labo panel")) return true;
     if (parseHospitalisationDaysLine(trimmed)) return true;

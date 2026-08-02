@@ -24,9 +24,42 @@ const COMMON_FR: Record<string, string> = {
   myAccount: 'Mon compte',
 }
 
+function normalizeKey(text: string): string {
+  return text
+    .replace(/\u2019/g, "'")
+    .replace(/\u2018/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Index ui/nav avec clés normalisées (évite les échecs sur \\n vs espaces). */
+const NORMALIZED_UI: Record<AppLocale, Record<string, string>> = {
+  fr: {},
+  en: {},
+  ar: {},
+}
+const NORMALIZED_NAV: Record<AppLocale, Record<string, string>> = {
+  fr: {},
+  en: {},
+  ar: {},
+}
+
+for (const locale of Object.keys(CATALOGS) as AppLocale[]) {
+  const bundle = CATALOGS[locale]
+  for (const [raw, value] of Object.entries(bundle.ui ?? {})) {
+    NORMALIZED_UI[locale][normalizeKey(raw)] = value
+  }
+  for (const [raw, value] of Object.entries(bundle.nav ?? {})) {
+    NORMALIZED_NAV[locale][normalizeKey(raw)] = value
+  }
+}
+
+function activeLocale(): AppLocale {
+  return (i18n.global.locale.value || 'fr') as AppLocale
+}
+
 function activeBundle(): MessageBundle {
-  const locale = (i18n.global.locale.value || 'fr') as AppLocale
-  return CATALOGS[locale] ?? CATALOGS.fr
+  return CATALOGS[activeLocale()] ?? CATALOGS.fr
 }
 
 /**
@@ -35,16 +68,18 @@ function activeBundle(): MessageBundle {
  */
 export function translateUi(text: string | null | undefined): string {
   if (text == null) return ''
-  const key = text.replace(/\s+/g, ' ').trim()
+  const key = normalizeKey(text)
   if (!key) return text
 
+  const locale = activeLocale()
+  const fromUi = NORMALIZED_UI[locale]?.[key]
+  if (fromUi != null) return fromUi
+  const fromNav = NORMALIZED_NAV[locale]?.[key]
+  if (fromNav != null) return fromNav
+
   const bundle = activeBundle()
-
-  if (bundle.ui?.[key]) return bundle.ui[key]
-  if (bundle.nav?.[key]) return bundle.nav[key]
-
   for (const [code, frLabel] of Object.entries(COMMON_FR)) {
-    if (frLabel === key && bundle.common?.[code]) return bundle.common[code]
+    if (normalizeKey(frLabel) === key && bundle.common?.[code]) return bundle.common[code]
   }
 
   return key
@@ -55,5 +90,5 @@ export function translateRole(role: string): string {
 }
 
 export function getAppLocale(): AppLocale {
-  return (i18n.global.locale.value || 'fr') as AppLocale
+  return activeLocale()
 }

@@ -1,5 +1,7 @@
 import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
 import { fullName } from '@/lib/roles'
+import { formatAppDate } from '@/i18n/locale-format'
+import { translateUi } from '@/i18n/translate'
 import {
   getAllLabFormPanels,
   getLabFormPanel,
@@ -28,7 +30,7 @@ function escapeHtml(value: string) {
 }
 
 function formatFormTitle(label: string) {
-  return label.trim().toUpperCase()
+  return translateUi(label).trim().toUpperCase()
 }
 
 function countPanelFields(panel: LabFormPanel) {
@@ -84,7 +86,7 @@ function renderSectionTable(
     .map(
       (field) => `
       <tr>
-        <td class="lab-sheet-table__test">${escapeHtml(field.label)}</td>
+        <td class="lab-sheet-table__test">${escapeHtml(translateUi(field.label))}</td>
         ${renderResultCell(field, values)}
         <td class="lab-sheet-table__ref">${escapeHtml(field.reference ?? '—')}</td>
       </tr>
@@ -98,8 +100,8 @@ function renderSectionTable(
     <table class="lab-sheet-table${density}">
       <thead>
         <tr>
-          <th>Test</th>
-          <th>Result</th>
+          <th>${escapeHtml(translateUi('Test'))}</th>
+          <th>${escapeHtml(translateUi('Result'))}</th>
           <th>N.R</th>
         </tr>
       </thead>
@@ -120,7 +122,7 @@ function renderPanelTables(panel: LabFormPanel, values: Record<string, string>) 
 
       return `
         <div class="lab-sheet-block">
-          <div class="lab-sheet-block__heading">${escapeHtml(section.title.toUpperCase())}</div>
+          <div class="lab-sheet-block__heading">${escapeHtml(translateUi(section.title).toUpperCase())}</div>
           ${table}
         </div>
       `
@@ -130,10 +132,10 @@ function renderPanelTables(panel: LabFormPanel, values: Record<string, string>) 
 
 function renderPatientBand(context: PrintContext, date: string) {
   const fields = [
-    { label: 'Date', value: date },
-    { label: 'Matricule', value: context.patientCode },
-    { label: 'Nom et prénom', value: context.patientName },
-    { label: 'Prescrit par', value: context.prescribedBy },
+    { label: translateUi('Date'), value: date },
+    { label: translateUi('Matricule'), value: context.patientCode },
+    { label: translateUi('Nom et prénom'), value: context.patientName },
+    { label: translateUi('Prescrit par'), value: context.prescribedBy },
   ]
 
   const cells = fields
@@ -147,7 +149,7 @@ function renderPatientBand(context: PrintContext, date: string) {
     )
     .join('')
 
-  return `<section class="lab-result-print__patient" aria-label="Informations patient">${cells}</section>`
+  return `<section class="lab-result-print__patient" aria-label="${escapeHtml(translateUi('Informations patient'))}">${cells}</section>`
 }
 
 export function buildLabPanelPrintHtml(
@@ -158,7 +160,7 @@ export function buildLabPanelPrintHtml(
   const panel = getLabFormPanel(slug)
   if (!panel) return ''
 
-  const date = context.date ?? new Date().toLocaleDateString('fr-FR')
+  const date = context.date ?? formatAppDate(new Date())
   const scale = initialPrintScale(panel)
   const formTitle = formatFormTitle(panel.label)
 
@@ -175,7 +177,7 @@ export function buildLabPanelPrintHtml(
           ${renderPanelTables(panel, values)}
         </div>
         <footer class="lab-result-print__footer">
-          <span class="lab-result-print__footer-label">Validé par</span>
+          <span class="lab-result-print__footer-label">${escapeHtml(translateUi('Validé par'))}</span>
           <strong>${escapeHtml(context.validatedBy)}</strong>
         </footer>
       </div>
@@ -211,25 +213,25 @@ const LAB_PANEL_PRINT_STYLES = `
   }
   .lab-result-print .clinic-header {
     margin-bottom: 6px;
-    padding-bottom: 7px;
-    gap: 10px;
+    padding: 0 68px 7px;
+    min-height: 60px;
     border-bottom: 1.5px solid #0f766e;
   }
   .lab-result-print .clinic-logo {
-    width: 54px;
-    height: 54px;
+    width: 58px;
+    height: 58px;
   }
   .lab-result-print .clinic-info h1 {
-    font-size: 12px;
+    font-size: 14px;
     margin-bottom: 2px;
   }
   .lab-result-print .clinic-ar {
     margin-bottom: 3px;
-    font-size: 10px;
+    font-size: 12px;
   }
   .lab-result-print .clinic-contact {
-    font-size: 8.5px;
-    line-height: 1.3;
+    font-size: 10px;
+    line-height: 1.35;
     margin-bottom: 1px;
   }
   .lab-result-print__patient {

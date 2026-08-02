@@ -1,7 +1,11 @@
 import { CLINIC } from './clinic'
 import { formatFcfa } from './format-fcfa'
+import { getAppLocale, translateUi } from '@/i18n/translate'
+import { formatAppDate, formatAppTime, intlLocaleFor } from '@/i18n/locale-format'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 const formatFcfaPrint = formatFcfa
+const t = translateUi
 
 export const CLINIC_PRINT_STYLES = `
   * { box-sizing: border-box; }
@@ -46,43 +50,50 @@ export const CLINIC_PRINT_STYLES = `
     break-after: auto;
   }
   .clinic-header {
-    display: flex;
-    gap: 14px;
-    align-items: flex-start;
+    position: relative;
+    display: block;
     border-bottom: 2px dashed #ccc;
-    padding-bottom: 14px;
+    padding: 0 88px 14px;
     margin-bottom: 16px;
+    min-height: 80px;
+    text-align: center;
   }
   .clinic-logo {
-    width: 72px;
-    height: 72px;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 76px;
+    height: 76px;
     object-fit: contain;
-    flex-shrink: 0;
+  }
+  .clinic-info {
+    text-align: center;
   }
   .clinic-info h1 {
     margin: 0 0 4px;
-    font-size: 15px;
-    line-height: 1.25;
+    font-size: 18px;
+    line-height: 1.3;
   }
   .clinic-ar {
     margin: 0 0 6px;
-    font-size: 12px;
+    font-size: 14px;
     color: #334155;
     font-family: 'Noto Naskh Arabic', 'Amiri', 'Tahoma', 'Arial', sans-serif;
   }
   .clinic-contact {
     margin: 0 0 2px;
-    font-size: 10px;
+    font-size: 12px;
     color: #475569;
     line-height: 1.45;
   }
   .doc-title {
     margin: 10px 0 0;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: #0f766e;
+    text-align: center;
   }
   .row {
     display: flex;
@@ -156,7 +167,7 @@ export const CLINIC_PRINT_STYLES = `
   }
   .receipt-invoice__clinic-name {
     margin: 0;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 800;
     color: #3e6640;
     line-height: 1.25;
@@ -166,7 +177,7 @@ export const CLINIC_PRINT_STYLES = `
   }
   .receipt-invoice__clinic-ar {
     margin: 0 0 6px;
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     color: #c62828;
     text-align: center;
@@ -182,7 +193,7 @@ export const CLINIC_PRINT_STYLES = `
   }
   .receipt-invoice__contact {
     margin: 0 0 3px;
-    font-size: 11px;
+    font-size: 12px;
     color: #222;
     line-height: 1.45;
   }
@@ -752,6 +763,7 @@ function buildGroupedExamInvoiceRows(examLines: LabExamInvoiceLine[]) {
   }
 
   const grouped: Record<ExamKindSlug, LabExamInvoiceLine[]> = {
+    specialty: [],
     examen: [],
     radio: [],
     echo: [],
@@ -768,7 +780,7 @@ function buildGroupedExamInvoiceRows(examLines: LabExamInvoiceLine[]) {
     if (!lines.length) return []
     const header = `
       <tr class="receipt-invoice__type-header receipt-invoice__type-header--${kind}">
-        <td colspan="2">${escapeHtml(EXAM_KIND_LABELS[kind])}</td>
+        <td colspan="2">${escapeHtml(t(EXAM_KIND_LABELS[kind]))}</td>
       </tr>`
     const rows = lines
       .map(
@@ -804,8 +816,8 @@ function patientAgeLabel(age?: number | null, ageUnit?: PatientAgeUnit | null) {
 }
 
 function formatGender(gender?: string | null) {
-  if (gender === 'F') return 'Féminin'
-  if (gender === 'M') return 'Masculin'
+  if (gender === 'F') return t('Féminin')
+  if (gender === 'M') return t('Masculin')
   return null
 }
 
@@ -824,17 +836,18 @@ function parseReceiptDateTime(dateStr: string, shortDate = false) {
       )
     : new Date(dateStr)
   const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed
+  const locale = intlLocaleFor()
 
   return {
     date: shortDate
-      ? date.toLocaleDateString('fr-FR')
-      : date.toLocaleDateString('fr-FR', {
+      ? formatAppDate(date)
+      : date.toLocaleDateString(locale, {
           weekday: 'long',
           day: 'numeric',
           month: 'long',
           year: 'numeric',
         }),
-    time: date.toLocaleTimeString('fr-FR', {
+    time: formatAppTime(date, {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
@@ -850,7 +863,11 @@ function labExamDensityClass(examCount: number) {
 }
 
 function receiptField(label: string, value: string) {
-  return `<p class="receipt-invoice__field"><span class="receipt-invoice__label">${escapeHtml(label)} :</span> ${escapeHtml(value)}</p>`
+  return `<p class="receipt-invoice__field"><span class="receipt-invoice__label">${escapeHtml(t(label))} :</span> ${escapeHtml(value)}</p>`
+}
+
+function translateStatus(status: string) {
+  return t(status)
 }
 
 export function buildConsultationReceiptHtml(data: ConsultationReceiptData): string {
@@ -860,17 +877,17 @@ export function buildConsultationReceiptHtml(data: ConsultationReceiptData): str
   const ageLabel = data.age != null ? patientAgeLabel(data.age, data.ageUnit) : null
 
   const metaRows = [
-    ['Patient', data.patientName],
-    ['Matricule', data.patientCode],
-    ...(genderLabel ? [['Sexe', genderLabel] as const] : []),
-    ...(ageLabel ? [['Âge', ageLabel] as const] : []),
-    ...(data.phone ? [['Tél.', data.phone] as const] : []),
-    ['Date', date],
-    ['Heure', time],
-    ['N° consult.', consultNo],
-    ['Médecin', data.doctorName],
-    ['Statut', 'Payé'],
-    ...(data.processedBy ? [['Encaissé par', data.processedBy] as const] : []),
+    [t('Patient'), data.patientName],
+    [t('Matricule'), data.patientCode],
+    ...(genderLabel ? [[t('Sexe'), genderLabel] as const] : []),
+    ...(ageLabel ? [[t('Âge'), ageLabel] as const] : []),
+    ...(data.phone ? [[t('Tél.'), data.phone] as const] : []),
+    [t('Date'), date],
+    [t('Heure'), time],
+    [t('N° consult.'), consultNo],
+    [t('Médecin'), data.doctorName],
+    [t('Statut'), t('Payé')],
+    ...(data.processedBy ? [[t('Encaissé par'), data.processedBy] as const] : []),
   ]
     .map(
       ([label, value]) => `
@@ -892,7 +909,7 @@ export function buildConsultationReceiptHtml(data: ConsultationReceiptData): str
   </header>
 
   <hr class="thermal-receipt__rule" />
-  <h1 class="thermal-receipt__title">Reçu de consultation</h1>
+  <h1 class="thermal-receipt__title">${escapeHtml(t('Reçu de consultation'))}</h1>
   <p class="thermal-receipt__subtitle">${escapeHtml(consultNo)}</p>
   <hr class="thermal-receipt__rule" />
 
@@ -903,14 +920,14 @@ export function buildConsultationReceiptHtml(data: ConsultationReceiptData): str
   <table class="thermal-receipt__totals">
     <tbody>
       <tr>
-        <th>Total payé</th>
+        <th>${escapeHtml(t('Total payé'))}</th>
         <td>${formatFcfaPrint(data.total)}</td>
       </tr>
     </tbody>
   </table>
 
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks">Merci de votre confiance</p>
+  <p class="thermal-receipt__thanks">${escapeHtml(t('Merci de votre confiance'))}</p>
 </div>`
 }
 
@@ -932,7 +949,7 @@ export type DayClosureReceiptData = {
 
 export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string {
   const closed = parseReceiptDateTime(data.closedAt)
-  const dateLabel = new Date(`${data.businessDate}T12:00:00`).toLocaleDateString('fr-FR', {
+  const dateLabel = new Date(`${data.businessDate}T12:00:00`).toLocaleDateString(intlLocaleFor(), {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
@@ -940,12 +957,12 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
   })
 
   const metaRows = [
-    ['Date', dateLabel],
-    ['Clôturé le', `${closed.date} à ${closed.time}`],
-    ['Réceptionniste', data.receptionistName],
-    ...(data.shiftLabel ? [['Créneau', data.shiftLabel] as const] : []),
-    ['Inscriptions', String(data.registeredToday)],
-    ['Passages', String(data.visitsToday)],
+    [t('Date'), dateLabel],
+    [t('Clôturé le'), translateTemplate('{date} à {time}', { date: closed.date, time: closed.time })],
+    [t('Réceptionniste'), data.receptionistName],
+    ...(data.shiftLabel ? [[t('Créneau'), t(data.shiftLabel)] as const] : []),
+    [t('Inscriptions'), String(data.registeredToday)],
+    [t('Passages'), String(data.visitsToday)],
   ]
     .map(
       ([label, value]) => `
@@ -957,10 +974,10 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
     .join('')
 
   const detailRows = [
-    data.consultationsFcfa != null ? ['Consultations', data.consultationsFcfa] as const : null,
-    data.examsFcfa != null ? ['Examens', data.examsFcfa] as const : null,
-    data.surgeryFcfa != null ? ['Chirurgie', data.surgeryFcfa] as const : null,
-    data.hospitalizationFcfa != null ? ['Hospitalisation', data.hospitalizationFcfa] as const : null,
+    data.consultationsFcfa != null ? [t('Consultations'), data.consultationsFcfa] as const : null,
+    data.examsFcfa != null ? [t('Examens'), data.examsFcfa] as const : null,
+    data.surgeryFcfa != null ? [t('Chirurgie'), data.surgeryFcfa] as const : null,
+    data.hospitalizationFcfa != null ? [t('Hospitalisation'), data.hospitalizationFcfa] as const : null,
   ]
     .filter((row): row is NonNullable<typeof row> => row != null && row[1] > 0)
     .map(
@@ -982,7 +999,7 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
   </header>
 
   <hr class="thermal-receipt__rule" />
-  <h1 class="thermal-receipt__title">Clôture de journée</h1>
+  <h1 class="thermal-receipt__title">${escapeHtml(t('Clôture de journée'))}</h1>
   <p class="thermal-receipt__subtitle">${escapeHtml(dateLabel)}</p>
   <hr class="thermal-receipt__rule" />
 
@@ -995,22 +1012,22 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
   <table class="thermal-receipt__totals">
     <tbody>
       <tr>
-        <th>Encaissements</th>
+        <th>${escapeHtml(t('Encaissements'))}</th>
         <td>${formatFcfaPrint(data.collectedFcfa)}</td>
       </tr>
       <tr>
-        <th>Dépenses</th>
+        <th>${escapeHtml(t('Dépenses'))}</th>
         <td>${formatFcfaPrint(data.expensesFcfa)}</td>
       </tr>
       <tr>
-        <th>Net à remettre</th>
+        <th>${escapeHtml(t('Net à remettre'))}</th>
         <td>${formatFcfaPrint(data.netFcfa)}</td>
       </tr>
     </tbody>
   </table>
 
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks">Remettre la caisse à la comptabilité</p>
+  <p class="thermal-receipt__thanks">${escapeHtml(t('Remettre la caisse à la comptabilité'))}</p>
 </div>`
 }
 
@@ -1041,7 +1058,7 @@ export type LabExamInvoiceData = {
 }
 
 function resolveLabExamDocTitle(data: LabExamInvoiceData) {
-  return (
+  const raw =
     data.docTitle ??
     resolveLabExamInvoiceDocTitle(
       data.examLines.map((line) => ({
@@ -1050,7 +1067,7 @@ function resolveLabExamDocTitle(data: LabExamInvoiceData) {
         kind: line.kind,
       })),
     )
-  )
+  return t(raw)
 }
 
 function buildGroupedThermalExamRows(examLines: LabExamInvoiceLine[]) {
@@ -1070,6 +1087,7 @@ function buildGroupedThermalExamRows(examLines: LabExamInvoiceLine[]) {
   }
 
   const grouped: Record<ExamKindSlug, LabExamInvoiceLine[]> = {
+    specialty: [],
     examen: [],
     radio: [],
     echo: [],
@@ -1086,7 +1104,7 @@ function buildGroupedThermalExamRows(examLines: LabExamInvoiceLine[]) {
     if (!lines.length) return []
     const header = `
       <tr class="thermal-receipt__type-header">
-        <td colspan="2">${escapeHtml(EXAM_KIND_LABELS[kind])}</td>
+        <td colspan="2">${escapeHtml(t(EXAM_KIND_LABELS[kind]))}</td>
       </tr>`
     return header + lines.map(renderRow).join('')
   }).join('')
@@ -1098,23 +1116,23 @@ export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string
   const genderLabel = formatGender(data.gender)
   const hasReduction = data.reductionFcfa > 0
   const invoiceNo = data.invoiceNumber ?? '—'
-  const status = data.status ?? 'Payé'
+  const status = translateStatus(data.status ?? 'Payé')
   const docTitle = resolveLabExamDocTitle(data)
-  const totalLabel = status === 'Payé' ? 'Total payé' : 'Total à payer'
+  const totalLabel = (data.status ?? 'Payé') === 'Payé' ? t('Total payé') : t('Total à payer')
   const ageLabel = data.age != null ? patientAgeLabel(data.age, data.ageUnit) : null
 
   const metaRows = [
-    ['Patient', data.patientName],
-    ['Matricule', data.patientCode],
-    ...(genderLabel ? [['Sexe', genderLabel] as const] : []),
-    ...(ageLabel ? [['Âge', ageLabel] as const] : []),
-    ...(data.phone ? [['Tél.', data.phone] as const] : []),
-    ['Date', date],
-    ['Heure', time],
-    ['N° facture', invoiceNo],
-    ['Statut', status],
-    ['Prescrit par', data.prescribedBy],
-    ...(data.processedBy ? [['Encaissé par', data.processedBy] as const] : []),
+    [t('Patient'), data.patientName],
+    [t('Matricule'), data.patientCode],
+    ...(genderLabel ? [[t('Sexe'), genderLabel] as const] : []),
+    ...(ageLabel ? [[t('Âge'), ageLabel] as const] : []),
+    ...(data.phone ? [[t('Tél.'), data.phone] as const] : []),
+    [t('Date'), date],
+    [t('Heure'), time],
+    [t('N° facture'), invoiceNo],
+    [t('Statut'), status],
+    [t('Prescrit par'), data.prescribedBy],
+    ...(data.processedBy ? [[t('Encaissé par'), data.processedBy] as const] : []),
   ]
     .map(
       ([label, value]) => `
@@ -1127,14 +1145,14 @@ export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string
 
   const kindComment = data.kindComment?.trim()
   const kindCommentBlock = kindComment
-    ? `<p class="thermal-receipt__note"><strong>Commentaire:</strong> ${escapeHtml(kindComment)}</p>`
+    ? `<p class="thermal-receipt__note"><strong>${escapeHtml(t('Commentaire:'))}</strong> ${escapeHtml(kindComment)}</p>`
     : ''
 
   const totalsRows = [
     ...(hasReduction
       ? [
-          `<tr><th>Sous-total</th><td>${formatFcfaPrint(data.grossFcfa)}</td></tr>`,
-          `<tr><th>Réduction</th><td>- ${formatFcfaPrint(data.reductionFcfa)}</td></tr>`,
+          `<tr><th>${escapeHtml(t('Sous-total'))}</th><td>${formatFcfaPrint(data.grossFcfa)}</td></tr>`,
+          `<tr><th>${escapeHtml(t('Réduction'))}</th><td>- ${formatFcfaPrint(data.reductionFcfa)}</td></tr>`,
         ]
       : []),
     `<tr><th>${escapeHtml(totalLabel)}</th><td>${formatFcfaPrint(data.totalFcfa)}</td></tr>`,
@@ -1162,8 +1180,8 @@ export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string
   <table class="thermal-receipt__items thermal-receipt__items--exams">
     <thead>
       <tr>
-        <th>Examen</th>
-        <th>Montant</th>
+        <th>${escapeHtml(t('Examen'))}</th>
+        <th>${escapeHtml(t('Montant'))}</th>
       </tr>
     </thead>
     <tbody>
@@ -1178,7 +1196,7 @@ export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string
   ${kindCommentBlock}
 
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks">Merci de votre confiance</p>
+  <p class="thermal-receipt__thanks">${escapeHtml(t('Merci de votre confiance'))}</p>
 </div>`
 }
 
@@ -1190,9 +1208,9 @@ export function buildLabExamInvoiceHtml(data: LabExamInvoiceData): string {
   const genderLabel = formatGender(data.gender)
   const hasReduction = data.reductionFcfa > 0
   const invoiceNo = data.invoiceNumber ?? '—'
-  const status = data.status ?? 'Payé'
+  const status = translateStatus(data.status ?? 'Payé')
   const docTitle = resolveLabExamDocTitle(data)
-  const totalLabel = status === 'Payé' ? 'Total payé' : 'Total à payer'
+  const totalLabel = (data.status ?? 'Payé') === 'Payé' ? t('Total payé') : t('Total à payer')
   const invoiceKinds = new Set(data.examLines.map((line) => line.kind ?? 'examen'))
   const singleKind = invoiceKinds.size === 1 ? [...invoiceKinds][0] : null
   const kindClass = singleKind ? ` receipt-invoice--kind-${singleKind}` : ''
@@ -1219,14 +1237,14 @@ export function buildLabExamInvoiceHtml(data: LabExamInvoiceData): string {
 
   const reductionRow = hasReduction
     ? `<tr class="receipt-invoice__summary receipt-invoice__summary--discount">
-        <td>Réduction</td>
+        <td>${escapeHtml(t('Réduction'))}</td>
         <td>- ${formatFcfaPrint(data.reductionFcfa)}</td>
       </tr>`
     : ''
 
   const kindComment = data.kindComment?.trim()
   const kindCommentBlock = kindComment
-    ? `<div class="receipt-invoice__kind-comment"><strong>Commentaire médecin</strong>${escapeHtml(kindComment)}</div>`
+    ? `<div class="receipt-invoice__kind-comment"><strong>${escapeHtml(t('Commentaire médecin'))}</strong>${escapeHtml(kindComment)}</div>`
     : ''
 
   return `
@@ -1243,7 +1261,7 @@ export function buildLabExamInvoiceHtml(data: LabExamInvoiceData): string {
       <div class="receipt-invoice__contact-box">
         <p class="receipt-invoice__contact">${escapeHtml(CLINIC.fullAddress)}</p>
         <p class="receipt-invoice__contact">${escapeHtml(CLINIC.phones)}</p>
-        <p class="receipt-invoice__contact">Email : ${escapeHtml(CLINIC.email)}</p>
+        <p class="receipt-invoice__contact">${escapeHtml(t('Email :'))} ${escapeHtml(CLINIC.email)}</p>
       </div>
     </div>
   </header>
@@ -1260,8 +1278,8 @@ export function buildLabExamInvoiceHtml(data: LabExamInvoiceData): string {
   <table class="receipt-invoice__table receipt-invoice__table--exams">
     <thead>
       <tr>
-        <th>Examen</th>
-        <th>Montant</th>
+        <th>${escapeHtml(t('Examen'))}</th>
+        <th>${escapeHtml(t('Montant'))}</th>
       </tr>
     </thead>
     <tbody>
@@ -1277,12 +1295,12 @@ export function buildLabExamInvoiceHtml(data: LabExamInvoiceData): string {
 
   ${kindCommentBlock}
 
-  <p class="receipt-invoice__thanks">Merci de votre confiance</p>
+  <p class="receipt-invoice__thanks">${escapeHtml(t('Merci de votre confiance'))}</p>
 </div>`
 }
 
 export function buildClinicPrintHeader(docTitle?: string): string {
-  const title = docTitle ? `<p class="doc-title">${docTitle}</p>` : ''
+  const title = docTitle ? `<p class="doc-title">${escapeHtml(t(docTitle))}</p>` : ''
   return `
   <div class="clinic-header">
     <img src="${CLINIC.logo}" alt="${CLINIC.nameFr}" class="clinic-logo" />
@@ -1291,7 +1309,7 @@ export function buildClinicPrintHeader(docTitle?: string): string {
       <p class="clinic-ar" dir="rtl" lang="ar">${CLINIC.nameAr}</p>
       <p class="clinic-contact">${CLINIC.fullAddress}</p>
       <p class="clinic-contact">${CLINIC.phoneLabel}</p>
-      <p class="clinic-contact">Email : ${CLINIC.email}</p>
+      <p class="clinic-contact">${escapeHtml(t('Email :'))} ${CLINIC.email}</p>
       ${title}
     </div>
   </div>`
@@ -1315,13 +1333,17 @@ export function openPrintDocument(
   const isA5 = options.pageSize === 'A5'
   const isA4 = options.pageSize === 'A4'
   const isThermal = options.pageSize === '80mm'
-  const bodyClass = isA5
-    ? ' class="print-a5"'
-    : isA4
-      ? ' class="print-a4"'
-      : isThermal
-        ? ' class="print-thermal"'
-        : ''
+  const locale = getAppLocale()
+  const isRtl = locale === 'ar'
+  const lang = locale === 'ar' ? 'ar' : locale === 'en' ? 'en' : 'fr'
+  const dir = isRtl ? 'rtl' : 'ltr'
+  const bodyClassParts = [
+    isA5 ? 'print-a5' : '',
+    isA4 ? 'print-a4' : '',
+    isThermal ? 'print-thermal' : '',
+    isRtl ? 'print-rtl' : '',
+  ].filter(Boolean)
+  const bodyClass = bodyClassParts.length ? ` class="${bodyClassParts.join(' ')}"` : ''
   const windowSize = isA5
     ? 'width=520,height=740'
     : isA4
@@ -1337,9 +1359,19 @@ export function openPrintDocument(
       ? `<script>window.onload = () => { window.print(); window.close(); }<\/script>`
       : ''
 
+  const windowTitle = escapeHtml(title)
+
   printWindow.document.write(`<!DOCTYPE html>
-<html lang="fr"><head><meta charset="UTF-8"><title>${title}</title>
-<style>${CLINIC_PRINT_STYLES}</style></head><body${bodyClass}>
+<html lang="${lang}" dir="${dir}"><head><meta charset="UTF-8"><title>${windowTitle}</title>
+<style>${CLINIC_PRINT_STYLES}
+  body.print-rtl { direction: rtl; }
+  body.print-rtl th, body.print-rtl td { text-align: right; }
+  body.print-rtl .row strong,
+  body.print-rtl .thermal-receipt__row strong,
+  body.print-rtl .receipt-invoice__field { text-align: left; }
+  body.print-rtl .thermal-receipt__row strong { text-align: left; }
+  body.print-rtl .receipt-invoice__label { margin-left: 0.35rem; margin-right: 0; }
+</style></head><body${bodyClass}>
 ${bodyHtml}
 ${script}
 </body></html>`)

@@ -27,11 +27,13 @@ const { needRefresh, applyUpdate } = usePwaUpdate()
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.65rem 1rem;
-  border-radius: 999px;
+  max-width: calc(100vw - 2rem);
+  padding: 0.75rem 1.1rem;
+  border-radius: 14px;
   background: #1b4f9c;
   color: #fff;
   box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
   font-size: 0.9rem;
+  line-height: 1.35;
 }
 </style>

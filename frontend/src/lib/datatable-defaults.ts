@@ -106,8 +106,11 @@ export function catalogRowActionsHtml(row: {
 }
 
 /** Actions ligne patient réception — ordre fixe, pas de retour à la ligne. */
-export function patientRowActionsHtml(row: { id: string }, options?: { showDelete?: boolean }) {
-  const showDelete = options?.showDelete !== false
+export function patientRowActionsHtml(
+  row: { id: string; canDelete?: boolean },
+  options?: { showDelete?: boolean },
+) {
+  const showDelete = options?.showDelete !== false && row.canDelete !== false
   const deleteBtn = showDelete
     ? `<span class="dt-patient-actions__sep" aria-hidden="true"></span>
       <button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-delete" data-action="delete" title="Supprimer le dossier" aria-label="Supprimer le dossier">${DT_ICONS.delete}</button>`

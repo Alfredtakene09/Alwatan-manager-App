@@ -16,6 +16,14 @@ import {
 import { parseShiftSlot } from "../lib/cash-shift.js";
 import { prisma } from "../lib/db.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
+import { resolveEmployeeClinicServiceLink } from "../lib/clinic-service-exam.js";
+import {
+  getClinicServiceWithDoctors,
+  listAssignableClinicDoctors,
+  listClinicServicesWithDoctors,
+  syncClinicServiceDoctors,
+  syncEmployeeClinicServices,
+} from "../lib/clinic-service-doctors.js";
 import { USER_ROLES } from "../lib/roles.js";
 import { employeeCompensationData } from "../lib/doctor-compensation.js";
 import {
@@ -83,13 +91,26 @@ const EXPENSE_STATUS_LABELS: Record<ClinicExpenseStatus, string> = {
 };
 
 const interventionSchema = z.object({
-  code: z.string().min(2),
+  code: z.string().min(2).optional(),
   label: z.string().min(2),
   category: z.nativeEnum(InterventionCategory),
   totalCostFcfa: z.number().int().positive(),
   surgeonPercent: z.number().int().min(1).max(99),
+  clinicServiceId: z.string().optional().nullable(),
   active: z.boolean().optional(),
 });
+
+function generateInterventionCode(label: string) {
+  const slug = label
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 18);
+  return `OP-${slug || "INTERVENTION"}-${Date.now().toString(36).toUpperCase()}`;
+}
 
 const productSchema = z.object({
   name: z.string().min(2),
@@ -123,6 +144,12 @@ const employeeCompensationSchema = z.object({
 });
 
 function employeeValidationMessage(error: unknown) {
+  if (error instanceof Error && error.message === "DOCTOR_SERVICE_REQUIRED") {
+    return "Sélectionnez le service clinique du médecin.";
+  }
+  if (error instanceof Error && error.message === "SERVICE_INVALID") {
+    return "Service clinique introuvable ou inactif.";
+  }
   if (error instanceof z.ZodError) {
     const issue = error.issues[0];
     if (issue?.path.join(".") === "firstName" || issue?.path.join(".") === "lastName") {
@@ -143,6 +170,9 @@ const createEmployeeSchema = z
     active: z.boolean().optional(),
     specialty: z.string().max(120).optional().nullable(),
     availabilitySlots: doctorAvailabilitySlotsSchema,
+    clinicServiceId: z.string().min(1).optional().nullable(),
+    clinicServiceIds: z.array(z.string().min(1)).optional().nullable(),
+    service: z.string().optional().nullable(),
   })
   .merge(employeeCompensationSchema);
 
@@ -178,6 +208,12 @@ const createUserSchema = z.object({
   active: z.boolean().optional(),
 });
 
+const booleanFromForm = z.preprocess((value) => {
+  if (value === "true" || value === true) return true;
+  if (value === "false" || value === false) return false;
+  return value;
+}, z.boolean());
+
 const updateUserSchema = z.object({
   username: z
     .string()
@@ -189,7 +225,7 @@ const updateUserSchema = z.object({
   email: optionalEmailSchema,
   password: z.string().min(6, "Le mot de passe doit contenir au moins 6 caractères.").optional(),
   role: assignableUserRoleSchema.optional(),
-  active: z.boolean().optional(),
+  active: booleanFromForm.optional(),
   employeeId: z.string().min(1).optional(),
   cashShiftSlot: cashShiftSlotSchema.optional().nullable(),
 });
@@ -206,6 +242,7 @@ const clinicServiceSchema = z.object({
     .union([z.boolean(), z.enum(["true", "false"]).transform((value) => value === "true")])
     .optional(),
   sortOrder: z.coerce.number().int().min(0).optional(),
+  doctorIds: z.array(z.string().min(1)).optional(),
 });
 
 const userSelect = {
@@ -306,7 +343,7 @@ async function validateEmployeeForUser(
   if (employee.user && employee.user.id !== currentUserId) {
     return { error: "Cet employé est déjà lié à un compte utilisateur." as const };
   }
-  if (role === UserRole.MEDECIN && !employee.isMedecin) {
+  if (role === UserRole.MEDECIN && !resolveEmployeeIsMedecin(employee.isMedecin, employee.jobTitle)) {
     return { error: "Un compte médecin doit être lié à un employé médecin." as const };
   }
   return { employee };
@@ -428,31 +465,38 @@ router.delete("/job-titles/:id", requireModule("utilisateurs"), async (req, res)
   return res.json({ ok: true, message: `Le poste « ${item.label} » a été supprimé.` });
 });
 
-const clinicServicesAccess = requireAnyModule("utilisateurs", "gestionnaire");
+const clinicServicesAccess = requireAnyModule("utilisateurs", "gestionnaire", "comptabilite");
+
+router.get("/services/doctors", clinicServicesAccess, async (_req, res) => {
+  const doctors = await listAssignableClinicDoctors();
+  return res.json(doctors);
+});
 
 router.get("/services", clinicServicesAccess, async (req, res) => {
   await ensureDefaultClinicServices(prisma);
-
   const activeOnly = req.query.activeOnly === "true";
-  const items = await prisma.clinicService.findMany({
-    where: activeOnly ? { active: true } : undefined,
-    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-  });
-  return res.json(items);
+  return res.json(await listClinicServicesWithDoctors(activeOnly));
 });
 
 router.post("/services", clinicServicesAccess, async (req, res) => {
   try {
     const body = clinicServiceSchema.parse(req.body);
-    const item = await prisma.clinicService.create({
+    const created = await prisma.clinicService.create({
       data: {
         name: body.name.trim(),
         active: body.active ?? true,
         sortOrder: body.sortOrder ?? 0,
       },
     });
+    if (body.doctorIds) {
+      await syncClinicServiceDoctors(created.id, body.doctorIds);
+    }
+    const item = await getClinicServiceWithDoctors(created.id);
     return res.status(201).json(item);
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === "DOCTORS_INVALID") {
+      return res.status(400).json({ error: "Un ou plusieurs médecins sont invalides." });
+    }
     return res.status(400).json({ error: "Service invalide ou déjà existant." });
   }
 });
@@ -464,7 +508,7 @@ router.put("/services/:id", clinicServicesAccess, async (req, res) => {
     const existing = await prisma.clinicService.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ error: "Service introuvable." });
 
-    const item = await prisma.clinicService.update({
+    await prisma.clinicService.update({
       where: { id },
       data: {
         ...(body.name !== undefined ? { name: body.name.trim() } : {}),
@@ -472,8 +516,15 @@ router.put("/services/:id", clinicServicesAccess, async (req, res) => {
         sortOrder: body.sortOrder,
       },
     });
+    if (body.doctorIds !== undefined) {
+      await syncClinicServiceDoctors(id, body.doctorIds);
+    }
+    const item = await getClinicServiceWithDoctors(id);
     return res.json(item);
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === "DOCTORS_INVALID") {
+      return res.status(400).json({ error: "Un ou plusieurs médecins sont invalides." });
+    }
     return res.status(400).json({ error: "Mise à jour impossible — nom invalide ou déjà utilisé." });
   }
 });
@@ -483,6 +534,11 @@ router.delete("/services/:id", clinicServicesAccess, async (req, res) => {
   const item = await prisma.clinicService.findUnique({ where: { id } });
   if (!item) return res.status(404).json({ error: "Service introuvable." });
 
+  await prisma.employee.updateMany({
+    where: { clinicServiceId: id },
+    data: { clinicServiceId: null, service: null },
+  });
+  await prisma.clinicServiceDoctor.deleteMany({ where: { clinicServiceId: id } });
   await prisma.clinicService.delete({ where: { id } });
   return res.json({ ok: true, message: `Le service « ${item.name} » a été supprimé.` });
 });
@@ -493,12 +549,20 @@ router.post("/employees", requireModule("utilisateurs"), async (req, res) => {
     const jobTitle = body.jobTitle?.trim() || null;
     const isMedecin = resolveEmployeeIsMedecin(body.isMedecin, jobTitle);
     const availabilitySlots = normalizeAvailabilitySlots(body.availabilitySlots, isMedecin);
+    const serviceLink = await resolveEmployeeClinicServiceLink({
+      isMedecin,
+      clinicServiceId: body.clinicServiceId,
+      clinicServiceIds: body.clinicServiceIds,
+      service: body.service,
+    });
     const employee = await prisma.employee.create({
       data: {
         firstName: body.firstName,
         lastName: body.lastName,
         phone: body.phone?.trim() || null,
         jobTitle,
+        service: serviceLink.service,
+        clinicServiceId: serviceLink.clinicServiceId,
         isMedecin,
         specialty: normalizeSpecialty(body.specialty, isMedecin),
         ...(availabilitySlots !== undefined ? { availabilitySlots } : {}),
@@ -507,7 +571,17 @@ router.post("/employees", requireModule("utilisateurs"), async (req, res) => {
       },
       select: employeeSelect,
     });
-    return res.status(201).json(serializeEmployee(employee));
+    if (isMedecin && serviceLink.clinicServiceId) {
+      await syncEmployeeClinicServices(employee.id, {
+        defaultClinicServiceId: serviceLink.clinicServiceId,
+        clinicServiceIds: serviceLink.clinicServiceIds,
+      });
+    }
+    const refreshed = await prisma.employee.findUnique({
+      where: { id: employee.id },
+      select: employeeSelect,
+    });
+    return res.status(201).json(serializeEmployee(refreshed ?? employee));
   } catch (error) {
     return res.status(400).json({ error: employeeValidationMessage(error) });
   }
@@ -558,6 +632,34 @@ router.put("/employees/:id", requireModule("utilisateurs"), async (req, res) => 
           )
         : undefined;
 
+    const shouldUpdateService =
+      body.clinicServiceId !== undefined ||
+      body.clinicServiceIds !== undefined ||
+      body.service !== undefined ||
+      body.isMedecin !== undefined ||
+      body.jobTitle !== undefined;
+    const existingServiceIds =
+      (
+        await prisma.clinicServiceDoctor.findMany({
+          where: { employeeId },
+          select: { clinicServiceId: true },
+        })
+      ).map((link) => link.clinicServiceId) ?? [];
+    const serviceLink = shouldUpdateService
+      ? await resolveEmployeeClinicServiceLink({
+          isMedecin: nextIsMedecin,
+          clinicServiceId:
+            body.clinicServiceId !== undefined
+              ? body.clinicServiceId
+              : existing.clinicServiceId,
+          clinicServiceIds:
+            body.clinicServiceIds !== undefined
+              ? body.clinicServiceIds
+              : existingServiceIds,
+          service: body.service !== undefined ? body.service : existing.service,
+        })
+      : null;
+
     const employee = await prisma.employee.update({
       where: { id: employeeId },
       data: {
@@ -565,6 +667,9 @@ router.put("/employees/:id", requireModule("utilisateurs"), async (req, res) => 
         lastName: body.lastName,
         phone: body.phone === undefined ? undefined : body.phone.trim() || null,
         jobTitle: body.jobTitle === undefined ? undefined : nextJobTitle,
+        ...(serviceLink
+          ? { service: serviceLink.service, clinicServiceId: serviceLink.clinicServiceId }
+          : {}),
         isMedecin: nextIsMedecin,
         active: body.active,
         ...(body.specialty !== undefined ||
@@ -583,6 +688,20 @@ router.put("/employees/:id", requireModule("utilisateurs"), async (req, res) => 
       select: employeeSelect,
     });
 
+    if (serviceLink) {
+      if (nextIsMedecin && serviceLink.clinicServiceId) {
+        await syncEmployeeClinicServices(employeeId, {
+          defaultClinicServiceId: serviceLink.clinicServiceId,
+          clinicServiceIds: serviceLink.clinicServiceIds,
+        });
+      } else {
+        await syncEmployeeClinicServices(employeeId, {
+          defaultClinicServiceId: null,
+          clinicServiceIds: [],
+        });
+      }
+    }
+
     if (body.firstName || body.lastName) {
       await prisma.user.updateMany({
         where: { employeeId },
@@ -593,7 +712,11 @@ router.put("/employees/:id", requireModule("utilisateurs"), async (req, res) => 
       });
     }
 
-    return res.json(serializeEmployee(employee));
+    const refreshed = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: employeeSelect,
+    });
+    return res.json(serializeEmployee(refreshed ?? employee));
   } catch (error) {
     return res.status(400).json({ error: employeeValidationMessage(error) });
   }
@@ -717,24 +840,34 @@ router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
     const existing = await prisma.user.findUnique({ where: { id: userId } });
     if (!existing) return res.status(404).json({ error: "Utilisateur introuvable" });
 
-    if (body.username && body.username !== existing.username) {
+    const usernameChanged =
+      typeof body.username === "string" &&
+      body.username.toLowerCase() !== existing.username.toLowerCase();
+    if (usernameChanged) {
       const usernameTaken = await prisma.user.findFirst({
         where: {
           username: { equals: body.username, mode: "insensitive" },
           id: { not: userId },
         },
       });
-      if (usernameTaken) return res.status(409).json({ error: "Ce nom d'utilisateur est déjà utilisé." });
+      if (usernameTaken) {
+        return res.status(409).json({ error: "Ce nom d'utilisateur est déjà utilisé." });
+      }
     }
 
-    if (body.email && body.email !== existing.email) {
+    const emailChanged =
+      typeof body.email === "string" &&
+      body.email.toLowerCase() !== existing.email.toLowerCase();
+    if (emailChanged) {
       const emailTaken = await prisma.user.findFirst({
         where: {
           email: { equals: body.email, mode: "insensitive" },
           id: { not: userId },
         },
       });
-      if (emailTaken) return res.status(409).json({ error: "Cet e-mail est déjà utilisé." });
+      if (emailTaken) {
+        return res.status(409).json({ error: "Cet e-mail est déjà utilisé." });
+      }
     }
 
     if (body.active === false && userId === currentUser.id) {
@@ -752,9 +885,12 @@ router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
       return res.status(409).json({ error: adminGuard });
     }
 
+    const employeeChanged =
+      typeof body.employeeId === "string" && body.employeeId !== existing.employeeId;
     let employeeNames: { firstName: string; lastName: string } | undefined;
-    if (body.employeeId && body.employeeId !== existing.employeeId) {
-      const employeeCheck = await validateEmployeeForUser(body.employeeId, nextRole, userId);
+    // Ne revalider le lien employé que s'il change — évite le faux « déjà lié » à l'édition.
+    if (employeeChanged) {
+      const employeeCheck = await validateEmployeeForUser(body.employeeId!, nextRole, userId);
       if ("error" in employeeCheck) {
         return res.status(400).json({ error: employeeCheck.error });
       }
@@ -762,6 +898,12 @@ router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
         firstName: employeeCheck.employee.firstName,
         lastName: employeeCheck.employee.lastName,
       };
+    } else if (body.role !== undefined && body.role !== existing.role) {
+      // Changement de rôle seul : vérifier la compatibilité avec l'employé déjà lié.
+      const employeeCheck = await validateEmployeeForUser(existing.employeeId, nextRole, userId);
+      if ("error" in employeeCheck) {
+        return res.status(400).json({ error: employeeCheck.error });
+      }
     }
 
     const cashShiftSlot =
@@ -775,11 +917,13 @@ router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
     const user = await prisma.user.update({
       where: { id: userId },
       data: {
-        username: body.username,
-        email: body.email,
-        role: body.role,
-        active: body.active,
-        employeeId: body.employeeId,
+        ...(usernameChanged || (body.username && body.username !== existing.username)
+          ? { username: body.username }
+          : {}),
+        ...(emailChanged ? { email: body.email } : {}),
+        ...(body.role !== undefined ? { role: body.role } : {}),
+        ...(body.active !== undefined ? { active: body.active } : {}),
+        ...(employeeChanged ? { employeeId: body.employeeId } : {}),
         ...(cashShiftSlot !== undefined ? { cashShiftSlot } : {}),
         ...(employeeNames ?? {}),
         ...(passwordHash ? { passwordHash } : {}),
@@ -789,6 +933,25 @@ router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
 
     return res.json(await enrichUserForAdmin(user, currentUser.id));
   } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: string }).code === "P2002"
+    ) {
+      const target = (error as { meta?: { target?: string[] | string } }).meta?.target;
+      const fields = Array.isArray(target) ? target.join(",") : String(target ?? "");
+      if (fields.includes("email")) {
+        return res.status(409).json({ error: "Cet e-mail est déjà utilisé." });
+      }
+      if (fields.includes("username")) {
+        return res.status(409).json({ error: "Ce nom d'utilisateur est déjà utilisé." });
+      }
+      if (fields.includes("employeeId")) {
+        return res.status(409).json({ error: "Cet employé est déjà lié à un compte utilisateur." });
+      }
+      return res.status(409).json({ error: "Une valeur unique est déjà utilisée par un autre compte." });
+    }
     return res.status(400).json({ error: zodErrorMessage(error, "Mise à jour impossible") });
   }
 });
@@ -835,8 +998,9 @@ router.get("/interventions", async (_req, res) => {
 router.post("/interventions", async (req, res) => {
   try {
     const body = interventionSchema.parse(req.body);
+    const code = body.code?.trim() || generateInterventionCode(body.label);
     const duplicate = await findDuplicateIntervention({
-      code: body.code,
+      code,
       label: body.label,
       category: body.category,
     });
@@ -844,7 +1008,7 @@ router.post("/interventions", async (req, res) => {
       return res.status(409).json(
         duplicateErrorResponse(
           "intervention",
-          "Une intervention avec ce code ou ce libellé existe déjà.",
+          "Une intervention avec ce libellé existe déjà.",
           {
             code: duplicate.code,
             label: duplicate.label,
@@ -854,7 +1018,17 @@ router.post("/interventions", async (req, res) => {
         ),
       );
     }
-    const item = await prisma.interventionType.create({ data: body });
+    const item = await prisma.interventionType.create({
+      data: {
+        label: body.label,
+        category: body.category,
+        totalCostFcfa: body.totalCostFcfa,
+        surgeonPercent: body.surgeonPercent,
+        clinicServiceId: body.clinicServiceId ?? null,
+        active: body.active ?? true,
+        code,
+      },
+    });
     return res.status(201).json(item);
   } catch {
     return res.status(400).json({ error: "Données invalides" });

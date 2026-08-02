@@ -25,6 +25,13 @@ export type BreakdownItem = {
   percent?: number
 }
 
+export type OperationsByServiceRow = {
+  serviceId: string | null
+  serviceName: string
+  count: number
+  amountFcfa: number
+}
+
 export type AdminExpenseRow = {
   id: string
   date: string
@@ -53,6 +60,7 @@ export type AdminDashboardOverview = {
   monthlyTrend: MonthlyTrendPoint[]
   revenueBreakdown: BreakdownItem[]
   expenseBreakdown: BreakdownItem[]
+  operationsByService: OperationsByServiceRow[]
   recentExpenses: AdminExpenseRow[]
   employees: {
     totalActive: number
@@ -76,6 +84,7 @@ export type AdminDashboardOverview = {
     pendingExpenses: number
     unpaidPayroll: number
     lowStock: number
+    pendingDayClosures?: number
     recentValidations: Array<{
       id: string
       label: string
@@ -92,6 +101,7 @@ export type AdminDashboardOverview = {
   navBadges: {
     depenses: number
     salaires: number
+    caisse?: number
   }
 }
 

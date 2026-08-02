@@ -13,6 +13,7 @@ import MedecinPrescriptionModal, {
 import LabsWaitingDataTable, {
   type LabsWaitingVisitRow,
 } from '@/components/ui/LabsWaitingDataTable.vue'
+import { useSilentRefresh } from '@/composables/useSilentRefresh'
 
 const visits = ref<LabsWaitingVisitRow[]>([])
 const prescriptionVisit = ref<PrescriptionVisit | null>(null)
@@ -21,15 +22,15 @@ const statsRefreshKey = ref(0)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 
-async function loadVisits() {
+async function loadVisits(opts?: { silent?: boolean }) {
   if (prescriptionVisit.value) return
-  loading.value = true
+  if (!opts?.silent) loading.value = true
   try {
     const { data } = await api.get('/consultations/labs-en-attente')
     visits.value = data
   } finally {
-    loading.value = false
-    statsRefreshKey.value += 1
+    if (!opts?.silent) loading.value = false
+    if (!opts?.silent) statsRefreshKey.value += 1
   }
 }
 
@@ -47,10 +48,21 @@ function closePrescriptionModal() {
 function onPrescriptionSaved() {
   message.value = 'Nouveaux examens ajoutés. Les examens supplémentaires suivront le circuit paiement / laboratoire.'
   messageType.value = 'success'
-  loadVisits()
+  void loadVisits()
 }
 
-onMounted(loadVisits)
+const { refresh: refreshVisits } = useSilentRefresh(
+  ({ silent }) => loadVisits({ silent }),
+  {
+    intervalMs: 20_000,
+    enabled: () => !prescriptionVisit.value,
+    immediate: false,
+  },
+)
+
+onMounted(() => {
+  void loadVisits()
+})
 </script>
 
 <template>
@@ -76,7 +88,7 @@ onMounted(loadVisits)
         icon-variant="amber"
       >
         <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadVisits">
+          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshVisits()">
             Actualiser
           </UiButton>
         </template>
@@ -89,7 +101,7 @@ onMounted(loadVisits)
           fill
           :visits="visits"
           :selected-id="prescriptionVisit?.id"
-          :loading="loading"
+          :loading="loading && !visits.length"
           @append="openAppendModal"
         />
       </UiCard>

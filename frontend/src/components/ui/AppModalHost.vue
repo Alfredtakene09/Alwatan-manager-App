@@ -12,10 +12,12 @@ import {
 import type { AppModalType } from '@/lib/app-modal'
 import { useAppModal } from '@/composables/useAppModal'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import { useModalTeleportTarget } from '@/composables/useModalTeleportTarget'
 import UiButton from '@/components/ui/UiButton.vue'
 
 const { state, confirmModal, cancelModal } = useAppModal()
 const { uiText, localeCode } = useAppI18n()
+const teleportTarget = useModalTeleportTarget()
 
 const titleText = computed(() => {
   void localeCode.value
@@ -66,7 +68,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <Teleport to="body">
+  <Teleport :to="teleportTarget">
     <Transition name="app-modal">
       <div
         v-if="state.open"

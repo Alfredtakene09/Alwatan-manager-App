@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { canAccessAnyModule, canManagePharmacyCatalog, getDefaultRoute } from '@/lib/roles'
+import { canAccessAnyModule, canManageLabStock, canManagePharmacyCatalog, getDefaultRoute } from '@/lib/roles'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -100,6 +100,12 @@ const router = createRouter({
           path: 'medecin/operations',
           name: 'medecin-operations',
           component: () => import('@/views/MedecinOperationsView.vue'),
+          meta: { module: 'consultation' },
+        },
+        {
+          path: 'medecin/nomenclature',
+          name: 'medecin-nomenclature',
+          component: () => import('@/views/MedecinExamCatalogView.vue'),
           meta: { module: 'consultation' },
         },
         {
@@ -249,7 +255,7 @@ const router = createRouter({
           path: 'pharmacie/produits',
           name: 'pharmacie-produits',
           component: () => import('@/views/pharmacie/PharmacieProductsView.vue'),
-          meta: { module: 'pharmacie', pharmacyCatalog: true },
+          meta: { module: 'pharmacie' },
         },
         {
           path: 'pharmacie/ventes',
@@ -277,9 +283,7 @@ const router = createRouter({
         },
         {
           path: 'pharmacie/mouvements',
-          name: 'pharmacie-mouvements',
-          component: () => import('@/views/pharmacie/PharmacieMovementsView.vue'),
-          meta: { module: 'pharmacie', pharmacyCatalog: true },
+          redirect: { name: 'pharmacie-produits' },
         },
         {
           path: 'pharmacie/tableau-de-bord',
@@ -337,7 +341,7 @@ const router = createRouter({
           meta: { module: 'logistique' },
         },
         { path: 'factures', name: 'factures', component: () => import('@/views/FacturesView.vue'), meta: { module: 'factures' } },
-        { path: 'admin', name: 'admin', component: () => import('@/views/AdminView.vue'), meta: { module: 'admin' } },
+        { path: 'admin', redirect: '/comptabilite/types-examen/operation' },
         {
           path: 'admin/employes',
           name: 'admin-employes',
@@ -452,6 +456,12 @@ const router = createRouter({
           component: () => import('@/views/LaboratoirePanelsView.vue'),
           meta: { module: 'laboratoire' },
         },
+        {
+          path: 'laboratoire/stock',
+          name: 'laboratoire-stock',
+          component: () => import('@/views/LaboratoireStockView.vue'),
+          meta: { modules: ['laboratoire', 'gestionnaire'], labStock: true },
+        },
         { path: 'laboratoire/tableau-de-bord', redirect: '/laboratoire' },
         {
           path: 'mon-compte',
@@ -491,6 +501,10 @@ router.beforeEach(async (to) => {
     (to.meta.module as string) ?? 'consultation',
   ]
   if (!canAccessAnyModule(auth.user.role, modules)) {
+    return getDefaultRoute(auth.user.role)
+  }
+
+  if (to.meta.labStock && !canManageLabStock(auth.user.role)) {
     return getDefaultRoute(auth.user.role)
   }
 

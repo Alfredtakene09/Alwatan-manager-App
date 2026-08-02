@@ -22,7 +22,12 @@ import {
   parsePrescribedExamsByKind,
   mergeHospitalisationDaysInNotes,
   parsePrescribedExamCommentsByKind,
+  mergePharmacyOrdonnanceInNotes,
+  parsePharmacyOrdonnanceLines,
+  prescriptionRequiresLabWork,
+  isDirectClinicalConsultationPrescription,
   type ExamKindSlug,
+  type PharmacyOrdonnanceLine,
 } from "../lib/lab-notes.js";
 import {
   ensureHospitalizationFromReferral,
@@ -64,6 +69,7 @@ const consultationSchema = z.object({
 });
 
 const examsByKindSchema = z.object({
+  specialty: z.array(z.string().min(1)).default([]),
   examen: z.array(z.string().min(1)).default([]),
   radio: z.array(z.string().min(1)).default([]),
   echo: z.array(z.string().min(1)).default([]),
@@ -73,6 +79,7 @@ const examsByKindSchema = z.object({
 });
 
 const examCommentsByKindSchema = z.object({
+  specialty: z.string().max(2000).optional(),
   examen: z.string().max(2000).optional(),
   radio: z.string().max(2000).optional(),
   echo: z.string().max(2000).optional(),
@@ -91,6 +98,18 @@ const prescribeExamsSchema = z
     hospitalisationDays: z.number().int().min(1).max(365).optional(),
     notes: z.string().optional(),
     append: z.boolean().optional().default(false),
+    pharmacyOrdonnance: z
+      .array(
+        z.object({
+          productId: z.string().min(1).nullable().optional(),
+          name: z.string().min(1),
+          dosage: z.string().max(120).nullable().optional(),
+          quantity: z.number().int().positive().max(999),
+          instructions: z.string().max(500).optional(),
+        }),
+      )
+      .max(80)
+      .optional(),
   })
   .refine(
     (data) => {
@@ -104,9 +123,10 @@ const prescribeExamsSchema = z
         ? flattenPrescribedExams(data.examsByKind as Record<ExamKindSlug, string[]>).length > 0
         : (data.exams?.length ?? 0) > 0;
       const hasComment = (data.doctorComment?.trim().length ?? 0) >= 2;
-      return hasExams || hasComment;
+      const hasOrdonnance = (data.pharmacyOrdonnance?.length ?? 0) > 0;
+      return hasExams || hasComment || hasOrdonnance;
     },
-    { message: "Sélectionnez au moins un examen ou saisissez un commentaire." },
+    { message: "Sélectionnez au moins un examen, un commentaire ou une ordonnance." },
   );
 
 async function syncPrescribedProcedures(
@@ -408,6 +428,24 @@ router.patch("/labs-resultats/:visitId/panels/:panelSlug/comment", async (req, r
   }
 });
 
+router.get("/pharmacy-products", async (_req, res) => {
+  const items = await prisma.product.findMany({
+    where: { active: true, quantity: { gt: 0 } },
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      sku: true,
+      barcode: true,
+      dosage: true,
+      pharmaceuticalForm: true,
+      quantity: true,
+      unitPriceFcfa: true,
+    },
+  });
+  return res.json(items);
+});
+
 router.post("/prescribe-exams", async (req, res) => {
   try {
     const body = prescribeExamsSchema.parse(req.body);
@@ -483,8 +521,11 @@ router.post("/prescribe-exams", async (req, res) => {
       const hasExams = examsByKind
         ? flattenPrescribedExams(examsByKind).length > 0
         : (body.exams?.length ?? 0) > 0;
+      const requiresLabWork = prescriptionRequiresLabWork(
+        examsByKind ?? (body.exams?.length ? { examen: body.exams } : null),
+      );
 
-      const notes = hasExams
+      let notes = hasExams
         ? examsByKind
           ? buildPrescribedExamsNotesByKind(
               examsByKind,
@@ -495,6 +536,22 @@ router.post("/prescribe-exams", async (req, res) => {
           : buildPrescribedExamsNotes(body.exams ?? [], existingNotes, body.notes)
         : existingNotes;
 
+      const pharmacyLines: PharmacyOrdonnanceLine[] = body.pharmacyOrdonnance?.length
+        ? body.pharmacyOrdonnance.map((line) => ({
+            productId: line.productId?.trim() || null,
+            name: line.name,
+            dosage: line.dosage ?? null,
+            quantity: line.quantity,
+            instructions: line.instructions?.trim() || undefined,
+          }))
+        : body.append
+          ? parsePharmacyOrdonnanceLines(existingNotes)
+          : [];
+
+      if (body.pharmacyOrdonnance) {
+        notes = mergePharmacyOrdonnanceInNotes(notes ?? "", pharmacyLines);
+      }
+
       const clinicalNotes =
         hasHospitalisation && body.hospitalisationDays
           ? mergeHospitalisationDaysInNotes(notes ?? "", body.hospitalisationDays)
@@ -504,9 +561,12 @@ router.post("/prescribe-exams", async (req, res) => {
         where: { visitId: body.visitId },
         update: {
           doctorId: user.id,
-          ...(hasExams ? { clinicalNotes } : {}),
+          ...(hasExams || body.pharmacyOrdonnance ? { clinicalNotes } : {}),
           ...(doctorComment ? { doctorComment } : {}),
-          ...(shouldCreateImmediateInvoice(visit.patient.category) && hasExams && !body.append
+          ...(shouldCreateImmediateInvoice(visit.patient.category) &&
+          hasExams &&
+          requiresLabWork &&
+          !body.append
             ? { labSentToLabAt: null, labApprovedById: null }
             : {}),
         },
@@ -524,10 +584,17 @@ router.post("/prescribe-exams", async (req, res) => {
         await syncPrescribedProcedures(tx, body.visitId, examsByKind, user.id);
       }
 
-      if (!hasExams && doctorComment) {
+      const directClinical =
+        !!examsByKind && isDirectClinicalConsultationPrescription(examsByKind);
+
+      if ((!hasExams && (doctorComment || pharmacyLines.length)) || directClinical) {
         const completed = await tx.consultation.update({
           where: { id: consultation.id },
-          data: { completedAt: new Date() },
+          data: {
+            ...(hasExams || body.pharmacyOrdonnance ? { clinicalNotes } : {}),
+            ...(doctorComment ? { doctorComment } : {}),
+            completedAt: new Date(),
+          },
         });
         await tx.visit.update({
           where: { id: body.visitId },
@@ -536,7 +603,11 @@ router.post("/prescribe-exams", async (req, res) => {
         return completed;
       }
 
-      if (!shouldCreateImmediateInvoice(visit.patient.category) && hasExams) {
+      if (
+        !shouldCreateImmediateInvoice(visit.patient.category) &&
+        hasExams &&
+        requiresLabWork
+      ) {
         const grossFcfa = computeLabExamsGrossFcfa(notes);
         const consultationAfterLab = await tx.consultation.update({
           where: { id: consultation.id },

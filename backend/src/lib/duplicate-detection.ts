@@ -10,6 +10,11 @@ function normalizePhone(value?: string | null) {
   return value.replace(/\D/g, "");
 }
 
+function normalizeGender(value?: string | null) {
+  if (!value) return "";
+  return value.trim().toUpperCase();
+}
+
 function sameCalendarDay(a: Date, b: Date) {
   return (
     a.getUTCFullYear() === b.getUTCFullYear() &&
@@ -25,24 +30,78 @@ export function serializePatientForDuplicate(patient: Patient) {
     firstName: patient.firstName,
     lastName: patient.lastName,
     phone: patient.phone,
+    gender: patient.gender,
     dateOfBirth: patient.dateOfBirth?.toISOString() ?? null,
     category: patient.category,
   };
 }
 
-/** Patient : nom + prénom + (téléphone, date de naissance ou âge). */
-export async function findDuplicatePatient(input: {
+/** Critères stricts de fusion de dossier : nom + prénom + téléphone + genre. */
+export async function findPatientForDossierFusion(input: {
   firstName: string;
   lastName: string;
   phone?: string | null;
-  age?: number | null;
-  ageUnit?: AgeUnit | null;
-  dateOfBirth?: Date | null;
+  gender?: string | null;
   excludeId?: string;
 }) {
   const first = normalizeName(input.firstName);
   const last = normalizeName(input.lastName);
   const phone = normalizePhone(input.phone);
+  const gender = normalizeGender(input.gender);
+
+  if (!phone || !gender) return null;
+
+  const candidates = await prisma.patient.findMany({
+    where: {
+      ...(input.excludeId ? { id: { not: input.excludeId } } : {}),
+      firstName: { equals: input.firstName.trim(), mode: "insensitive" },
+      lastName: { equals: input.lastName.trim(), mode: "insensitive" },
+      phone: { not: null },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 40,
+  });
+
+  return (
+    candidates.find((patient) => {
+      if (normalizeName(patient.firstName) !== first || normalizeName(patient.lastName) !== last) {
+        return false;
+      }
+      if (normalizePhone(patient.phone) !== phone) return false;
+      const patientGender = normalizeGender(patient.gender);
+      if (patientGender && patientGender !== gender) return false;
+      return true;
+    }) ?? null
+  );
+}
+
+/**
+ * Fusion / doublon patient : nom + prénom + numéro de téléphone + genre.
+ * Critères secondaires (date de naissance / âge) si téléphone ou genre manquant.
+ */
+export async function findDuplicatePatient(input: {
+  firstName: string;
+  lastName: string;
+  phone?: string | null;
+  gender?: string | null;
+  age?: number | null;
+  ageUnit?: AgeUnit | null;
+  dateOfBirth?: Date | null;
+  excludeId?: string;
+}) {
+  const fusion = await findPatientForDossierFusion({
+    firstName: input.firstName,
+    lastName: input.lastName,
+    phone: input.phone,
+    gender: input.gender,
+    excludeId: input.excludeId,
+  });
+  if (fusion) return fusion;
+
+  const first = normalizeName(input.firstName);
+  const last = normalizeName(input.lastName);
+  const phone = normalizePhone(input.phone);
+  const gender = normalizeGender(input.gender);
   const dob = input.dateOfBirth ?? null;
   const age = input.age ?? null;
   const ageUnit = input.ageUnit ?? "YEARS";
@@ -54,21 +113,34 @@ export async function findDuplicatePatient(input: {
       lastName: { equals: input.lastName.trim(), mode: "insensitive" },
     },
     orderBy: { createdAt: "desc" },
-    take: 20,
+    take: 40,
   });
 
-  const nameMatch = candidates.find((patient) => {
-    if (normalizeName(patient.firstName) !== first || normalizeName(patient.lastName) !== last) {
-      return false;
-    }
+  const nameMatches = candidates.filter(
+    (patient) =>
+      normalizeName(patient.firstName) === first && normalizeName(patient.lastName) === last,
+  );
 
+  // Téléphone + nom/prénom (genre non renseigné à la saisie)
+  if (phone && !gender) {
+    const phoneMatch = nameMatches.find((patient) => {
+      const patientPhone = normalizePhone(patient.phone);
+      return !!patientPhone && patientPhone === phone;
+    });
+    if (phoneMatch) return phoneMatch;
+  }
+
+  const secondaryMatch = nameMatches.find((patient) => {
     const patientPhone = normalizePhone(patient.phone);
+    const patientGender = normalizeGender(patient.gender);
 
     if (phone && patientPhone && patientPhone === phone) {
+      if (gender && patientGender && patientGender !== gender) return false;
       return true;
     }
 
     if (dob && patient.dateOfBirth) {
+      if (gender && patientGender && patientGender !== gender) return false;
       return sameCalendarDay(dob, patient.dateOfBirth);
     }
 
@@ -78,21 +150,24 @@ export async function findDuplicatePatient(input: {
       age === patient.age &&
       ageUnit === (patient.ageUnit ?? "YEARS")
     ) {
+      if (gender && patientGender && patientGender !== gender) return false;
       return true;
     }
 
     if (phone && !patientPhone && !patient.dateOfBirth) {
+      if (gender && patientGender && patientGender !== gender) return false;
       return true;
     }
 
     if (!dob && !phone && !patient.dateOfBirth && !patientPhone) {
+      if (gender && patientGender && patientGender !== gender) return false;
       return true;
     }
 
     return false;
   });
 
-  if (nameMatch) return nameMatch;
+  if (secondaryMatch) return secondaryMatch;
 
   if (!phone) return null;
 
@@ -108,7 +183,12 @@ export async function findDuplicatePatient(input: {
   return (
     phoneCandidates.find((patient) => {
       if (normalizePhone(patient.phone) !== phone) return false;
-      return normalizeName(patient.firstName) === first && normalizeName(patient.lastName) === last;
+      if (normalizeName(patient.firstName) !== first || normalizeName(patient.lastName) !== last) {
+        return false;
+      }
+      const patientGender = normalizeGender(patient.gender);
+      if (gender && patientGender && patientGender !== gender) return false;
+      return true;
     }) ?? null
   );
 }
@@ -146,15 +226,21 @@ export async function findDuplicateExamCatalogItem(input: {
   kind: ExamCatalogKind;
   code: string;
   label: string;
+  clinicServiceId?: string | null;
   excludeId?: string;
 }) {
   const code = input.code.trim();
   const label = normalizeName(input.label);
+  const serviceScopeKey =
+    input.clinicServiceId !== undefined
+      ? input.clinicServiceId?.trim() || "_"
+      : undefined;
 
   const byCode = await prisma.examCatalogItem.findFirst({
     where: {
       kind: input.kind,
       code,
+      ...(serviceScopeKey !== undefined ? { serviceScopeKey } : {}),
       ...(input.excludeId ? { id: { not: input.excludeId } } : {}),
     },
   });
@@ -163,6 +249,7 @@ export async function findDuplicateExamCatalogItem(input: {
   const byLabel = await prisma.examCatalogItem.findMany({
     where: {
       kind: input.kind,
+      ...(serviceScopeKey !== undefined ? { serviceScopeKey } : {}),
       ...(input.excludeId ? { id: { not: input.excludeId } } : {}),
     },
   });

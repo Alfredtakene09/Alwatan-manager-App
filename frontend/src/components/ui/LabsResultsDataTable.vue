@@ -9,6 +9,7 @@ import {
   parseLatestLabResultAt,
 } from '@/lib/lab-notes'
 import { DT_ICONS } from '@/lib/datatable-defaults'
+import { formatAppDate, formatAppTime } from '@/i18n/locale-format'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
 
 export type LabsResultsVisitRow = {
@@ -71,12 +72,8 @@ const tableData = computed(() =>
       exams,
       examsFull,
       examCount,
-      resultDate: updatedAt.toLocaleDateString('fr-FR', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-      }),
-      resultTime: updatedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+      resultDate: formatAppDate(updatedAt),
+      resultTime: formatAppTime(updatedAt),
       resultSort: updatedAt.getTime(),
     }
   })

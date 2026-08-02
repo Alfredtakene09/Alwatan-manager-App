@@ -5,6 +5,7 @@ import https from "node:https";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
+import compression from "compression";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import authRoutes from "./routes/auth.js";
@@ -22,6 +23,7 @@ import { refreshExamPriceCache } from "./lib/lab-exam-prices.js";
 import { backfillLegacyConsultationInvoices } from "./lib/revenue-stats.js";
 import examCatalogRoutes from "./routes/exam-catalog.js";
 import examTypesRoutes from "./routes/exam-types.js";
+import medecinExamCatalogRoutes from "./routes/medecin-exam-catalog.js";
 import patientDossiersRoutes, { initPatientDossiers } from "./routes/patient-dossiers.js";
 import laboratoireRoutes from "./routes/laboratoire.js";
 import labPanelsRoutes from "./routes/lab-panels.js";
@@ -32,15 +34,40 @@ import cashSettlementsRoutes from "./routes/cash-settlements.js";
 import cashDeskRoutes from "./routes/cash-desk.js";
 import gestionnaireRoutes from "./routes/gestionnaire.js";
 import logistiqueRoutes from "./routes/logistique.js";
-import { getLanIpv4, isPrivateLanOrigin, parseCorsOrigins } from "./lib/lan-host.js";
+import labStockRoutes from "./routes/lab-stock.js";
+import clientSetupRoutes from "./routes/client-setup.js";
+import { getLanIpv4, getTailscaleIpv4, isPrivateLanOrigin, parseCorsOrigins } from "./lib/lan-host.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
 const host = process.env.HOST ?? "0.0.0.0";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+/** backend/src ou backend/dist → racine projet = ../.. */
+const projectRoot = path.resolve(__dirname, "../..");
 const frontendDist =
   process.env.FRONTEND_DIST?.trim() ||
-  path.resolve(__dirname, "../../frontend/dist");
+  path.join(projectRoot, "frontend", "dist");
+const frontendIndex = path.join(frontendDist, "index.html");
+
+/** Cache long pour les assets hashés Vite ; no-cache pour HTML / SW (mises à jour). */
+function setFrontendCacheHeaders(res: express.Response, filePath: string) {
+  const base = path.basename(filePath).toLowerCase();
+  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
+  if (
+    base === "index.html" ||
+    base === "sw.js" ||
+    base.startsWith("workbox-") ||
+    base.endsWith(".webmanifest")
+  ) {
+    res.setHeader("Cache-Control", "no-cache");
+    return;
+  }
+  if (normalized.includes("/assets/")) {
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    return;
+  }
+  res.setHeader("Cache-Control", "public, max-age=86400");
+}
 
 const corsAllowList = parseCorsOrigins(process.env.CORS_ORIGIN);
 app.use(
@@ -54,11 +81,41 @@ app.use(
     credentials: true,
   }),
 );
+app.use(compression());
 app.use(express.json());
 app.use(cookieParser());
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", service: "alwatan-api" });
+});
+
+app.get("/api/app-version", (_req, res) => {
+  try {
+    if (!fs.existsSync(frontendIndex)) {
+      res.json({ buildId: "dev", updatedAt: null });
+      return;
+    }
+    const html = fs.readFileSync(frontendIndex, "utf8");
+    const match = html.match(/assets\/index-[^"']+\.js/);
+    const stat = fs.statSync(frontendIndex);
+    const buildId = match?.[0] ?? `mtime-${stat.mtimeMs}`;
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      buildId,
+      updatedAt: stat.mtime.toISOString(),
+    });
+  } catch {
+    res.json({ buildId: "unknown", updatedAt: null });
+  }
+});
+
+app.get("/api/health/frontend", (_req, res) => {
+  const ready = fs.existsSync(frontendIndex);
+  res.status(ready ? 200 : 503).json({
+    ready,
+    frontendDist,
+    indexHtml: frontendIndex,
+  });
 });
 
 app.use("/api/auth", authRoutes);
@@ -74,6 +131,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/hospitalisation", hospitalisationRoutes);
 app.use("/api/exam-catalog", examCatalogRoutes);
 app.use("/api/comptabilite/exam-types", examTypesRoutes);
+app.use("/api/consultation/exam-nomenclature", medecinExamCatalogRoutes);
 app.use("/api/patient-dossiers", patientDossiersRoutes);
 app.use("/api/laboratoire", laboratoireRoutes);
 app.use("/api/lab-panels", labPanelsRoutes);
@@ -82,6 +140,8 @@ app.use("/api/cash-settlements", cashSettlementsRoutes);
 app.use("/api/cash-desk", cashDeskRoutes);
 app.use("/api/gestionnaire", gestionnaireRoutes);
 app.use("/api/logistique", logistiqueRoutes);
+app.use("/api/lab-stock", labStockRoutes);
+app.use("/api/client-setup", clientSetupRoutes);
 
 refreshExamPriceCache().catch((error) => {
   console.error("Impossible de charger le cache des tarifs examens:", error);
@@ -112,17 +172,31 @@ backfillLegacyConsultationInvoices()
     console.error("Synchronisation factures consultation:", error);
   });
 
-const serveFrontend = process.env.SERVE_FRONTEND !== "0" && fs.existsSync(frontendDist);
+const serveFrontend =
+  process.env.SERVE_FRONTEND !== "0" && fs.existsSync(frontendIndex);
 if (serveFrontend) {
-  app.use(express.static(frontendDist, { index: false }));
+  app.use(
+    express.static(frontendDist, {
+      index: false,
+      fallthrough: true,
+      etag: true,
+      lastModified: true,
+      setHeaders: setFrontendCacheHeaders,
+    }),
+  );
   app.use((req, res, next) => {
     if (req.method !== "GET" && req.method !== "HEAD") return next();
     if (req.path.startsWith("/api")) return next();
-    res.sendFile(path.join(frontendDist, "index.html"), (error) => {
+    res.setHeader("Cache-Control", "no-cache");
+    res.sendFile(frontendIndex, (error) => {
       if (error) next(error);
     });
   });
   console.log(`Interface servie depuis ${frontendDist}`);
+} else {
+  console.warn(
+    `Interface non servie (index introuvable ou SERVE_FRONTEND=0) : ${frontendIndex}`,
+  );
 }
 
 function startServer() {
@@ -141,12 +215,16 @@ function startServer() {
       console.log(`Application clinique : ${scheme}://localhost:${port}`);
     }
     const lanIp = getLanIpv4();
+    const tsIp = getTailscaleIpv4();
     if (lanIp && host === "0.0.0.0") {
-      console.log(`Accès réseau (autres postes) : ${scheme}://${lanIp}:${port}`);
+      console.log(`Accès Wi-Fi / Ethernet : ${scheme}://${lanIp}:${port}`);
       if (serveFrontend) {
         console.log(`  → interface + API sur le même port ${port}`);
       }
       console.log(`  → mode dev interface : ${scheme}://${lanIp}:5173 (si Vite est démarré)`);
+    }
+    if (tsIp && host === "0.0.0.0") {
+      console.log(`Accès Tailscale        : ${scheme}://${tsIp}:${port}`);
     }
   };
 

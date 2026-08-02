@@ -82,9 +82,9 @@ export const EXAM_CATALOG_FORM_PLACEHOLDERS: Record<
 
 export const OPERATION_KIND_CONFIG: ExamCatalogKindConfig = {
   slug: 'operation',
-  label: 'Opérations',
-  title: 'Opérations',
-  subtitle: 'Nomenclature chirurgicale, tarifs et part médecin',
+  label: 'Types opérations',
+  title: 'Types opérations',
+  subtitle: 'Tarifs et répartition chirurgien / assistant / clinique',
   icon: Scissors,
   iconVariant: 'rose',
 }

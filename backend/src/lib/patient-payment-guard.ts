@@ -16,6 +16,11 @@ export const PATIENT_HAS_DATA_CODE = "PATIENT_HAS_DATA";
 export const PATIENT_HAS_DATA_MESSAGE =
   "Impossible de supprimer : ce patient a déjà des données (facture, consultation, examens ou documents).";
 
+export const PATIENT_ALREADY_CONSULTED_CODE = "PATIENT_ALREADY_CONSULTED";
+
+export const PATIENT_ALREADY_CONSULTED_MESSAGE =
+  "Impossible de supprimer : ce patient a déjà été envoyé et consulté.";
+
 /** Patient avec au moins un encaissement enregistré (facture payée, opération ou hospitalisation). */
 export async function patientHasPaidBilling(
   patientId: string,
@@ -116,20 +121,105 @@ function isPendingClinicalNotes(notes?: string | null): boolean {
   return false;
 }
 
-/** Suppression dossier patient — autorisée seulement sans facture ni activité clinique. */
+type ConsultationLockFields = {
+  clinicalNotes?: string | null;
+  labSentToLabAt?: Date | null;
+  doctorId?: string | null;
+  completedAt?: Date | null;
+  diagnosis?: string | null;
+  doctorComment?: string | null;
+} | null;
+
+/** True si le médecin a déjà pris en charge / consulté ce passage. */
+function consultationIndicatesSeen(consultation?: ConsultationLockFields): boolean {
+  if (!consultation) return false;
+  if (consultation.completedAt || consultation.doctorId || consultation.labSentToLabAt) return true;
+  if (consultation.diagnosis?.trim() || consultation.doctorComment?.trim()) return true;
+  const notes = consultation.clinicalNotes;
+  if (notes?.includes(EXAMS_PRESCRIBED_PREFIX)) return true;
+  if (!isPendingClinicalNotes(notes)) return true;
+  return false;
+}
+
+function visitIndicatesConsulted(visit: {
+  status: VisitStatus;
+  consultation?: ConsultationLockFields;
+}): boolean {
+  if (visit.status !== VisitStatus.WAITING_CONSULTATION) return true;
+  return consultationIndicatesSeen(visit.consultation);
+}
+
+const consultationLockSelect = {
+  clinicalNotes: true,
+  labSentToLabAt: true,
+  doctorId: true,
+  completedAt: true,
+  diagnosis: true,
+  doctorComment: true,
+} as const;
+
+/**
+ * IDs patients dont la suppression est verrouillée (paiement, données, ou déjà consultés).
+ * Utilisé par la liste réception pour masquer le bouton supprimer.
+ */
+export async function findPatientIdsDeletionLocked(patientIds: string[]): Promise<Set<string>> {
+  if (!patientIds.length) return new Set();
+
+  const uniqueIds = [...new Set(patientIds)];
+  const locked = await findPatientIdsWithPaidBilling(uniqueIds);
+
+  const [invoices, documents, reclamations, visits] = await Promise.all([
+    prisma.invoice.findMany({
+      where: { patientId: { in: uniqueIds } },
+      select: { patientId: true },
+      distinct: ["patientId"],
+    }),
+    prisma.patientDocument.findMany({
+      where: { patientId: { in: uniqueIds } },
+      select: { patientId: true },
+      distinct: ["patientId"],
+    }),
+    prisma.examReclamation.findMany({
+      where: { patientId: { in: uniqueIds } },
+      select: { patientId: true },
+      distinct: ["patientId"],
+    }),
+    prisma.visit.findMany({
+      where: { patientId: { in: uniqueIds }, status: { not: VisitStatus.CANCELLED } },
+      select: {
+        patientId: true,
+        status: true,
+        consultation: { select: consultationLockSelect },
+      },
+    }),
+  ]);
+
+  for (const row of invoices) {
+    if (row.patientId) locked.add(row.patientId);
+  }
+  for (const row of documents) locked.add(row.patientId);
+  for (const row of reclamations) locked.add(row.patientId);
+  for (const visit of visits) {
+    if (visitIndicatesConsulted(visit)) locked.add(visit.patientId);
+  }
+
+  return locked;
+}
+
+/** Suppression dossier patient — autorisée seulement sans facture ni activité clinique / consultation. */
 export async function assertPatientDeletable(
   patientId: string,
   db: Prisma.TransactionClient | typeof prisma = prisma,
 ): Promise<void> {
   await assertPatientDataDeletable(patientId, db);
 
-  const [invoiceCount, documentCount, reclamationCount, activeVisit] = await Promise.all([
+  const [invoiceCount, documentCount, reclamationCount, visits] = await Promise.all([
     db.invoice.count({ where: { patientId } }),
     db.patientDocument.count({ where: { patientId } }),
     db.examReclamation.count({ where: { patientId } }),
-    db.visit.findFirst({
+    db.visit.findMany({
       where: { patientId, status: { not: VisitStatus.CANCELLED } },
-      include: { consultation: { select: { clinicalNotes: true, labSentToLabAt: true } } },
+      include: { consultation: { select: consultationLockSelect } },
     }),
   ]);
 
@@ -137,20 +227,7 @@ export async function assertPatientDeletable(
     throw new Error(PATIENT_HAS_DATA_CODE);
   }
 
-  if (!activeVisit) return;
-
-  if (activeVisit.status !== VisitStatus.WAITING_CONSULTATION) {
-    throw new Error(PATIENT_HAS_DATA_CODE);
-  }
-
-  const notes = activeVisit.consultation?.clinicalNotes;
-  if (activeVisit.consultation?.labSentToLabAt) {
-    throw new Error(PATIENT_HAS_DATA_CODE);
-  }
-  if (notes?.includes(EXAMS_PRESCRIBED_PREFIX)) {
-    throw new Error(PATIENT_HAS_DATA_CODE);
-  }
-  if (!isPendingClinicalNotes(notes)) {
-    throw new Error(PATIENT_HAS_DATA_CODE);
+  if (visits.some(visitIndicatesConsulted)) {
+    throw new Error(PATIENT_ALREADY_CONSULTED_CODE);
   }
 }

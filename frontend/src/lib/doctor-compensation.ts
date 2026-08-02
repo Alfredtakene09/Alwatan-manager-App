@@ -8,6 +8,13 @@ export type DoctorOption = {
   id: string
   firstName: string
   lastName: string
+  acceptingPatients?: boolean
+  specialty?: string | null
+  service?: string | null
+  clinicServiceId?: string | null
+  clinicService?: { id: string; name: string } | null
+  clinicServiceIds?: string[]
+  clinicServices?: { id: string; name: string; isDefault?: boolean }[]
   doctorCompensationType?: DoctorCompensationType
   consultationTotalFcfa?: number | null
   consultationQuotaMode?: ConsultationQuotaMode
@@ -192,7 +199,11 @@ export function formatDoctorQuotaShare(doctor: DoctorOption) {
 }
 
 export function doctorSelectSuffix(doctor: DoctorOption) {
-  if (doctorIsFixedSalary(doctor)) return ' — salaire fixe'
+  const names = doctorClinicServiceNames(doctor)
+  const serviceName =
+    names.length > 1 ? names.join(' / ') : names[0] ?? doctor.clinicService?.name ?? doctor.service ?? null
+  const servicePrefix = serviceName ? `${serviceName} · ` : ''
+  if (doctorIsFixedSalary(doctor)) return ` — ${servicePrefix}salaire fixe`.replace(' —  · ', ' — ')
   const combinedPrefix = doctor.doctorCompensationType === 'COMBINED' ? 'salaire + ' : ''
   const total = doctor.consultationTotalFcfa
   const validity =
@@ -204,9 +215,30 @@ export function doctorSelectSuffix(doctor: DoctorOption) {
       doctor.doctorConsultationShareFcfa ??
       computeDoctorConsultationShares(total, doctor).doctorShareFcfa
     const quotaLabel = formatDoctorQuotaShare(doctor)
-    return ` — ${combinedPrefix}${formatFcfa(total)} (part ${quotaLabel} · ${formatFcfa(share)})${validity}`
+    return ` — ${servicePrefix}${combinedPrefix}${formatFcfa(total)} (part ${quotaLabel} · ${formatFcfa(share)})${validity}`
   }
-  return ` — ${combinedPrefix}quota${validity}`
+  return ` — ${servicePrefix}${combinedPrefix}quota${validity}`
+}
+
+export function doctorServiceName(doctor?: DoctorOption | null) {
+  return doctor?.clinicService?.name ?? doctor?.service ?? null
+}
+
+/** Noms de tous les services liés au médecin (défaut + additionnels). */
+export function doctorClinicServiceNames(doctor?: DoctorOption | null): string[] {
+  if (doctor?.clinicServices?.length) {
+    return doctor.clinicServices.map((service) => service.name)
+  }
+  const single = doctorServiceName(doctor)
+  return single ? [single] : []
+}
+
+export function doctorMatchesService(
+  doctor: DoctorOption | null | undefined,
+  serviceName: string | null | undefined,
+) {
+  if (!serviceName) return true
+  return doctorClinicServiceNames(doctor).some((name) => name === serviceName)
 }
 
 export function defaultConsultationAmountForDoctor(doctor?: DoctorOption | null) {

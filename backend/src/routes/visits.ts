@@ -3,6 +3,7 @@ import { z } from "zod";
 import { InvoiceStatus, InvoiceType, PatientCategory, Prisma, UserRole, VisitStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
+import { backfillClinicServiceDoctorLinks } from "../lib/clinic-service-doctors.js";
 import {
   EXAMS_PRESCRIBED_PREFIX,
   LAB_BILLABLE_EXAM_KINDS,
@@ -36,16 +37,14 @@ import {
   PATIENT_HAS_PAYMENTS_CODE,
 } from "../lib/patient-payment-guard.js";
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
-import { serializeDoctorFields, selectableDoctorWhere, selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
+import { serializeDoctorFields, selectableDoctorWhere, selectableDoctorByIdWhere, selectableDoctorIncludingPausedWhere } from "../lib/doctor-compensation.js";
 import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
 import { resolveConsultationBilling, shouldCreateImmediateInvoice, isComptabiliteBillablePatient, comptabilitePatientWhere } from "../lib/patient-billing.js";
 import { consultationInvoiceCreateData, consultationInvoiceUpdateData } from "../lib/consultation-invoice.js";
 import { planReconsultation, archiveVisitsForReconsultation } from "../lib/reconsultation.js";
 import {
-  findDuplicatePatient,
-  serializePatientForDuplicate,
+  findPatientForDossierFusion,
 } from "../lib/duplicate-detection.js";
-import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import {
   collectedInvoicesWhere,
   INVOICE_TYPE_LABELS,
@@ -115,6 +114,8 @@ router.get("/doctors", async (req, res) => {
     return res.status(403).json({ error: "Accès refusé" });
   }
 
+  await backfillClinicServiceDoctorLinks();
+
   const doctors = await prisma.user.findMany({
     where: selectableDoctorWhere,
     select: {
@@ -122,6 +123,7 @@ router.get("/doctors", async (req, res) => {
       firstName: true,
       lastName: true,
       role: true,
+      acceptingPatients: true,
       employee: {
         select: {
           isMedecin: true,
@@ -135,21 +137,106 @@ router.get("/doctors", async (req, res) => {
           consultationValidityDays: true,
           consultationRenewalPolicy: true,
           surgeryQuotaPercent: true,
+          service: true,
+          clinicServiceId: true,
+          clinicService: { select: { id: true, name: true } },
+          clinicServiceLinks: {
+            select: {
+              isDefault: true,
+              clinicService: { select: { id: true, name: true, active: true } },
+            },
+          },
         },
       },
     },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });
   return res.json(
-    doctors.map((doctor) => ({
-      id: doctor.id,
-      firstName: doctor.firstName,
-      lastName: doctor.lastName,
-      specialty: doctor.employee?.specialty ?? null,
-      availabilitySlots: doctor.employee?.availabilitySlots ?? null,
-      ...serializeDoctorFields({ role: doctor.role, employee: doctor.employee }),
-    })),
+    doctors.map((doctor) => {
+      const clinicService = doctor.employee?.clinicService ?? null;
+      const serviceName = clinicService?.name ?? doctor.employee?.service ?? null;
+      const clinicServices = (doctor.employee?.clinicServiceLinks ?? [])
+        .filter((link) => link.clinicService.active)
+        .map((link) => ({
+          id: link.clinicService.id,
+          name: link.clinicService.name,
+          isDefault: link.isDefault,
+        }))
+        .sort((a, b) => {
+          if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+          return a.name.localeCompare(b.name, "fr");
+        });
+      const resolvedServices =
+        clinicServices.length > 0
+          ? clinicServices
+          : clinicService
+            ? [{ id: clinicService.id, name: clinicService.name, isDefault: true }]
+            : [];
+      return {
+        id: doctor.id,
+        firstName: doctor.firstName,
+        lastName: doctor.lastName,
+        acceptingPatients: doctor.acceptingPatients,
+        specialty: doctor.employee?.specialty ?? null,
+        availabilitySlots: doctor.employee?.availabilitySlots ?? null,
+        clinicServiceId: clinicService?.id ?? doctor.employee?.clinicServiceId ?? null,
+        service: serviceName,
+        clinicService,
+        clinicServiceIds: resolvedServices.map((s) => s.id),
+        clinicServices: resolvedServices,
+        ...serializeDoctorFields({ role: doctor.role, employee: doctor.employee }),
+      };
+    }),
   );
+});
+
+const availabilitySchema = z.object({
+  acceptingPatients: z.boolean(),
+});
+
+router.get("/me/availability", requireModule("consultation"), async (req, res) => {
+  const user = req.user!;
+  const dbUser = await prisma.user.findFirst({
+    where: { id: user.id, ...selectableDoctorIncludingPausedWhere },
+    select: { id: true, acceptingPatients: true },
+  });
+  if (!dbUser) {
+    return res.status(403).json({ error: "Réservé aux médecins." });
+  }
+  return res.json({
+    acceptingPatients: dbUser.acceptingPatients,
+  });
+});
+
+router.patch("/me/availability", requireModule("consultation"), async (req, res) => {
+  try {
+    const user = req.user!;
+    const me = await prisma.user.findFirst({
+      where: { id: user.id, ...selectableDoctorIncludingPausedWhere },
+      select: { id: true },
+    });
+    if (!me) {
+      return res.status(403).json({ error: "Réservé aux médecins." });
+    }
+    const body = availabilitySchema.parse(req.body);
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: { acceptingPatients: body.acceptingPatients },
+      select: { id: true, acceptingPatients: true },
+    });
+    return res.json({
+      acceptingPatients: updated.acceptingPatients,
+      message: updated.acceptingPatients
+        ? "Vous êtes disponible pour de nouveaux patients."
+        : "Vous êtes en pause — votre nom n’apparaît plus à la réception.",
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: "Données invalides." });
+    }
+    console.error("[visits/me/availability]", error);
+    return res.status(500).json({ error: "Impossible de mettre à jour la disponibilité." });
+  }
 });
 
 router.get("/external-services", requireModule("reception"), async (_req, res) => {
@@ -187,7 +274,9 @@ router.get("/", async (req, res) => {
 
   if (
     queue === "supervision" &&
-    (user.role === UserRole.ADMIN || user.role === UserRole.COMPTABLE)
+    (user.role === UserRole.ADMIN ||
+      user.role === UserRole.COMPTABLE ||
+      user.role === UserRole.GESTIONNAIRE)
   ) {
     where.status = { in: [VisitStatus.WAITING_CONSULTATION, VisitStatus.IN_CONSULTATION] };
   } else if (queue === "pending" && canAccessModule(user.role, "consultation")) {
@@ -549,22 +638,33 @@ router.get("/compte-rendu-receptions", async (req, res) => {
 });
 
 router.get("/etat-patients", requireModule("reception"), async (_req, res) => {
-  await cancelDuplicateActiveVisits();
+  // Dédup en arrière-plan — ne pas bloquer le chargement de la page
+  void cancelDuplicateActiveVisits().catch(() => undefined);
 
   const visits = await prisma.visit.findMany({
     where: {
       status: { notIn: [VisitStatus.CANCELLED] },
     },
-    include: {
-      patient: true,
+    select: {
+      id: true,
+      patientId: true,
+      status: true,
+      createdAt: true,
+      updatedAt: true,
+      patient: {
+        select: {
+          id: true,
+          code: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          createdAt: true,
+        },
+      },
       assignedDoctor: { select: { id: true, firstName: true, lastName: true } },
-      vitalSigns: { orderBy: { recordedAt: "desc" }, take: 1 },
-      consultation: true,
-      surgeryCase: { include: { interventionType: true } },
-      hospitalization: { include: { room: true } },
     },
     orderBy: { updatedAt: "desc" },
-    take: 500,
+    take: 300,
   });
 
   const result = keepLatestVisitPerPatient(visits);
@@ -758,6 +858,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
 });
 
 const examsByKindSchema = z.object({
+  specialty: z.array(z.string().min(1)).default([]),
   examen: z.array(z.string().min(1)).default([]),
   radio: z.array(z.string().min(1)).default([]),
   echo: z.array(z.string().min(1)).default([]),
@@ -771,6 +872,10 @@ const externalLabOrderSchema = z
     lastName: z.string().min(2).optional(),
     phone: z.string().optional(),
     gender: z.string().optional(),
+    service: z.string().max(120).optional(),
+    /** Médecin / prescripteur optionnel (ordonnance externe) */
+    doctorId: z.string().optional(),
+    prescriberDoctorId: z.string().optional(),
     ...patientAgeShape,
     exams: z.array(z.string().min(1)).optional(),
     examsByKind: examsByKindSchema.optional(),
@@ -870,27 +975,22 @@ router.post("/external-patient", requireModule("reception"), async (req, res) =>
       assignedDoctorId = doctor.id;
     }
 
-    if (!body.patientId) {
-      const duplicate = await findDuplicatePatient({
+    let resolvedPatientId = body.patientId;
+
+    if (!resolvedPatientId) {
+      const duplicate = await findPatientForDossierFusion({
         firstName: body.firstName!,
         lastName: body.lastName!,
         phone: body.phone,
-        age: body.age,
-        ageUnit: body.ageUnit,
+        gender: body.gender,
       });
       if (duplicate) {
-        return res.status(409).json(
-          duplicateErrorResponse(
-            "patient",
-            "Un patient avec ces informations est déjà enregistré.",
-            serializePatientForDuplicate(duplicate),
-          ),
-        );
+        resolvedPatientId = duplicate.id;
       }
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      let patientId = body.patientId;
+      let patientId = resolvedPatientId;
 
       if (!patientId) {
         const patient = await tx.patient.create({
@@ -958,6 +1058,7 @@ router.post("/external-patient", requireModule("reception"), async (req, res) =>
         data: {
           visitId: visit.id,
           clinicalNotes: EXTERNAL_EXAMS_PENDING_NOTE,
+          doctorId: assignedDoctorId ?? undefined,
         },
       });
 
@@ -990,6 +1091,8 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
   try {
     const body = externalLabOrderSchema.parse(req.body);
     const user = req.user!;
+    const service = body.service?.trim() || null;
+    const requestedDoctorId = body.doctorId?.trim() || body.prescriberDoctorId?.trim() || null;
     const examLabels = body.examsByKind
       ? flattenPrescribedExams(body.examsByKind as Record<ExamKindSlug, string[]>)
       : body.exams ?? [];
@@ -1002,33 +1105,37 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
       return res.status(400).json({ error: "La réduction ne peut pas dépasser le montant total." });
     }
 
+    let assignedDoctorId: string | null = null;
+    if (requestedDoctorId) {
+      const doctor = await prisma.user.findFirst({
+        where: selectableDoctorByIdWhere(requestedDoctorId),
+      });
+      if (!doctor) return res.status(400).json({ error: "Médecin invalide" });
+      assignedDoctorId = doctor.id;
+    }
+
     const clinicalNotes = body.examsByKind
       ? buildPrescribedExamsNotesByKind(body.examsByKind)
       : buildPrescribedExamsNotes(examLabels);
 
-    if (!body.patientId) {
-      const duplicate = await findDuplicatePatient({
+    let resolvedLabPatientId = body.patientId;
+
+    if (!resolvedLabPatientId) {
+      const duplicate = await findPatientForDossierFusion({
         firstName: body.firstName!,
         lastName: body.lastName!,
         phone: body.phone,
-        age: body.age,
-        ageUnit: body.ageUnit,
+        gender: body.gender,
       });
       if (duplicate) {
-        return res.status(409).json(
-          duplicateErrorResponse(
-            "patient",
-            "Un patient avec ces informations est déjà enregistré.",
-            serializePatientForDuplicate(duplicate),
-          ),
-        );
+        resolvedLabPatientId = duplicate.id;
       }
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      let patientId = body.patientId;
-      let patientCategory = body.patientId
-        ? (await tx.patient.findUnique({ where: { id: body.patientId } }))?.category
+      let patientId = resolvedLabPatientId;
+      let patientCategory = resolvedLabPatientId
+        ? (await tx.patient.findUnique({ where: { id: resolvedLabPatientId } }))?.category
         : undefined;
 
       if (!patientId) {
@@ -1093,6 +1200,17 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
 
       if (pendingExternal?.consultation) {
         visitId = pendingExternal.id;
+        if (service || assignedDoctorId) {
+          await tx.visit.update({
+            where: { id: visitId },
+            data: {
+              ...(service
+                ? { notes: buildExternalPatientVisitNote(service) }
+                : {}),
+              ...(assignedDoctorId ? { assignedDoctorId } : {}),
+            },
+          });
+        }
         consultation = await tx.consultation.update({
           where: { id: pendingExternal.consultation.id },
           data: {
@@ -1100,6 +1218,7 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
             labExamReductionFcfa: examReduction,
             labSentToLabAt: paidAt,
             labApprovedById: user.id,
+            ...(assignedDoctorId ? { doctorId: assignedDoctorId } : {}),
           },
         });
       } else {
@@ -1107,7 +1226,8 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
           data: {
             patientId,
             status: VisitStatus.IN_TREATMENT,
-            notes: EXTERNAL_PATIENT_VISIT_NOTE,
+            notes: buildExternalPatientVisitNote(service),
+            assignedDoctorId: assignedDoctorId ?? undefined,
           },
           include: { patient: true },
         });
@@ -1120,6 +1240,7 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
             labExamReductionFcfa: examReduction,
             labSentToLabAt: paidAt,
             labApprovedById: user.id,
+            doctorId: assignedDoctorId ?? undefined,
           },
         });
       }

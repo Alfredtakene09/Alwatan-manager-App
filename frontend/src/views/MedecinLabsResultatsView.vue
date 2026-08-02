@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ClipboardList, Eye, Plus, Printer, RefreshCw } from '@lucide/vue'
 import api from '@/api/client'
@@ -21,10 +21,13 @@ import MedecinPrescriptionModal, {
   type PrescriptionVisit,
 } from '@/components/MedecinPrescriptionModal.vue'
 import { type LabsResultsVisitRow } from '@/components/ui/LabsResultsDataTable.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { useSilentRefresh } from '@/composables/useSilentRefresh'
 import '@/assets/lab-visit-table.css'
 
 const router = useRouter()
 const auth = useAuthStore()
+const { uiText, dateText, timeText, numberText } = useAppI18n()
 
 const visits = ref<LabsResultsVisitRow[]>([])
 const prescriptionVisit = ref<PrescriptionVisit | null>(null)
@@ -50,26 +53,23 @@ const rows = computed(() =>
         exams: formatLabPrescribedExamsPreview(notes),
         examsFull: formatLabPrescribedExamsSummary(notes),
         examCount: countLabPrescribedExams(notes),
-        resultDate: resultAt.toLocaleDateString('fr-FR'),
-        resultTime: resultAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        resultDate: dateText(resultAt),
+        resultTime: timeText(resultAt),
         resultSort: resultAt.getTime(),
       }
     })
     .sort((a, b) => b.resultSort - a.resultSort),
 )
 
-const POLL_MS = 30_000
-let pollTimer: ReturnType<typeof setInterval> | null = null
-
-async function loadVisits() {
+async function loadVisits(opts?: { silent?: boolean }) {
   if (prescriptionVisit.value) return
-  loading.value = true
+  if (!opts?.silent) loading.value = true
   try {
     const { data } = await api.get('/consultations/labs-resultats')
     visits.value = data
   } finally {
-    loading.value = false
-    statsRefreshKey.value += 1
+    if (!opts?.silent) loading.value = false
+    if (!opts?.silent) statsRefreshKey.value += 1
   }
 }
 
@@ -102,16 +102,20 @@ function closePrescriptionModal() {
 function onPrescriptionSaved() {
   message.value = 'Nouveaux examens ajoutés à la prescription.'
   messageType.value = 'success'
-  loadVisits()
+  void loadVisits()
 }
 
-onMounted(() => {
-  loadVisits()
-  pollTimer = setInterval(loadVisits, POLL_MS)
-})
+const { refresh: refreshVisits } = useSilentRefresh(
+  ({ silent }) => loadVisits({ silent }),
+  {
+    intervalMs: 20_000,
+    enabled: () => !prescriptionVisit.value,
+    immediate: false,
+  },
+)
 
-onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
+onMounted(() => {
+  void loadVisits()
 })
 </script>
 
@@ -139,25 +143,25 @@ onUnmounted(() => {
         icon-variant="teal"
       >
         <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadVisits">
+          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshVisits()">
             Actualiser
           </UiButton>
         </template>
 
-        <p v-if="loading && !visits.length" class="empty">Chargement des résultats…</p>
+        <p v-if="loading && !visits.length" class="empty">{{ uiText('Chargement des résultats…') }}</p>
         <p v-else-if="!loading && !visits.length" class="empty">
-          Aucun résultat de laboratoire disponible pour le moment.
+          {{ uiText('Aucun résultat de laboratoire disponible pour le moment.') }}
         </p>
         <div v-else class="lab-visit-table-wrap">
           <table class="lab-visit-table">
             <thead>
               <tr>
                 <th class="lab-visit-table__num">#</th>
-                <th>Matricule</th>
-                <th>Patient</th>
-                <th>Examens</th>
-                <th>Résultats reçus</th>
-                <th class="lab-visit-table__actions-head">Actions</th>
+                <th>{{ uiText('Matricule') }}</th>
+                <th>{{ uiText('Patient') }}</th>
+                <th>{{ uiText('Examens') }}</th>
+                <th>{{ uiText('Résultats reçus') }}</th>
+                <th class="lab-visit-table__actions-head">{{ uiText('Actions') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -166,7 +170,7 @@ onUnmounted(() => {
                 :key="row.id"
                 :class="{ 'is-selected': prescriptionVisit?.id === row.id }"
               >
-                <td class="lab-visit-table__num">{{ index + 1 }}</td>
+                <td class="lab-visit-table__num">{{ numberText(index + 1) }}</td>
                 <td>
                   <span class="lab-visit-badge">{{ row.code }}</span>
                 </td>
@@ -176,7 +180,7 @@ onUnmounted(() => {
                 </td>
                 <td>
                   <span class="lab-visit-exams" :title="row.examsFull !== row.exams ? row.examsFull : ''">
-                    <span v-if="row.examCount > 0" class="lab-visit-exam-count">{{ row.examCount }}</span>
+                    <span v-if="row.examCount > 0" class="lab-visit-exam-count">{{ numberText(row.examCount) }}</span>
                     <span class="lab-visit-sub lab-visit-sub--truncate">{{ row.exams }}</span>
                   </span>
                 </td>
@@ -189,7 +193,7 @@ onUnmounted(() => {
                     <button
                       type="button"
                       class="lab-visit-act lab-visit-act--icon lab-visit-act--accent"
-                      title="Voir les résultats"
+                      :title="uiText('Voir les résultats')"
                       @click="viewResults(row.id)"
                     >
                       <Eye :size="15" />
@@ -197,7 +201,7 @@ onUnmounted(() => {
                     <button
                       type="button"
                       class="lab-visit-act lab-visit-act--icon"
-                      title="Imprimer les résultats"
+                      :title="uiText('Imprimer les résultats')"
                       :disabled="printingVisitId === row.id"
                       @click="printResults(row.id)"
                     >
@@ -206,11 +210,11 @@ onUnmounted(() => {
                     <button
                       type="button"
                       class="lab-visit-act lab-visit-act--labeled"
-                      title="Ajouter des examens"
+                      :title="uiText('Ajouter des examens')"
                       @click="openAppendModal(row.id)"
                     >
                       <Plus :size="15" />
-                      Ajouter
+                      {{ uiText('Ajouter') }}
                     </button>
                   </div>
                 </td>

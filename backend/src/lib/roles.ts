@@ -45,24 +45,29 @@ export const ADMIN_ASSIGNABLE_USER_ROLES = [
 
 export type AdminAssignableUserRole = (typeof ADMIN_ASSIGNABLE_USER_ROLES)[number];
 
-/** Direction (COMPTABLE) gère désormais les modules d’administration. */
+/**
+ * Direction (COMPTABLE) et Gestionnaire partagent les mêmes vues / modules.
+ * ADMIN conserve un accès transversal.
+ */
+export const DIRECTION_GESTIONNAIRE_ROLES: AppUserRole[] = ["ADMIN", "COMPTABLE", "GESTIONNAIRE"];
+
 export const MODULE_ACCESS: Record<string, AppUserRole[]> = {
   dashboard: [...USER_ROLES],
-  reception: ["ADMIN", "RECEPTIONNISTE", "COMPTABLE"],
-  consultation: ["ADMIN", "MEDECIN", "COMPTABLE"],
-  comptabilite: ["ADMIN", "COMPTABLE", "GESTIONNAIRE"],
+  reception: ["ADMIN", "RECEPTIONNISTE", "COMPTABLE", "GESTIONNAIRE"],
+  consultation: ["ADMIN", "MEDECIN", "COMPTABLE", "GESTIONNAIRE"],
+  comptabilite: [...DIRECTION_GESTIONNAIRE_ROLES],
   hospitalisation: ["ADMIN", "RECEPTIONNISTE", "COMPTABLE", "GESTIONNAIRE"],
-  "bloc-salles": ["ADMIN", "COMPTABLE", "SOIGNANT"],
+  "bloc-salles": ["ADMIN", "COMPTABLE", "SOIGNANT", "GESTIONNAIRE"],
   pharmacie: ["ADMIN", "PHARMACIEN", "COMPTABLE", "GESTIONNAIRE"],
-  logistique: ["ADMIN", "LOGISTIQUE", "COMPTABLE"],
-  laboratoire: ["ADMIN", "LABORANTIN", "COMPTABLE"],
-  "dossier-patient": ["ADMIN", "MEDECIN", "LABORANTIN", "COMPTABLE"],
-  factures: ["ADMIN", "COMPTABLE"],
-  utilisateurs: ["ADMIN", "COMPTABLE", "GESTIONNAIRE"],
-  /** Comptes de connexion — admin plateforme et gestionnaire. */
-  "user-accounts": ["ADMIN", "GESTIONNAIRE"],
-  admin: ["ADMIN", "COMPTABLE", "GESTIONNAIRE"],
-  gestionnaire: ["ADMIN", "GESTIONNAIRE", "COMPTABLE"],
+  logistique: ["ADMIN", "LOGISTIQUE", "COMPTABLE", "GESTIONNAIRE"],
+  laboratoire: ["ADMIN", "LABORANTIN", "COMPTABLE", "GESTIONNAIRE"],
+  "dossier-patient": ["ADMIN", "MEDECIN", "LABORANTIN", "COMPTABLE", "GESTIONNAIRE"],
+  factures: [...DIRECTION_GESTIONNAIRE_ROLES],
+  utilisateurs: [...DIRECTION_GESTIONNAIRE_ROLES],
+  /** Comptes de connexion — admin, direction et gestionnaire. */
+  "user-accounts": [...DIRECTION_GESTIONNAIRE_ROLES],
+  admin: [...DIRECTION_GESTIONNAIRE_ROLES],
+  gestionnaire: [...DIRECTION_GESTIONNAIRE_ROLES],
 };
 
 export function canAccessModule(role: AppUserRole, module: string) {
@@ -70,20 +75,43 @@ export function canAccessModule(role: AppUserRole, module: string) {
 }
 
 /** Nomenclatures, suppressions, structure (salles, dossiers…) — pas la réception. */
-export const MANAGEMENT_ROLES: AppUserRole[] = ["ADMIN", "COMPTABLE", "GESTIONNAIRE"]
+export const MANAGEMENT_ROLES: AppUserRole[] = DIRECTION_GESTIONNAIRE_ROLES;
 
 export function canManageResources(role: AppUserRole) {
   return MANAGEMENT_ROLES.includes(role)
 }
 
+/** Direction et Gestionnaire — mêmes droits de supervision / lecture clinique. */
+export function isDirectionOrGestionnaire(role: AppUserRole) {
+  return role === "COMPTABLE" || role === "GESTIONNAIRE" || role === "ADMIN";
+}
+
 /**
- * Catalogue pharmacie (catégories, produits, fournisseurs, mouvements).
- * PHARMACIEN exclu — Direction (COMPTABLE) conserve l’accès admin existant.
+ * Infos cliniques de consultation + ordonnance pharmacie :
+ * médecin prescripteur, ou admin / direction / gestionnaire.
  */
-export const PHARMACY_CATALOG_ROLES: AppUserRole[] = ["ADMIN", "GESTIONNAIRE", "COMPTABLE"]
+export function canViewClinicalConsultationDetails(role: AppUserRole) {
+  return isDirectionOrGestionnaire(role);
+}
+
+/**
+ * Catalogue pharmacie (catégories / fournisseurs / écriture produits).
+ * Réservé admin et gestionnaire.
+ */
+export const PHARMACY_CATALOG_ROLES: AppUserRole[] = ["ADMIN", "GESTIONNAIRE"];
 
 export function canManagePharmacyCatalog(role: AppUserRole) {
-  return PHARMACY_CATALOG_ROLES.includes(role)
+  return PHARMACY_CATALOG_ROLES.includes(role);
+}
+
+/**
+ * Stock laboratoire (réactifs / consommables).
+ * Réservé gestionnaire et Direction — laborantin exclu.
+ */
+export const LAB_STOCK_ROLES: AppUserRole[] = DIRECTION_GESTIONNAIRE_ROLES;
+
+export function canManageLabStock(role: AppUserRole) {
+  return LAB_STOCK_ROLES.includes(role)
 }
 
 export function canWriteDossierDocuments(role: AppUserRole) {
@@ -91,7 +119,8 @@ export function canWriteDossierDocuments(role: AppUserRole) {
     role === "ADMIN" ||
     role === "MEDECIN" ||
     role === "LABORANTIN" ||
-    role === "COMPTABLE"
+    role === "COMPTABLE" ||
+    role === "GESTIONNAIRE"
   )
 }
 
@@ -102,7 +131,8 @@ export function getDefaultRoute(role: AppUserRole) {
     case "MEDECIN":
       return "/consultation";
     case "COMPTABLE":
-      return "/reception";
+    case "GESTIONNAIRE":
+      return "/dashboard";
     case "SOIGNANT":
       return "/bloc-salles/tableau-de-bord";
     case "PHARMACIEN":
@@ -111,8 +141,6 @@ export function getDefaultRoute(role: AppUserRole) {
       return "/logistique/tableau-de-bord";
     case "LABORANTIN":
       return "/laboratoire";
-    case "GESTIONNAIRE":
-      return "/dashboard";
     default:
       return "/dashboard";
   }

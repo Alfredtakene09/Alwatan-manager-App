@@ -6,6 +6,9 @@ import PharmacyCashierPanel, {
   type CashierPatient,
   type CashierProduct,
 } from '@/components/pharmacie/PharmacyCashierPanel.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+
+const { uiText } = useAppI18n()
 
 const products = ref<CashierProduct[]>([])
 const patients = ref<CashierPatient[]>([])
@@ -20,7 +23,7 @@ async function loadDispensationData() {
     products.value = data.products
     patients.value = data.patients
   } catch {
-    loadError.value = 'Impossible de charger le catalogue pharmacie.'
+    loadError.value = uiText('Impossible de charger le catalogue pharmacie.')
     products.value = []
     patients.value = []
   } finally {

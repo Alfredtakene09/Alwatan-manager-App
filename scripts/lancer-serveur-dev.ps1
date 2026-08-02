@@ -33,6 +33,7 @@ if (-not $apiRunning) {
 `$env:Path='$nodeDir;'+`$env:Path
 `$env:HOST='0.0.0.0'
 `$env:CORS_ORIGIN='$corsOrigin'
+`$env:SERVE_FRONTEND='0'
 Set-Location '$be'
 npm.cmd run dev
 "@

@@ -1,3 +1,4 @@
+/** @deprecated Conservé pour compat — les formes vivent en base (ProductForm / API /pharmacie/forms). */
 export const PHARMACEUTICAL_FORMS = [
   'Comprimé',
   'Gélule',

@@ -7,6 +7,7 @@ export {
   loadExamCatalog,
   getExamCatalogSync,
   getCatalogForKind,
+  getSpecialtyServiceName,
   getExamPriceFcfa,
   invalidateExamCatalogCache,
 } from './store'

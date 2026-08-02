@@ -152,7 +152,30 @@ model ClinicService {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  employees Employee[]
+  /// Médecins rattachés (plusieurs services possibles par médecin)
+  serviceDoctors ClinicServiceDoctor[]
+  examCatalogItems ExamCatalogItem[]
+  examCatalogServiceTabs ExamCatalogServiceTab[]
+  interventionTypes InterventionType[]
+
   @@index([active, sortOrder, name])
+}
+
+/// Lien médecin ↔ service clinique (plusieurs services ; un seul isDefault).
+model ClinicServiceDoctor {
+  id              String   @id @default(cuid())
+  employeeId      String
+  clinicServiceId String
+  isDefault       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+
+  employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  clinicService ClinicService @relation(fields: [clinicServiceId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, clinicServiceId])
+  @@index([clinicServiceId])
+  @@index([employeeId, isDefault])
 }
 
 model Employee {
@@ -174,6 +197,8 @@ model Employee {
   birthDate                DateTime?              @db.Date
   address                  String?
   service                  String?
+  /// Service clinique par défaut (consultation / catalogue examens)
+  clinicServiceId          String?
   hiredAt                  DateTime?              @db.Date
   contractType             ContractType?
   contractStatus           EmployeeContractStatus @default(ACTIF)
@@ -187,9 +212,14 @@ model Employee {
   createdAt                DateTime               @default(now())
   updatedAt                DateTime               @updatedAt
 
+  clinicService ClinicService? @relation(fields: [clinicServiceId], references: [id], onDelete: SetNull)
+  /// Tous les services auxquels le médecin est rattaché (réception)
+  clinicServiceLinks ClinicServiceDoctor[]
   user     User?
   payrolls EmployeePayroll[]
   salaryAdvances SalaryAdvance[]
+
+  @@index([clinicServiceId])
 }
 
 model User {
@@ -201,6 +231,8 @@ model User {
   lastName      String
   role          UserRole
   active        Boolean             @default(true)
+  /// Médecin disponible pour de nouveaux patients à la réception (false = en pause)
+  acceptingPatients Boolean         @default(true)
   employeeId    String              @unique
   /// Créneau caisse assigné (obligatoire pour les réceptionnistes)
   cashShiftSlot ReceptionShiftSlot?
@@ -228,6 +260,7 @@ model User {
   receptionCashSettlementsAsReceptionist ReceptionCashSettlement[] @relation("SettlementReceptionist")
   receptionCashSettlementsAsAccountant   ReceptionCashSettlement[] @relation("SettlementAccountant")
   receptionDayClosures                   ReceptionDayClosure[]
+  receptionDayClosuresValidated          ReceptionDayClosure[]     @relation("DayClosureValidatedBy")
   clinicExpensesPaid                     ClinicExpense[]           @relation("ExpensePaidBy")
   clinicExpensesRecorded                 ClinicExpense[]           @relation("ExpenseRecordedBy")
   changeTransfersAsRequester             CashChangeTransfer[]      @relation("ChangeRequester")
@@ -243,6 +276,7 @@ model User {
   logisticsStockMovements                LogisticsStockMovement[]
   logisticsRequestsCreated               LogisticsRequest[]        @relation("LogisticsRequestRequestedBy")
   logisticsRequestsHandled               LogisticsRequest[]        @relation("LogisticsRequestHandledBy")
+  labStockMovements                      LabStockMovement[]
   treatingDoctorPatients                 Patient[]                 @relation("TreatingDoctorPatients")
   registeredPatients                     Patient[]                 @relation("PatientRegisteredBy")
   attendingHospitalizations              Hospitalization[]         @relation("HospitalizationAttendingDoctor")
@@ -399,27 +433,54 @@ model InterventionType {
   surgeonName             String?
   anesthesiologistId      String?
   anesthesiologistName    String?
+  /// Service clinique auquel l'opération est rattachée
+  clinicServiceId         String?
   active                  Boolean              @default(true)
 
-  surgeon          User?         @relation("InterventionSurgeon", fields: [surgeonId], references: [id])
-  anesthesiologist User?         @relation("InterventionAnesthesiologist", fields: [anesthesiologistId], references: [id])
+  surgeon          User?          @relation("InterventionSurgeon", fields: [surgeonId], references: [id])
+  anesthesiologist User?          @relation("InterventionAnesthesiologist", fields: [anesthesiologistId], references: [id])
+  clinicService    ClinicService? @relation(fields: [clinicServiceId], references: [id], onDelete: SetNull)
   surgeryCases     SurgeryCase[]
+
+  @@index([clinicServiceId])
 }
 
 model ExamCatalogItem {
-  id        String          @id @default(cuid())
-  kind      ExamCatalogKind
-  code      String
-  label     String
-  category  String?
-  priceFcfa Int
-  active    Boolean         @default(true)
-  sortOrder Int             @default(0)
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
+  id              String          @id @default(cuid())
+  kind            ExamCatalogKind
+  code            String
+  label           String
+  category        String?
+  priceFcfa       Int
+  /// Service clinique auquel l'examen est rattaché (Laboratoire / Hospitalisation = visibles pour tous)
+  clinicServiceId String?
+  /// Périmètre d'unicité du code : "_" = nomenclature globale du type, sinon id du service.
+  serviceScopeKey String          @default("_")
+  active          Boolean         @default(true)
+  sortOrder       Int             @default(0)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 
-  @@unique([kind, code])
+  clinicService ClinicService? @relation(fields: [clinicServiceId], references: [id], onDelete: SetNull)
+
+  @@unique([kind, code, serviceScopeKey])
   @@index([kind, active])
+  @@index([clinicServiceId])
+  @@index([serviceScopeKey])
+}
+
+model ExamCatalogServiceTab {
+  id              String          @id @default(cuid())
+  kind            ExamCatalogKind
+  clinicServiceId String
+  sortOrder       Int             @default(0)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  clinicService ClinicService @relation(fields: [clinicServiceId], references: [id], onDelete: Cascade)
+
+  @@unique([kind, clinicServiceId])
+  @@index([kind, sortOrder])
 }
 
 /// Formulaire de résultats laboratoire (panel), géré via le module CRUD du labo.
@@ -633,6 +694,18 @@ model ProductCategory {
   @@index([sortOrder])
 }
 
+/** Formes galéniques du catalogue pharmacie (Comprimé, Sirop…). */
+model ProductForm {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([sortOrder])
+}
+
 model Product {
   id                 String    @id @default(cuid())
   name               String
@@ -755,12 +828,13 @@ model ReceptionCashSettlement {
   receptionist User @relation("SettlementReceptionist", fields: [receptionistId], references: [id])
   accountant   User @relation("SettlementAccountant", fields: [accountantId], references: [id])
   lines        ReceptionCashSettlementLine[]
+  dayClosure   ReceptionDayClosure?
 
   @@unique([receptionistId, businessDate, shiftSlot])
   @@index([businessDate, shiftSlot])
 }
 
-/// Clôture journalière déclarée par le réceptionniste (avant décaissement comptable).
+/// Clôture journalière déclarée par le réceptionniste (avant validation gestionnaire).
 model ReceptionDayClosure {
   id             String              @id @default(cuid())
   receptionistId String
@@ -774,11 +848,20 @@ model ReceptionDayClosure {
   comment        String?
   closedAt       DateTime            @default(now())
   createdAt      DateTime            @default(now())
+  /// Validation par le gestionnaire (récupération / acceptation de la caisse réception)
+  validatedAt    DateTime?
+  validatedById  String?
+  validationComment String?
+  /// Décaissement créé automatiquement à la validation
+  settlementId   String?             @unique
 
-  receptionist User @relation(fields: [receptionistId], references: [id])
+  receptionist User  @relation(fields: [receptionistId], references: [id])
+  validatedBy  User? @relation("DayClosureValidatedBy", fields: [validatedById], references: [id])
+  settlement   ReceptionCashSettlement? @relation(fields: [settlementId], references: [id])
 
   @@unique([receptionistId, businessDate])
   @@index([businessDate])
+  @@index([validatedAt])
 }
 
 model ReceptionCashSettlementLine {
@@ -1145,4 +1228,69 @@ model LogisticsRequestLine {
   item    LogisticsItem    @relation(fields: [itemId], references: [id])
 
   @@index([requestId])
+}
+
+// ---------------------------------------------------------------------------
+// Stock laboratoire (réactifs / consommables) — gestionnaire & direction
+// ---------------------------------------------------------------------------
+
+enum LabStockMovementType {
+  ENTRY
+  EXIT
+  ADJUSTMENT
+}
+
+model LabStockCategory {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items LabStockItem[]
+
+  @@index([sortOrder])
+}
+
+model LabStockItem {
+  id           String    @id @default(cuid())
+  name         String
+  sku          String    @unique
+  reference    String?
+  unit         String    @default("unité")
+  categoryId   String?
+  quantity     Int       @default(0)
+  unitCostFcfa Int       @default(0)
+  minStock     Int       @default(5)
+  expiryDate   DateTime? @db.Date
+  noExpiry     Boolean   @default(true)
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  category  LabStockCategory?   @relation(fields: [categoryId], references: [id])
+  movements LabStockMovement[]
+
+  @@index([categoryId])
+  @@index([name])
+}
+
+model LabStockMovement {
+  id           String               @id @default(cuid())
+  itemId       String
+  type         LabStockMovementType
+  quantity     Int
+  unitCostFcfa Int?
+  reference    String?
+  notes        String?
+  userId       String
+  stockAfter   Int
+  createdAt    DateTime             @default(now())
+
+  item LabStockItem @relation(fields: [itemId], references: [id])
+  user User         @relation(fields: [userId], references: [id])
+
+  @@index([itemId, createdAt])
+  @@index([createdAt])
 }

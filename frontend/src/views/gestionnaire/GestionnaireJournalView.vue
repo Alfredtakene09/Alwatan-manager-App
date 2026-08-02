@@ -137,6 +137,10 @@ const hasActiveFilters = computed(
     Boolean(searchQuery.value.trim()),
 )
 
+const listedDaysCount = computed(() =>
+  (journal.value?.dailyByMonth ?? []).reduce((sum, month) => sum + month.days.length, 0),
+)
+
 const filtersLabel = computed(() => {
   const parts: string[] = []
   if (filterType.value !== 'all') {
@@ -368,65 +372,104 @@ onMounted(loadJournal)
 
     <section class="page-with-table__head journal-page__head no-print">
       <header class="journal-hero">
-        <div class="journal-hero__top">
-          <div class="journal-hero__content">
-            <div class="journal-hero__icon">
-              <BookOpen :size="26" />
-            </div>
-            <div>
-              <p class="journal-hero__eyebrow">Trésorerie clinique</p>
-              <h1 class="journal-hero__title">Livre journal</h1>
-              <p class="journal-hero__subtitle">Entrées et sorties — synthèse journalière</p>
-            </div>
+        <div class="journal-hero__main">
+          <div class="journal-hero__icon">
+            <BookOpen :size="26" />
           </div>
-
-          <div class="journal-hero__controls">
-            <div class="period-pills" role="tablist" aria-label="Période">
-              <button
-                v-for="p in (['today', 'week', 'month', 'year', 'custom'] as const)"
-                :key="p"
-                type="button"
-                role="tab"
-                class="period-pill"
-                :class="{ 'period-pill--active': preset === p }"
-                :aria-selected="preset === p"
-                @click="selectPreset(p)"
-              >
-                {{ PRESET_LABELS[p] }}
-              </button>
-            </div>
-
-            <div v-if="preset === 'custom'" class="period-inline">
-              <input
-                v-model="customFrom"
-                type="date"
-                class="period-inline__input"
-                aria-label="Date de début"
-                :max="customTo || todayKey"
-              />
-              <span class="period-inline__sep" aria-hidden="true">→</span>
-              <input
-                v-model="customTo"
-                type="date"
-                class="period-inline__input"
-                aria-label="Date de fin"
-                :min="customFrom || undefined"
-                :max="todayKey"
-              />
-            </div>
-
-            <UiButton
-              size="sm"
-              variant="ghost"
-              :icon="RefreshCw"
-              :disabled="loading"
-              @click="loadJournal"
-            >
-              Actualiser
-            </UiButton>
+          <div class="journal-hero__text">
+            <p class="journal-hero__eyebrow">Trésorerie clinique</p>
+            <h1 class="journal-hero__title">Livre journal</h1>
+            <p class="journal-hero__subtitle">
+              Entrées et sorties — synthèse journalière
+              <span v-if="periodLabel" class="journal-hero__period">· {{ periodLabel }}</span>
+            </p>
           </div>
         </div>
+
+        <div class="journal-hero__controls">
+          <div class="period-pills" role="tablist" aria-label="Période">
+            <button
+              v-for="p in (['today', 'week', 'month', 'year', 'custom'] as const)"
+              :key="p"
+              type="button"
+              role="tab"
+              class="period-pill"
+              :class="{ 'period-pill--active': preset === p }"
+              :aria-selected="preset === p"
+              @click="selectPreset(p)"
+            >
+              {{ PRESET_LABELS[p] }}
+            </button>
+          </div>
+
+          <div v-if="preset === 'custom'" class="period-inline">
+            <input
+              v-model="customFrom"
+              type="date"
+              class="period-inline__input"
+              aria-label="Date de début"
+              :max="customTo || todayKey"
+            />
+            <span class="period-inline__sep" aria-hidden="true">→</span>
+            <input
+              v-model="customTo"
+              type="date"
+              class="period-inline__input"
+              aria-label="Date de fin"
+              :min="customFrom || undefined"
+              :max="todayKey"
+            />
+          </div>
+
+          <UiButton
+            size="sm"
+            variant="ghost"
+            class="journal-hero__refresh"
+            :icon="RefreshCw"
+            :disabled="loading"
+            @click="loadJournal"
+          >
+            Actualiser
+          </UiButton>
+        </div>
       </header>
+
+      <div v-if="journal" class="journal-summary" aria-label="Totaux période">
+        <article class="summary-card summary-card--in">
+          <span class="summary-card__label">Total entrées</span>
+          <AmountFcfa :amount="journal.totals.inflowsFcfa" variant="in" size="lg" bold class="summary-card__amount" />
+          <span class="summary-card__hint">{{ periodLabel }}</span>
+        </article>
+        <article class="summary-card summary-card--out">
+          <span class="summary-card__label">Total sorties</span>
+          <AmountFcfa :amount="journal.totals.outflowsFcfa" variant="out" size="lg" bold class="summary-card__amount" />
+          <span class="summary-card__hint">Dépenses, salaires, décaissements…</span>
+        </article>
+        <article
+          class="summary-card"
+          :class="journal.totals.balanceFcfa >= 0 ? 'summary-card--net-pos' : 'summary-card--net-neg'"
+        >
+          <span class="summary-card__label">Solde période</span>
+          <AmountFcfa
+            :amount="journal.totals.balanceFcfa"
+            :variant="journal.totals.balanceFcfa >= 0 ? 'net-pos' : 'net-neg'"
+            size="lg"
+            bold
+            class="summary-card__amount"
+          />
+          <span class="summary-card__hint">
+            {{ journal.totals.balanceFcfa >= 0 ? 'Excédent net' : 'Déficit net' }}
+          </span>
+        </article>
+        <article class="summary-card summary-card--meta">
+          <span class="summary-card__label">Jours listés</span>
+          <p class="summary-card__value">{{ listedDaysCount }}</p>
+          <span class="summary-card__hint">
+            {{ journal.dailyByMonth.length }} mois ·
+            {{ hasActiveFilters ? 'Filtres actifs' : 'Sans filtre' }}
+          </span>
+        </article>
+      </div>
 
       <div class="journal-toolbar">
         <label class="journal-toolbar__search">
@@ -637,8 +680,9 @@ onMounted(loadJournal)
 .journal-page.page-with-table {
   height: calc(100dvh - 6.5rem);
   min-height: 32rem;
-  max-width: 1120px;
-  gap: 0.5rem;
+  max-width: none;
+  width: 100%;
+  gap: 0.65rem;
 }
 
 .journal-page__head {
@@ -649,8 +693,8 @@ onMounted(loadJournal)
   top: 0;
   z-index: 10;
   background: var(--bg-app, #f4f6ef);
-  padding-bottom: 0.15rem;
-  gap: 0.45rem;
+  padding-bottom: 0.1rem;
+  gap: 0.65rem;
 }
 
 .journal-page__body {
@@ -675,36 +719,35 @@ onMounted(loadJournal)
 }
 
 .journal-hero {
-  padding: 1rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.95rem 1.2rem;
   border-radius: 16px;
   background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 48%, #fde68a 100%);
   border: 1px solid rgba(180, 83, 9, 0.18);
   box-shadow: 0 8px 24px rgba(180, 83, 9, 0.07);
 }
 
-.journal-hero__top {
+.journal-hero__main {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1.25rem;
+  align-items: center;
+  gap: 0.85rem;
+  min-width: 0;
 }
 
 .journal-hero__controls {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   justify-content: flex-end;
-  gap: 0.55rem;
-  flex: 1;
-  min-width: min(100%, 22rem);
-  max-width: 36rem;
-  margin-left: auto;
+  gap: 0.5rem;
+  flex-shrink: 0;
 }
 
-.journal-hero__content {
-  display: flex;
-  align-items: center;
-  gap: 0.85rem;
+.journal-hero__refresh {
+  background: rgba(255, 255, 255, 0.55) !important;
 }
 
 .journal-hero__icon {
@@ -742,6 +785,84 @@ onMounted(loadJournal)
   margin: 0.25rem 0 0;
   font-size: 0.875rem;
   color: #a16207;
+}
+
+.journal-hero__period {
+  color: #92400e;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.journal-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-height: 6.25rem;
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+}
+
+.summary-card--in {
+  border-color: rgba(22, 163, 74, 0.2);
+  background: linear-gradient(160deg, #f0fdf4, #fff);
+}
+
+.summary-card--out {
+  border-color: rgba(220, 38, 38, 0.18);
+  background: linear-gradient(160deg, #fef2f2, #fff);
+}
+
+.summary-card--net-pos {
+  border-color: rgba(37, 99, 235, 0.2);
+  background: linear-gradient(160deg, #eff6ff, #fff);
+}
+
+.summary-card--net-neg {
+  border-color: rgba(234, 88, 12, 0.22);
+  background: linear-gradient(160deg, #fff7ed, #fff);
+}
+
+.summary-card--meta {
+  border-color: rgba(180, 83, 9, 0.18);
+  background: linear-gradient(160deg, #fffbeb, #fff);
+}
+
+.summary-card__label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.summary-card__value {
+  margin: 0.1rem 0 0;
+  font-size: 1.65rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: #0f172a;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-card__amount {
+  margin-top: 0.15rem;
+}
+
+.summary-card__hint {
+  margin-top: auto;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: #64748b;
 }
 
 .period-pills {
@@ -948,7 +1069,13 @@ onMounted(loadJournal)
 }
 
 .journal-month:not(.journal-month--solo) .journal-table-viewport {
-  max-height: 22rem;
+  max-height: min(42vh, 28rem);
+}
+
+@media (max-width: 1100px) {
+  .journal-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 820px) {
@@ -957,13 +1084,12 @@ onMounted(loadJournal)
     min-height: 26rem;
   }
 
-  .journal-hero__top {
+  .journal-hero {
     flex-direction: column;
+    align-items: stretch;
   }
 
   .journal-hero__controls {
-    max-width: none;
-    margin-left: 0;
     justify-content: flex-start;
   }
 
@@ -977,10 +1103,20 @@ onMounted(loadJournal)
     width: auto;
   }
 
+  .journal-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .journal-toolbar__actions {
     margin-left: 0;
     width: 100%;
     justify-content: flex-end;
+  }
+}
+
+@media (max-width: 560px) {
+  .journal-summary {
+    grid-template-columns: 1fr;
   }
 }
 

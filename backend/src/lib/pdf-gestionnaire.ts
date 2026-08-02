@@ -16,12 +16,13 @@ function drawArabicClinicName(
   x: number,
   y: number,
   width: number,
+  align: "left" | "center" | "right" = "center",
 ): boolean {
   if (!ARABIC_FONT_PATH || !fs.existsSync(ARABIC_FONT_PATH)) return false;
   try {
-    doc.font(ARABIC_FONT_PATH).fontSize(8.5).fillColor("#475569").text(CLINIC.nameAr, x, y, {
+    doc.font(ARABIC_FONT_PATH).fontSize(10).fillColor("#475569").text(CLINIC.nameAr, x, y, {
       width,
-      align: "right",
+      align,
     });
     doc.font("Helvetica");
     return true;
@@ -42,9 +43,23 @@ function collectPdf(doc: PDFKit.PDFDocument): Promise<Buffer> {
 }
 
 function drawHeader(doc: PDFKit.PDFDocument, title: string) {
-  doc.fillColor("#b45309").fontSize(14).font("Helvetica-Bold").text(CLINIC.nameFr, 50, 45);
-  doc.fillColor("#334155").fontSize(9).font("Helvetica").text(CLINIC.fullAddress, 50, doc.y + 4);
-  doc.fillColor("#0f172a").fontSize(12).font("Helvetica-Bold").text(title, 50, doc.y + 12);
+  const leftX = 50;
+  const contentWidth = doc.page.width - leftX * 2;
+  doc
+    .fillColor("#b45309")
+    .fontSize(16)
+    .font("Helvetica-Bold")
+    .text(CLINIC.nameFr, leftX, 45, { width: contentWidth, align: "center" });
+  doc
+    .fillColor("#334155")
+    .fontSize(11)
+    .font("Helvetica")
+    .text(CLINIC.fullAddress, leftX, doc.y + 4, { width: contentWidth, align: "center" });
+  doc
+    .fillColor("#0f172a")
+    .fontSize(13)
+    .font("Helvetica-Bold")
+    .text(title, leftX, doc.y + 12, { width: contentWidth, align: "center" });
   doc.moveDown();
 }
 
@@ -54,49 +69,60 @@ function drawJournalLetterhead(
   periodLabel?: string,
   filtersLabel?: string,
 ) {
-  const hasLogo = fs.existsSync(LOGO_PATH);
-  const textX = hasLogo ? PAGE_LEFT + 62 : PAGE_LEFT;
+  const contentWidth = PAGE_RIGHT - PAGE_LEFT;
   let headerBottom = 42;
 
-  if (hasLogo) {
-    doc.image(LOGO_PATH, PAGE_LEFT, 38, { width: 52 });
-    headerBottom = 98;
+  if (fs.existsSync(LOGO_PATH)) {
+    doc.image(LOGO_PATH, PAGE_LEFT, 36, { width: 56 });
+    headerBottom = 102;
   }
 
   doc
     .fillColor("#0f766e")
-    .fontSize(13)
+    .fontSize(15)
     .font("Helvetica-Bold")
-    .text(CLINIC.nameFr, textX, 40, { width: 520 });
+    .text(CLINIC.nameFr, PAGE_LEFT, 40, { width: contentWidth, align: "center" });
   doc
     .fillColor("#475569")
-    .fontSize(8.5)
+    .fontSize(10)
     .font("Helvetica");
-  const arabicDrawn = drawArabicClinicName(doc, textX, doc.y + 2, 520);
-  doc.font("Helvetica").fillColor("#475569");
-  doc.text(CLINIC.fullAddress, textX, doc.y + (arabicDrawn ? 3 : 2), { width: 520 });
-  doc.text(`${CLINIC.phoneLabel} · ${CLINIC.email}`, textX, doc.y + 2, { width: 520 });
+  const arabicDrawn = drawArabicClinicName(doc, PAGE_LEFT, doc.y + 2, contentWidth, "center");
+  doc.font("Helvetica").fillColor("#475569").fontSize(10);
+  doc.text(CLINIC.fullAddress, PAGE_LEFT, doc.y + (arabicDrawn ? 3 : 2), {
+    width: contentWidth,
+    align: "center",
+  });
+  doc.text(`${CLINIC.phoneLabel} · ${CLINIC.email}`, PAGE_LEFT, doc.y + 2, {
+    width: contentWidth,
+    align: "center",
+  });
 
   doc
     .fillColor("#78350f")
-    .fontSize(11)
+    .fontSize(12)
     .font("Helvetica-Bold")
-    .text(docTitle.toUpperCase(), textX, doc.y + 8, { width: 520 });
+    .text(docTitle.toUpperCase(), PAGE_LEFT, doc.y + 8, { width: contentWidth, align: "center" });
 
   if (periodLabel) {
     doc
       .fillColor("#334155")
-      .fontSize(9)
+      .fontSize(10)
       .font("Helvetica")
-      .text(`Période : ${periodLabel}`, textX, doc.y + 4, { width: 520 });
+      .text(`Période : ${periodLabel}`, PAGE_LEFT, doc.y + 4, {
+        width: contentWidth,
+        align: "center",
+      });
   }
 
   if (filtersLabel) {
     doc
       .fillColor("#64748b")
-      .fontSize(8)
+      .fontSize(9)
       .font("Helvetica-Oblique")
-      .text(`Filtres : ${filtersLabel}`, textX, doc.y + 2, { width: 520 });
+      .text(`Filtres : ${filtersLabel}`, PAGE_LEFT, doc.y + 2, {
+        width: contentWidth,
+        align: "center",
+      });
   }
 
   doc.y = Math.max(doc.y + 8, headerBottom);
@@ -366,64 +392,68 @@ export async function generatePayslipPdf(params: {
   const rightX = leftX + contentWidth;
   const hasLogo = fs.existsSync(LOGO_PATH);
 
-  // En-tête clinique (plus aéré)
+  // En-tête clinique (logo à gauche, infos centrées)
+  const headerH = 98;
   doc.save();
-  doc.roundedRect(leftX, 36, contentWidth, 90, 10).fill("#fffdf8");
+  doc.roundedRect(leftX, 36, contentWidth, headerH, 10).fill("#fffdf8");
   doc.restore();
   doc
     .strokeColor("#fde68a")
     .lineWidth(1)
-    .roundedRect(leftX, 36, contentWidth, 90, 10)
+    .roundedRect(leftX, 36, contentWidth, headerH, 10)
     .stroke();
 
   if (hasLogo) {
-    doc.image(LOGO_PATH, leftX + 12, 50, { width: 48 });
+    doc.image(LOGO_PATH, leftX + 12, 52, { width: 54 });
   }
-  const textX = hasLogo ? leftX + 72 : leftX + 14;
+  const centerTextWidth = contentWidth - 160;
   doc
     .fillColor("#0f766e")
-    .fontSize(12.5)
+    .fontSize(14)
     .font("Helvetica-Bold")
-    .text(CLINIC.nameFr, textX, 50, { width: contentWidth - (textX - leftX) - 170 });
+    .text(CLINIC.nameFr, leftX, 48, { width: centerTextWidth, align: "center" });
   doc
     .fillColor("#475569")
-    .fontSize(8)
+    .fontSize(10)
     .font("Helvetica");
   const payslipArabicDrawn = drawArabicClinicName(
     doc,
-    textX,
+    leftX,
     doc.y + 1,
-    contentWidth - (textX - leftX) - 170,
+    centerTextWidth,
+    "center",
   );
-  doc.font("Helvetica").fillColor("#475569");
-  doc.text(CLINIC.fullAddress, textX, doc.y + (payslipArabicDrawn ? 2 : 1), {
-    width: contentWidth - (textX - leftX) - 170,
+  doc.font("Helvetica").fillColor("#475569").fontSize(10);
+  doc.text(CLINIC.fullAddress, leftX, doc.y + (payslipArabicDrawn ? 2 : 1), {
+    width: centerTextWidth,
+    align: "center",
   });
-  doc.text(`${CLINIC.phoneLabel} · ${CLINIC.email}`, textX, doc.y + 1, {
-    width: contentWidth - (textX - leftX) - 170,
+  doc.text(`${CLINIC.phoneLabel} · ${CLINIC.email}`, leftX, doc.y + 1, {
+    width: centerTextWidth,
+    align: "center",
   });
 
   doc
     .fillColor("#78350f")
-    .fontSize(10.5)
+    .fontSize(11)
     .font("Helvetica-Bold")
     .text("FICHE DE PAIE", rightX - 160, 50, { width: 145, align: "right" });
   doc
     .fillColor("#64748b")
-    .fontSize(8)
+    .fontSize(9)
     .font("Helvetica")
-    .text(`Période : ${monthLabel}`, rightX - 160, 66, { width: 145, align: "right" });
+    .text(`Période : ${monthLabel}`, rightX - 160, 68, { width: 145, align: "right" });
   doc
     .fillColor("#94a3b8")
-    .fontSize(7.5)
+    .fontSize(8)
     .font("Helvetica")
-    .text(`Date : ${new Date().toLocaleDateString("fr-FR")}`, rightX - 160, 79, {
+    .text(`Date : ${new Date().toLocaleDateString("fr-FR")}`, rightX - 160, 82, {
       width: 145,
       align: "right",
     });
 
   // Bloc employé
-  const employeeBoxY = 140;
+  const employeeBoxY = 150;
   const employeeBoxH = 78;
   doc.save();
   doc.roundedRect(leftX, employeeBoxY, contentWidth, employeeBoxH, 8).fillAndStroke("#f8fafc", "#e2e8f0");

@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { Plus, RefreshCw, Save, ArrowDownUp } from '@lucide/vue'
 import api from '@/api/client'
-import { formatFcfa, fullName } from '@/lib/roles'
+import { formatFcfa, fullName, canManagePharmacyCatalog } from '@/lib/roles'
 import { statusBadge } from '@/lib/datatable-defaults'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { PharmacyProductRecord } from '@/components/pharmacie/PharmacyProductsPanel.vue'
@@ -17,6 +17,9 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+import { useAuthStore } from '@/stores/auth'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 type StockMovementType = 'ENTRY' | 'EXIT' | 'ADJUSTMENT' | 'DISPENSATION'
 
@@ -35,6 +38,12 @@ type StockMovementRecord = {
 }
 
 const emit = defineEmits<{ changed: [] }>()
+
+const { uiText, localeCode } = useAppI18n()
+const auth = useAuthStore()
+const canManageCatalog = computed(() =>
+  auth.user ? canManagePharmacyCatalog(auth.user.role) : false,
+)
 
 const movements = ref<StockMovementRecord[]>([])
 const products = ref<PharmacyProductRecord[]>([])
@@ -73,13 +82,14 @@ const activeProducts = computed(() => products.value.filter((p) => p.active))
 const activeSuppliers = computed(() => suppliers.value.filter((s) => s.active))
 const selectedProduct = computed(() => products.value.find((p) => p.id === formProductId.value))
 
-const tableRows = computed(() =>
-  movements.value.map((m) => ({
+const tableRows = computed(() => {
+  void localeCode.value
+  return movements.value.map((m) => ({
     id: m.id,
     date: new Date(m.createdAt).toLocaleString('fr-FR'),
     dateSort: new Date(m.createdAt).getTime(),
     productName: m.product.name,
-    typeLabel: movementTypeLabels[m.type],
+    typeLabel: uiText(movementTypeLabels[m.type]),
     typeVariant: movementTypeVariants[m.type],
     quantity: m.quantity,
     stockAfter: m.stockAfter,
@@ -87,35 +97,38 @@ const tableRows = computed(() =>
     userName: fullName(m.user.firstName, m.user.lastName),
     reference: m.reference?.trim() || '—',
     unitCost: m.unitCostFcfa ? formatFcfa(m.unitCostFcfa) : '—',
-  })),
-)
+  }))
+})
 
-const columns = [
-  {
-    data: 'dateSort',
-    title: 'Date',
-    responsivePriority: 1,
-    render: (_d: number, _t: string, row: { date: string }) => `<span>${row.date}</span>`,
-  },
-  {
-    data: 'productName',
-    title: 'Produit',
-    responsivePriority: 1,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  {
-    data: 'typeLabel',
-    title: 'Type',
-    responsivePriority: 2,
-    render: (label: string, _t: string, row: { typeVariant: string }) =>
-      statusBadge(label, row.typeVariant as 'success' | 'danger' | 'warning' | 'info'),
-  },
-  { data: 'quantity', title: 'Qté', responsivePriority: 3 },
-  { data: 'stockAfter', title: 'Stock après', responsivePriority: 3 },
-  { data: 'supplierName', title: 'Fournisseur', responsivePriority: 4 },
-  { data: 'reference', title: 'Référence', responsivePriority: 5 },
-  { data: 'userName', title: 'Par', responsivePriority: 4 },
-]
+const columns = computed(() => {
+  void localeCode.value
+  return [
+    {
+      data: 'dateSort',
+      title: uiText('Date'),
+      responsivePriority: 1,
+      render: (_d: number, _t: string, row: { date: string }) => `<span>${row.date}</span>`,
+    },
+    {
+      data: 'productName',
+      title: uiText('Produit'),
+      responsivePriority: 1,
+      render: (name: string) => `<span class="dt-name">${name}</span>`,
+    },
+    {
+      data: 'typeLabel',
+      title: uiText('Type'),
+      responsivePriority: 2,
+      render: (label: string, _t: string, row: { typeVariant: string }) =>
+        statusBadge(label, row.typeVariant as 'success' | 'danger' | 'warning' | 'info'),
+    },
+    { data: 'quantity', title: uiText('Qté'), responsivePriority: 3 },
+    { data: 'stockAfter', title: uiText('Stock après'), responsivePriority: 3 },
+    { data: 'supplierName', title: uiText('Fournisseur'), responsivePriority: 4 },
+    { data: 'reference', title: uiText('Référence'), responsivePriority: 5 },
+    { data: 'userName', title: uiText('Par'), responsivePriority: 4 },
+  ]
+})
 
 function apiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error) && typeof error.response?.data?.error === 'string') {
@@ -165,6 +178,7 @@ function resetForm() {
 }
 
 function openCreateModal() {
+  if (!canManageCatalog.value) return
   resetForm()
   if (filterProductId.value) formProductId.value = filterProductId.value
   modalOpen.value = true
@@ -182,6 +196,7 @@ watch(formProductId, (id) => {
 })
 
 async function saveMovement() {
+  if (!canManageCatalog.value) return
   if (!formProductId.value) {
     message.value = 'Sélectionnez un produit.'
     messageType.value = 'error'
@@ -235,23 +250,26 @@ onMounted(reload)
 
 type MovementExportRow = (typeof tableRows.value)[number]
 
-const movementExportColumns: ExportColumn<MovementExportRow>[] = [
-  { header: 'Date', value: (r) => r.date },
-  { header: 'Produit', value: (r) => r.productName },
-  { header: 'Type', value: (r) => r.typeLabel },
-  { header: 'Qté', value: (r) => r.quantity },
-  { header: 'Stock après', value: (r) => r.stockAfter },
-  { header: 'Fournisseur', value: (r) => r.supplierName },
-  { header: 'Référence', value: (r) => r.reference },
-  { header: 'Par', value: (r) => r.userName },
-]
+const movementExportColumns = computed<ExportColumn<MovementExportRow>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Date'), value: (r) => r.date },
+    { header: uiText('Produit'), value: (r) => r.productName },
+    { header: uiText('Type'), value: (r) => r.typeLabel },
+    { header: uiText('Qté'), value: (r) => r.quantity },
+    { header: uiText('Stock après'), value: (r) => r.stockAfter },
+    { header: uiText('Fournisseur'), value: (r) => r.supplierName },
+    { header: uiText('Référence'), value: (r) => r.reference },
+    { header: uiText('Par'), value: (r) => r.userName },
+  ]
+})
 
 function exportPdf() {
-  exportTablePdf('Mouvements de stock pharmacie', movementExportColumns, tableRows.value)
+  exportTablePdf(uiText('Mouvements de stock pharmacie'), movementExportColumns.value, tableRows.value)
 }
 
 function exportExcel() {
-  exportTableExcel('Mouvements de stock pharmacie', movementExportColumns, tableRows.value)
+  exportTableExcel(uiText('Mouvements de stock pharmacie'), movementExportColumns.value, tableRows.value)
 }
 
 defineExpose({ reload })
@@ -261,21 +279,27 @@ defineExpose({ reload })
   <PageTableSection embedded>
     <template #toolbar>
       <select v-model="filterProductId" class="filter-select" @change="loadMovements">
-        <option value="">Tous les produits</option>
+        <option value="">{{ uiText('Tous les produits') }}</option>
         <option v-for="p in products" :key="p.id" :value="p.id">{{ p.name }}</option>
       </select>
       <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="reload">
-        Actualiser
+        {{ uiText('Actualiser') }}
       </UiButton>
-      <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
-        Nouveau mouvement
+      <UiButton
+        v-if="canManageCatalog"
+        variant="primary"
+        size="sm"
+        :icon="Plus"
+        @click="openCreateModal"
+      >
+        {{ uiText('Nouveau mouvement') }}
       </UiButton>
     </template>
 
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
 
-    <p v-if="!loading && !movements.length" class="empty">Aucun mouvement enregistré</p>
+    <p v-if="!loading && !movements.length" class="empty">{{ uiText('Aucun mouvement enregistré') }}</p>
     <UiDataTable
       v-else
       fill
@@ -299,13 +323,13 @@ defineExpose({ reload })
     <UiAlert v-if="message && modalOpen" :type="messageType" :message="message" />
     <section class="form-panel">
       <UiSelect v-model="formType" label="Type de mouvement">
-        <option value="ENTRY">Entrée (réapprovisionnement)</option>
-        <option value="EXIT">Sortie manuelle</option>
-        <option value="ADJUSTMENT">Ajustement inventaire</option>
+        <option value="ENTRY">{{ uiText('Entrée (réapprovisionnement)') }}</option>
+        <option value="EXIT">{{ uiText('Sortie manuelle') }}</option>
+        <option value="ADJUSTMENT">{{ uiText('Ajustement inventaire') }}</option>
       </UiSelect>
 
       <UiSelect v-model="formProductId" label="Produit" required>
-        <option value="">Sélectionner un produit</option>
+        <option value="">{{ uiText('Sélectionner un produit') }}</option>
         <option v-for="p in activeProducts" :key="p.id" :value="p.id">
           {{ p.name }} (stock: {{ p.quantity }})
         </option>
@@ -313,7 +337,7 @@ defineExpose({ reload })
 
       <template v-if="formType === 'ENTRY'">
         <UiSelect v-model="formSupplierId" label="Fournisseur" required>
-          <option value="">Sélectionner un fournisseur</option>
+          <option value="">{{ uiText('Sélectionner un fournisseur') }}</option>
           <option v-for="s in activeSuppliers" :key="s.id" :value="s.id">{{ s.name }}</option>
         </UiSelect>
         <div class="form-grid">
@@ -344,17 +368,21 @@ defineExpose({ reload })
           required
         />
         <p v-if="selectedProduct" class="hint">
-          Stock actuel : {{ selectedProduct.quantity }} — écart :
-          {{ Number(formTargetQuantity) - selectedProduct.quantity >= 0 ? '+' : '' }}{{ Number(formTargetQuantity) - selectedProduct.quantity }}
+          {{
+            translateTemplate('Stock actuel : {qty} — écart : {delta}', {
+              qty: selectedProduct.quantity,
+              delta: `${Number(formTargetQuantity) - selectedProduct.quantity >= 0 ? '+' : ''}${Number(formTargetQuantity) - selectedProduct.quantity}`,
+            })
+          }}
         </p>
       </template>
 
-      <UiTextarea v-model="formNotes" label="Notes" :rows="2" placeholder="Commentaire optionnel…" />
+      <UiTextarea v-model="formNotes" :label="uiText('Notes')" :rows="2" :placeholder="uiText('Commentaire optionnel…')" />
     </section>
     <template #footer>
-      <UiButton variant="ghost" @click="closeModal">Annuler</UiButton>
+      <UiButton variant="ghost" @click="closeModal">{{ uiText('Annuler') }}</UiButton>
       <UiButton variant="primary" :icon="Save" :disabled="saving" @click="saveMovement">
-        {{ saving ? 'Enregistrement…' : 'Valider le mouvement' }}
+        {{ saving ? uiText('Enregistrement…') : uiText('Valider le mouvement') }}
       </UiButton>
     </template>
   </UiFormModal>
