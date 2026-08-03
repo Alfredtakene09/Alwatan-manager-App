@@ -77,7 +77,13 @@ export function translateUi(text: string | null | undefined): string {
   const fromNav = NORMALIZED_NAV[locale]?.[key]
   if (fromNav != null) return fromNav
 
+  // Repli live (évite un cache NORMALIZED_* obsolète après HMR / mise à jour partielle)
   const bundle = activeBundle()
+  const liveUi = bundle.ui?.[key] ?? bundle.ui?.[text]
+  if (liveUi != null) return liveUi
+  const liveNav = bundle.nav?.[key] ?? bundle.nav?.[text]
+  if (liveNav != null) return liveNav
+
   for (const [code, frLabel] of Object.entries(COMMON_FR)) {
     if (normalizeKey(frLabel) === key && bundle.common?.[code]) return bundle.common[code]
   }

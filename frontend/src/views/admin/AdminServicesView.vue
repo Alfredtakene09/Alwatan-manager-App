@@ -19,6 +19,7 @@ type ServiceDoctor = {
   lastName: string
   specialty: string | null
   active: boolean
+  hasActiveUser?: boolean
   clinicServiceId?: string | null
   clinicServiceIds?: string[]
   clinicServices?: { id: string; name: string; isDefault?: boolean }[]
@@ -312,7 +313,10 @@ onMounted(reloadAll)
           <div class="doctors-picker__head">
             <div>
               <h3>Médecins du service</h3>
-              <p>Cochez les médecins rattachés à ce service. Un médecin peut appartenir à plusieurs services.</p>
+              <p>
+                Cochez tous les médecins de ce service. Un même médecin peut être coché sur
+                plusieurs services (multi-rattachement).
+              </p>
             </div>
             <span class="doctors-picker__count">{{ form.doctorIds.length }} sélectionné(s)</span>
           </div>
@@ -333,8 +337,14 @@ onMounted(reloadAll)
                 <span>
                   <strong>{{ doctorFullName(doctor) }}</strong>
                   <small v-if="doctor.specialty">{{ doctor.specialty }}</small>
+                  <small v-if="doctor.hasActiveUser === false" class="no-account">
+                    Pas encore de compte utilisateur
+                  </small>
                   <small v-if="doctorAlreadyElsewhere(doctor)" class="elsewhere">
                     Aussi lié à : {{ otherServiceName(doctor) }}
+                  </small>
+                  <small v-else-if="(doctor.clinicServiceIds?.length ?? 0) > 1" class="multi">
+                    {{ doctor.clinicServiceIds?.length }} services
                   </small>
                 </span>
               </label>
@@ -504,6 +514,14 @@ onMounted(reloadAll)
 
 .doctor-option .elsewhere {
   color: #b45309;
+}
+
+.doctor-option .no-account {
+  color: #9a3412;
+}
+
+.doctor-option .multi {
+  color: #0f766e;
 }
 
 .sr-only {

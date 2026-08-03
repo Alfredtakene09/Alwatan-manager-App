@@ -546,6 +546,16 @@ function Open-AlwatanBrowser {
     $appUrl = $Url.Trim()
     if ($appUrl -notmatch '/$') { $appUrl += '/' }
 
+    # Bust cache navigateur / PWA : ajoute le buildId serveur pour forcer la dernière version
+    try {
+        $base = $appUrl.TrimEnd('/')
+        $ver = Invoke-RestMethod -Uri ("{0}/api/app-version?_={1}" -f $base, [guid]::NewGuid().ToString('N')) -TimeoutSec 3
+        if ($ver -and $ver.buildId) {
+            $q = [uri]::EscapeDataString([string]$ver.buildId)
+            $appUrl = "{0}?v={1}" -f $appUrl, $q
+        }
+    } catch { }
+
     $browserCandidates = @(
         "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
         "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",

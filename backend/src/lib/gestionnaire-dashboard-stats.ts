@@ -25,6 +25,7 @@ import {
   invoiceCollectedAt,
   startOfDay,
 } from "./revenue-stats.js";
+import { countPendingDoctorOvertime } from "./doctor-overtime.js";
 
 const CASH_REGISTER_ROLES: UserRole[] = [UserRole.RECEPTIONNISTE, UserRole.COMPTABLE];
 
@@ -580,6 +581,7 @@ export async function buildGestionnaireDashboardOverview() {
     dailyFlow90,
     monthExpenseRows,
     financialKpis,
+    pendingDoctorOvertimeCount,
   ] = await Promise.all([
     computeGlobalCashBalance(),
     sumValidatedExpensesBetween(todayStart, tomorrowStart),
@@ -616,6 +618,7 @@ export async function buildGestionnaireDashboardOverview() {
     buildDailyFlow(90),
     sumValidatedExpensesBetween(monthBounds.start, monthBounds.end),
     buildFinancialKpis(now),
+    countPendingDoctorOvertime(),
   ]);
 
   const payrollMonthGrossFcfa = payrollRows.reduce((sum, row) => sum + row.grossFcfa, 0);
@@ -650,6 +653,7 @@ export async function buildGestionnaireDashboardOverview() {
       pendingExpenses: 0,
       unpaidPayroll: unpaidPayrollCount,
       pendingDayClosures,
+      pendingDoctorOvertime: pendingDoctorOvertimeCount,
     },
     recentDisbursements: recentDisbursements.map((row) => ({
       id: row.id,
@@ -668,7 +672,7 @@ export async function buildGestionnaireDashboardOverview() {
     },
     navBadges: {
       depenses: 0,
-      salaires: unpaidPayrollCount,
+      salaires: unpaidPayrollCount + pendingDoctorOvertimeCount,
       caisse: pendingDayClosures,
     },
   };
@@ -676,7 +680,7 @@ export async function buildGestionnaireDashboardOverview() {
 
 export async function buildGestionnaireNavBadges() {
   const { year, month } = currentPayrollPeriod();
-  const [unpaidPayroll, pendingDayClosures] = await Promise.all([
+  const [unpaidPayroll, pendingDayClosures, pendingDoctorOvertime] = await Promise.all([
     prisma.employeePayroll.count({
       where: {
         year,
@@ -685,6 +689,11 @@ export async function buildGestionnaireNavBadges() {
       },
     }),
     prisma.receptionDayClosure.count({ where: { validatedAt: null } }),
+    countPendingDoctorOvertime(),
   ]);
-  return { depenses: 0, salaires: unpaidPayroll, caisse: pendingDayClosures };
+  return {
+    depenses: 0,
+    salaires: unpaidPayroll + pendingDoctorOvertime,
+    caisse: pendingDayClosures,
+  };
 }

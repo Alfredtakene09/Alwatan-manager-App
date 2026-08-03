@@ -14,8 +14,9 @@ import UiStatCard from '@/components/ui/UiStatCard.vue'
 import CaisseToolbar from '@/components/caisse/CaisseToolbar.vue'
 import AdminPayrollHistoriquePanel from '@/components/admin/AdminPayrollHistoriquePanel.vue'
 import GestionnaireSalaryAdvancesPanel from '@/components/gestionnaire/GestionnaireSalaryAdvancesPanel.vue'
+import GestionnaireOvertimePanel from '@/components/gestionnaire/GestionnaireOvertimePanel.vue'
 
-type TabId = 'mois' | 'historique' | 'avances'
+type TabId = 'mois' | 'historique' | 'avances' | 'heures-supp'
 
 type PayrollResponse = {
   year: number
@@ -41,6 +42,7 @@ const router = useRouter()
 function resolveTab(tab: unknown): TabId {
   if (tab === 'historique') return 'historique'
   if (tab === 'avances') return 'avances'
+  if (tab === 'heures-supp') return 'heures-supp'
   return 'mois'
 }
 
@@ -85,6 +87,7 @@ const periodLabel = computed(() => {
 const pageSubtitle = computed(() => {
   if (activeTab.value === 'historique') return 'Historique des salaires payés'
   if (activeTab.value === 'avances') return 'Avances sur salaire des employés'
+  if (activeTab.value === 'heures-supp') return 'Heures supplémentaires médecins — validation et calcul'
   return 'Validation des salaires et fiches du personnel'
 })
 
@@ -93,7 +96,10 @@ function selectTab(tab: TabId) {
 }
 
 watch(activeTab, async (tab, previous) => {
-  router.replace({ query: tab === 'historique' || tab === 'avances' ? { tab } : {} })
+  router.replace({
+    query:
+      tab === 'historique' || tab === 'avances' || tab === 'heures-supp' ? { tab } : {},
+  })
   if (previous === 'avances' || tab === 'avances') {
     await loadAdvances()
   }
@@ -206,6 +212,16 @@ onMounted(reloadPayrollData)
           <HandCoins :size="16" />
           Avances
         </button>
+        <button
+          type="button"
+          class="salaires-toolbar__tab"
+          :class="{ 'salaires-toolbar__tab--active': activeTab === 'heures-supp' }"
+          :aria-selected="activeTab === 'heures-supp'"
+          @click="selectTab('heures-supp')"
+        >
+          <Clock :size="16" />
+          Heures supp.
+        </button>
       </CaisseToolbar>
 
       <div class="salaires-toolbar-row__stats" aria-label="Synthèse paie">
@@ -286,12 +302,13 @@ onMounted(reloadPayrollData)
     </template>
 
     <AdminPayrollHistoriquePanel v-else-if="activeTab === 'historique'" ref="historiquePanelRef" />
-    <div v-else class="salary-advances-admin">
+    <div v-else-if="activeTab === 'avances'" class="salary-advances-admin">
       <p class="salary-advances-admin__hint">
         Les avances en attente sont automatiquement déduites au moment de la validation de la paie.
       </p>
       <GestionnaireSalaryAdvancesPanel ref="avancesPanelRef" api-base-path="/admin" />
     </div>
+    <GestionnaireOvertimePanel v-else />
   </div>
 </template>
 

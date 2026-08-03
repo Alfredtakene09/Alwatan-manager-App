@@ -14,6 +14,7 @@ import InstallAppBanner from '@/components/pwa/InstallAppBanner.vue'
 import SidebarNavSections from '@/components/layout/SidebarNavSections.vue'
 import ProfileAccountModal from '@/components/ProfileAccountModal.vue'
 import GlobalAlertsBell from '@/components/layout/GlobalAlertsBell.vue'
+import DoctorOvertimeSubmitButton from '@/components/layout/DoctorOvertimeSubmitButton.vue'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -241,6 +242,7 @@ watch(
         </div>
 
         <div class="topbar__right">
+          <DoctorOvertimeSubmitButton />
           <GlobalAlertsBell />
           <LanguageSwitcher />
 

@@ -183,20 +183,24 @@ export function serializePayrollRow(
   row: Prisma.EmployeePayrollGetPayload<{
     include: typeof employeePayrollInclude;
   }>,
-  options?: { pendingAdvancesFcfa?: number },
+  options?: { pendingAdvancesFcfa?: number; pendingOvertimeFcfa?: number },
 ) {
   const employee = row.employee;
   const advances =
     row.status === "PAID"
       ? row.advanceDeductionFcfa
       : (options?.pendingAdvancesFcfa ?? 0);
-  const netBeforeAdvances = row.grossFcfa;
+  const primeFcfa =
+    row.status === "PAID"
+      ? row.primeFcfa
+      : (options?.pendingOvertimeFcfa ?? row.primeFcfa ?? 0);
+  const netBeforeAdvances = row.grossFcfa + primeFcfa;
   return {
     id: row.id,
     year: row.year,
     month: row.month,
     grossFcfa: row.grossFcfa,
-    primeFcfa: 0,
+    primeFcfa,
     pendingAdvancesFcfa: advances,
     advanceDeductionFcfa: row.advanceDeductionFcfa,
     netFcfa: Math.max(0, netBeforeAdvances - advances),

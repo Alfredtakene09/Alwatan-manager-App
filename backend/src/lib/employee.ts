@@ -28,6 +28,7 @@ export type EmployeeRecord = {
   contractType?: ContractType | null;
   contractStatus?: EmployeeContractStatus;
   bonusFcfa?: number | null;
+  overtimeHourlyRateFcfa?: number | null;
   specialty?: string | null;
   availabilitySlots?: unknown;
   photoPath?: string | null;
@@ -80,6 +81,9 @@ export function serializeEmployee(employee: EmployeeRecord) {
     contractType: employee.contractType ?? null,
     contractStatus: employee.contractStatus ?? "ACTIF",
     bonusFcfa: employee.bonusFcfa ?? null,
+    overtimeHourlyRateFcfa: employee.isMedecin
+      ? (employee.overtimeHourlyRateFcfa ?? null)
+      : null,
     specialty: employee.isMedecin ? (employee.specialty ?? null) : null,
     availabilitySlots: employee.isMedecin ? (employee.availabilitySlots ?? null) : null,
     photoPath: employee.photoPath ?? null,
@@ -190,6 +194,7 @@ export const employeeSelect = {
   contractType: true,
   contractStatus: true,
   bonusFcfa: true,
+  overtimeHourlyRateFcfa: true,
   specialty: true,
   availabilitySlots: true,
   photoPath: true,

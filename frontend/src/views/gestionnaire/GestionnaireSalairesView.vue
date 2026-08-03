@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Coins, Banknote, History, HandCoins } from '@lucide/vue'
+import { Coins, Banknote, History, HandCoins, Clock } from '@lucide/vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import CaisseToolbar from '@/components/caisse/CaisseToolbar.vue'
 import GestionnairePayrollMoisPanel from '@/components/gestionnaire/GestionnairePayrollMoisPanel.vue'
 import GestionnairePayrollHistoriquePanel from '@/components/gestionnaire/GestionnairePayrollHistoriquePanel.vue'
 import GestionnaireSalaryAdvancesPanel from '@/components/gestionnaire/GestionnaireSalaryAdvancesPanel.vue'
+import GestionnaireOvertimePanel from '@/components/gestionnaire/GestionnaireOvertimePanel.vue'
 import '@/assets/gestionnaire-page.css'
 
-type TabId = 'mois' | 'historique' | 'avances'
+type TabId = 'mois' | 'historique' | 'avances' | 'heures-supp'
 
 const route = useRoute()
 const router = useRouter()
@@ -23,11 +24,14 @@ const activeTab = ref<TabId>(
     ? 'historique'
     : route.query.tab === 'avances'
       ? 'avances'
-      : 'mois',
+      : route.query.tab === 'heures-supp'
+        ? 'heures-supp'
+        : 'mois',
 )
 
 const historiquePanelRef = ref<InstanceType<typeof GestionnairePayrollHistoriquePanel> | null>(null)
 const avancesPanelRef = ref<InstanceType<typeof GestionnaireSalaryAdvancesPanel> | null>(null)
+const overtimePanelRef = ref<InstanceType<typeof GestionnaireOvertimePanel> | null>(null)
 
 const periodLabel = computed(() =>
   new Date(payrollYear.value, payrollMonth.value - 1, 1).toLocaleDateString('fr-FR', {
@@ -39,6 +43,7 @@ const periodLabel = computed(() =>
 const pageSubtitle = computed(() => {
   if (activeTab.value === 'historique') return 'Historique des salaires payés'
   if (activeTab.value === 'avances') return 'Avances sur salaire des employés'
+  if (activeTab.value === 'heures-supp') return 'Heures supplémentaires médecins — validation et calcul'
   return `Paie — ${periodLabel.value}`
 })
 
@@ -54,12 +59,14 @@ function updatePeriod(year: number, month: number) {
 function onPaid() {
   historiquePanelRef.value?.reload()
   avancesPanelRef.value?.reload()
+  overtimePanelRef.value?.reload()
 }
 
 function syncRouteQuery() {
   const query: Record<string, string> = {}
   if (activeTab.value === 'historique') query.tab = 'historique'
   else if (activeTab.value === 'avances') query.tab = 'avances'
+  else if (activeTab.value === 'heures-supp') query.tab = 'heures-supp'
   if (activeTab.value === 'mois') {
     query.year = String(payrollYear.value)
     query.month = String(payrollMonth.value)
@@ -77,7 +84,13 @@ watch(
   () => route.query.tab,
   (tab) => {
     activeTab.value =
-      tab === 'historique' ? 'historique' : tab === 'avances' ? 'avances' : 'mois'
+      tab === 'historique'
+        ? 'historique'
+        : tab === 'avances'
+          ? 'avances'
+          : tab === 'heures-supp'
+            ? 'heures-supp'
+            : 'mois'
   },
 )
 
@@ -125,6 +138,16 @@ watch(
         <HandCoins :size="16" />
         Avances
       </button>
+      <button
+        type="button"
+        class="salaires-toolbar__tab"
+        :class="{ 'salaires-toolbar__tab--active': activeTab === 'heures-supp' }"
+        :aria-selected="activeTab === 'heures-supp'"
+        @click="selectTab('heures-supp')"
+      >
+        <Clock :size="16" />
+        Heures supp.
+      </button>
     </CaisseToolbar>
 
     <GestionnairePayrollMoisPanel
@@ -136,7 +159,8 @@ watch(
     />
 
     <GestionnairePayrollHistoriquePanel v-else-if="activeTab === 'historique'" ref="historiquePanelRef" />
-    <GestionnaireSalaryAdvancesPanel v-else ref="avancesPanelRef" />
+    <GestionnaireSalaryAdvancesPanel v-else-if="activeTab === 'avances'" ref="avancesPanelRef" />
+    <GestionnaireOvertimePanel v-else ref="overtimePanelRef" />
   </div>
 </template>
 

@@ -24,6 +24,7 @@ import { backfillLegacyConsultationInvoices } from "./lib/revenue-stats.js";
 import examCatalogRoutes from "./routes/exam-catalog.js";
 import examTypesRoutes from "./routes/exam-types.js";
 import medecinExamCatalogRoutes from "./routes/medecin-exam-catalog.js";
+import medecinOperationTypesRoutes from "./routes/medecin-operation-types.js";
 import patientDossiersRoutes, { initPatientDossiers } from "./routes/patient-dossiers.js";
 import laboratoireRoutes from "./routes/laboratoire.js";
 import labPanelsRoutes from "./routes/lab-panels.js";
@@ -36,6 +37,7 @@ import gestionnaireRoutes from "./routes/gestionnaire.js";
 import logistiqueRoutes from "./routes/logistique.js";
 import labStockRoutes from "./routes/lab-stock.js";
 import clientSetupRoutes from "./routes/client-setup.js";
+import doctorOvertimeRoutes from "./routes/doctor-overtime.js";
 import { getLanIpv4, getTailscaleIpv4, isPrivateLanOrigin, parseCorsOrigins } from "./lib/lan-host.js";
 
 const app = express();
@@ -132,6 +134,7 @@ app.use("/api/hospitalisation", hospitalisationRoutes);
 app.use("/api/exam-catalog", examCatalogRoutes);
 app.use("/api/comptabilite/exam-types", examTypesRoutes);
 app.use("/api/consultation/exam-nomenclature", medecinExamCatalogRoutes);
+app.use("/api/consultation/operation-types", medecinOperationTypesRoutes);
 app.use("/api/patient-dossiers", patientDossiersRoutes);
 app.use("/api/laboratoire", laboratoireRoutes);
 app.use("/api/lab-panels", labPanelsRoutes);
@@ -142,6 +145,7 @@ app.use("/api/gestionnaire", gestionnaireRoutes);
 app.use("/api/logistique", logistiqueRoutes);
 app.use("/api/lab-stock", labStockRoutes);
 app.use("/api/client-setup", clientSetupRoutes);
+app.use("/api/doctor-overtime", doctorOvertimeRoutes);
 
 refreshExamPriceCache().catch((error) => {
   console.error("Impossible de charger le cache des tarifs examens:", error);

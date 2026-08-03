@@ -29,6 +29,7 @@ import {
   type ExamCommentsByKind,
 } from '@/lib/exam-catalog'
 import { useAuthStore } from '@/stores/auth'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 export type PrescriptionVisit = {
   id: string
@@ -68,6 +69,7 @@ const emit = defineEmits<{
 }>()
 
 const auth = useAuthStore()
+const { uiText } = useAppI18n()
 
 /** Visite figée à l'ouverture — évite la perte de sélection lors des rafraîchissements liste. */
 const sessionVisit = ref<PrescriptionVisit | null>(null)
@@ -313,9 +315,9 @@ async function submit() {
             </h3>
             <div class="exam-sections">
               <div v-for="section in existingExamSections" :key="section.kind" class="exam-section">
-                <h4>{{ section.label }}</h4>
+                <h4>{{ uiText(section.label) }}</h4>
                 <ul v-if="section.exams.length" class="exam-list">
-                  <li v-for="exam in section.exams" :key="`${section.kind}-${exam}`">{{ exam }}</li>
+                  <li v-for="exam in section.exams" :key="`${section.kind}-${exam}`">{{ uiText(exam) }}</li>
                 </ul>
                 <p v-if="section.comment" class="exam-comment">{{ section.comment }}</p>
               </div>

@@ -5,9 +5,9 @@ import { EXAM_CATALOG_KIND_SLUGS } from "../lib/exam-catalog-seed.js";
 import { HOSPITALISATION_PRESCRIPTION_LABEL } from "../lib/hospitalization-referral.js";
 import {
   examCatalogVisibleForServiceWhere,
+  interventionVisibleForServicesWhere,
   isSpecialtyClinicServiceName,
-  resolveDoctorClinicService,
-  resolveDoctorClinicServiceId,
+  resolveDoctorClinicServices,
 } from "../lib/clinic-service-exam.js";
 import { requireAuth, requireAnyModule } from "../middleware/auth.js";
 
@@ -54,41 +54,58 @@ function defaultHospitalisationCatalogItem(
 }
 
 router.get("/", async (req, res) => {
-  const doctorId =
+  // Un médecin ne peut consulter que son propre périmètre (pas un autre doctorId).
+  const isMedecin = req.user?.role === "MEDECIN";
+  const queryDoctorId =
     typeof req.query.doctorId === "string" ? req.query.doctorId.trim() : "";
+  const doctorId = isMedecin ? (req.user?.id ?? "") : queryDoctorId;
   const serviceId =
     typeof req.query.serviceId === "string" ? req.query.serviceId.trim() : "";
 
-  let filterServiceId: string | null = serviceId || null;
+  let filterServiceIds: string[] = [];
+  const specialtyServiceIds = new Set<string>();
   let specialtyServiceName: string | null = null;
 
   if (doctorId) {
-    const doctorService = await resolveDoctorClinicService(doctorId);
-    if (!filterServiceId && doctorService) {
-      filterServiceId = doctorService.id;
+    const doctorServices = await resolveDoctorClinicServices(doctorId);
+    if (doctorServices) {
+      filterServiceIds = doctorServices.ids;
+      for (const svc of doctorServices.all) {
+        if (!isSpecialtyClinicServiceName(svc.name)) continue;
+        specialtyServiceIds.add(svc.id);
+        if (svc.id === doctorServices.default.id || !specialtyServiceName) {
+          specialtyServiceName = svc.name;
+        }
+      }
     }
-    if (doctorService && isSpecialtyClinicServiceName(doctorService.name)) {
-      specialtyServiceName = doctorService.name;
-    }
-  } else if (filterServiceId) {
+  } else if (serviceId) {
     const service = await prisma.clinicService.findFirst({
-      where: { id: filterServiceId, active: true },
+      where: { id: serviceId, active: true },
       select: { id: true, name: true },
     });
-    if (service && isSpecialtyClinicServiceName(service.name)) {
-      specialtyServiceName = service.name;
+    if (service) {
+      filterServiceIds = [service.id];
+      if (isSpecialtyClinicServiceName(service.name)) {
+        specialtyServiceIds.add(service.id);
+        specialtyServiceName = service.name;
+      }
     }
   }
 
-  if (!filterServiceId && doctorId) {
-    filterServiceId = await resolveDoctorClinicServiceId(doctorId);
-  }
+  // Médecin sans service : aucun examen/opération métier hors Labo/Hospit/null.
+  const examWhere =
+    filterServiceIds.length > 0
+      ? { active: true, ...examCatalogVisibleForServiceWhere(filterServiceIds) }
+      : doctorId || isMedecin
+        ? { active: true, ...examCatalogVisibleForServiceWhere(null) }
+        : { active: true };
 
-  const examWhere = filterServiceId
-    ? { active: true, ...examCatalogVisibleForServiceWhere(filterServiceId) }
-    : doctorId
-      ? { active: true, ...examCatalogVisibleForServiceWhere(null) }
-      : { active: true };
+  const interventionWhere =
+    filterServiceIds.length > 0
+      ? { active: true, ...interventionVisibleForServicesWhere(filterServiceIds) }
+      : doctorId || isMedecin
+        ? { active: true, id: { in: [] as string[] } }
+        : { active: true };
 
   const [items, interventions, rooms] = await Promise.all([
     prisma.examCatalogItem.findMany({
@@ -106,7 +123,7 @@ router.get("/", async (req, res) => {
       },
     }),
     prisma.interventionType.findMany({
-      where: { active: true },
+      where: interventionWhere,
       orderBy: [{ category: "asc" }, { label: "asc" }],
       select: {
         id: true,
@@ -162,15 +179,14 @@ router.get("/", async (req, res) => {
       clinicServiceName: item.clinicService?.name ?? null,
     };
 
-    // Examens du service spécialisé du médecin → onglet dédié (ex. Ophtalmologie)
+    // Examens des services spécialisés du médecin → onglet dédié
     if (
-      specialtyServiceName &&
-      filterServiceId &&
-      item.clinicServiceId === filterServiceId
+      item.clinicServiceId &&
+      specialtyServiceIds.has(item.clinicServiceId)
     ) {
       grouped.specialty.push({
         ...dto,
-        category: dto.category || specialtyServiceName,
+        category: dto.category || item.clinicService?.name || specialtyServiceName,
       });
       continue;
     }

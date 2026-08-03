@@ -96,14 +96,22 @@ watch(
 )
 
 const filteredExams = computed(() => {
+  void localeCode.value
   const q = search.value.trim().toLowerCase()
   const pool = availableExams.value
   if (!q) return pool
-  return pool.filter(
-    (exam) =>
-      exam.label.toLowerCase().includes(q) ||
-      exam.category.toLowerCase().includes(q),
-  )
+  return pool.filter((exam) => {
+    const labelFr = exam.label.toLowerCase()
+    const labelLocal = uiText(exam.label).toLowerCase()
+    const categoryFr = exam.category.toLowerCase()
+    const categoryLocal = uiText(exam.category).toLowerCase()
+    return (
+      labelFr.includes(q) ||
+      labelLocal.includes(q) ||
+      categoryFr.includes(q) ||
+      categoryLocal.includes(q)
+    )
+  })
 })
 
 const groupedFiltered = computed(() => groupExamsByCategory(filteredExams.value))
@@ -167,10 +175,13 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
 <template>
   <div ref="rootRef" class="exam-picker">
     <template v-if="isHospitalisationKind">
-      <label class="exam-picker__label">Orientation hospitalisation</label>
+      <label class="exam-picker__label">{{ uiText('Orientation hospitalisation') }}</label>
       <p class="exam-picker__hosp-hint">
-        Le médecin oriente le patient vers l'hospitalisation. Le choix de la salle, la
-        disponibilité des salles et le paiement se font à la réception.
+        {{
+          uiText(
+            "Le médecin oriente le patient vers l'hospitalisation. Le choix de la salle, la disponibilité des salles et le paiement se font à la réception.",
+          )
+        }}
       </p>
       <button
         type="button"
@@ -179,22 +190,26 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
         :disabled="!catalogReady"
         @click="toggleHospitalisation"
       >
-        {{ hospitalisationPrescribed ? 'Hospitalisation prescrite' : 'Prescrire une hospitalisation' }}
+        {{
+          hospitalisationPrescribed
+            ? uiText('Hospitalisation prescrite')
+            : uiText('Prescrire une hospitalisation')
+        }}
       </button>
       <div v-if="hospitalisationPrescribed" class="exam-picker__cart exam-picker__cart--inline">
         <div class="exam-picker__cart-head">
           <ShoppingBag :size="16" />
-          <span>Hospitalisation</span>
+          <span>{{ uiText('Hospitalisation') }}</span>
           <strong>1</strong>
         </div>
         <ul class="exam-picker__cart-list">
           <li class="exam-picker__cart-item">
             <span class="exam-picker__cart-num">1</span>
-            <span class="exam-picker__cart-label">{{ HOSPITALISATION_PRESCRIPTION_LABEL }}</span>
+            <span class="exam-picker__cart-label">{{ uiText(HOSPITALISATION_PRESCRIPTION_LABEL) }}</span>
             <button
               type="button"
               class="exam-picker__cart-remove"
-              aria-label="Retirer"
+              :aria-label="uiText('Retirer')"
               @click="toggleHospitalisation"
             >
               <X :size="14" />
@@ -205,7 +220,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
       <UiInput
         v-if="hospitalisationPrescribed"
         :model-value="hospitalisationDays ?? 1"
-        :label="uiText('Nombre de jours d\'hospitalisation')"
+        label="Nombre de jours d'hospitalisation"
         type="number"
         min="1"
         max="365"
@@ -247,7 +262,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
             :key="category"
             class="exam-picker__group"
           >
-            <div class="exam-picker__group-label">{{ category }}</div>
+            <div class="exam-picker__group-label">{{ uiText(category) }}</div>
             <button
               v-for="exam in exams"
               :key="exam.id"
@@ -256,7 +271,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
               role="option"
               @click="addExam(exam.label)"
             >
-              <span>{{ exam.label }}</span>
+              <span>{{ uiText(exam.label) }}</span>
               <Plus :size="15" />
             </button>
           </div>
@@ -280,11 +295,11 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
       <ul class="exam-picker__cart-list">
         <li v-for="(exam, index) in cart" :key="exam" class="exam-picker__cart-item">
           <span class="exam-picker__cart-num">{{ index + 1 }}</span>
-          <span class="exam-picker__cart-label">{{ exam }}</span>
+          <span class="exam-picker__cart-label">{{ uiText(exam) }}</span>
           <button
             type="button"
             class="exam-picker__cart-remove"
-            aria-label="Retirer"
+            :aria-label="uiText('Retirer')"
             @click="removeExam(exam)"
           >
             <X :size="14" />

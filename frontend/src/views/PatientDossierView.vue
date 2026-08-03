@@ -19,11 +19,10 @@ import { confirmAppModal } from '@/lib/api-modal-helper'
 import { useAuthStore } from '@/stores/auth'
 import { fullName, canWriteDossierDocuments, isDirectionOrGestionnaire } from '@/lib/roles'
 import { matchesPatientSearch } from '@/lib/patient-search'
-import { formatPatientAge, normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
+import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
 import {
   PATIENT_DOCUMENT_KIND_LABELS,
   PATIENT_DOCUMENT_KINDS,
-  formatDocumentDate,
   formatFileSize,
   type PatientDocumentKind,
 } from '@/lib/patient-documents'
@@ -36,6 +35,8 @@ import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiInput from '@/components/ui/UiInput.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 type PatientSummary = {
   id: string
@@ -84,6 +85,7 @@ type DossierResponse = {
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const { uiText, dateText, localeCode } = useAppI18n()
 
 const canWriteDocuments = computed(() =>
   auth.user ? canWriteDossierDocuments(auth.user.role) : false,
@@ -172,17 +174,48 @@ const filteredDocuments = computed(() => {
 })
 
 const kindFilters = computed(() => {
+  void localeCode.value
   const counts = dossier.value?.countsByKind ?? {}
   const total = filesCount.value
   return [
-    { value: 'ALL' as const, label: 'Tous', count: total },
+    { value: 'ALL' as const, label: uiText('Tous'), count: total },
     ...PATIENT_DOCUMENT_KINDS.map((kind) => ({
       value: kind,
-      label: PATIENT_DOCUMENT_KIND_LABELS[kind],
+      label: uiText(PATIENT_DOCUMENT_KIND_LABELS[kind]),
       count: counts[kind] ?? 0,
     })),
   ]
 })
+
+function formatValidatedMeta(iso: string, formCount: number) {
+  void localeCode.value
+  return translateTemplate('Validé le {date} · {n} formulaire(s)', {
+    date: dateText(iso),
+    n: formCount,
+  })
+}
+
+function patientAgeLabel(age: number, unit: PatientAgeUnit | null | undefined) {
+  void localeCode.value
+  const normalized = normalizePatientAgeUnit(unit)
+  if (normalized === 'MONTHS') {
+    return translateTemplate('Âge : {age} mois', { age })
+  }
+  if (normalized === 'DAYS') {
+    return age > 1
+      ? translateTemplate('Âge : {age} jours', { age })
+      : translateTemplate('Âge : {age} jour', { age })
+  }
+  return age > 1
+    ? translateTemplate('Âge : {age} ans', { age })
+    : translateTemplate('Âge : {age} an', { age })
+}
+
+function patientCardDescription(patient: PatientSummary) {
+  void localeCode.value
+  const base = translateTemplate('Matricule {code}', { code: patient.code })
+  return patient.phone ? `${base} · ${patient.phone}` : base
+}
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -244,7 +277,7 @@ async function loadDossier(patientId: string) {
     router.replace({ query: { patient: patientId } })
   } catch {
     dossier.value = null
-    dossierError.value = 'Impossible de charger le dossier patient.'
+    dossierError.value = uiText('Impossible de charger le dossier patient.')
   } finally {
     loadingDossier.value = false
   }
@@ -264,7 +297,7 @@ function onFileChange(event: Event) {
 
 async function submitUpload() {
   if (!selectedPatientId.value || !uploadForm.value.file) {
-    uploadError.value = 'Veuillez sélectionner un fichier.'
+    uploadError.value = uiText('Veuillez sélectionner un fichier.')
     return
   }
 
@@ -291,7 +324,9 @@ async function submitUpload() {
     activeTab.value = 'files'
     await loadDossier(selectedPatientId.value)
   } catch {
-    uploadError.value = 'Impossible d\'ajouter le document. Vérifiez le fichier (PDF, image, max 15 Mo).'
+    uploadError.value = uiText(
+      "Impossible d'ajouter le document. Vérifiez le fichier (PDF, image, max 15 Mo).",
+    )
   } finally {
     uploading.value = false
   }
@@ -306,9 +341,9 @@ async function deleteDocument(doc: PatientDocument) {
   if (!selectedPatientId.value || !canDeleteDocuments.value) return
   const confirmed = await confirmAppModal({
     type: 'DELETE',
-    title: 'Supprimer le document',
-    message: `Supprimer « ${doc.title} » du dossier ?`,
-    confirmLabel: 'Supprimer',
+    title: uiText('Supprimer le document'),
+    message: translateTemplate('Supprimer « {title} » du dossier ?', { title: doc.title }),
+    confirmLabel: uiText('Supprimer'),
   })
   if (!confirmed) return
 
@@ -316,8 +351,9 @@ async function deleteDocument(doc: PatientDocument) {
     await api.delete(`/patient-dossiers/${selectedPatientId.value}/documents/${doc.id}`)
     await loadDossier(selectedPatientId.value)
   } catch {
-    dossierError.value =
-      'Impossible de supprimer ce document : le patient a déjà effectué un paiement.'
+    dossierError.value = uiText(
+      'Impossible de supprimer ce document : le patient a déjà effectué un paiement.',
+    )
   }
 }
 
@@ -361,12 +397,12 @@ onMounted(async () => {
         >
           <label class="sidebar-search">
             <Search :size="14" />
-            <input v-model="sidebarQuery" type="search" placeholder="Filtrer…" />
+            <input v-model="sidebarQuery" type="search" :placeholder="uiText('Filtrer…')" />
           </label>
 
-          <p v-if="loadingMedecinPatients" class="hint">Chargement…</p>
+          <p v-if="loadingMedecinPatients" class="hint">{{ uiText('Chargement…') }}</p>
           <p v-else-if="!filteredMedecinPatients.length" class="hint">
-            Aucun patient avec résultats validés par le laboratoire.
+            {{ uiText('Aucun patient avec résultats validés par le laboratoire.') }}
           </p>
 
           <ul v-else class="patient-list">
@@ -380,8 +416,7 @@ onMounted(async () => {
                 <strong>{{ row.patient.code }}</strong>
                 <span>{{ fullName(row.patient.firstName, row.patient.lastName) }}</span>
                 <span class="patient-list__meta">
-                  Validé le {{ new Date(row.lastVisitAt).toLocaleDateString('fr-FR') }}
-                  · {{ row.labResultsCount }} formulaire(s)
+                  {{ formatValidatedMeta(row.lastVisitAt, row.labResultsCount) }}
                 </span>
               </button>
             </li>
@@ -398,12 +433,12 @@ onMounted(async () => {
         >
           <label class="sidebar-search">
             <Search :size="14" />
-            <input v-model="sidebarQuery" type="search" placeholder="Filtrer la liste…" />
+            <input v-model="sidebarQuery" type="search" :placeholder="uiText('Filtrer la liste…')" />
           </label>
 
-          <p v-if="loadingManagementPatients" class="hint">Chargement…</p>
+          <p v-if="loadingManagementPatients" class="hint">{{ uiText('Chargement…') }}</p>
           <p v-else-if="!filteredManagementPatients.length" class="hint">
-            Aucun patient trouvé. Utilisez la recherche ci-contre.
+            {{ uiText('Aucun patient trouvé. Utilisez la recherche ci-contre.') }}
           </p>
 
           <ul v-else class="patient-list">
@@ -431,7 +466,7 @@ onMounted(async () => {
               <input
                 v-model="searchQuery"
                 type="search"
-                placeholder="Matricule, nom, prénom ou téléphone…"
+                :placeholder="uiText('Matricule, nom, prénom ou téléphone…')"
                 autocomplete="off"
               />
             </label>
@@ -461,7 +496,7 @@ onMounted(async () => {
           <UiCard
             class="patient-card"
             :title="fullName(dossier.patient.firstName, dossier.patient.lastName)"
-            :description="`Matricule ${dossier.patient.code}${dossier.patient.phone ? ' · ' + dossier.patient.phone : ''}`"
+            :description="patientCardDescription(dossier.patient)"
             :icon="UserRound"
             icon-variant="teal"
           >
@@ -473,7 +508,7 @@ onMounted(async () => {
                 :icon="Plus"
                 @click="showUpload = true"
               >
-                Joindre un fichier
+                {{ uiText('Joindre un fichier') }}
               </UiButton>
               <UiButton
                 variant="ghost"
@@ -482,21 +517,23 @@ onMounted(async () => {
                 :disabled="loadingDossier"
                 @click="loadDossier(selectedPatientId!)"
               >
-                Actualiser
+                {{ uiText('Actualiser') }}
               </UiButton>
             </template>
 
             <div class="summary-row">
               <span class="summary-chip">
                 <History :size="14" />
-                <strong>{{ historyCount }}</strong> visite(s)
+                <strong>{{ historyCount }}</strong>
+                {{ uiText('visite(s)') }}
               </span>
               <span class="summary-chip">
                 <Paperclip :size="14" />
-                <strong>{{ filesCount }}</strong> fichier(s)
+                <strong>{{ filesCount }}</strong>
+                {{ uiText('fichier(s)') }}
               </span>
               <span v-if="dossier.patient.age != null" class="summary-chip">
-                Âge : {{ formatPatientAge(dossier.patient.age, normalizePatientAgeUnit(dossier.patient.ageUnit)) }}
+                {{ patientAgeLabel(dossier.patient.age, dossier.patient.ageUnit) }}
               </span>
             </div>
           </UiCard>
@@ -509,7 +546,7 @@ onMounted(async () => {
               @click="activeTab = 'history'"
             >
               <History :size="16" />
-              Parcours médical
+              {{ uiText('Parcours médical') }}
               <span class="tab-btn__count">{{ historyCount }}</span>
             </button>
             <button
@@ -519,7 +556,7 @@ onMounted(async () => {
               @click="activeTab = 'payments'"
             >
               <Banknote :size="16" />
-              Paiements
+              {{ uiText('Paiements') }}
             </button>
             <button
               type="button"
@@ -528,7 +565,7 @@ onMounted(async () => {
               @click="activeTab = 'files'"
             >
               <Paperclip :size="16" />
-              Fichiers attachés
+              {{ uiText('Fichiers attachés') }}
               <span class="tab-btn__count">{{ filesCount }}</span>
             </button>
           </div>
@@ -540,7 +577,7 @@ onMounted(async () => {
               :show-open-lab-link="isMedecin"
               :empty-message="
                 isMedecin
-                  ? 'Aucune consultation, ordonnance ou examen enregistré pour ce patient.'
+                  ? uiText('Aucune consultation, ordonnance ou examen enregistré pour ce patient.')
                   : undefined
               "
             />
@@ -571,27 +608,35 @@ onMounted(async () => {
               </button>
             </div>
 
-            <p v-if="loadingDossier" class="empty">Chargement…</p>
+            <p v-if="loadingDossier" class="empty">{{ uiText('Chargement…') }}</p>
             <p v-else-if="!filteredDocuments.length" class="empty">
-              Aucun fichier importé. Les résultats de laboratoire apparaissent dans l'onglet Parcours médical.
+              {{
+                uiText(
+                  "Aucun fichier importé. Les résultats de laboratoire apparaissent dans l'onglet Parcours médical.",
+                )
+              }}
             </p>
 
             <p v-if="filteredDocuments.length && !canDeleteDocuments" class="hint hint--warning">
-              Les documents ne peuvent pas être supprimés : ce patient a déjà effectué un paiement.
+              {{
+                uiText(
+                  'Les documents ne peuvent pas être supprimés : ce patient a déjà effectué un paiement.',
+                )
+              }}
             </p>
 
             <ul v-if="filteredDocuments.length" class="doc-list">
               <li v-for="doc in filteredDocuments" :key="doc.id" class="doc-item">
                 <div class="doc-item__main">
-                  <span class="doc-item__kind">{{ PATIENT_DOCUMENT_KIND_LABELS[doc.kind] }}</span>
+                  <span class="doc-item__kind">{{ uiText(PATIENT_DOCUMENT_KIND_LABELS[doc.kind]) }}</span>
                   <strong class="doc-item__title">{{ doc.title }}</strong>
                   <span class="doc-item__meta">
-                    {{ formatDocumentDate(doc.documentDate) }} · {{ formatFileSize(doc.fileSize) }}
+                    {{ dateText(doc.documentDate) }} · {{ formatFileSize(doc.fileSize) }}
                   </span>
                 </div>
                 <div class="doc-item__actions">
                   <UiButton variant="ghost" size="sm" :icon="Eye" @click="openDocument(doc.id)">
-                    Voir
+                    {{ uiText('Voir') }}
                   </UiButton>
                   <UiButton
                     v-if="canWriteDocuments && canDeleteDocuments"
@@ -600,7 +645,7 @@ onMounted(async () => {
                     :icon="Trash2"
                     @click="deleteDocument(doc)"
                   >
-                    Supprimer
+                    {{ uiText('Supprimer') }}
                   </UiButton>
                 </div>
               </li>
@@ -616,8 +661,12 @@ onMounted(async () => {
           <p class="hint">
             {{
               isMedecin
-                ? 'Seuls les patients dont le laboratoire a enregistré et validé des résultats apparaissent ici.'
-                : 'Choisissez un patient dans la liste ou recherchez par matricule, nom ou téléphone.'
+                ? uiText(
+                    'Seuls les patients dont le laboratoire a enregistré et validé des résultats apparaissent ici.',
+                  )
+                : uiText(
+                    'Choisissez un patient dans la liste ou recherchez par matricule, nom ou téléphone.',
+                  )
             }}
           </p>
         </UiCard>
@@ -626,23 +675,27 @@ onMounted(async () => {
 
     <div v-if="showUpload" class="modal-backdrop" @click.self="showUpload = false">
       <div class="modal">
-        <h3><Upload :size="18" /> Joindre un fichier</h3>
+        <h3><Upload :size="18" /> {{ uiText('Joindre un fichier') }}</h3>
         <UiSelect v-model="uploadForm.kind" label="Type">
           <option v-for="kind in PATIENT_DOCUMENT_KINDS" :key="kind" :value="kind">
-            {{ PATIENT_DOCUMENT_KIND_LABELS[kind] }}
+            {{ uiText(PATIENT_DOCUMENT_KIND_LABELS[kind]) }}
           </option>
         </UiSelect>
-        <UiInput v-model="uploadForm.title" label="Titre" placeholder="Ex. Radio thorax" />
+        <UiInput
+          v-model="uploadForm.title"
+          label="Titre"
+          placeholder="Ex. Radio thorax"
+        />
         <UiInput v-model="uploadForm.documentDate" label="Date" type="date" required />
         <label class="file-field">
-          <span class="file-field__label">Fichier (PDF, image — max 15 Mo)</span>
+          <span class="file-field__label">{{ uiText('Fichier (PDF, image — max 15 Mo)') }}</span>
           <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx" @change="onFileChange" />
         </label>
         <p v-if="uploadError" class="error">{{ uploadError }}</p>
         <div class="modal__actions">
-          <UiButton variant="ghost" @click="showUpload = false">Annuler</UiButton>
+          <UiButton variant="ghost" @click="showUpload = false">{{ uiText('Annuler') }}</UiButton>
           <UiButton variant="primary" :icon="Upload" :disabled="uploading" @click="submitUpload">
-            {{ uploading ? 'Envoi…' : 'Enregistrer' }}
+            {{ uploading ? uiText('Envoi…') : uiText('Enregistrer') }}
           </UiButton>
         </div>
       </div>

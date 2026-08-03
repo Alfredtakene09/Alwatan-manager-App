@@ -55,6 +55,10 @@ import {
 import { computeLabExamsGrossFcfa } from "../lib/lab-exam-prices.js";
 import { isExemptPatient, shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
 import { getMedecinDossierPatients } from "../lib/patient-medical-record.js";
+import {
+  interventionVisibleForServicesWhere,
+  resolveDoctorClinicServices,
+} from "../lib/clinic-service-exam.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -137,8 +141,14 @@ async function syncPrescribedProcedures(
 ) {
   const operationLabel = examsByKind.operation?.find(Boolean);
   if (operationLabel) {
+    const doctorServices = await resolveDoctorClinicServices(doctorId);
+    const serviceIds = doctorServices?.ids ?? [];
     const intervention = await tx.interventionType.findFirst({
-      where: { label: operationLabel, active: true },
+      where: {
+        label: operationLabel,
+        active: true,
+        ...interventionVisibleForServicesWhere(serviceIds),
+      },
     });
     if (intervention) {
       const surgeonShare = Math.round(
@@ -686,8 +696,12 @@ router.post("/", async (req, res) => {
       await tx.visit.update({ where: { id: body.visitId }, data: { status: nextStatus } });
 
       if (body.needsSurgery) {
+        const doctorServices = await resolveDoctorClinicServices(user.id);
         const defaultIntervention = await tx.interventionType.findFirst({
-          where: { active: true },
+          where: {
+            active: true,
+            ...interventionVisibleForServicesWhere(doctorServices?.ids ?? []),
+          },
           orderBy: { category: "asc" },
         });
         if (defaultIntervention) {

@@ -67,6 +67,10 @@ import {
   serializeSalaryAdvance,
   sumPendingAdvancesByEmployee,
 } from "../lib/salary-advances.js";
+import {
+  applyValidatedOvertimeToPayroll,
+  sumValidatedOvertimeByEmployee,
+} from "../lib/doctor-overtime.js";
 import { employeeSelect, serializeEmployee, dedupeEmployeesForSelection, isHiddenPlatformAdminEmployee, hiddenPlatformAdminEmployeeWhere } from "../lib/employee.js";
 import {
   deleteOrDeactivateEmployee,
@@ -114,6 +118,7 @@ const employeeCompensationSchema = z.object({
   consultationRenewalPolicy: z.nativeEnum(ConsultationRenewalPolicy).optional(),
   surgeryQuotaPercent: z.number().int().min(1).max(99).optional(),
   fixedSalaryFcfa: z.number().int().min(0).optional(),
+  overtimeHourlyRateFcfa: z.number().int().min(0).optional().nullable(),
 });
 
 const gestionnaireEmployeeSchema = z
@@ -860,6 +865,9 @@ router.post("/employees", async (req, res) => {
         contractType: body.contractType ?? null,
         contractStatus: body.contractStatus ?? EmployeeContractStatus.ACTIF,
         bonusFcfa: body.bonusFcfa ?? null,
+        overtimeHourlyRateFcfa: isMedecin
+          ? body.overtimeHourlyRateFcfa ?? null
+          : null,
         isMedecin,
         specialty: normalizeSpecialty(body.specialty, isMedecin),
         ...(availabilitySlots !== undefined ? { availabilitySlots } : {}),
@@ -976,6 +984,15 @@ router.put("/employees/:id", async (req, res) => {
         ...(body.contractType !== undefined ? { contractType: body.contractType } : {}),
         ...(body.contractStatus !== undefined ? { contractStatus: body.contractStatus } : {}),
         ...(body.bonusFcfa !== undefined ? { bonusFcfa: body.bonusFcfa } : {}),
+        ...(body.overtimeHourlyRateFcfa !== undefined
+          ? {
+              overtimeHourlyRateFcfa: nextIsMedecin
+                ? body.overtimeHourlyRateFcfa
+                : null,
+            }
+          : !nextIsMedecin
+            ? { overtimeHourlyRateFcfa: null }
+            : {}),
         isMedecin: nextIsMedecin,
         ...(body.active !== undefined ? { active: body.active } : {}),
         ...(body.specialty !== undefined ||
@@ -1071,10 +1088,15 @@ router.get("/payroll/periods", async (_req, res) => {
 
 async function buildPayrollMonthResponse(targetYear: number, targetMonth: number) {
   const rows = await fetchPayrollRowsForMonth(targetYear, targetMonth);
-  const pendingMap = await sumPendingAdvancesByEmployee(rows.map((row) => row.employeeId));
+  const employeeIds = rows.map((row) => row.employeeId);
+  const [pendingMap, overtimeMap] = await Promise.all([
+    sumPendingAdvancesByEmployee(employeeIds),
+    sumValidatedOvertimeByEmployee(employeeIds, targetYear, targetMonth),
+  ]);
   const serialized = rows.map((row) =>
     serializePayrollRow(row, {
       pendingAdvancesFcfa: pendingMap.get(row.employeeId) ?? 0,
+      pendingOvertimeFcfa: overtimeMap.get(row.employeeId) ?? 0,
     }),
   );
   const paidCount = serialized.filter((row) => row.status === PayrollStatus.PAID).length;
@@ -1193,15 +1215,23 @@ router.post("/payroll/:id/pay", async (req, res) => {
       row.year,
       row.month,
     );
+    const paidAt = body.paidAt ? new Date(body.paidAt) : new Date();
+    const primeFcfa = await applyValidatedOvertimeToPayroll(tx, {
+      employeeId: row.employeeId,
+      year: row.year,
+      month: row.month,
+      paidById: user.id,
+      paidAt,
+    });
     return tx.employeePayroll.update({
       where: { id: row.id },
       data: {
         status: PayrollStatus.PAID,
-        paidAt: body.paidAt ? new Date(body.paidAt) : new Date(),
+        paidAt,
         paidById: user.id,
         paymentMethod: body.paymentMethod,
         remarks: body.remarks?.trim() || null,
-        primeFcfa: 0,
+        primeFcfa,
         advanceDeductionFcfa,
       },
       include: employeePayrollInclude,

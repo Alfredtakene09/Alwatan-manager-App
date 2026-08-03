@@ -71,17 +71,41 @@ export async function resolveEmployeeClinicServiceLink(input: {
   return { clinicServiceId: null, service: freeText, clinicServiceIds: [] };
 }
 
-/** Filtre catalogue : service du médecin + Laboratoire + Hospitalisation (+ non liés). */
+/** Filtre catalogue : service(s) du médecin + Laboratoire + Hospitalisation (+ non liés). */
 export function examCatalogVisibleForServiceWhere(
-  clinicServiceId: string | null | undefined,
+  clinicServiceId: string | string[] | null | undefined,
 ): Prisma.ExamCatalogItemWhereInput {
-  const serviceId = clinicServiceId?.trim() || null;
+  const ids = (Array.isArray(clinicServiceId) ? clinicServiceId : [clinicServiceId])
+    .map((id) => id?.trim())
+    .filter((id): id is string => Boolean(id));
   return {
     OR: [
-      ...(serviceId ? [{ clinicServiceId: serviceId }] : []),
+      ...(ids.length === 1
+        ? [{ clinicServiceId: ids[0] }]
+        : ids.length > 1
+          ? [{ clinicServiceId: { in: ids } }]
+          : []),
       { clinicService: { name: { in: [...GLOBAL_EXAM_SERVICE_NAMES] } } },
       { clinicServiceId: null },
     ],
+  };
+}
+
+/**
+ * Types d'opération visibles pour un médecin : uniquement ceux rattachés à ses services.
+ * Les interventions sans service (seed global) restent hors du périmètre médecin.
+ */
+export function interventionVisibleForServicesWhere(
+  clinicServiceIds: string[] | null | undefined,
+): Prisma.InterventionTypeWhereInput {
+  const ids = (clinicServiceIds ?? [])
+    .map((id) => id?.trim())
+    .filter((id): id is string => Boolean(id));
+  if (ids.length === 0) {
+    return { id: { in: [] } };
+  }
+  return {
+    clinicServiceId: ids.length === 1 ? ids[0] : { in: ids },
   };
 }
 
@@ -95,6 +119,16 @@ export async function resolveDoctorClinicServiceId(
 export async function resolveDoctorClinicService(
   doctorUserId: string | null | undefined,
 ): Promise<ClinicServiceRef | null> {
+  const resolved = await resolveDoctorClinicServices(doctorUserId);
+  return resolved?.default ?? null;
+}
+
+/**
+ * Tous les services cliniques actifs du médecin (liens ClinicServiceDoctor + défaut).
+ */
+export async function resolveDoctorClinicServices(
+  doctorUserId: string | null | undefined,
+): Promise<{ default: ClinicServiceRef; all: ClinicServiceRef[]; ids: string[] } | null> {
   const id = doctorUserId?.trim();
   if (!id) return null;
   const doctor = await prisma.user.findFirst({
@@ -104,13 +138,52 @@ export async function resolveDoctorClinicService(
         select: {
           clinicServiceId: true,
           clinicService: { select: { id: true, name: true, active: true } },
+          clinicServiceLinks: {
+            where: { clinicService: { active: true } },
+            select: {
+              isDefault: true,
+              clinicService: { select: { id: true, name: true, active: true } },
+            },
+          },
         },
       },
     },
   });
-  const linked = doctor?.employee?.clinicService;
-  if (!linked?.active) return null;
-  return { id: linked.id, name: linked.name };
+  const employee = doctor?.employee;
+  if (!employee) return null;
+
+  const byId = new Map<string, ClinicServiceRef>();
+  for (const link of employee.clinicServiceLinks) {
+    if (!link.clinicService.active) continue;
+    byId.set(link.clinicService.id, {
+      id: link.clinicService.id,
+      name: link.clinicService.name,
+    });
+  }
+  if (employee.clinicService?.active) {
+    byId.set(employee.clinicService.id, {
+      id: employee.clinicService.id,
+      name: employee.clinicService.name,
+    });
+  }
+  if (byId.size === 0) return null;
+
+  const all = [...byId.values()];
+  const defaultFromLink = employee.clinicServiceLinks.find((l) => l.isDefault)?.clinicService;
+  const defaultService =
+    (defaultFromLink?.active
+      ? { id: defaultFromLink.id, name: defaultFromLink.name }
+      : null) ??
+    (employee.clinicService?.active
+      ? { id: employee.clinicService.id, name: employee.clinicService.name }
+      : null) ??
+    all[0];
+
+  return {
+    default: defaultService,
+    all,
+    ids: all.map((s) => s.id),
+  };
 }
 
 /** Kind de nomenclature suggéré d'après le nom du service clinique. */

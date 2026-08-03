@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { Banknote } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 type PaymentRow = {
   id: string
@@ -34,6 +36,7 @@ const props = defineProps<{
   compact?: boolean
 }>()
 
+const { uiText, dateTimeText, localeCode } = useAppI18n()
 const loading = ref(false)
 const groups = ref<PaymentGroup[]>([])
 const totals = ref<PaymentHistoryResponse['totals'] | null>(null)
@@ -41,7 +44,8 @@ const totals = ref<PaymentHistoryResponse['totals'] | null>(null)
 const hasData = computed(() => groups.value.length > 0)
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleString('fr-FR', {
+  void localeCode.value
+  return dateTimeText(iso, {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
@@ -51,8 +55,9 @@ function formatDate(iso: string) {
 }
 
 function statusLabel(status: string) {
-  if (status === 'PARTIALLY_PAID') return 'En cours'
-  if (status === 'PAID') return 'Soldé'
+  void localeCode.value
+  if (status === 'PARTIALLY_PAID') return uiText('En cours')
+  if (status === 'PAID') return uiText('Soldé')
   return status
 }
 
@@ -82,22 +87,22 @@ defineExpose({ reload: load })
 
 <template>
   <div class="payment-history" :class="{ 'payment-history--compact': compact }">
-    <div v-if="loading" class="payment-history__empty">Chargement de l'historique…</div>
+    <div v-if="loading" class="payment-history__empty">{{ uiText("Chargement de l'historique…") }}</div>
     <div v-else-if="!hasData" class="payment-history__empty">
-      Aucun paiement enregistré pour ce patient.
+      {{ uiText('Aucun paiement enregistré pour ce patient.') }}
     </div>
     <template v-else>
       <div v-if="totals && !compact" class="payment-history__totals">
         <div>
-          <span>Total facturé</span>
+          <span>{{ uiText('Total facturé') }}</span>
           <strong>{{ formatFcfa(totals.totalFcfa) }}</strong>
         </div>
         <div>
-          <span>Encaissé</span>
+          <span>{{ uiText('Encaissé') }}</span>
           <strong>{{ formatFcfa(totals.paidFcfa) }}</strong>
         </div>
         <div>
-          <span>Reste à payer</span>
+          <span>{{ uiText('Reste à payer') }}</span>
           <strong>{{ formatFcfa(totals.remainingFcfa) }}</strong>
         </div>
       </div>
@@ -120,9 +125,11 @@ defineExpose({ reload: load })
         </header>
 
         <div class="payment-history__amounts">
-          <span>Total {{ formatFcfa(group.totalFcfa) }}</span>
-          <span>Payé {{ formatFcfa(group.paidFcfa) }}</span>
-          <span v-if="group.remainingFcfa > 0">Reste {{ formatFcfa(group.remainingFcfa) }}</span>
+          <span>{{ translateTemplate('Total {amount}', { amount: formatFcfa(group.totalFcfa) }) }}</span>
+          <span>{{ translateTemplate('Payé {amount}', { amount: formatFcfa(group.paidFcfa) }) }}</span>
+          <span v-if="group.remainingFcfa > 0">
+            {{ translateTemplate('Reste {amount}', { amount: formatFcfa(group.remainingFcfa) }) }}
+          </span>
         </div>
 
         <ul class="payment-history__payments">

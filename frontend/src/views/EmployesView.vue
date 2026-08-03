@@ -77,6 +77,7 @@ type Employee = {
   compensationLabel?: string | null
   fixedSalaryFcfa?: number | null
   bonusFcfa?: number | null
+  overtimeHourlyRateFcfa?: number | null
   service?: string | null
   clinicServiceId?: string | null
   clinicService?: { id: string; name: string } | null
@@ -165,6 +166,7 @@ const form = ref({
   clinicServiceIds: [] as string[],
   fixedSalaryFcfa: '',
   bonusFcfa: '',
+  overtimeHourlyRateFcfa: '',
   contractType: 'CDI',
   contractStatus: 'ACTIF',
   active: true,
@@ -399,6 +401,13 @@ const tableRows = computed(() => {
     name: fullName(employee.firstName, employee.lastName),
     jobTitle: employee.jobTitle || '—',
     specialty: employee.isMedecin ? employee.specialty || '—' : '—',
+    servicesLabel: employee.isMedecin
+      ? (employee.clinicServices?.length
+          ? employee.clinicServices
+              .map((s) => (s.isDefault ? `${s.name} ★` : s.name))
+              .join(', ')
+          : employee.clinicService?.name || employee.service || '—')
+      : '—',
     profileLabel: employee.isMedecin ? uiText('Médecin') : uiText('Personnel'),
     compensationLabel: employeeCompensationLabel(employee),
     statusLabel: employee.active ? uiText('Actif') : uiText('Inactif'),
@@ -418,6 +427,13 @@ const columns = [
   {
     data: 'specialty',
     title: 'Spécialité',
+    responsivePriority: 5,
+    render: (label: string) =>
+      label === '—' ? '<span class="dt-muted">—</span>' : `<span class="dt-date">${label}</span>`,
+  },
+  {
+    data: 'servicesLabel',
+    title: 'Services',
     responsivePriority: 5,
     render: (label: string) =>
       label === '—' ? '<span class="dt-muted">—</span>' : `<span class="dt-date">${label}</span>`,
@@ -454,6 +470,7 @@ const employeeExportColumns: ExportColumn<EmployeeExportRow>[] = [
   { header: 'Profil', value: (r) => r.profileLabel },
   { header: 'Poste', value: (r) => r.jobTitle },
   { header: 'Spécialité', value: (r) => r.specialty },
+  { header: 'Services', value: (r) => r.servicesLabel },
   { header: 'Rémunération', value: (r) => r.compensationLabel },
   { header: 'Statut', value: (r) => r.statusLabel },
 ]
@@ -496,6 +513,7 @@ function resetForm() {
     clinicServiceIds: [],
     fixedSalaryFcfa: '',
     bonusFcfa: '',
+    overtimeHourlyRateFcfa: '',
     contractType: 'CDI',
     contractStatus: 'ACTIF',
     active: true,
@@ -566,16 +584,20 @@ function openEditModal(id: string) {
     service: employee.service ?? '',
     clinicServiceId: employee.clinicServiceId ?? employee.clinicService?.id ?? '',
     clinicServiceIds: (() => {
+      const defaultId = employee.clinicServiceId ?? employee.clinicService?.id ?? ''
       const ids =
         employee.clinicServiceIds?.length
           ? [...employee.clinicServiceIds]
           : (employee.clinicServices ?? []).map((s) => s.id)
-      const defaultId = employee.clinicServiceId ?? employee.clinicService?.id ?? ''
-      return ids.filter((id) => id && id !== defaultId)
+      const unique = [...new Set(ids.filter(Boolean))]
+      if (defaultId && !unique.includes(defaultId)) unique.unshift(defaultId)
+      return unique
     })(),
     fixedSalaryFcfa:
       employee.fixedSalaryFcfa != null ? String(employee.fixedSalaryFcfa) : '',
     bonusFcfa: employee.bonusFcfa != null ? String(employee.bonusFcfa) : '',
+    overtimeHourlyRateFcfa:
+      employee.overtimeHourlyRateFcfa != null ? String(employee.overtimeHourlyRateFcfa) : '',
     contractType: employee.contractType ?? 'CDI',
     contractStatus: employee.contractStatus ?? 'ACTIF',
     active: employee.active,
@@ -625,14 +647,16 @@ function compensationPayload() {
 function payrollPayload() {
   const payload: Record<string, unknown> = {}
   if (isMedecinProfile.value) {
-    payload.clinicServiceId = form.value.clinicServiceId.trim() || null
-    const extra = form.value.clinicServiceIds.filter(
-      (id) => id && id !== form.value.clinicServiceId.trim(),
-    )
-    payload.clinicServiceIds = [
-      ...(form.value.clinicServiceId.trim() ? [form.value.clinicServiceId.trim()] : []),
-      ...extra,
+    const defaultId = form.value.clinicServiceId.trim()
+    const allIds = [
+      ...new Set(
+        [defaultId, ...form.value.clinicServiceIds]
+          .map((id) => id.trim())
+          .filter(Boolean),
+      ),
     ]
+    payload.clinicServiceId = defaultId || allIds[0] || null
+    payload.clinicServiceIds = allIds
   } else if (showPayrollSection.value) {
     payload.service = form.value.service.trim() || undefined
     payload.clinicServiceId = null
@@ -643,6 +667,13 @@ function payrollPayload() {
     payload.contractStatus = form.value.contractStatus
     const bonus = Number(form.value.bonusFcfa)
     if (Number.isFinite(bonus) && bonus >= 0) payload.bonusFcfa = bonus
+  }
+  if (isMedecinProfile.value) {
+    const rate = Number(form.value.overtimeHourlyRateFcfa)
+    payload.overtimeHourlyRateFcfa =
+      Number.isFinite(rate) && rate >= 0 ? rate : null
+  } else if (showPayrollSection.value) {
+    payload.overtimeHourlyRateFcfa = null
   }
   // Salaire fixe pour le personnel et les médecins en salaire fixe (pas pour le quota)
   if (showSalaryField.value) {
@@ -656,15 +687,48 @@ watch(
   () => form.value.clinicServiceId,
   (serviceId) => {
     if (!serviceId) return
-    form.value.clinicServiceIds = form.value.clinicServiceIds.filter((id) => id !== serviceId)
+    // garde le défaut dans la sélection
+    if (!form.value.clinicServiceIds.includes(serviceId)) {
+      form.value.clinicServiceIds = [...form.value.clinicServiceIds, serviceId]
+    }
   },
 )
 
-function toggleExtraClinicService(serviceId: string) {
-  const set = new Set(form.value.clinicServiceIds)
-  if (set.has(serviceId)) set.delete(serviceId)
-  else set.add(serviceId)
-  form.value.clinicServiceIds = [...set]
+const selectedClinicServiceCount = computed(() => {
+  const ids = new Set(
+    [form.value.clinicServiceId, ...form.value.clinicServiceIds].filter(Boolean),
+  )
+  return ids.size
+})
+
+function isClinicServiceSelected(serviceId: string) {
+  return (
+    form.value.clinicServiceId === serviceId || form.value.clinicServiceIds.includes(serviceId)
+  )
+}
+
+function setDefaultClinicService(serviceId: string) {
+  form.value.clinicServiceId = serviceId
+  if (!form.value.clinicServiceIds.includes(serviceId)) {
+    form.value.clinicServiceIds = [...form.value.clinicServiceIds, serviceId]
+  }
+}
+
+function toggleClinicService(serviceId: string) {
+  const selected = isClinicServiceSelected(serviceId)
+  if (selected) {
+    // Ne pas laisser le médecin sans aucun service : si un seul est coché, on le garde
+    if (selectedClinicServiceCount.value <= 1) return
+    form.value.clinicServiceIds = form.value.clinicServiceIds.filter((id) => id !== serviceId)
+    if (form.value.clinicServiceId === serviceId) {
+      form.value.clinicServiceId = form.value.clinicServiceIds[0] ?? ''
+    }
+    return
+  }
+  form.value.clinicServiceIds = [...form.value.clinicServiceIds, serviceId]
+  if (!form.value.clinicServiceId) {
+    form.value.clinicServiceId = serviceId
+  }
 }
 
 function onDoctorCompensationTypeChange(type: DoctorCompensationType) {
@@ -685,6 +749,7 @@ function onProfileChange(profile: 'STAFF' | 'MEDECIN') {
     form.value.clinicServiceId = ''
     form.value.clinicServiceIds = []
     form.value.availabilitySlots = []
+    form.value.overtimeHourlyRateFcfa = ''
   }
   if (
     profile === 'MEDECIN' &&
@@ -792,7 +857,7 @@ async function saveEmployee() {
   }
   if (isMedecinProfile.value) {
     if (!form.value.clinicServiceId.trim()) {
-      message.value = 'Sélectionnez le service clinique du médecin.'
+      message.value = 'Sélectionnez au moins un service clinique pour ce médecin.'
       messageType.value = 'error'
       return
     }
@@ -1183,42 +1248,47 @@ onMounted(async () => {
           </datalist>
         </div>
 
-        <UiSelect v-model="form.clinicServiceId" label="Service par défaut (consultation)" required>
-          <option value="" disabled>
-            {{
-              clinicServices.length
-                ? uiText('Sélectionner le service principal')
-                : uiText('Aucun service disponible')
-            }}
-          </option>
-          <option v-for="service in clinicServices" :key="service.id" :value="service.id">
-            {{ service.name }}
-          </option>
-        </UiSelect>
-        <p class="form-panel__hint">
-          Service principal pour la consultation et le catalogue d’examens (Laboratoire et Hospitalisation restent toujours disponibles).
-        </p>
-
-        <div v-if="form.clinicServiceId" class="extra-services">
-          <p class="extra-services__label">{{ uiText('Services additionnels (réception)') }}</p>
-          <p class="form-panel__hint">
-            Le médecin apparaîtra aussi pour ces services à la réception, sans quitter son service par défaut.
+        <div class="clinic-services-picker">
+          <p class="clinic-services-picker__label">
+            {{ uiText('Services cliniques') }} <span class="req">*</span>
           </p>
-          <ul class="extra-services__list">
-            <li
-              v-for="service in clinicServices.filter((s) => s.id !== form.clinicServiceId)"
-              :key="service.id"
-            >
-              <label class="extra-services__option">
+          <p class="form-panel__hint">
+            Cochez un ou plusieurs services. Le service « par défaut » sert pour la consultation et le
+            catalogue d’examens (Laboratoire et Hospitalisation restent toujours disponibles).
+          </p>
+          <p v-if="!clinicServices.length" class="form-panel__hint">
+            {{ uiText('Aucun service disponible — créez-en depuis Administration → Services.') }}
+          </p>
+          <ul v-else class="clinic-services-picker__list">
+            <li v-for="service in clinicServices" :key="service.id">
+              <label class="clinic-services-picker__option">
                 <input
                   type="checkbox"
-                  :checked="form.clinicServiceIds.includes(service.id)"
-                  @change="toggleExtraClinicService(service.id)"
+                  :checked="isClinicServiceSelected(service.id)"
+                  @change="toggleClinicService(service.id)"
                 />
-                <span>{{ service.name }}</span>
+                <span class="clinic-services-picker__name">{{ service.name }}</span>
               </label>
+              <button
+                v-if="isClinicServiceSelected(service.id)"
+                type="button"
+                class="clinic-services-picker__default"
+                :class="{ 'is-default': form.clinicServiceId === service.id }"
+                :disabled="form.clinicServiceId === service.id"
+                @click="setDefaultClinicService(service.id)"
+              >
+                {{
+                  form.clinicServiceId === service.id
+                    ? uiText('Par défaut')
+                    : uiText('Définir par défaut')
+                }}
+              </button>
             </li>
           </ul>
+          <p v-if="selectedClinicServiceCount > 1" class="form-panel__hint">
+            {{ selectedClinicServiceCount }} services liés — le médecin apparaîtra pour chacun à la
+            réception.
+          </p>
         </div>
 
         <div class="availability-grid" role="group" :aria-label="uiText('Disponibilités')">
@@ -1263,6 +1333,18 @@ onMounted(async () => {
         </h3>
         <p class="form-panel__intro">
           Définit le tarif affiché à la réception et la part reversée au médecin.
+        </p>
+
+        <UiInput
+          v-model="form.overtimeHourlyRateFcfa"
+          label="Taux horaire heures supplémentaires (FCFA)"
+          type="number"
+          min="0"
+          step="100"
+          placeholder="Ex. 5000"
+        />
+        <p class="form-panel__hint">
+          Utilisé par le gestionnaire pour calculer les heures supp. saisies par le médecin.
         </p>
 
         <div class="comp-type-picker" role="radiogroup" aria-label="Type de rémunération">
@@ -1685,35 +1767,86 @@ onMounted(async () => {
   gap: 0.35rem;
 }
 
-.extra-services {
+.clinic-services-picker {
   margin-top: 0.75rem;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.45rem;
 }
 
-.extra-services__label {
+.clinic-services-picker__label {
   margin: 0;
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--text);
 }
 
-.extra-services__list {
+.clinic-services-picker__label .req {
+  color: #b91c1c;
+}
+
+.clinic-services-picker__list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 0.35rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card, #fff);
+  max-height: 16rem;
+  overflow: auto;
 }
 
-.extra-services__option {
+.clinic-services-picker__list li {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  font-size: 0.875rem;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.clinic-services-picker__list li:last-child {
+  border-bottom: none;
+}
+
+.clinic-services-picker__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
   cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.clinic-services-picker__name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.clinic-services-picker__default {
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.clinic-services-picker__default.is-default {
+  border-color: rgba(13, 148, 136, 0.45);
+  background: rgba(13, 148, 136, 0.1);
+  color: #0f766e;
+  cursor: default;
+}
+
+.clinic-services-picker__default:disabled {
+  opacity: 1;
 }
 
 .specialty-field__label {

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ExamCatalogKind } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import {
-  resolveDoctorClinicService,
+  resolveDoctorClinicServices,
   suggestExamCatalogKindFromServiceName,
   examCatalogServiceScopeKey,
 } from "../lib/clinic-service-exam.js";
@@ -66,33 +66,34 @@ async function requireDoctorService(req: Request, res: Response) {
     res.status(401).json({ error: "Non autorisé" });
     return null;
   }
-  const service = await resolveDoctorClinicService(userId);
-  if (!service) {
+  const services = await resolveDoctorClinicServices(userId);
+  if (!services) {
     res.status(400).json({
       error:
         "Aucun service clinique n'est associé à votre compte. Contactez l'administration.",
     });
     return null;
   }
-  return service;
+  return { default: services.default, ids: services.ids, all: services.all };
 }
 
 router.get("/me", async (req, res) => {
-  const service = await requireDoctorService(req, res);
-  if (!service) return;
+  const ctx = await requireDoctorService(req, res);
+  if (!ctx) return;
   return res.json({
-    clinicServiceId: service.id,
-    clinicServiceName: service.name,
-    suggestedKind: suggestExamCatalogKindFromServiceName(service.name),
+    clinicServiceId: ctx.default.id,
+    clinicServiceName: ctx.default.name,
+    clinicServiceIds: ctx.ids,
+    suggestedKind: suggestExamCatalogKindFromServiceName(ctx.default.name),
   });
 });
 
 router.get("/", async (req, res) => {
-  const service = await requireDoctorService(req, res);
-  if (!service) return;
+  const ctx = await requireDoctorService(req, res);
+  if (!ctx) return;
 
   const items = await prisma.examCatalogItem.findMany({
-    where: { clinicServiceId: service.id },
+    where: { clinicServiceId: { in: ctx.ids } },
     orderBy: [{ kind: "asc" }, { sortOrder: "asc" }, { label: "asc" }],
     select: examCatalogSelect,
   });
@@ -100,8 +101,9 @@ router.get("/", async (req, res) => {
 });
 
 router.post("/", async (req, res) => {
-  const service = await requireDoctorService(req, res);
-  if (!service) return;
+  const ctx = await requireDoctorService(req, res);
+  if (!ctx) return;
+  const service = ctx.default;
 
   try {
     const body = catalogItemSchema.parse(req.body);
@@ -182,13 +184,13 @@ router.post("/", async (req, res) => {
 });
 
 router.put("/:id", async (req, res) => {
-  const service = await requireDoctorService(req, res);
-  if (!service) return;
+  const ctx = await requireDoctorService(req, res);
+  if (!ctx) return;
 
   try {
     const body = catalogItemSchema.partial().parse(req.body);
     const existing = await prisma.examCatalogItem.findFirst({
-      where: { id: String(req.params.id), clinicServiceId: service.id },
+      where: { id: String(req.params.id), clinicServiceId: { in: ctx.ids } },
     });
     if (!existing) return res.status(404).json({ error: "Élément introuvable" });
 
@@ -197,16 +199,17 @@ router.put("/:id", async (req, res) => {
     const nextCode =
       body.code === undefined
         ? existing.code
-        : body.code.trim()
+        : body.code?.trim()
           ? buildExamCatalogCode(body.code, nextLabel)
           : existing.code;
+    const scopeServiceId = existing.clinicServiceId ?? ctx.default.id;
 
     if (body.code !== undefined || body.label !== undefined) {
       const duplicate = await findDuplicateExamCatalogItem({
         kind: nextKind,
         code: nextCode,
         label: nextLabel,
-        clinicServiceId: service.id,
+        clinicServiceId: scopeServiceId,
         excludeId: existing.id,
       });
       if (duplicate) {
@@ -234,8 +237,6 @@ router.put("/:id", async (req, res) => {
         priceFcfa: body.priceFcfa,
         sortOrder: body.sortOrder,
         active: body.active,
-        clinicServiceId: service.id,
-        serviceScopeKey: examCatalogServiceScopeKey(service.id),
       },
       select: examCatalogSelect,
     });
@@ -247,12 +248,12 @@ router.put("/:id", async (req, res) => {
 });
 
 router.delete("/:id", async (req, res) => {
-  const service = await requireDoctorService(req, res);
-  if (!service) return;
+  const ctx = await requireDoctorService(req, res);
+  if (!ctx) return;
 
   try {
     const existing = await prisma.examCatalogItem.findFirst({
-      where: { id: String(req.params.id), clinicServiceId: service.id },
+      where: { id: String(req.params.id), clinicServiceId: { in: ctx.ids } },
     });
     if (!existing) return res.status(404).json({ error: "Élément introuvable" });
 

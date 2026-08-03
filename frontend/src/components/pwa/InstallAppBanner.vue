@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Download, Smartphone, X } from '@lucide/vue'
+import { Download, Smartphone, Tablet, X } from '@lucide/vue'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -9,22 +9,68 @@ const {
   shouldShowBanner,
   canNativeInstall,
   isLanHttp,
+  isAndroid,
+  isIos,
+  isMobile,
+  isWindows,
+  showAndroidHelp,
   dismissBanner,
   promptNativeInstall,
   downloadShortcut,
+  downloadAndroidShortcut,
+  openAndroidHelp,
+  closeAndroidHelp,
 } = usePwaInstall()
+
+async function onInstallClick() {
+  if (canNativeInstall.value) {
+    await promptNativeInstall()
+    return
+  }
+  if (isAndroid.value || isIos.value) {
+    if (showAndroidHelp.value) closeAndroidHelp()
+    else openAndroidHelp()
+  }
+}
 </script>
 
 <template>
   <aside v-if="shouldShowBanner" class="install-banner" role="region" :aria-label="t('pwa.installTitle')">
     <div class="install-banner__icon" aria-hidden="true">
-      <Smartphone :size="22" />
+      <component :is="isMobile ? Tablet : Smartphone" :size="22" />
     </div>
     <div class="install-banner__body">
-      <p class="install-banner__title">{{ t('pwa.installTitle') }}</p>
-      <p class="install-banner__text">
-        {{ isLanHttp ? t('pwa.installHttpHint') : t('pwa.installBody') }}
+      <p class="install-banner__title">
+        {{ isAndroid || isIos ? t('pwa.installTabletTitle') : t('pwa.installTitle') }}
       </p>
+      <p class="install-banner__text">
+        <template v-if="isAndroid">
+          {{ t('pwa.installAndroidHint') }}
+        </template>
+        <template v-else-if="isIos">
+          {{ t('pwa.installIosHint') }}
+        </template>
+        <template v-else-if="isLanHttp">
+          {{ t('pwa.installHttpHint') }}
+        </template>
+        <template v-else>
+          {{ t('pwa.installBody') }}
+        </template>
+      </p>
+
+      <ol v-if="showAndroidHelp && (isAndroid || isIos)" class="install-banner__steps">
+        <template v-if="isAndroid">
+          <li>{{ t('pwa.androidStep1') }}</li>
+          <li>{{ t('pwa.androidStep2') }}</li>
+          <li>{{ t('pwa.androidStep3') }}</li>
+        </template>
+        <template v-else>
+          <li>{{ t('pwa.iosStep1') }}</li>
+          <li>{{ t('pwa.iosStep2') }}</li>
+          <li>{{ t('pwa.iosStep3') }}</li>
+        </template>
+      </ol>
+
       <div class="install-banner__actions">
         <UiButton
           v-if="canNativeInstall"
@@ -35,9 +81,37 @@ const {
         >
           {{ t('pwa.installButton') }}
         </UiButton>
-        <UiButton type="button" size="sm" :icon="Download" @click="downloadShortcut">
+
+        <UiButton
+          v-else-if="isAndroid || isIos"
+          type="button"
+          size="sm"
+          :icon="Tablet"
+          @click="onInstallClick"
+        >
+          {{ showAndroidHelp ? t('pwa.hideSteps') : t('pwa.installTabletButton') }}
+        </UiButton>
+
+        <UiButton
+          v-if="isAndroid"
+          type="button"
+          size="sm"
+          :icon="Download"
+          @click="downloadAndroidShortcut"
+        >
+          {{ t('pwa.installAndroidShortcut') }}
+        </UiButton>
+
+        <UiButton
+          v-if="isWindows || (!isAndroid && !isIos)"
+          type="button"
+          size="sm"
+          :icon="Download"
+          @click="downloadShortcut"
+        >
           {{ t('pwa.installDesktopShortcut') }}
         </UiButton>
+
         <UiButton type="button" size="sm" variant="ghost" @click="dismissBanner">
           {{ t('pwa.installDismiss') }}
         </UiButton>
@@ -81,6 +155,18 @@ const {
   color: var(--color-text-muted, #4b5563);
 }
 
+.install-banner__steps {
+  margin: 0 0 0.75rem;
+  padding-inline-start: 1.2rem;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: var(--color-text, #1f2937);
+}
+
+.install-banner__steps li + li {
+  margin-top: 0.25rem;
+}
+
 .install-banner__actions {
   display: flex;
   flex-wrap: wrap;
@@ -90,7 +176,7 @@ const {
 .install-banner__close {
   position: absolute;
   top: 0.45rem;
-  right: 0.45rem;
+  inset-inline-end: 0.45rem;
   border: none;
   background: transparent;
   color: inherit;

@@ -110,8 +110,78 @@ function findSetupZip(): string | null {
   return null;
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function escapePsSingleQuoted(value: string): string {
   return value.replace(/'/g, "''");
+}
+
+function buildAndroidShortcutHtml(appUrl: string, iconUrl: string): string {
+  const url = escapeHtml(appUrl.replace(/\/?$/, "/"));
+  const icon = escapeHtml(iconUrl);
+  return `<!DOCTYPE html>
+<html lang="fr" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#1b4f9c" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Alwatan Manager" />
+  <link rel="icon" href="${icon}" />
+  <link rel="apple-touch-icon" href="${icon}" />
+  <title>Alwatan Manager — Tablette</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0; min-height: 100vh; font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      background: linear-gradient(160deg, #e8f0fb 0%, #ffffff 45%, #f5f7fb 100%);
+      color: #12233f; display: grid; place-items: center; padding: 1.25rem;
+    }
+    .card {
+      width: min(440px, 100%); background: #fff; border-radius: 18px;
+      box-shadow: 0 12px 40px rgba(18, 35, 63, 0.12); padding: 1.4rem 1.25rem 1.5rem;
+      text-align: center;
+    }
+    img { width: 84px; height: 84px; border-radius: 18px; object-fit: cover; margin-bottom: 0.85rem; }
+    h1 { margin: 0 0 0.35rem; font-size: 1.25rem; }
+    p { margin: 0 0 0.85rem; color: #4b5563; line-height: 1.45; font-size: 0.95rem; }
+    ol { text-align: start; margin: 0 0 1.1rem; padding-inline-start: 1.2rem; color: #1f2937; line-height: 1.55; }
+    a.btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+      min-height: 48px; padding: 0.75rem 1.1rem; border-radius: 12px; text-decoration: none;
+      background: #1b4f9c; color: #fff; font-weight: 650; font-size: 1rem; width: 100%;
+    }
+    .hint { margin-top: 0.9rem; font-size: 0.82rem; color: #6b7280; }
+    .ar { direction: rtl; font-family: "Noto Naskh Arabic", "Segoe UI", Tahoma, sans-serif; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <img src="${icon}" alt="Alwatan" />
+    <h1>Clinique Alwatan — Manager</h1>
+    <p>Raccourci tablette Android / iPad. Ouvrez l’app puis ajoutez-la à l’écran d’accueil.</p>
+    <ol>
+      <li>Appuyez sur <strong>Ouvrir l’application</strong>.</li>
+      <li>Dans Chrome : menu <strong>⋮</strong> → <strong>Ajouter à l’écran d’accueil</strong>.</li>
+      <li>Sur Safari (iPad) : Partager → <strong>Sur l’écran d’accueil</strong>.</li>
+    </ol>
+    <a class="btn" href="${url}">Ouvrir l’application</a>
+    <p class="hint ar">افتح التطبيق ثم أضفه إلى الشاشة الرئيسية من قائمة المتصفح.</p>
+    <p class="hint">${url}</p>
+  </main>
+  <script>
+    // Si ouvert depuis Téléchargements, l’utilisateur clique le bouton.
+    // Option : ouverture auto après 1,2 s (désactivée pour laisser lire le guide).
+  </script>
+</body>
+</html>`;
 }
 
 /** Lanceur client : Wi‑Fi d’abord, Tailscale en secours (un seul raccourci). */
@@ -132,6 +202,16 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "}",
     "",
     "function Open-AlwatanUrl([string]$Url) {",
+    "  if (-not $Url) { return }",
+    "  $openUrl = $Url",
+    "  try {",
+    "    $base = $Url.TrimEnd('/')",
+    "    $ver = Invoke-RestMethod -Uri ($base + '/api/app-version?_=' + [guid]::NewGuid().ToString('N')) -TimeoutSec 3",
+    "    if ($ver -and $ver.buildId) {",
+    "      $q = [uri]::EscapeDataString([string]$ver.buildId)",
+    "      $openUrl = $Url.TrimEnd('/') + '/?v=' + $q",
+    "    }",
+    "  } catch { }",
     "  $edge = @(",
     "    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\\Edge\\Application\\msedge.exe'),",
     "    (Join-Path $env:ProgramFiles 'Microsoft\\Edge\\Application\\msedge.exe'),",
@@ -141,9 +221,9 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "    (Join-Path $env:ProgramFiles 'Google\\Chrome\\Application\\chrome.exe'),",
     "    (Join-Path ${env:ProgramFiles(x86)} 'Google\\Chrome\\Application\\chrome.exe')",
     "  ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1",
-    "  if ($edge) { Start-Process -FilePath $edge -ArgumentList ('--app=' + $Url) }",
-    "  elseif ($chrome) { Start-Process -FilePath $chrome -ArgumentList ('--app=' + $Url) }",
-    "  else { Start-Process $Url }",
+    "  if ($edge) { Start-Process -FilePath $edge -ArgumentList ('--app=' + $openUrl) }",
+    "  elseif ($chrome) { Start-Process -FilePath $chrome -ArgumentList ('--app=' + $openUrl) }",
+    "  else { Start-Process $openUrl }",
     "}",
     "",
     "$candidates = New-Object System.Collections.Generic.List[string]",
@@ -284,6 +364,7 @@ router.get("/info", (req, res) => {
     shortcutTailscaleUrl: bases.tailscale
       ? "/api/client-setup/install-desktop-shortcut.cmd"
       : null,
+    androidShortcutUrl: "/api/client-setup/android-shortcut.html",
     launcherUrl: "/api/client-setup/launcher.cmd",
     packageUrl: findSetupZip() ? "/api/client-setup/package.zip" : null,
     packageAvailable: Boolean(findSetupZip()),
@@ -324,6 +405,21 @@ router.get("/install-desktop-shortcut.cmd", (req, res) => {
     'attachment; filename="Installer-Raccourci-Alwatan-Bureau.cmd"',
   );
   res.send(body);
+});
+
+router.get("/android-shortcut.html", (req, res) => {
+  const bases = resolveAccessBases(req);
+  const appUrl = `${(bases.wifi ?? bases.primary).replace(/\/?$/, "/")}`;
+  const iconUrl = `${appUrl.replace(/\/?$/, "")}/pwa/icon-192.png`;
+  const html = buildAndroidShortcutHtml(appUrl, iconUrl);
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="Alwatan-Manager-Tablette.html"',
+  );
+  res.setHeader("Cache-Control", "no-store");
+  res.send(html);
 });
 
 router.get("/shortcut.url", (_req, res) => {

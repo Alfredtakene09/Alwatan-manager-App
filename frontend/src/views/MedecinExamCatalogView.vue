@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ListChecks, Plus, RefreshCw, Save } from '@lucide/vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ListChecks, Plus, RefreshCw, Save, Stethoscope } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
@@ -16,6 +17,8 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+import MedecinOperationTypesPanel from '@/components/medecin/MedecinOperationTypesPanel.vue'
+import '@/assets/datatable-theme.css'
 
 type CatalogItem = {
   id: string
@@ -36,8 +39,17 @@ type DoctorServiceInfo = {
   suggestedKind: string
 }
 
+type TabId = 'exams' | 'operations'
+
+const route = useRoute()
+const router = useRouter()
 const { uiText, localeCode } = useAppI18n()
 
+function tabFromQuery(): TabId {
+  return route.query.tab === 'operations' ? 'operations' : 'exams'
+}
+
+const activeTab = ref<TabId>(tabFromQuery())
 const serviceInfo = ref<DoctorServiceInfo | null>(null)
 const items = ref<CatalogItem[]>([])
 const loading = ref(false)
@@ -58,9 +70,13 @@ const pageTitle = computed(() =>
   translateTemplate('Nomenclature — {label}', { label: serviceName.value }),
 )
 const pageSubtitle = computed(() =>
-  translateTemplate('Gérez les examens et tarifs de {service}', {
-    service: serviceName.value,
-  }),
+  activeTab.value === 'operations'
+    ? translateTemplate('Types d’opérations du service {service}', {
+        service: serviceName.value,
+      })
+    : translateTemplate('Gérez les examens et tarifs de {service}', {
+        service: serviceName.value,
+      }),
 )
 const addButtonLabel = computed(() =>
   translateTemplate('Ajout {label}', { label: serviceName.value }),
@@ -94,9 +110,9 @@ const tableRows = computed(() => {
   localeCode.value
   return filteredItems.value.map((item) => ({
     id: item.id,
-    label: item.label,
+    label: uiText(item.label),
     code: item.code,
-    category: item.category || '—',
+    category: uiText(item.category || '—'),
     price: formatFcfa(item.priceFcfa),
     priceSort: item.priceFcfa,
     statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),
@@ -131,6 +147,10 @@ const columns = [
       catalogRowActionsHtml(row),
   },
 ]
+
+function selectTab(tab: TabId) {
+  activeTab.value = tab
+}
 
 function resetMessages() {
   message.value = ''
@@ -241,17 +261,21 @@ async function saveEdit() {
     invalidateExamCatalogCache()
     closeEditModal()
     await loadItems()
-  } catch {
-    message.value = 'Mise à jour impossible.'
-    messageType.value = 'error'
+  } catch (error) {
+    const shown = await showDuplicateModalFromError(error)
+    if (!shown) {
+      message.value = 'Mise à jour impossible.'
+      messageType.value = 'error'
+    }
   } finally {
     saving.value = false
   }
 }
 
-async function toggleItem(id: string) {
+async function toggleActive(id: string) {
   const item = itemsById.value.get(id)
   if (!item) return
+  saving.value = true
   resetMessages()
   try {
     await api.put(`/consultation/exam-nomenclature/${id}`, { active: !item.active })
@@ -260,44 +284,43 @@ async function toggleItem(id: string) {
     invalidateExamCatalogCache()
     await loadItems()
   } catch {
-    message.value = 'Action impossible.'
+    message.value = 'Mise à jour impossible.'
     messageType.value = 'error'
+  } finally {
+    saving.value = false
   }
 }
 
 async function deleteItem(id: string) {
   const item = itemsById.value.get(id)
   if (!item) return
-
-  const confirmed = await confirmAppModal({
+  const ok = await confirmAppModal({
     type: 'DELETE',
-    title: "Supprimer l'élément",
-    message: translateTemplate(
-      'Supprimer définitivement « {name} » ? Cette action est irréversible.',
-      { name: item.label },
-    ),
-    confirmLabel: 'Supprimer',
+    title: uiText("Supprimer l'élément"),
+    message: translateTemplate('Supprimer « {name} » ?', { name: item.label }),
+    confirmLabel: uiText('Supprimer'),
   })
-  if (!confirmed) return
-
+  if (!ok) return
+  saving.value = true
   resetMessages()
   try {
     await api.delete(`/consultation/exam-nomenclature/${id}`)
     message.value = 'Élément supprimé.'
     messageType.value = 'success'
     invalidateExamCatalogCache()
-    if (editingId.value === id) closeEditModal()
     await loadItems()
   } catch {
     message.value = 'Suppression impossible.'
     messageType.value = 'error'
+  } finally {
+    saving.value = false
   }
 }
 
 function onTableAction({ action, id }: { action: string; id: string }) {
-  if (action === 'toggle') toggleItem(id)
   if (action === 'edit') openEditModal(id)
-  if (action === 'delete') deleteItem(id)
+  if (action === 'toggle') void toggleActive(id)
+  if (action === 'delete') void deleteItem(id)
 }
 
 onMounted(async () => {
@@ -306,8 +329,21 @@ onMounted(async () => {
   } catch {
     // handled in loadItems
   }
-  await loadItems()
+  if (activeTab.value === 'exams') await loadItems()
 })
+
+watch(activeTab, (tab) => {
+  const query = tab === 'exams' ? {} : { tab }
+  router.replace({ query })
+  if (tab === 'exams' && items.value.length === 0) void loadItems()
+})
+
+watch(
+  () => route.query.tab,
+  () => {
+    activeTab.value = tabFromQuery()
+  },
+)
 
 watch(categoryOptions, (options) => {
   if (selectedCategory.value && !options.includes(selectedCategory.value)) {
@@ -317,115 +353,155 @@ watch(categoryOptions, (options) => {
 </script>
 
 <template>
-  <div>
-    <UiPageHeader :title="pageTitle" :subtitle="pageSubtitle" :icon="ListChecks" />
-
-    <UiAlert v-if="message" :type="messageType" :message="message" />
-
-    <UiCard
-      :title="pageTitle"
-      description="Tarifs utilisés pour vos prescriptions et la facturation"
-      :icon="ListChecks"
-      icon-variant="teal"
-      class="section"
-    >
-      <template #actions>
-        <UiButton
-          variant="primary"
-          size="sm"
-          :icon="Plus"
-          :disabled="!serviceInfo"
-          @click="openAddModal"
+  <div class="page-with-table">
+    <section class="page-with-table__head">
+      <UiPageHeader :title="pageTitle" :subtitle="pageSubtitle" :icon="ListChecks" />
+      <div class="page-tabs" role="tablist" :aria-label="uiText('Sections nomenclature')">
+        <button
+          type="button"
+          class="page-tab"
+          role="tab"
+          :aria-selected="activeTab === 'exams'"
+          :class="{ 'page-tab--active': activeTab === 'exams' }"
+          @click="selectTab('exams')"
         >
-          {{ uiText(addButtonLabel) }}
-        </UiButton>
-        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">
-          Actualiser
-        </UiButton>
-        <span class="list-count">{{ elementCountLabel }}</span>
-      </template>
-
-      <div class="catalog-filters">
-        <UiInput
-          v-model="searchQuery"
-          label="Rechercher"
-          placeholder="Libellé, code, catégorie…"
-        />
-        <UiSelect
-          :key="`medecin-category-filter-${serviceInfo?.clinicServiceId || 'none'}`"
-          v-model="selectedCategory"
-          label="Catégorie"
+          <ListChecks :size="14" />
+          {{ uiText('Examens') }}
+        </button>
+        <button
+          type="button"
+          class="page-tab"
+          role="tab"
+          :aria-selected="activeTab === 'operations'"
+          :class="{ 'page-tab--active': activeTab === 'operations' }"
+          @click="selectTab('operations')"
         >
-          <option value="">{{ uiText('Toutes les catégories') }}</option>
-          <option v-for="category in categoryOptions" :key="category" :value="category">
-            {{ category }}
-          </option>
-        </UiSelect>
+          <Stethoscope :size="14" />
+          {{ uiText('Types d’opérations') }}
+        </button>
       </div>
+    </section>
 
-      <div class="table-panel-scroll">
-        <UiDataTable
-          :table-key="`medecin-exam-nomenclature-${searchQuery}-${selectedCategory}`"
-          compact
-          :data="tableRows"
-          :columns="columns"
-          :loading="loading"
-          loading-label="Chargement de votre nomenclature…"
-          @action="onTableAction"
-        />
-      </div>
-    </UiCard>
+    <template v-if="activeTab === 'exams'">
+      <UiAlert v-if="message" :type="messageType" :message="message" />
 
-    <UiFormModal
-      v-if="showAddModal"
-      title-id="medecin-add-catalog-title"
-      :title="uiText(addButtonLabel)"
-      :subtitle="translateTemplate('Ajouter un examen pour {service}', { service: serviceName })"
-      :icon="ListChecks"
-      @close="closeAddModal"
-    >
-      <section class="form-panel">
-        <p class="form-panel__hint">
-          {{ uiText('Service') }}: <strong>{{ serviceName }}</strong>
-        </p>
-        <div class="form-grid-2">
-          <UiInput v-model="newItem.code" label="Code (optionnel)" placeholder="ex: consultation" />
-          <UiInput v-model="newItem.label" label="Libellé" placeholder="Libellé de l'examen" />
-          <UiInput v-model="newItem.category" label="Catégorie (optionnel)" placeholder="Optionnel" />
-          <UiInput v-model="newItem.priceFcfa" label="Tarif (FCFA)" type="number" min="1" />
+      <UiCard
+        :title="pageTitle"
+        description="Tarifs utilisés pour vos prescriptions et la facturation"
+        :icon="ListChecks"
+        icon-variant="teal"
+        class="section"
+      >
+        <template #actions>
+          <UiButton
+            variant="primary"
+            size="sm"
+            :icon="Plus"
+            :disabled="!serviceInfo"
+            @click="openAddModal"
+          >
+            {{ uiText(addButtonLabel) }}
+          </UiButton>
+          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">
+            {{ uiText('Actualiser') }}
+          </UiButton>
+          <span class="list-count">{{ elementCountLabel }}</span>
+        </template>
+
+        <div class="catalog-filters">
+          <UiInput
+            v-model="searchQuery"
+            label="Rechercher"
+            placeholder="Libellé, code, catégorie…"
+          />
+          <UiSelect
+            :key="`medecin-category-filter-${serviceInfo?.clinicServiceId || 'none'}`"
+            v-model="selectedCategory"
+            label="Catégorie"
+          >
+            <option value="">{{ uiText('Toutes les catégories') }}</option>
+            <option v-for="category in categoryOptions" :key="category" :value="category">
+              {{ uiText(category) }}
+            </option>
+          </UiSelect>
         </div>
-      </section>
-      <template #footer>
-        <UiButton variant="ghost" @click="closeAddModal">Annuler</UiButton>
-        <UiButton variant="primary" :icon="Plus" :disabled="saving" @click="addItem">
-          Enregistrer
-        </UiButton>
-      </template>
-    </UiFormModal>
 
-    <UiFormModal
-      v-if="editingId"
-      title-id="medecin-edit-catalog-title"
-      title="Modifier l'élément"
-      subtitle="Mettre à jour le libellé, la catégorie ou le tarif"
-      :icon="ListChecks"
-      @close="closeEditModal"
-    >
-      <section class="form-panel">
-        <div class="form-grid-2">
-          <UiInput v-model="editForm.code" label="Code (optionnel)" />
-          <UiInput v-model="editForm.label" label="Libellé" />
-          <UiInput v-model="editForm.category" label="Catégorie (optionnel)" />
-          <UiInput v-model="editForm.priceFcfa" label="Tarif (FCFA)" type="number" min="1" />
+        <div class="table-panel-scroll">
+          <UiDataTable
+            :table-key="`medecin-exam-nomenclature-${searchQuery}-${selectedCategory}`"
+            compact
+            :data="tableRows"
+            :columns="columns"
+            :loading="loading"
+            loading-label="Chargement de votre nomenclature…"
+            @action="onTableAction"
+          />
         </div>
-      </section>
-      <template #footer>
-        <UiButton variant="ghost" @click="closeEditModal">Annuler</UiButton>
-        <UiButton variant="primary" :icon="Save" :disabled="saving" @click="saveEdit">
-          Enregistrer
-        </UiButton>
-      </template>
-    </UiFormModal>
+      </UiCard>
+
+      <UiFormModal
+        v-if="showAddModal"
+        title-id="medecin-add-catalog-title"
+        :title="uiText(addButtonLabel)"
+        :subtitle="translateTemplate('Ajouter un examen pour {service}', { service: serviceName })"
+        :icon="ListChecks"
+        @close="closeAddModal"
+      >
+        <section class="form-panel">
+          <p class="form-panel__hint">
+            {{ uiText('Service') }}: <strong>{{ serviceName }}</strong>
+          </p>
+          <div class="form-grid-2">
+            <UiInput v-model="newItem.code" label="Code (optionnel)" placeholder="ex: consultation" />
+            <UiInput v-model="newItem.label" label="Libellé" placeholder="Libellé de l'examen" />
+            <UiInput v-model="newItem.category" label="Catégorie (optionnel)" placeholder="Optionnel" />
+            <UiInput v-model="newItem.priceFcfa" label="Tarif (FCFA)" type="number" min="1" />
+          </div>
+        </section>
+        <template #footer>
+          <UiButton variant="ghost" @click="closeAddModal">{{ uiText('Annuler') }}</UiButton>
+          <UiButton variant="primary" :icon="Plus" :disabled="saving" @click="addItem">
+            {{ uiText('Enregistrer') }}
+          </UiButton>
+        </template>
+      </UiFormModal>
+
+      <UiFormModal
+        v-if="editingId"
+        title-id="medecin-edit-catalog-title"
+        title="Modifier l'élément"
+        subtitle="Mettre à jour le libellé, la catégorie ou le tarif"
+        :icon="ListChecks"
+        @close="closeEditModal"
+      >
+        <section class="form-panel">
+          <div class="form-grid-2">
+            <UiInput v-model="editForm.code" label="Code (optionnel)" />
+            <UiInput v-model="editForm.label" label="Libellé" />
+            <UiInput v-model="editForm.category" label="Catégorie (optionnel)" />
+            <UiInput v-model="editForm.priceFcfa" label="Tarif (FCFA)" type="number" min="1" />
+          </div>
+        </section>
+        <template #footer>
+          <UiButton variant="ghost" @click="closeEditModal">{{ uiText('Annuler') }}</UiButton>
+          <UiButton variant="primary" :icon="Save" :disabled="saving" @click="saveEdit">
+            {{ uiText('Enregistrer') }}
+          </UiButton>
+        </template>
+      </UiFormModal>
+    </template>
+
+    <MedecinOperationTypesPanel
+      v-else
+      :service-info="
+        serviceInfo
+          ? {
+              clinicServiceId: serviceInfo.clinicServiceId,
+              clinicServiceName: serviceInfo.clinicServiceName,
+            }
+          : null
+      "
+    />
   </div>
 </template>
 
@@ -462,5 +538,17 @@ watch(categoryOptions, (options) => {
   margin: 0 0 0.85rem;
   font-size: 0.8125rem;
   color: var(--text-muted);
+}
+
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media (max-width: 720px) {
+  .form-grid-2 {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

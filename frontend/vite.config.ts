@@ -20,9 +20,11 @@ export default defineConfig({
         theme_color: THEME_COLOR,
         background_color: '#ffffff',
         display: 'standalone',
+        orientation: 'any',
         scope: '/',
         start_url: '/',
         lang: 'fr',
+        categories: ['medical', 'business', 'productivity'],
         icons: [
           {
             src: '/pwa/icon-192.png',

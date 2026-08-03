@@ -1,3 +1,6 @@
+import { formatAppDate } from '@/i18n/locale-format'
+import { translateTemplate } from '@/lib/dashboard-i18n'
+
 export type PatientDocumentKind = 'EXAMEN' | 'ODONTO' | 'RADIO' | 'ECHO' | 'CONSULTATION' | 'AUTRE'
 
 export const PATIENT_DOCUMENT_KIND_LABELS: Record<PatientDocumentKind, string> = {
@@ -14,13 +17,15 @@ export const PATIENT_DOCUMENT_KINDS = Object.keys(
 ) as PatientDocumentKind[]
 
 export function formatFileSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} o`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`
+  if (bytes < 1024) return translateTemplate('{n} o', { n: bytes })
+  if (bytes < 1024 * 1024) {
+    return translateTemplate('{n} Ko', { n: (bytes / 1024).toFixed(1) })
+  }
+  return translateTemplate('{n} Mo', { n: (bytes / (1024 * 1024)).toFixed(1) })
 }
 
 export function formatDocumentDate(value: string) {
-  return new Date(value).toLocaleDateString('fr-FR', {
+  return formatAppDate(value, {
     day: '2-digit',
     month: 'long',
     year: 'numeric',

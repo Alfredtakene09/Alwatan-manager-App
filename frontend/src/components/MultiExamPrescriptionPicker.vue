@@ -372,7 +372,7 @@ watch(
         <section v-if="consultationSelected">
           <h4>{{ uiText('Consultation') }}</h4>
           <ul>
-            <li>{{ CLINICAL_CONSULTATION_EXAM_LABEL }}</li>
+            <li>{{ uiText(CLINICAL_CONSULTATION_EXAM_LABEL) }}</li>
           </ul>
         </section>
         <section
@@ -386,7 +386,7 @@ watch(
               v-for="exam in kind === 'specialty' ? specialtySummaryExams : examsByKind[kind]"
               :key="`${kind}-${exam}`"
             >
-              {{ exam }}
+              {{ uiText(exam) }}
             </li>
           </ul>
           <p v-if="showCommentForKind(kind) && kindComment(kind)" class="multi-exam-picker__summary-comment">

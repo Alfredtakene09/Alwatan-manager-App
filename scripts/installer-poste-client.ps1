@@ -97,18 +97,9 @@ $lienPath = Join-Path $installDir 'LIEN-SERVEUR.txt'
 $bat = @"
 @echo off
 title Alwatan Manager
-set "WIFI_URL=$url"
-set "TS_URL=$tsUrl"
-powershell -NoProfile -Command "try { `$r=Invoke-WebRequest -Uri `$env:WIFI_URL -UseBasicParsing -TimeoutSec 3; if (`$r.StatusCode -ge 200) { exit 0 } else { exit 1 } } catch { exit 1 }"
-if not errorlevel 1 (
-  start "" "%WIFI_URL%"
-  exit /b 0
-)
-if defined TS_URL if not "%TS_URL%"=="" (
-  start "" "%TS_URL%"
-  exit /b 0
-)
-start "" "%WIFI_URL%"
+cd /d "%~dp0"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0lancer-client.ps1"
+if errorlevel 1 pause
 "@
 Set-Content -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan.bat') -Value $bat -Encoding ASCII
 

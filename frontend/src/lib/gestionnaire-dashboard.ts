@@ -123,6 +123,7 @@ export type GestionnaireDashboardOverview = {
     pendingExpenses: number
     unpaidPayroll: number
     pendingDayClosures?: number
+    pendingDoctorOvertime?: number
   }
   recentDisbursements: RecentDisbursement[]
   payroll: {

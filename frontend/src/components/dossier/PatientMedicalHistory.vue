@@ -16,6 +16,8 @@ import { getLabFormPanel, getFilledLabPanelSections, type LabPanelSlug } from '@
 import { useLabPanelsStore } from '@/stores/lab-panels'
 import type { PharmacyOrdonnanceLine } from '@/lib/lab-notes'
 import UiButton from '@/components/ui/UiButton.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 export type MedicalHistoryLabPanel = {
   slug: LabPanelSlug
@@ -45,6 +47,7 @@ defineProps<{
 
 const router = useRouter()
 const labPanels = useLabPanelsStore()
+const { uiText, dateText, timeText, localeCode } = useAppI18n()
 const expandedVisitId = ref<string | null>(null)
 const expandedPanel = ref<{ visitId: string; slug: LabPanelSlug } | null>(null)
 
@@ -53,7 +56,8 @@ onMounted(() => {
 })
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString('fr-FR', {
+  void localeCode.value
+  return dateText(iso, {
     day: '2-digit',
     month: 'long',
     year: 'numeric',
@@ -61,7 +65,8 @@ function formatDate(iso: string) {
 }
 
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+  void localeCode.value
+  return timeText(iso, { hour: '2-digit', minute: '2-digit' })
 }
 
 function pharmacyLines(entry: MedicalHistoryEntry) {
@@ -69,11 +74,12 @@ function pharmacyLines(entry: MedicalHistoryEntry) {
 }
 
 function formatPharmacyLine(line: PharmacyOrdonnanceLine) {
+  void localeCode.value
   const parts = [line.name]
   if (line.dosage?.trim()) parts.push(line.dosage.trim())
   parts.push(`× ${line.quantity}`)
   if (line.instructions?.trim()) parts.push(`— ${line.instructions.trim()}`)
-  if (!line.productId?.trim()) parts.push('(hors pharmacie)')
+  if (!line.productId?.trim()) parts.push(uiText('(hors pharmacie)'))
   return parts.join(' ')
 }
 
@@ -101,11 +107,13 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
 </script>
 
 <template>
-  <p v-if="loading" class="history-empty">Chargement de l'historique…</p>
+  <p v-if="loading" class="history-empty">{{ uiText("Chargement de l'historique…") }}</p>
   <p v-else-if="!entries.length" class="history-empty">
     {{
       emptyMessage ??
-      'Aucune consultation, ordonnance, examen ou commentaire enregistré pour ce patient.'
+      uiText(
+        'Aucune consultation, ordonnance, examen ou commentaire enregistré pour ce patient.',
+      )
     }}
   </p>
 
@@ -130,18 +138,18 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
           <div class="timeline-card__badges">
             <span v-if="entry.doctorComment" class="badge badge--comment">
               <MessageSquare :size="12" />
-              Consultation
+              {{ uiText('Consultation') }}
             </span>
             <span v-if="pharmacyLines(entry).length" class="badge badge--pharmacy">
               <PillBottle :size="12" />
-              {{ pharmacyLines(entry).length }} produit(s)
+              {{ translateTemplate('{n} produit(s)', { n: pharmacyLines(entry).length }) }}
             </span>
             <span v-if="entry.prescribedExams.length" class="badge badge--exam">
               <FlaskConical :size="12" />
-              {{ entry.prescribedExams.length }} examen(s)
+              {{ translateTemplate('{n} examen(s)', { n: entry.prescribedExams.length }) }}
             </span>
             <span v-if="entry.labPanels.length" class="badge badge--result">
-              {{ entry.labPanels.length }} résultat(s)
+              {{ translateTemplate('{n} résultat(s)', { n: entry.labPanels.length }) }}
             </span>
           </div>
         </button>
@@ -149,16 +157,20 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
         <div v-if="expandedVisitId === entry.visitId" class="timeline-card__body">
           <p v-if="entry.doctor" class="timeline-meta">
             <Stethoscope :size="14" />
-            Dr {{ fullName(entry.doctor.firstName, entry.doctor.lastName) }}
+            {{
+              translateTemplate('Dr {name}', {
+                name: fullName(entry.doctor.firstName, entry.doctor.lastName),
+              })
+            }}
           </p>
 
           <div v-if="entry.doctorComment" class="timeline-block timeline-block--comment">
-            <h4>Informations cliniques</h4>
+            <h4>{{ uiText('Informations cliniques') }}</h4>
             <p class="timeline-block__text">{{ entry.doctorComment }}</p>
           </div>
 
           <div v-if="pharmacyLines(entry).length" class="timeline-block timeline-block--pharmacy">
-            <h4>Ordonnance pharmacie</h4>
+            <h4>{{ uiText('Ordonnance pharmacie') }}</h4>
             <ul class="pharmacy-list">
               <li v-for="line in pharmacyLines(entry)" :key="`${line.productId}-${line.name}`">
                 {{ formatPharmacyLine(line) }}
@@ -167,13 +179,15 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
           </div>
 
           <div v-if="entry.prescribedExams.length" class="timeline-block">
-            <h4>Examens prescrits</h4>
-            <p class="exam-list">{{ entry.prescribedExams.join(' · ') }}</p>
+            <h4>{{ uiText('Examens prescrits') }}</h4>
+            <p class="exam-list">
+              {{ entry.prescribedExams.map((exam) => uiText(exam)).join(' · ') }}
+            </p>
           </div>
 
           <div v-if="entry.labPanels.length" class="timeline-block">
             <div class="timeline-block__head">
-              <h4>Résultats laboratoire</h4>
+              <h4>{{ uiText('Résultats laboratoire') }}</h4>
               <UiButton
                 v-if="showOpenLabLink && entry.hasLabResults"
                 variant="ghost"
@@ -181,7 +195,7 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
                 :icon="Eye"
                 @click="openLabDossier(entry.visitId)"
               >
-                Ouvrir en détail
+                {{ uiText('Ouvrir en détail') }}
               </UiButton>
             </div>
 
@@ -194,7 +208,9 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
                 >
                   <FileText :size="14" />
                   <span>{{ panel.label }}</span>
-                  <span class="panel-card__count">{{ panel.filledCount }} valeur(s)</span>
+                  <span class="panel-card__count">
+                    {{ translateTemplate('{n} valeur(s)', { n: panel.filledCount }) }}
+                  </span>
                 </button>
 
                 <div

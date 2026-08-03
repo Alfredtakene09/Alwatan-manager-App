@@ -117,6 +117,27 @@ const dashboardAlerts = computed(() => {
     })
   }
 
+  const pendingDoctorOvertime = gestionnaireOverview.value?.alerts.pendingDoctorOvertime ?? 0
+  if (pendingDoctorOvertime > 0) {
+    items.push({
+      id: 'doctor-overtime',
+      severity: 'warning',
+      title: translateDashboardLabel('Heures supplémentaires à valider'),
+      message:
+        pendingDoctorOvertime > 1
+          ? translateTemplate('{n} saisies médecins en attente de calcul.', {
+              n: pendingDoctorOvertime,
+            })
+          : translateTemplate('{n} saisie médecin en attente de calcul.', {
+              n: pendingDoctorOvertime,
+            }),
+      actionLabel: translateDashboardLabel('Valider les heures'),
+      actionTo: showGestionnaireSection.value
+        ? '/gestionnaire/salaires?tab=heures-supp'
+        : '/admin/salaires?tab=heures-supp',
+    })
+  }
+
   const pendingExpenses =
     overview.value?.alerts.pendingExpenses ??
     gestionnaireOverview.value?.alerts.pendingExpenses ??

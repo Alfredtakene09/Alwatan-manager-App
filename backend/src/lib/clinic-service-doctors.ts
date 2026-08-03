@@ -8,6 +8,7 @@ export const clinicServiceDoctorSelect = {
   specialty: true,
   active: true,
   clinicServiceId: true,
+  user: { select: { id: true, active: true } },
   clinicServiceLinks: {
     select: {
       clinicServiceId: true,
@@ -23,6 +24,8 @@ export type ClinicServiceDoctorRow = {
   lastName: string;
   specialty: string | null;
   active: boolean;
+  /** False si la fiche médecin n’a pas encore de compte application actif. */
+  hasActiveUser: boolean;
   clinicServiceId?: string | null;
   clinicServiceIds?: string[];
   clinicServices?: { id: string; name: string; isDefault: boolean }[];
@@ -31,7 +34,9 @@ export type ClinicServiceDoctorRow = {
 const serviceWithDoctorsInclude = {
   serviceDoctors: {
     where: {
-      employee: { isMedecin: true, user: { is: { active: true } } },
+      // Fiche médecin active suffit pour le rattachement service
+      // (le compte utilisateur n’est requis que pour la consultation / réception).
+      employee: { isMedecin: true, active: true },
     },
     orderBy: [
       { employee: { lastName: "asc" as const } },
@@ -47,6 +52,7 @@ const serviceWithDoctorsInclude = {
           specialty: true,
           active: true,
           clinicServiceId: true,
+          user: { select: { id: true, active: true } },
         },
       },
     },
@@ -71,6 +77,7 @@ export function serializeClinicService(service: ClinicServiceWithDoctors) {
       lastName: link.employee.lastName,
       specialty: link.employee.specialty,
       active: link.employee.active,
+      hasActiveUser: Boolean(link.employee.user?.active),
       clinicServiceId: link.employee.clinicServiceId,
       isDefaultForService: link.isDefault,
     })),
@@ -103,6 +110,7 @@ function serializeAssignableDoctor(
     specialty: string | null;
     active: boolean;
     clinicServiceId: string | null;
+    user: { id: string; active: boolean } | null;
     clinicServiceLinks: {
       clinicServiceId: string;
       isDefault: boolean;
@@ -128,6 +136,7 @@ function serializeAssignableDoctor(
     lastName: doctor.lastName,
     specialty: doctor.specialty,
     active: doctor.active,
+    hasActiveUser: Boolean(doctor.user?.active),
     clinicServiceId: doctor.clinicServiceId,
     clinicServiceIds: clinicServices.map((s) => s.id),
     clinicServices,
@@ -140,7 +149,6 @@ export async function listAssignableClinicDoctors(): Promise<ClinicServiceDoctor
     where: {
       isMedecin: true,
       active: true,
-      user: { is: { active: true } },
     },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
     select: clinicServiceDoctorSelect,
@@ -312,7 +320,6 @@ export async function syncClinicServiceDoctors(serviceId: string, doctorIds: str
         id: { in: uniqueIds },
         isMedecin: true,
         active: true,
-        user: { is: { active: true } },
       },
       select: { id: true, clinicServiceId: true },
     });
