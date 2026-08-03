@@ -518,6 +518,9 @@ router.post("/prescribe-exams", async (req, res) => {
       }
 
       const doctorComment = body.doctorComment?.trim() || null;
+      const diagnosisFromComment = doctorComment
+        ? doctorComment.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 240) || null
+        : null;
       if ((examsByKind?.hospitalisation?.length ?? 0) > 0) {
         examsByKind = {
           ...examsByKind!,
@@ -572,7 +575,12 @@ router.post("/prescribe-exams", async (req, res) => {
         update: {
           doctorId: user.id,
           ...(hasExams || body.pharmacyOrdonnance ? { clinicalNotes } : {}),
-          ...(doctorComment ? { doctorComment } : {}),
+          ...(doctorComment
+            ? {
+                doctorComment,
+                ...(diagnosisFromComment ? { diagnosis: diagnosisFromComment } : {}),
+              }
+            : {}),
           ...(shouldCreateImmediateInvoice(visit.patient.category) &&
           hasExams &&
           requiresLabWork &&
@@ -585,6 +593,7 @@ router.post("/prescribe-exams", async (req, res) => {
           doctorId: user.id,
           clinicalNotes: clinicalNotes ?? notes,
           doctorComment,
+          diagnosis: diagnosisFromComment,
           needsSurgery: false,
           needsHospitalization: false,
         },
@@ -602,7 +611,12 @@ router.post("/prescribe-exams", async (req, res) => {
           where: { id: consultation.id },
           data: {
             ...(hasExams || body.pharmacyOrdonnance ? { clinicalNotes } : {}),
-            ...(doctorComment ? { doctorComment } : {}),
+            ...(doctorComment
+              ? {
+                  doctorComment,
+                  ...(diagnosisFromComment ? { diagnosis: diagnosisFromComment } : {}),
+                }
+              : {}),
             completedAt: new Date(),
           },
         });

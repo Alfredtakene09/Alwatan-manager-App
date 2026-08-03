@@ -268,17 +268,49 @@ const PRESCRIPTION_TAB_EXCLUDED_SERVICE_NAMES = [
   "Pharmacie",
   "Accueil / Réception",
   "Bloc opératoire",
+  "Chirurgie Générale",
 ] as const;
+
+/** Normalise pour comparer sans accents / casse. */
+function normalizeServiceNameKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "");
+}
+
+/**
+ * Redondant avec l'onglet global « Opération » :
+ * Bloc opératoire, Chirurgie générale, Opération… — on n'affiche qu'un seul choix.
+ * (Fusion métier des modules reportée.)
+ */
+export function isRedundantWithGlobalOperationTab(
+  serviceName: string | null | undefined,
+): boolean {
+  const name = normalizeServiceNameKey(String(serviceName ?? ""));
+  if (!name) return false;
+  if (
+    name === "operation" ||
+    name === "operations" ||
+    name === "chirurgie" ||
+    name === "chirurgie generale"
+  ) {
+    return true;
+  }
+  if (name.includes("bloc oper")) return true;
+  if (name.includes("chirurgie generale")) return true;
+  return false;
+}
 
 export function isPrescriptionDestinationServiceName(
   serviceName: string | null | undefined,
 ): boolean {
   if (!isSpecialtyClinicServiceName(serviceName)) return false;
-  const name = String(serviceName ?? "")
-    .trim()
-    .toLowerCase();
+  if (isRedundantWithGlobalOperationTab(serviceName)) return false;
+  const name = normalizeServiceNameKey(String(serviceName ?? ""));
   return !PRESCRIPTION_TAB_EXCLUDED_SERVICE_NAMES.some(
-    (excluded) => excluded.toLowerCase() === name,
+    (excluded) => normalizeServiceNameKey(excluded) === name,
   );
 }
 

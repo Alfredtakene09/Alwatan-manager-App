@@ -28,9 +28,17 @@ type InterventionItem = {
   surgeonPercent: number
   anesthesiologistPercent: number
   clinicPercent: number
+  anesthesiologistId?: string | null
   anesthesiologistName?: string | null
+  anesthesiologist?: { id: string; firstName: string; lastName: string } | null
   clinicService?: { id: string; name: string } | null
   active: boolean
+}
+
+type DoctorOption = {
+  id: string
+  firstName: string
+  lastName: string
 }
 
 type ServiceInfo = {
@@ -51,6 +59,7 @@ const props = defineProps<{
 const { uiText, localeCode } = useAppI18n()
 
 const items = ref<InterventionItem[]>([])
+const doctors = ref<DoctorOption[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
@@ -59,6 +68,8 @@ const showAddModal = ref(false)
 const editingId = ref<string | null>(null)
 const searchQuery = ref('')
 
+type AssistantInputMode = 'select' | 'custom'
+
 const emptyForm = () => ({
   label: '',
   category: 'MOYENNE_B' as Category,
@@ -66,7 +77,9 @@ const emptyForm = () => ({
   surgeonPercent: '70',
   withAssistant: false,
   anesthesiologistPercent: '10',
+  anesthesiologistId: '',
   anesthesiologistName: '',
+  assistantInputMode: 'select' as AssistantInputMode,
 })
 
 const newItem = ref(emptyForm())
@@ -74,6 +87,18 @@ const editForm = ref(emptyForm())
 
 const serviceName = computed(() => props.serviceInfo?.clinicServiceName || uiText('Mon service'))
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
+
+function doctorLabel(doctor: DoctorOption) {
+  return `Dr ${doctor.firstName} ${doctor.lastName}`.trim()
+}
+
+function assistantDisplay(item: InterventionItem) {
+  if (item.anesthesiologistPercent <= 0) return uiText('Sans assistant')
+  if (item.anesthesiologist) {
+    return doctorLabel(item.anesthesiologist)
+  }
+  return item.anesthesiologistName?.trim() || uiText('Assistant chirurgie')
+}
 
 const filteredItems = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
@@ -104,6 +129,7 @@ const tableRows = computed(() => {
     price: formatFcfa(item.totalCostFcfa),
     priceSort: item.totalCostFcfa,
     splits: `${item.surgeonPercent}% / ${item.anesthesiologistPercent}% / ${item.clinicPercent}%`,
+    assistant: assistantDisplay(item),
     statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),
     statusVariant: item.active ? 'success' : 'danger',
     toggleLabel: item.active ? uiText('Désactiver') : uiText('Activer'),
@@ -122,6 +148,7 @@ const columns = [
       `<span class="dt-amount">${row.price}</span>`,
   },
   { data: 'splits', title: 'Chirurgien / Assist. / Clinique' },
+  { data: 'assistant', title: 'Assistant' },
   {
     data: 'statusLabel',
     title: 'Statut',
@@ -140,6 +167,15 @@ const columns = [
 
 function resetMessages() {
   message.value = ''
+}
+
+async function loadDoctors() {
+  try {
+    const { data } = await api.get<DoctorOption[]>('/consultation/operation-types/doctors')
+    doctors.value = Array.isArray(data) ? data : []
+  } catch {
+    doctors.value = []
+  }
 }
 
 async function loadItems() {
@@ -173,20 +209,33 @@ function openEditModal(id: string) {
   const item = itemsById.value.get(id)
   if (!item) return
   editingId.value = id
+  const hasAssistant = item.anesthesiologistPercent > 0
+  const fromList = Boolean(item.anesthesiologistId)
   editForm.value = {
     label: item.label,
     category: item.category,
     totalCostFcfa: String(item.totalCostFcfa),
     surgeonPercent: String(item.surgeonPercent),
-    withAssistant: item.anesthesiologistPercent > 0,
+    withAssistant: hasAssistant,
     anesthesiologistPercent: String(item.anesthesiologistPercent || 10),
+    anesthesiologistId: item.anesthesiologistId ?? '',
     anesthesiologistName: item.anesthesiologistName ?? '',
+    assistantInputMode: fromList || !item.anesthesiologistName ? 'select' : 'custom',
   }
 }
 
 function closeEditModal() {
   editingId.value = null
   editForm.value = emptyForm()
+}
+
+function onAssistantModeChange(
+  form: ReturnType<typeof emptyForm>,
+  mode: AssistantInputMode,
+) {
+  form.assistantInputMode = mode
+  if (mode === 'select') form.anesthesiologistName = ''
+  else form.anesthesiologistId = ''
 }
 
 function buildPayload(form: ReturnType<typeof emptyForm>) {
@@ -198,9 +247,13 @@ function buildPayload(form: ReturnType<typeof emptyForm>) {
   if (!form.label.trim() || !form.totalCostFcfa) {
     return { error: uiText('Libellé et coût total sont obligatoires.') }
   }
-  if (form.withAssistant && form.anesthesiologistName.trim().length < 2) {
-    return {
-      error: uiText("Saisissez le nom de l'assistant chirurgie (2 caractères min.)."),
+  if (form.withAssistant) {
+    const hasDoctor = form.assistantInputMode === 'select' && form.anesthesiologistId
+    const hasName = form.assistantInputMode === 'custom' && form.anesthesiologistName.trim().length >= 2
+    if (!hasDoctor && !hasName) {
+      return {
+        error: uiText("Liez un médecin ou saisissez le nom de l'assistant chirurgie (2 caractères min.)."),
+      }
     }
   }
 
@@ -211,7 +264,13 @@ function buildPayload(form: ReturnType<typeof emptyForm>) {
       totalCostFcfa: Number(form.totalCostFcfa),
       surgeonPercent,
       anesthesiologistPercent,
-      anesthesiologistName: form.withAssistant ? form.anesthesiologistName.trim() : null,
+      anesthesiologistId: form.withAssistant && form.assistantInputMode === 'select'
+        ? form.anesthesiologistId || null
+        : null,
+      anesthesiologistName:
+        form.withAssistant && form.assistantInputMode === 'custom'
+          ? form.anesthesiologistName.trim()
+          : null,
     },
   }
 }
@@ -337,7 +396,7 @@ function clinicPercentPreview(form: ReturnType<typeof emptyForm>) {
 }
 
 onMounted(() => {
-  void loadItems()
+  void Promise.all([loadItems(), loadDoctors()])
 })
 </script>
 
@@ -418,19 +477,50 @@ onMounted(() => {
           <input v-model="newItem.withAssistant" type="checkbox" />
           {{ uiText('Avec assistant chirurgie') }}
         </label>
-        <div v-if="newItem.withAssistant" class="form-grid-2">
-          <UiInput
-            v-model="newItem.anesthesiologistPercent"
-            label="% Assistant chirurgie"
-            type="number"
-            min="1"
-            max="99"
-          />
-          <UiInput
-            v-model="newItem.anesthesiologistName"
-            label="Nom assistant chirurgie"
-            placeholder="Nom de l'assistant"
-          />
+        <div v-if="newItem.withAssistant" class="assistant-block">
+          <div class="assistant-mode" role="tablist">
+            <button
+              type="button"
+              class="assistant-mode__btn"
+              :class="{ 'assistant-mode__btn--active': newItem.assistantInputMode === 'select' }"
+              @click="onAssistantModeChange(newItem, 'select')"
+            >
+              {{ uiText('Médecin enregistré') }}
+            </button>
+            <button
+              type="button"
+              class="assistant-mode__btn"
+              :class="{ 'assistant-mode__btn--active': newItem.assistantInputMode === 'custom' }"
+              @click="onAssistantModeChange(newItem, 'custom')"
+            >
+              {{ uiText('Autre (saisie libre)') }}
+            </button>
+          </div>
+          <div class="form-grid-2">
+            <UiSelect
+              v-if="newItem.assistantInputMode === 'select'"
+              v-model="newItem.anesthesiologistId"
+              :label="uiText('Assistant chirurgie')"
+            >
+              <option value="">{{ uiText('— Sélectionner —') }}</option>
+              <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
+                {{ doctorLabel(doctor) }}
+              </option>
+            </UiSelect>
+            <UiInput
+              v-else
+              v-model="newItem.anesthesiologistName"
+              :label="uiText('Nom assistant chirurgie')"
+              placeholder="Nom de l'assistant"
+            />
+            <UiInput
+              v-model="newItem.anesthesiologistPercent"
+              :label="uiText('% Assistant chirurgie')"
+              type="number"
+              min="1"
+              max="99"
+            />
+          </div>
         </div>
         <p class="form-panel__hint">
           {{ uiText('Part clinique') }}:
@@ -468,15 +558,49 @@ onMounted(() => {
           <input v-model="editForm.withAssistant" type="checkbox" />
           {{ uiText('Avec assistant chirurgie') }}
         </label>
-        <div v-if="editForm.withAssistant" class="form-grid-2">
-          <UiInput
-            v-model="editForm.anesthesiologistPercent"
-            label="% Assistant chirurgie"
-            type="number"
-            min="1"
-            max="99"
-          />
-          <UiInput v-model="editForm.anesthesiologistName" label="Nom assistant chirurgie" />
+        <div v-if="editForm.withAssistant" class="assistant-block">
+          <div class="assistant-mode" role="tablist">
+            <button
+              type="button"
+              class="assistant-mode__btn"
+              :class="{ 'assistant-mode__btn--active': editForm.assistantInputMode === 'select' }"
+              @click="onAssistantModeChange(editForm, 'select')"
+            >
+              {{ uiText('Médecin enregistré') }}
+            </button>
+            <button
+              type="button"
+              class="assistant-mode__btn"
+              :class="{ 'assistant-mode__btn--active': editForm.assistantInputMode === 'custom' }"
+              @click="onAssistantModeChange(editForm, 'custom')"
+            >
+              {{ uiText('Autre (saisie libre)') }}
+            </button>
+          </div>
+          <div class="form-grid-2">
+            <UiSelect
+              v-if="editForm.assistantInputMode === 'select'"
+              v-model="editForm.anesthesiologistId"
+              :label="uiText('Assistant chirurgie')"
+            >
+              <option value="">{{ uiText('— Sélectionner —') }}</option>
+              <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
+                {{ doctorLabel(doctor) }}
+              </option>
+            </UiSelect>
+            <UiInput
+              v-else
+              v-model="editForm.anesthesiologistName"
+              :label="uiText('Nom assistant chirurgie')"
+            />
+            <UiInput
+              v-model="editForm.anesthesiologistPercent"
+              :label="uiText('% Assistant chirurgie')"
+              type="number"
+              min="1"
+              max="99"
+            />
+          </div>
         </div>
         <p class="form-panel__hint">
           {{ uiText('Part clinique') }}:
@@ -535,6 +659,38 @@ onMounted(() => {
   margin: 0.85rem 0;
   font-size: 0.875rem;
   font-weight: 600;
+}
+
+.assistant-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-bottom: 0.35rem;
+}
+
+.assistant-mode {
+  display: inline-flex;
+  gap: 0.35rem;
+  padding: 0.2rem;
+  border-radius: 10px;
+  background: rgba(15, 40, 80, 0.05);
+}
+
+.assistant-mode__btn {
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.assistant-mode__btn--active {
+  background: #fff;
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(15, 40, 80, 0.12);
 }
 
 @media (max-width: 720px) {

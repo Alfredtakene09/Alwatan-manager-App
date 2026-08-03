@@ -26,6 +26,7 @@ export type MedicalHistoryEntry = {
   date: string;
   status: VisitStatus;
   doctor: { firstName: string; lastName: string } | null;
+  diagnosis: string | null;
   prescribedExams: string[];
   labPanels: MedicalHistoryLabPanel[];
   doctorComment: string | null;
@@ -60,9 +61,8 @@ function buildLabPanels(clinicalNotes: string | null | undefined): MedicalHistor
     .filter((panel) => panel.filledCount > 0);
 }
 
-/** Résultats saisis au labo et marqués validés (préfixe « Résultats laboratoire »). */
+/** Au moins un formulaire labo avec valeurs saisies (validé ou non). */
 export function hasValidatedLabRecord(clinicalNotes: string | null | undefined) {
-  if (!hasLabResults(clinicalNotes)) return false;
   return buildLabPanels(clinicalNotes).length > 0;
 }
 
@@ -76,6 +76,7 @@ export function buildMedicalHistoryEntry(
       doctorId?: string | null;
       clinicalNotes: string | null;
       doctorComment: string | null;
+      diagnosis?: string | null;
       completedAt: Date | null;
       updatedAt: Date;
       doctor: { firstName: string; lastName: string } | null;
@@ -99,18 +100,18 @@ export function buildMedicalHistoryEntry(
     ? allPrescribedExams
     : allPrescribedExams.filter((label) => !isClinicalConsultationExamLabel(label));
 
-  const labPanels = hasValidatedLabRecord(consultation.clinicalNotes)
-    ? buildLabPanels(consultation.clinicalNotes)
-    : [];
+  // Toujours exposer les panneaux saisis — le marqueur « validé » sert seulement de statut.
+  const labPanels = buildLabPanels(consultation.clinicalNotes);
   const doctorComment = canSeeClinical
     ? consultation.doctorComment?.trim() || null
     : null;
+  const diagnosis = canSeeClinical ? consultation.diagnosis?.trim() || null : null;
   const pharmacyOrdonnance = canSeeClinical
     ? parsePharmacyOrdonnanceLines(consultation.clinicalNotes)
     : [];
-  const hasResults = hasLabResults(consultation.clinicalNotes);
+  const hasResults = hasLabResults(consultation.clinicalNotes) || labPanels.length > 0;
 
-  if (options?.labValidatedOnly && !hasValidatedLabRecord(consultation.clinicalNotes)) {
+  if (options?.labValidatedOnly && !hasLabResults(consultation.clinicalNotes)) {
     return null;
   }
 
@@ -118,6 +119,7 @@ export function buildMedicalHistoryEntry(
     !prescribedExams.length &&
     !labPanels.length &&
     !doctorComment &&
+    !diagnosis &&
     !pharmacyOrdonnance.length
   ) {
     return null;
@@ -131,6 +133,7 @@ export function buildMedicalHistoryEntry(
     date: historyDate.toISOString(),
     status: visit.status,
     doctor: consultation.doctor,
+    diagnosis,
     prescribedExams,
     labPanels,
     doctorComment,
@@ -193,6 +196,7 @@ export async function getMedecinDossierPatients(doctorId: string) {
           doctorId: true,
           clinicalNotes: true,
           doctorComment: true,
+          diagnosis: true,
           completedAt: true,
           updatedAt: true,
         },
@@ -224,6 +228,7 @@ export async function getMedecinDossierPatients(doctorId: string) {
               doctorId: visit.consultation.doctorId,
               clinicalNotes: visit.consultation.clinicalNotes,
               doctorComment: visit.consultation.doctorComment,
+              diagnosis: visit.consultation.diagnosis,
               completedAt: visit.consultation.completedAt ?? null,
               updatedAt: visit.consultation.updatedAt,
               doctor: null,
@@ -239,7 +244,9 @@ export async function getMedecinDossierPatients(doctorId: string) {
     const validatedAt = visit.consultation?.updatedAt ?? visit.updatedAt;
     const labResultsCount = entry?.labPanels.length ?? 0;
     const hasComment = Boolean(
-      entry?.doctorComment || (entry?.pharmacyOrdonnance?.length ?? 0) > 0,
+      entry?.doctorComment ||
+        entry?.diagnosis ||
+        (entry?.pharmacyOrdonnance?.length ?? 0) > 0,
     );
 
     const existing = byPatient.get(visit.patientId);

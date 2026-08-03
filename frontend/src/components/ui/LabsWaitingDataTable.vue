@@ -111,6 +111,10 @@ const tableData = computed(() =>
       code: v.patient.code,
       patientName: fullName(v.patient.firstName, v.patient.lastName),
       patientPhone: v.patient.phone || '',
+      doctorName: (() => {
+        const doctor = v.consultation?.doctor ?? v.assignedDoctor
+        return doctor ? `Dr ${fullName(doctor.firstName, doctor.lastName)}` : '—'
+      })(),
       exams,
       examsFull,
       examCount,
@@ -147,10 +151,20 @@ const columns = computed(() => {
     },
   }
 
+  const doctorCol = {
+    data: 'doctorName',
+    title: 'Médecin',
+    responsivePriority: props.actionsMode === 'lab-completed' ? 4 : 3,
+    render: (name: string) =>
+      name === '—'
+        ? '<span class="dt-muted">—</span>'
+        : `<span class="dt-name">${name}</span>`,
+  }
+
   const examsCol = {
     data: 'exams',
     title: 'Examens',
-    responsivePriority: props.actionsMode === 'lab-completed' ? 5 : 3,
+    responsivePriority: props.actionsMode === 'lab-completed' ? 5 : 4,
     className: props.actionsMode === 'lab-completed' ? 'dt-exams-col all' : undefined,
     render: (exams: string, _t: string, row: { examsFull: string; examCount: number }) => {
       const title =
@@ -168,7 +182,7 @@ const columns = computed(() => {
   const dateCol = {
     data: 'eventSort',
     title: props.dateMode === 'completed' ? 'Terminé le' : 'Transféré le',
-    responsivePriority: 4,
+    responsivePriority: 5,
     className: props.actionsMode === 'lab-completed' ? 'dt-date-col all' : undefined,
     render: (_d: number, _t: string, row: { eventDate: string; eventTime: string }) =>
       `<span class="dt-date">${row.eventDate}</span><span class="dt-sub">${row.eventTime}</span>`,
@@ -176,8 +190,8 @@ const columns = computed(() => {
 
   const base =
     props.actionsMode === 'lab-completed'
-      ? [matriculeCol, patientCol, dateCol, examsCol]
-      : [matriculeCol, patientCol, examsCol, dateCol]
+      ? [matriculeCol, patientCol, doctorCol, dateCol, examsCol]
+      : [matriculeCol, patientCol, doctorCol, examsCol, dateCol]
 
   if (props.actionsMode === 'none') return base
 

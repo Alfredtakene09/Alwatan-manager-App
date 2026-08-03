@@ -66,6 +66,14 @@ export const CLINIC_PRINT_STYLES = `
     height: 76px;
     object-fit: contain;
   }
+  .clinic-logo--right {
+    left: auto;
+    right: 0;
+  }
+  .clinic-header--dual-logo {
+    padding-left: 88px;
+    padding-right: 88px;
+  }
   .clinic-info {
     text-align: center;
   }
@@ -1299,11 +1307,18 @@ export function buildLabExamInvoiceHtml(data: LabExamInvoiceData): string {
 </div>`
 }
 
-export function buildClinicPrintHeader(docTitle?: string): string {
+export function buildClinicPrintHeader(
+  docTitle?: string,
+  options?: { dualLogo?: boolean },
+): string {
   const title = docTitle ? `<p class="doc-title">${escapeHtml(t(docTitle))}</p>` : ''
+  const rightLogo = options?.dualLogo
+    ? `<img src="${CLINIC.logo}" alt="" class="clinic-logo clinic-logo--right" aria-hidden="true" />`
+    : ''
   return `
-  <div class="clinic-header">
+  <div class="clinic-header${options?.dualLogo ? ' clinic-header--dual-logo' : ''}">
     <img src="${CLINIC.logo}" alt="${CLINIC.nameFr}" class="clinic-logo" />
+    ${rightLogo}
     <div class="clinic-info">
       <h1>${CLINIC.nameFr}</h1>
       <p class="clinic-ar" dir="rtl" lang="ar">${CLINIC.nameAr}</p>

@@ -4,7 +4,7 @@ import path from "node:path";
 import multer from "multer";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { PatientDocumentKind } from "@prisma/client";
+import { InvoiceStatus, InvoiceType, PatientDocumentKind, VisitStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import {
   ALLOWED_MIME_TYPES,
@@ -30,6 +30,20 @@ import {
 } from "../lib/patient-payment-guard.js";
 import { buildPatientPaymentHistory } from "../lib/patient-invoice-payments.js";
 import { medecinMatchWhere } from "../lib/medecin-queues.js";
+import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
+import {
+  resolveConsultationBilling,
+  shouldCreateImmediateInvoice,
+} from "../lib/patient-billing.js";
+import {
+  archiveVisitsForReconsultation,
+  planReconsultation,
+} from "../lib/reconsultation.js";
+import { generateInvoiceNumber } from "../lib/patient-code.js";
+import {
+  consultationInvoiceCreateData,
+  consultationInvoiceUpdateData,
+} from "../lib/consultation-invoice.js";
 import { requireAnyModule, requireAuth, requireManageAccess } from "../middleware/auth.js";
 import {
   canViewClinicalConsultationDetails,
@@ -169,6 +183,31 @@ router.get("/:patientId", requireAnyModule(...DOSSIER_MODULES), async (req, res)
 
   const hasPaidBilling = await patientHasPaidBilling(patientId);
 
+  let reconsult: {
+    canReconsult: boolean;
+    activeVisitId: string | null;
+  } | null = null;
+
+  if (req.user!.role === "MEDECIN") {
+    const doctorId = req.user!.id;
+    const activeVisit = await prisma.visit.findFirst({
+      where: {
+        patientId,
+        status: { in: [VisitStatus.WAITING_CONSULTATION, VisitStatus.IN_CONSULTATION] },
+        OR: [
+          { assignedDoctorId: doctorId },
+          { consultation: { is: { doctorId } } },
+        ],
+      },
+      select: { id: true },
+      orderBy: { updatedAt: "desc" },
+    });
+    reconsult = {
+      canReconsult: true,
+      activeVisitId: activeVisit?.id ?? null,
+    };
+  }
+
   return res.json({
     patient,
     dossier: { id: dossier.id, createdAt: dossier.createdAt },
@@ -179,7 +218,153 @@ router.get("/:patientId", requireAnyModule(...DOSSIER_MODULES), async (req, res)
       hasPaidBilling,
       canDeleteDocuments: !hasPaidBilling,
     },
+    reconsult,
   });
+});
+
+/** Reconsultation directe par le médecin déjà lié au patient. */
+router.post("/:patientId/reconsult", requireAnyModule(...DOSSIER_MODULES), async (req, res) => {
+  if (req.user!.role !== "MEDECIN") {
+    return res.status(403).json({ error: "Réservé aux médecins" });
+  }
+
+  const patientId = String(req.params.patientId);
+  const doctorId = req.user!.id;
+
+  const patient = await prisma.patient.findUnique({
+    where: { id: patientId },
+    select: { id: true, category: true },
+  });
+  if (!patient) return res.status(404).json({ error: "Patient introuvable" });
+
+  const linked = await prisma.visit.findFirst({
+    where: { patientId, ...medecinMatchWhere(doctorId) },
+    select: { id: true },
+  });
+  if (!linked) {
+    return res.status(403).json({
+      error: "Ce patient n'a pas encore été consulté par votre compte.",
+    });
+  }
+
+  const activeVisit = await prisma.visit.findFirst({
+    where: {
+      patientId,
+      status: { in: [VisitStatus.WAITING_CONSULTATION, VisitStatus.IN_CONSULTATION] },
+      OR: [
+        { assignedDoctorId: doctorId },
+        { consultation: { is: { doctorId } } },
+      ],
+    },
+    select: { id: true, status: true },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  if (activeVisit) {
+    if (activeVisit.status === VisitStatus.WAITING_CONSULTATION) {
+      await prisma.visit.update({
+        where: { id: activeVisit.id },
+        data: { status: VisitStatus.IN_CONSULTATION },
+      });
+    }
+    return res.json({
+      visitId: activeVisit.id,
+      created: false,
+      amountFcfa: 0,
+      requiresPayment: false,
+      message: "Visite en cours rouverte.",
+    });
+  }
+
+  try {
+    const plan = await planReconsultation(patientId);
+    const renewal = await resolveConsultationFeeForPatientDoctor({
+      patientId,
+      doctorId,
+      requestedAmount: null,
+    });
+    const billing = resolveConsultationBilling(patient.category, renewal.amountFcfa, 0);
+
+    const visit = await prisma.$transaction(async (tx) => {
+      if (plan.action === "create" && plan.archiveVisitIds.length) {
+        await archiveVisitsForReconsultation(tx, plan.archiveVisitIds);
+      }
+
+      if (plan.action === "update") {
+        const updated = await tx.visit.update({
+          where: { id: plan.visitId },
+          data: {
+            status: VisitStatus.IN_CONSULTATION,
+            assignedDoctorId: doctorId,
+            consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
+            reductionFcfa: billing.reductionFcfa,
+          },
+        });
+
+        if (billing.billableAmountFcfa > 0) {
+          const existingInvoice = await tx.invoice.findFirst({
+            where: { visitId: updated.id, type: InvoiceType.CONSULTATION },
+          });
+          if (!existingInvoice) {
+            await tx.invoice.create({
+              data: consultationInvoiceCreateData(patient.category, {
+                invoiceNumber: await generateInvoiceNumber(),
+                patientId,
+                visitId: updated.id,
+                amountFcfa: billing.billableAmountFcfa,
+                issuedById: doctorId,
+              }),
+            });
+          } else if (existingInvoice.status !== InvoiceStatus.PAID) {
+            await tx.invoice.update({
+              where: { id: existingInvoice.id },
+              data: consultationInvoiceUpdateData(patient.category, billing.billableAmountFcfa),
+            });
+          }
+        }
+
+        return updated;
+      }
+
+      const created = await tx.visit.create({
+        data: {
+          patientId,
+          status: VisitStatus.IN_CONSULTATION,
+          assignedDoctorId: doctorId,
+          consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
+          reductionFcfa: billing.reductionFcfa,
+        },
+      });
+
+      if (billing.billableAmountFcfa > 0) {
+        await tx.invoice.create({
+          data: consultationInvoiceCreateData(patient.category, {
+            invoiceNumber: await generateInvoiceNumber(),
+            patientId,
+            visitId: created.id,
+            amountFcfa: billing.billableAmountFcfa,
+            issuedById: doctorId,
+          }),
+        });
+      }
+
+      return created;
+    });
+
+    return res.status(201).json({
+      visitId: visit.id,
+      created: true,
+      amountFcfa: billing.billableAmountFcfa,
+      requiresPayment: billing.billableAmountFcfa > 0 && shouldCreateImmediateInvoice(patient.category),
+      message: renewal.message ?? "Reconsultation ouverte.",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message === "PATIENT_NOT_FOUND" || message === "DOCTOR_NOT_FOUND") {
+      return res.status(400).json({ error: "Impossible d'ouvrir la reconsultation." });
+    }
+    return res.status(400).json({ error: "Impossible d'ouvrir la reconsultation." });
+  }
 });
 
 router.post(

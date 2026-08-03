@@ -21,21 +21,17 @@ export type ExamKindSlug =
 
 
 export type CatalogExam = {
-
   id: string
-
   code: string
-
   label: string
-
   category: string
-
   priceFcfa: number
-
   clinicServiceId?: string | null
-
   clinicServiceName?: string | null
-
+  anesthesiologistPercent?: number
+  anesthesiologistId?: string | null
+  anesthesiologistName?: string | null
+  hasAssistant?: boolean
 }
 
 
@@ -113,6 +109,35 @@ export const EXTERNAL_PATIENT_EXAM_KINDS: ExamKindSlug[] = [...CASHIER_PAYMENT_Q
 export type SpecialtyServiceTab = {
   id: string
   name: string
+}
+
+/** Normalise pour comparer sans accents / casse. */
+function normalizeServiceNameKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+}
+
+/**
+ * Services redondants avec l'onglet global « Opération »
+ * (Bloc opératoire, Chirurgie générale…) — n'en afficher qu'un.
+ */
+export function isRedundantWithGlobalOperationTab(serviceName: string | null | undefined): boolean {
+  const name = normalizeServiceNameKey(String(serviceName ?? ''))
+  if (!name) return false
+  if (
+    name === 'operation' ||
+    name === 'operations' ||
+    name === 'chirurgie' ||
+    name === 'chirurgie generale'
+  ) {
+    return true
+  }
+  if (name.includes('bloc oper')) return true
+  if (name.includes('chirurgie generale')) return true
+  return false
 }
 
 

@@ -37,6 +37,10 @@ type CatalogItemDto = {
   priceFcfa: number;
   clinicServiceId: string | null;
   clinicServiceName: string | null;
+  anesthesiologistPercent?: number;
+  anesthesiologistId?: string | null;
+  anesthesiologistName?: string | null;
+  hasAssistant?: boolean;
 };
 
 function defaultHospitalisationCatalogItem(
@@ -155,6 +159,10 @@ router.get("/", async (req, res) => {
         totalCostFcfa: true,
         clinicServiceId: true,
         clinicService: { select: { id: true, name: true } },
+        anesthesiologistPercent: true,
+        anesthesiologistId: true,
+        anesthesiologistName: true,
+        anesthesiologist: { select: { id: true, firstName: true, lastName: true } },
       },
     }),
     prisma.room.findMany({
@@ -178,15 +186,24 @@ router.get("/", async (req, res) => {
     radio: [],
     echo: [],
     odonto: [],
-    operation: interventions.map((item) => ({
-      id: item.id,
-      code: item.code,
-      label: item.label,
-      category: INTERVENTION_CATEGORY_LABELS[item.category],
-      priceFcfa: item.totalCostFcfa,
-      clinicServiceId: item.clinicServiceId,
-      clinicServiceName: item.clinicService?.name ?? null,
-    })),
+    operation: interventions.map((item) => {
+      const assistantLabel = item.anesthesiologist
+        ? `Dr ${item.anesthesiologist.firstName} ${item.anesthesiologist.lastName}`.trim()
+        : item.anesthesiologistName?.trim() || null;
+      return {
+        id: item.id,
+        code: item.code,
+        label: item.label,
+        category: INTERVENTION_CATEGORY_LABELS[item.category],
+        priceFcfa: item.totalCostFcfa,
+        clinicServiceId: item.clinicServiceId,
+        clinicServiceName: item.clinicService?.name ?? null,
+        anesthesiologistPercent: item.anesthesiologistPercent,
+        anesthesiologistId: item.anesthesiologistId,
+        anesthesiologistName: assistantLabel,
+        hasAssistant: item.anesthesiologistPercent > 0,
+      };
+    }),
     hospitalisation: [defaultHospitalisationCatalogItem(rooms)],
   };
 

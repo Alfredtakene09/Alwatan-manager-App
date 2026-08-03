@@ -72,11 +72,13 @@ const rows = computed(() =>
     .map((visit) => {
       const notes = visit.consultation?.clinicalNotes
       const eventAt = new Date(visit.consultation?.labSentToLabAt ?? visit.updatedAt)
+      const doctor = visit.consultation?.doctor ?? visit.assignedDoctor
       return {
         id: visit.id,
         code: visit.patient.code,
         patientName: fullName(visit.patient.firstName, visit.patient.lastName),
         patientPhone: visit.patient.phone || '',
+        doctorName: doctor ? `Dr ${fullName(doctor.firstName, doctor.lastName)}` : '—',
         exams: formatLabPrescribedExamsPreview(notes),
         examsFull: formatLabPrescribedExamsSummary(notes),
         examCount: countLabPrescribedExams(notes),
@@ -183,7 +185,7 @@ onActivated(() => {
               <input
                 v-model="listSearch"
                 type="search"
-                :placeholder="uiText('Patient, matricule, examen…')"
+                :placeholder="uiText('Patient, matricule, examen, médecin…')"
                 :aria-label="uiText('Rechercher un dossier')"
               />
             </label>
@@ -209,6 +211,7 @@ onActivated(() => {
                 <th class="lab-visit-table__num">#</th>
                 <th>{{ uiText('Matricule') }}</th>
                 <th>{{ uiText('Patient') }}</th>
+                <th>{{ uiText('Médecin') }}</th>
                 <th>{{ uiText('Examens') }}</th>
                 <th>{{ uiText('Transféré le') }}</th>
                 <th class="lab-visit-table__actions-head">{{ uiText('Actions') }}</th>
@@ -227,6 +230,10 @@ onActivated(() => {
                 <td>
                   <span class="lab-visit-name">{{ row.patientName }}</span>
                   <span v-if="row.patientPhone" class="lab-visit-sub">{{ row.patientPhone }}</span>
+                </td>
+                <td>
+                  <span v-if="row.doctorName !== '—'" class="lab-visit-name">{{ row.doctorName }}</span>
+                  <span v-else class="lab-visit-sub">—</span>
                 </td>
                 <td>
                   <span class="lab-visit-exams" :title="row.examsFull !== row.exams ? row.examsFull : ''">

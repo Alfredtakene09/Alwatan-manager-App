@@ -13,6 +13,9 @@ import {
   History,
   Paperclip,
   Banknote,
+  Stethoscope,
+  Printer,
+  FileDown,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal } from '@/lib/api-modal-helper'
@@ -26,6 +29,7 @@ import {
   formatFileSize,
   type PatientDocumentKind,
 } from '@/lib/patient-documents'
+import { printPatientDossier } from '@/lib/patient-dossier-print'
 import PatientMedicalHistory, {
   type MedicalHistoryEntry,
 } from '@/components/dossier/PatientMedicalHistory.vue'
@@ -80,6 +84,10 @@ type DossierResponse = {
     hasPaidBilling: boolean
     canDeleteDocuments: boolean
   }
+  reconsult?: {
+    canReconsult: boolean
+    activeVisitId: string | null
+  } | null
 }
 
 const route = useRoute()
@@ -126,6 +134,18 @@ const uploadForm = ref({
   title: '',
   documentDate: new Date().toISOString().slice(0, 10),
   file: null as File | null,
+})
+const reconsulting = ref(false)
+const preserveTabOnReload = ref(false)
+
+const canReconsult = computed(
+  () => isMedecin.value && !!dossier.value?.reconsult?.canReconsult,
+)
+
+const latestClinicalSummary = computed(() => {
+  const entry = dossier.value?.medicalHistory[0]
+  if (!entry) return null
+  return entry.diagnosis?.trim() || entry.doctorComment?.trim() || null
 })
 
 const filteredMedecinPatients = computed(() => {
@@ -187,12 +207,14 @@ const kindFilters = computed(() => {
   ]
 })
 
-function formatValidatedMeta(iso: string, formCount: number) {
+function formatValidatedMeta(iso: string, formCount: number, hasComment: boolean) {
   void localeCode.value
-  return translateTemplate('Validé le {date} · {n} formulaire(s)', {
-    date: dateText(iso),
-    n: formCount,
-  })
+  const parts = [dateText(iso)]
+  if (formCount > 0) {
+    parts.push(translateTemplate('{n} résultat(s) labo', { n: formCount }))
+  }
+  if (hasComment) parts.push(uiText('Notes cliniques'))
+  return parts.join(' · ')
 }
 
 function patientAgeLabel(age: number, unit: PatientAgeUnit | null | undefined) {
@@ -273,7 +295,10 @@ async function loadDossier(patientId: string) {
     const { data } = await api.get<DossierResponse>(`/patient-dossiers/${patientId}`, { params })
     dossier.value = data
     selectedPatientId.value = patientId
-    activeTab.value = data.medicalHistory.length ? 'history' : 'files'
+    if (!preserveTabOnReload.value) {
+      activeTab.value = data.medicalHistory.length ? 'history' : 'files'
+    }
+    preserveTabOnReload.value = false
     router.replace({ query: { patient: patientId } })
   } catch {
     dossier.value = null
@@ -287,7 +312,52 @@ function selectPatient(patient: PatientSummary) {
   searchQuery.value = `${patient.code} — ${fullName(patient.firstName, patient.lastName)}`
   searchResults.value = []
   activeKind.value = 'ALL'
+  preserveTabOnReload.value = false
   loadDossier(patient.id)
+}
+
+function exportDossier(autoPrint: boolean) {
+  if (!dossier.value) return
+  printPatientDossier({
+    patient: dossier.value.patient,
+    history: dossier.value.medicalHistory,
+    doctorName: auth.user
+      ? `Dr ${fullName(auth.user.firstName, auth.user.lastName)}`
+      : null,
+    autoPrint,
+  })
+}
+
+async function startReconsult() {
+  if (!selectedPatientId.value || !canReconsult.value) return
+  reconsulting.value = true
+  dossierError.value = ''
+  try {
+    const activeId = dossier.value?.reconsult?.activeVisitId
+    if (activeId) {
+      await router.push({ name: 'consultation', query: { visit: activeId } })
+      return
+    }
+    const { data } = await api.post<{
+      visitId: string
+      requiresPayment?: boolean
+      amountFcfa?: number
+      message?: string
+    }>(`/patient-dossiers/${selectedPatientId.value}/reconsult`)
+    if (data.requiresPayment && data.amountFcfa) {
+      dossierError.value = translateTemplate(
+        'Reconsultation ouverte — paiement de {amount} FCFA à régulariser à la réception.',
+        { amount: data.amountFcfa.toLocaleString('fr-FR') },
+      )
+    }
+    await router.push({ name: 'consultation', query: { visit: data.visitId } })
+  } catch (error: unknown) {
+    const err = error as { response?: { data?: { error?: string } } }
+    dossierError.value =
+      err.response?.data?.error || uiText('Impossible d’ouvrir la reconsultation.')
+  } finally {
+    reconsulting.value = false
+  }
 }
 
 function onFileChange(event: Event) {
@@ -359,6 +429,7 @@ async function deleteDocument(doc: PatientDocument) {
 
 watch(activeKind, () => {
   if (selectedPatientId.value && activeTab.value === 'files') {
+    preserveTabOnReload.value = true
     loadDossier(selectedPatientId.value)
   }
 })
@@ -383,7 +454,7 @@ onMounted(async () => {
   <div class="dossier-page">
     <UiPageHeader
       title="Dossier patient"
-      subtitle="Résultats validés par le laboratoire et fichiers attachés"
+      subtitle="Parcours médical, diagnostics, prescriptions, paiements et fichiers"
       :icon="FolderOpen"
     />
 
@@ -391,7 +462,7 @@ onMounted(async () => {
       <aside v-if="isMedecin" class="dossier-sidebar">
         <UiCard
           title="Mes patients"
-          description="Résultats enregistrés et validés par le labo"
+          description="Patients déjà consultés ou suivis par votre compte"
           :icon="UserRound"
           icon-variant="teal"
         >
@@ -402,7 +473,7 @@ onMounted(async () => {
 
           <p v-if="loadingMedecinPatients" class="hint">{{ uiText('Chargement…') }}</p>
           <p v-else-if="!filteredMedecinPatients.length" class="hint">
-            {{ uiText('Aucun patient avec résultats validés par le laboratoire.') }}
+            {{ uiText('Aucun patient suivi pour le moment.') }}
           </p>
 
           <ul v-else class="patient-list">
@@ -416,7 +487,7 @@ onMounted(async () => {
                 <strong>{{ row.patient.code }}</strong>
                 <span>{{ fullName(row.patient.firstName, row.patient.lastName) }}</span>
                 <span class="patient-list__meta">
-                  {{ formatValidatedMeta(row.lastVisitAt, row.labResultsCount) }}
+                  {{ formatValidatedMeta(row.lastVisitAt, row.labResultsCount, row.hasComment) }}
                 </span>
               </button>
             </li>
@@ -502,8 +573,40 @@ onMounted(async () => {
           >
             <template #actions>
               <UiButton
-                v-if="canWriteDocuments"
+                v-if="canReconsult"
                 variant="primary"
+                size="sm"
+                :icon="Stethoscope"
+                :loading="reconsulting"
+                @click="startReconsult"
+              >
+                {{
+                  dossier.reconsult?.activeVisitId
+                    ? uiText('Continuer la consultation')
+                    : uiText('Reconsulter')
+                }}
+              </UiButton>
+              <UiButton
+                variant="secondary"
+                size="sm"
+                :icon="Printer"
+                :disabled="!dossier.medicalHistory.length"
+                @click="exportDossier(true)"
+              >
+                {{ uiText('Imprimer') }}
+              </UiButton>
+              <UiButton
+                variant="ghost"
+                size="sm"
+                :icon="FileDown"
+                :disabled="!dossier.medicalHistory.length"
+                @click="exportDossier(false)"
+              >
+                {{ uiText('Exporter PDF') }}
+              </UiButton>
+              <UiButton
+                v-if="canWriteDocuments"
+                variant="ghost"
                 size="sm"
                 :icon="Plus"
                 @click="showUpload = true"
@@ -515,7 +618,7 @@ onMounted(async () => {
                 size="sm"
                 :icon="RefreshCw"
                 :disabled="loadingDossier"
-                @click="loadDossier(selectedPatientId!)"
+                @click="preserveTabOnReload = true; loadDossier(selectedPatientId!)"
               >
                 {{ uiText('Actualiser') }}
               </UiButton>
@@ -536,6 +639,10 @@ onMounted(async () => {
                 {{ patientAgeLabel(dossier.patient.age, dossier.patient.ageUnit) }}
               </span>
             </div>
+            <p v-if="latestClinicalSummary" class="latest-clinical">
+              <strong>{{ uiText('Dernière note') }} :</strong>
+              {{ latestClinicalSummary }}
+            </p>
           </UiCard>
 
           <div class="tab-bar">
@@ -575,6 +682,8 @@ onMounted(async () => {
               :entries="dossier.medicalHistory"
               :loading="loadingDossier"
               :show-open-lab-link="isMedecin"
+              :patient="dossier.patient"
+              expand-first
               :empty-message="
                 isMedecin
                   ? uiText('Aucune consultation, ordonnance ou examen enregistré pour ce patient.')
@@ -873,6 +982,25 @@ onMounted(async () => {
 }
 
 .patient-card { margin-top: 1rem; }
+
+.latest-clinical {
+  margin: 0.85rem 0 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: 10px;
+  background: rgba(124, 58, 237, 0.06);
+  border: 1px solid rgba(124, 58, 237, 0.12);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.latest-clinical strong {
+  color: #6d28d9;
+}
 
 .summary-row {
   display: flex;

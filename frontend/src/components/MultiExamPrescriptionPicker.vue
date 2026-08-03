@@ -14,6 +14,10 @@ import {
 } from '@lucide/vue'
 import ExamPrescriptionPicker from '@/components/ExamPrescriptionPicker.vue'
 import UiTextarea from '@/components/ui/UiTextarea.vue'
+import UiInput from '@/components/ui/UiInput.vue'
+import UiSelect from '@/components/ui/UiSelect.vue'
+import UiButton from '@/components/ui/UiButton.vue'
+import api from '@/api/client'
 import {
   EXAM_KIND_LABELS,
   EXAM_KIND_ORDER,
@@ -23,7 +27,10 @@ import {
   getCatalogForKind,
   getSpecialtyServiceName,
   getSpecialtyServices,
+  invalidateExamCatalogCache,
+  isRedundantWithGlobalOperationTab,
   loadExamCatalog,
+  type CatalogExam,
   type ExamCommentsByKind,
   type ExamKindSlug,
   type ExamsByKind,
@@ -96,9 +103,13 @@ const specialtyTabs = computed(() => {
   const base = props.kinds ?? EXAM_KIND_ORDER
   if (!base.includes('specialty') && !base.includes('operation')) return []
   // Médecin : masquer services sans nomenclature. Patient externe : garder les services vides (choix destination).
-  const tabs = props.showConsultation
+  let tabs = props.showConsultation
     ? specialtyServiceTabs.value.filter((svc) => svc.hasExams || svc.hasOperations)
     : specialtyServiceTabs.value
+  // Éviter Opération + Chirurgie générale + Bloc opératoire en doublon.
+  if (base.includes('operation')) {
+    tabs = tabs.filter((svc) => !isRedundantWithGlobalOperationTab(svc.name))
+  }
   if (!base.includes('specialty')) {
     return tabs.filter((svc) => svc.hasOperations)
   }
@@ -448,8 +459,145 @@ function onActivePickerUpdate(selected: string[]) {
   updateKind(activeKind.value, selected)
 }
 
+type DoctorOption = { id: string; firstName: string; lastName: string }
+type AssistantInputMode = 'select' | 'custom'
+
+const assistantDoctors = ref<DoctorOption[]>([])
+const assistantSaving = ref(false)
+const assistantMessage = ref('')
+const assistantMessageType = ref<'success' | 'error'>('success')
+const assistantForm = ref({
+  withAssistant: true,
+  percent: '10',
+  doctorId: '',
+  name: '',
+  mode: 'select' as AssistantInputMode,
+})
+
+const selectedOperationExam = computed<CatalogExam | null>(() => {
+  void catalogEpoch.value
+  if (activeKind.value !== 'operation') return null
+  const labels =
+    String(activePanel.value).startsWith('specialty:')
+      ? activeSpecialtyCart.value
+      : (examsByKind.value.operation ?? [])
+  const label = labels[0]
+  if (!label) return null
+  const serviceId = activeSpecialtyClinicServiceId.value
+  return (
+    getCatalogForKind('operation', props.doctorId, props.serviceId, serviceId).find(
+      (exam) => exam.label === label,
+    ) ?? null
+  )
+})
+
+const showOperationAssistantPanel = computed(
+  () => props.showConsultation && !!selectedOperationExam.value,
+)
+
+function doctorOptionLabel(doctor: DoctorOption) {
+  return `Dr ${doctor.firstName} ${doctor.lastName}`.trim()
+}
+
+async function loadAssistantDoctors() {
+  if (!props.showConsultation) return
+  try {
+    const { data } = await api.get<DoctorOption[]>('/consultation/operation-types/doctors')
+    assistantDoctors.value = Array.isArray(data) ? data : []
+  } catch {
+    assistantDoctors.value = []
+  }
+}
+
+function syncAssistantFormFromSelection() {
+  const exam = selectedOperationExam.value
+  if (!exam) return
+  const hasAssistant = !!exam.hasAssistant
+  assistantForm.value = {
+    withAssistant: true,
+    percent: String(exam.anesthesiologistPercent && exam.anesthesiologistPercent > 0
+      ? exam.anesthesiologistPercent
+      : 10),
+    doctorId: exam.anesthesiologistId ?? '',
+    name: exam.anesthesiologistId ? '' : (exam.anesthesiologistName ?? ''),
+    mode: exam.anesthesiologistId || !exam.anesthesiologistName ? 'select' : 'custom',
+  }
+  if (!hasAssistant) {
+    assistantForm.value.withAssistant = true
+  }
+  assistantMessage.value = ''
+}
+
+async function saveOperationAssistant() {
+  const exam = selectedOperationExam.value
+  if (!exam) return
+
+  if (!assistantForm.value.withAssistant) {
+    assistantSaving.value = true
+    assistantMessage.value = ''
+    try {
+      await api.put(`/consultation/operation-types/${exam.id}`, {
+        anesthesiologistPercent: 0,
+        anesthesiologistId: null,
+        anesthesiologistName: null,
+      })
+      invalidateExamCatalogCache()
+      await refreshCatalogState()
+      assistantMessageType.value = 'success'
+      assistantMessage.value = uiText('Assistant retiré de cette opération.')
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { error?: string } } }
+      assistantMessageType.value = 'error'
+      assistantMessage.value =
+        err.response?.data?.error || uiText('Impossible de mettre à jour l’assistant.')
+    } finally {
+      assistantSaving.value = false
+    }
+    return
+  }
+
+  const percent = Number(assistantForm.value.percent)
+  if (!Number.isFinite(percent) || percent < 1 || percent > 99) {
+    assistantMessageType.value = 'error'
+    assistantMessage.value = uiText('Le % assistant doit être entre 1 et 99.')
+    return
+  }
+
+  const hasDoctor = assistantForm.value.mode === 'select' && assistantForm.value.doctorId
+  const hasName =
+    assistantForm.value.mode === 'custom' && assistantForm.value.name.trim().length >= 2
+  if (!hasDoctor && !hasName) {
+    assistantMessageType.value = 'error'
+    assistantMessage.value = uiText(
+      "Liez un médecin ou saisissez le nom de l'assistant chirurgie (2 caractères min.).",
+    )
+    return
+  }
+
+  assistantSaving.value = true
+  assistantMessage.value = ''
+  try {
+    await api.put(`/consultation/operation-types/${exam.id}`, {
+      anesthesiologistPercent: percent,
+      anesthesiologistId: hasDoctor ? assistantForm.value.doctorId : null,
+      anesthesiologistName: hasName ? assistantForm.value.name.trim() : null,
+    })
+    invalidateExamCatalogCache()
+    await refreshCatalogState()
+    assistantMessageType.value = 'success'
+    assistantMessage.value = uiText('Assistant lié à cette opération.')
+  } catch (error: unknown) {
+    const err = error as { response?: { data?: { error?: string } } }
+    assistantMessageType.value = 'error'
+    assistantMessage.value =
+      err.response?.data?.error || uiText('Impossible de lier l’assistant.')
+  } finally {
+    assistantSaving.value = false
+  }
+}
+
 onMounted(async () => {
-  await refreshCatalogState()
+  await Promise.all([refreshCatalogState(), loadAssistantDoctors()])
 })
 
 watch(
@@ -457,6 +605,14 @@ watch(
   async () => {
     await refreshCatalogState()
   },
+)
+
+watch(
+  selectedOperationExam,
+  () => {
+    syncAssistantFormFromSelection()
+  },
+  { immediate: true },
 )
 
 watch(
@@ -600,6 +756,116 @@ watch(
         @update:model-value="onActivePickerUpdate"
         @update:hospitalisation-days="prescribedHospitalisationDays = $event"
       />
+
+      <section
+        v-if="showOperationAssistantPanel && selectedOperationExam"
+        class="multi-exam-picker__assistant"
+      >
+        <header class="multi-exam-picker__assistant-head">
+          <h4>{{ uiText('Assistant chirurgie') }}</h4>
+          <p>
+            {{
+              selectedOperationExam.hasAssistant
+                ? translateTemplate('Déjà lié à « {op} » — vous pouvez modifier.', {
+                    op: selectedOperationExam.label,
+                  })
+                : translateTemplate('Aucun assistant sur « {op} » — liez-en un maintenant.', {
+                    op: selectedOperationExam.label,
+                  })
+            }}
+          </p>
+        </header>
+
+        <p v-if="selectedOperationExam.hasAssistant" class="multi-exam-picker__assistant-current">
+          {{
+            selectedOperationExam.anesthesiologistName
+              ? translateTemplate('Actuel : {name} ({pct} %)', {
+                  name: selectedOperationExam.anesthesiologistName,
+                  pct: selectedOperationExam.anesthesiologistPercent ?? 0,
+                })
+              : translateTemplate('Actuel : assistant ({pct} %)', {
+                  pct: selectedOperationExam.anesthesiologistPercent ?? 0,
+                })
+          }}
+        </p>
+
+        <label class="multi-exam-picker__assistant-toggle">
+          <input v-model="assistantForm.withAssistant" type="checkbox" />
+          {{ uiText('Inclure un assistant chirurgie pour cette opération') }}
+        </label>
+
+        <template v-if="assistantForm.withAssistant">
+          <div class="multi-exam-picker__assistant-modes">
+            <button
+              type="button"
+              class="multi-exam-picker__assistant-mode"
+              :class="{
+                'multi-exam-picker__assistant-mode--active': assistantForm.mode === 'select',
+              }"
+              @click="assistantForm.mode = 'select'; assistantForm.name = ''"
+            >
+              {{ uiText('Médecin enregistré') }}
+            </button>
+            <button
+              type="button"
+              class="multi-exam-picker__assistant-mode"
+              :class="{
+                'multi-exam-picker__assistant-mode--active': assistantForm.mode === 'custom',
+              }"
+              @click="assistantForm.mode = 'custom'; assistantForm.doctorId = ''"
+            >
+              {{ uiText('Autre (saisie libre)') }}
+            </button>
+          </div>
+          <div class="multi-exam-picker__assistant-grid">
+            <UiSelect
+              v-if="assistantForm.mode === 'select'"
+              v-model="assistantForm.doctorId"
+              :label="uiText('Assistant chirurgie')"
+            >
+              <option value="">{{ uiText('— Sélectionner —') }}</option>
+              <option v-for="doctor in assistantDoctors" :key="doctor.id" :value="doctor.id">
+                {{ doctorOptionLabel(doctor) }}
+              </option>
+            </UiSelect>
+            <UiInput
+              v-else
+              v-model="assistantForm.name"
+              :label="uiText('Nom assistant chirurgie')"
+              placeholder="Nom de l'assistant"
+            />
+            <UiInput
+              v-model="assistantForm.percent"
+              :label="uiText('% Assistant chirurgie')"
+              type="number"
+              min="1"
+              max="99"
+            />
+          </div>
+        </template>
+
+        <p
+          v-if="assistantMessage"
+          class="multi-exam-picker__assistant-msg"
+          :class="`multi-exam-picker__assistant-msg--${assistantMessageType}`"
+        >
+          {{ assistantMessage }}
+        </p>
+
+        <UiButton
+          type="button"
+          size="sm"
+          variant="secondary"
+          :loading="assistantSaving"
+          @click="saveOperationAssistant"
+        >
+          {{
+            assistantForm.withAssistant
+              ? uiText('Enregistrer l’assistant sur cette opération')
+              : uiText('Retirer l’assistant')
+          }}
+        </UiButton>
+      </section>
 
       <UiTextarea
         v-if="activePanel !== 'consultation' && showCommentForKind(activeKind)"
@@ -870,5 +1136,96 @@ watch(
   color: var(--accent-600);
   flex-shrink: 0;
   margin-top: 0.1rem;
+}
+
+.multi-exam-picker__assistant {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(27, 79, 156, 0.14);
+  background: linear-gradient(180deg, rgba(27, 79, 156, 0.04), #fff);
+}
+
+.multi-exam-picker__assistant-head h4 {
+  margin: 0 0 0.25rem;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.multi-exam-picker__assistant-head p {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.multi-exam-picker__assistant-current {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--primary-700, #1b4f9c);
+}
+
+.multi-exam-picker__assistant-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.multi-exam-picker__assistant-modes {
+  display: inline-flex;
+  gap: 0.35rem;
+  padding: 0.2rem;
+  border-radius: 10px;
+  background: rgba(15, 40, 80, 0.05);
+  width: fit-content;
+}
+
+.multi-exam-picker__assistant-mode {
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.multi-exam-picker__assistant-mode--active {
+  background: #fff;
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(15, 40, 80, 0.12);
+}
+
+.multi-exam-picker__assistant-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.multi-exam-picker__assistant-msg {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.multi-exam-picker__assistant-msg--success {
+  color: #15803d;
+}
+
+.multi-exam-picker__assistant-msg--error {
+  color: #b91c1c;
+}
+
+@media (max-width: 639px) {
+  .multi-exam-picker__assistant-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

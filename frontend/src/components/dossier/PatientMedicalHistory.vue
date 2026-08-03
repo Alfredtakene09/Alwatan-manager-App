@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ChevronDown,
@@ -10,11 +10,14 @@ import {
   Eye,
   FileText,
   PillBottle,
+  Printer,
+  ClipboardList,
 } from '@lucide/vue'
 import { fullName } from '@/lib/roles'
-import { getLabFormPanel, getFilledLabPanelSections, type LabPanelSlug } from '@/lib/lab-form-panels'
+import { getLabFormPanel, getFilledLabPanelSections, labFieldCommentKey, type LabPanelSlug } from '@/lib/lab-form-panels'
 import { useLabPanelsStore } from '@/stores/lab-panels'
 import type { PharmacyOrdonnanceLine } from '@/lib/lab-notes'
+import { printPharmacyOrdonnance } from '@/lib/pharmacy-ordonnance-print'
 import UiButton from '@/components/ui/UiButton.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -31,6 +34,7 @@ export type MedicalHistoryEntry = {
   date: string
   status: string
   doctor: { firstName: string; lastName: string } | null
+  diagnosis?: string | null
   prescribedExams: string[]
   labPanels: MedicalHistoryLabPanel[]
   doctorComment: string | null
@@ -38,22 +42,39 @@ export type MedicalHistoryEntry = {
   hasLabResults: boolean
 }
 
-defineProps<{
+const props = defineProps<{
   entries: MedicalHistoryEntry[]
   loading?: boolean
   showOpenLabLink?: boolean
   emptyMessage?: string
+  patient?: {
+    code: string
+    firstName: string
+    lastName: string
+    age?: number | null
+    gender?: string | null
+  } | null
+  expandFirst?: boolean
 }>()
 
 const router = useRouter()
 const labPanels = useLabPanelsStore()
 const { uiText, dateText, timeText, localeCode } = useAppI18n()
 const expandedVisitId = ref<string | null>(null)
-const expandedPanel = ref<{ visitId: string; slug: LabPanelSlug } | null>(null)
 
 onMounted(() => {
   labPanels.fetchPanels()
 })
+
+watch(
+  () => [props.entries, props.expandFirst] as const,
+  ([entries, expandFirst]) => {
+    if (expandFirst !== false && entries.length && !expandedVisitId.value) {
+      expandedVisitId.value = entries[0]!.visitId
+    }
+  },
+  { immediate: true },
+)
 
 function formatDate(iso: string) {
   void localeCode.value
@@ -83,15 +104,21 @@ function formatPharmacyLine(line: PharmacyOrdonnanceLine) {
   return parts.join(' ')
 }
 
-function toggleVisit(visitId: string) {
-  expandedVisitId.value = expandedVisitId.value === visitId ? null : visitId
-  expandedPanel.value = null
+function statusLabel(status: string) {
+  void localeCode.value
+  const map: Record<string, string> = {
+    WAITING_CONSULTATION: uiText('En attente'),
+    IN_CONSULTATION: uiText('En consultation'),
+    WAITING_LAB: uiText('Laboratoire'),
+    WAITING_PAYMENT: uiText('Paiement'),
+    COMPLETED: uiText('Terminée'),
+    CANCELLED: uiText('Annulée'),
+  }
+  return map[status] ?? status
 }
 
-function togglePanel(visitId: string, slug: LabPanelSlug) {
-  const same =
-    expandedPanel.value?.visitId === visitId && expandedPanel.value.slug === slug
-  expandedPanel.value = same ? null : { visitId, slug }
+function toggleVisit(visitId: string) {
+  expandedVisitId.value = expandedVisitId.value === visitId ? null : visitId
 }
 
 function openLabDossier(visitId: string) {
@@ -99,10 +126,42 @@ function openLabDossier(visitId: string) {
 }
 
 function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
-  const panel = getLabFormPanel(slug)
-  if (!panel) return []
   const values = entry.labPanels.find((p) => p.slug === slug)?.values ?? {}
-  return getFilledLabPanelSections(panel, values)
+  const panel = getLabFormPanel(slug)
+  if (panel) {
+    const sections = getFilledLabPanelSections(panel, values)
+    if (sections.length) return sections
+  }
+
+  // Repli : afficher les clés saisies même si le formulaire a changé / n'est pas chargé.
+  const fields = Object.entries(values)
+    .filter(([key, value]) => !key.endsWith('__comment') && String(value ?? '').trim())
+    .map(([key, value]) => {
+      const comment = String(values[labFieldCommentKey(key)] ?? '').trim()
+      return {
+        key,
+        label: key,
+        type: 'text' as const,
+        value: String(value).trim(),
+        comment: comment || undefined,
+      }
+    })
+
+  return fields.length ? [{ title: undefined as string | undefined, fields }] : []
+}
+
+function printOrdonnance(entry: MedicalHistoryEntry) {
+  if (!props.patient) return
+  const lines = pharmacyLines(entry)
+  if (!lines.length) return
+  printPharmacyOrdonnance({
+    patient: props.patient,
+    doctorName: entry.doctor
+      ? `Dr ${fullName(entry.doctor.firstName, entry.doctor.lastName)}`
+      : null,
+    lines,
+    date: entry.date,
+  })
 }
 </script>
 
@@ -124,7 +183,8 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
         :class="{
           'timeline-item__marker--lab': entry.labPanels.length,
           'timeline-item__marker--clinical':
-            !entry.labPanels.length && (entry.doctorComment || pharmacyLines(entry).length),
+            !entry.labPanels.length &&
+            (entry.doctorComment || entry.diagnosis || pharmacyLines(entry).length),
         }"
       />
 
@@ -134,8 +194,13 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
             <component :is="expandedVisitId === entry.visitId ? ChevronDown : ChevronRight" :size="16" />
             <strong>{{ formatDate(entry.date) }}</strong>
             <span class="timeline-card__time">{{ formatTime(entry.date) }}</span>
+            <span class="badge badge--status">{{ statusLabel(entry.status) }}</span>
           </div>
           <div class="timeline-card__badges">
+            <span v-if="entry.diagnosis" class="badge badge--diagnosis">
+              <ClipboardList :size="12" />
+              {{ uiText('Diagnostic') }}
+            </span>
             <span v-if="entry.doctorComment" class="badge badge--comment">
               <MessageSquare :size="12" />
               {{ uiText('Consultation') }}
@@ -152,20 +217,45 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
               {{ translateTemplate('{n} résultat(s)', { n: entry.labPanels.length }) }}
             </span>
           </div>
+          <p v-if="entry.diagnosis && expandedVisitId !== entry.visitId" class="timeline-card__preview">
+            {{ entry.diagnosis }}
+          </p>
+          <p
+            v-else-if="entry.doctorComment && expandedVisitId !== entry.visitId"
+            class="timeline-card__preview"
+          >
+            {{ entry.doctorComment }}
+          </p>
         </button>
 
         <div v-if="expandedVisitId === entry.visitId" class="timeline-card__body">
-          <p v-if="entry.doctor" class="timeline-meta">
-            <Stethoscope :size="14" />
-            {{
-              translateTemplate('Dr {name}', {
-                name: fullName(entry.doctor.firstName, entry.doctor.lastName),
-              })
-            }}
-          </p>
+          <div class="timeline-card__toolbar">
+            <p v-if="entry.doctor" class="timeline-meta">
+              <Stethoscope :size="14" />
+              {{
+                translateTemplate('Dr {name}', {
+                  name: fullName(entry.doctor.firstName, entry.doctor.lastName),
+                })
+              }}
+            </p>
+            <UiButton
+              v-if="patient && pharmacyLines(entry).length"
+              variant="ghost"
+              size="sm"
+              :icon="Printer"
+              @click="printOrdonnance(entry)"
+            >
+              {{ uiText('Imprimer ordonnance') }}
+            </UiButton>
+          </div>
+
+          <div v-if="entry.diagnosis" class="timeline-block timeline-block--diagnosis">
+            <h4>{{ uiText('Diagnostic') }}</h4>
+            <p class="timeline-block__text">{{ entry.diagnosis }}</p>
+          </div>
 
           <div v-if="entry.doctorComment" class="timeline-block timeline-block--comment">
-            <h4>{{ uiText('Informations cliniques') }}</h4>
+            <h4>{{ uiText('Informations cliniques / prescription') }}</h4>
             <p class="timeline-block__text">{{ entry.doctorComment }}</p>
           </div>
 
@@ -201,31 +291,24 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
 
             <div class="panel-grid">
               <div v-for="panel in entry.labPanels" :key="panel.slug" class="panel-card">
-                <button
-                  type="button"
-                  class="panel-card__head"
-                  @click="togglePanel(entry.visitId, panel.slug)"
-                >
+                <div class="panel-card__head panel-card__head--static">
                   <FileText :size="14" />
-                  <span>{{ panel.label }}</span>
+                  <span>{{ uiText(panel.label) }}</span>
                   <span class="panel-card__count">
                     {{ translateTemplate('{n} valeur(s)', { n: panel.filledCount }) }}
                   </span>
-                </button>
+                </div>
 
-                <div
-                  v-if="expandedPanel?.visitId === entry.visitId && expandedPanel.slug === panel.slug"
-                  class="panel-card__body"
-                >
+                <div class="panel-card__body">
                   <div
                     v-for="section in panelSections(entry, panel.slug)"
                     :key="section.title ?? 'default'"
                     class="result-section"
                   >
-                    <h5 v-if="section.title">{{ section.title }}</h5>
+                    <h5 v-if="section.title">{{ uiText(section.title) }}</h5>
                     <dl class="result-grid">
                       <template v-for="field in section.fields" :key="field.key">
-                        <dt>{{ field.label }}</dt>
+                        <dt>{{ uiText(field.label) }}</dt>
                         <dd>
                           {{ field.value || '—' }}
                           <span v-if="field.unit && field.value" class="unit">
@@ -236,6 +319,9 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
                       </template>
                     </dl>
                   </div>
+                  <p v-if="!panelSections(entry, panel.slug).length" class="result-empty">
+                    {{ uiText('Aucune valeur détaillée disponible pour ce formulaire.') }}
+                  </p>
                 </div>
               </div>
             </div>
@@ -277,51 +363,49 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
   margin-top: 1.1rem;
   border-radius: 50%;
   background: var(--primary-400);
-  box-shadow: 0 0 0 3px var(--primary-50);
+  box-shadow: 0 0 0 4px rgba(27, 79, 156, 0.12);
 }
 
 .timeline-item__marker--lab {
-  background: #7c3aed;
-  box-shadow: 0 0 0 3px #ede9fe;
+  background: #0d9488;
+  box-shadow: 0 0 0 4px rgba(13, 148, 136, 0.14);
 }
 
 .timeline-item__marker--clinical {
-  background: #0d9488;
-  box-shadow: 0 0 0 3px #ccfbf1;
+  background: #7c3aed;
+  box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.14);
 }
 
 .timeline-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border: 1px solid rgba(15, 40, 80, 0.1);
+  border-radius: 14px;
   background: #fff;
   overflow: hidden;
 }
 
 .timeline-card__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.65rem;
   width: 100%;
-  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.9rem 1rem;
   border: 0;
-  background: linear-gradient(180deg, #fafafa 0%, #fff 100%);
+  background: transparent;
   text-align: left;
   cursor: pointer;
 }
 
 .timeline-card__title-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.45rem;
   color: var(--text);
 }
 
 .timeline-card__time {
-  font-size: 0.8125rem;
   color: var(--text-muted);
-  font-weight: 500;
+  font-size: 0.8125rem;
 }
 
 .timeline-card__badges {
@@ -330,61 +414,118 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
   gap: 0.35rem;
 }
 
+.timeline-card__preview {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
-  padding: 0.2rem 0.55rem;
+  padding: 0.2rem 0.5rem;
   border-radius: 999px;
   font-size: 0.6875rem;
   font-weight: 700;
 }
 
-.badge--exam {
-  background: #fef3c7;
-  color: #92400e;
+.badge--status {
+  background: rgba(100, 116, 139, 0.12);
+  color: #475569;
 }
 
-.badge--result {
-  background: #ede9fe;
-  color: #5b21b6;
+.badge--diagnosis {
+  background: rgba(124, 58, 237, 0.12);
+  color: #6d28d9;
 }
 
 .badge--comment {
-  background: #ccfbf1;
-  color: #0f766e;
+  background: rgba(27, 79, 156, 0.1);
+  color: #1b4f9c;
 }
 
 .badge--pharmacy {
-  background: #ffe4e6;
-  color: #9f1239;
+  background: rgba(5, 150, 105, 0.12);
+  color: #047857;
+}
+
+.badge--exam {
+  background: rgba(14, 165, 233, 0.12);
+  color: #0369a1;
+}
+
+.badge--result {
+  background: rgba(13, 148, 136, 0.12);
+  color: #0f766e;
 }
 
 .timeline-card__body {
   padding: 0 1rem 1rem;
-  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  border-top: 1px solid rgba(15, 40, 80, 0.08);
+}
+
+.timeline-card__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
 }
 
 .timeline-meta {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  margin: 0.85rem 0 0.5rem;
+  margin: 0;
   font-size: 0.8125rem;
   color: var(--text-muted);
 }
 
 .timeline-block {
-  margin-top: 0.85rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 10px;
+  background: rgba(15, 40, 80, 0.03);
+}
+
+.timeline-block--diagnosis {
+  background: rgba(124, 58, 237, 0.06);
+  border: 1px solid rgba(124, 58, 237, 0.14);
+}
+
+.timeline-block--comment {
+  background: rgba(27, 79, 156, 0.05);
+  border: 1px solid rgba(27, 79, 156, 0.1);
+}
+
+.timeline-block--pharmacy {
+  background: rgba(5, 150, 105, 0.06);
+  border: 1px solid rgba(5, 150, 105, 0.12);
 }
 
 .timeline-block h4 {
   margin: 0 0 0.4rem;
-  font-size: 0.8125rem;
-  font-weight: 700;
-  color: var(--text-muted);
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.timeline-block__text,
+.exam-list {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .timeline-block__head {
@@ -392,120 +533,97 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
+  margin-bottom: 0.5rem;
 }
 
-.timeline-block__text {
+.timeline-block__head h4 {
   margin: 0;
-  padding: 0.65rem 0.75rem;
-  border-radius: var(--radius-sm);
-  background: #f0fdfa;
-  border: 1px solid #99f6e4;
-  font-size: 0.875rem;
-  line-height: 1.5;
-  white-space: pre-wrap;
-}
-
-.exam-list {
-  margin: 0;
-  font-size: 0.875rem;
-  line-height: 1.5;
 }
 
 .pharmacy-list {
   margin: 0;
-  padding: 0.65rem 0.75rem 0.65rem 1.35rem;
-  border-radius: var(--radius-sm);
-  background: #fff1f2;
-  border: 1px solid #fecdd3;
+  padding-left: 1.1rem;
   font-size: 0.875rem;
-  line-height: 1.55;
-}
-
-.pharmacy-list li + li {
-  margin-top: 0.25rem;
 }
 
 .panel-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  display: grid;
+  gap: 0.55rem;
 }
 
 .panel-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border: 1px solid rgba(15, 40, 80, 0.1);
+  border-radius: 8px;
   overflow: hidden;
+  background: #fff;
 }
 
 .panel-card__head {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  width: 100%;
-  padding: 0.6rem 0.75rem;
+  gap: 0.4rem;
+  padding: 0.55rem 0.7rem;
   border: 0;
-  background: #f8fafc;
+  background: rgba(13, 148, 136, 0.06);
   font-size: 0.8125rem;
   font-weight: 600;
-  cursor: pointer;
-  text-align: left;
+}
+
+.panel-card__head--static {
+  cursor: default;
 }
 
 .panel-card__count {
-  margin-left: auto;
-  font-size: 0.6875rem;
-  font-weight: 700;
+  margin-inline-start: auto;
   color: var(--text-muted);
+  font-weight: 500;
 }
 
 .panel-card__body {
-  padding: 0.75rem;
-  border-top: 1px solid var(--border);
+  padding: 0.55rem 0.7rem 0.7rem;
+}
+
+.result-empty {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
 }
 
 .result-section + .result-section {
-  margin-top: 0.75rem;
-  padding-top: 0.75rem;
-  border-top: 1px dashed var(--border);
+  margin-top: 0.65rem;
 }
 
 .result-section h5 {
-  margin: 0 0 0.5rem;
+  margin: 0 0 0.35rem;
   font-size: 0.75rem;
   color: var(--text-muted);
 }
 
 .result-grid {
   display: grid;
-  grid-template-columns: minmax(8rem, 1.2fr) 1fr;
-  gap: 0.35rem 0.75rem;
+  grid-template-columns: minmax(7rem, 34%) 1fr;
+  gap: 0.25rem 0.65rem;
   margin: 0;
   font-size: 0.8125rem;
 }
 
 .result-grid dt {
   color: var(--text-muted);
-  font-weight: 500;
 }
 
 .result-grid dd {
   margin: 0;
-  font-weight: 600;
 }
 
 .unit {
-  margin-left: 0.2rem;
-  font-weight: 500;
   color: var(--text-muted);
   font-size: 0.75rem;
 }
 
 .result-comment {
-  margin: 0.25rem 0 0;
-  font-size: 0.75rem;
-  font-weight: 500;
+  margin: 0.15rem 0 0;
   color: var(--text-muted);
-  white-space: pre-wrap;
-  line-height: 1.35;
+  font-size: 0.75rem;
 }
 </style>

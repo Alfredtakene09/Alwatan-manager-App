@@ -6,6 +6,7 @@ import { resolveDoctorClinicServices } from "../lib/clinic-service-exam.js";
 import { clinicPercentFromSplits, validateInterventionPercents } from "../lib/intervention-splits.js";
 import { findDuplicateIntervention } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
+import { selectableDoctorByIdWhere, selectableDoctorWhere } from "../lib/doctor-compensation.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -26,8 +27,22 @@ const interventionBaseSchema = z.object({
   anesthesiologistPercent: z.number().int().min(0).max(99).default(0),
   surgeonName: z.string().max(120).optional().nullable(),
   anesthesiologistName: z.string().max(120).optional().nullable(),
+  anesthesiologistId: z.preprocess(
+    (v) => (v === "" || v === undefined ? null : v),
+    z.string().min(1).nullable().optional(),
+  ),
   active: z.boolean().optional(),
 });
+
+function resolveAssistantFields(body: {
+  anesthesiologistId?: string | null;
+  anesthesiologistName?: string | null;
+}) {
+  const id = body.anesthesiologistId?.trim() || null;
+  const name = body.anesthesiologistName?.trim() || null;
+  if (id) return { anesthesiologistId: id, anesthesiologistName: null as string | null };
+  return { anesthesiologistId: null as string | null, anesthesiologistName: name };
+}
 
 function generateInterventionCode(label: string) {
   const slug = label
@@ -71,26 +86,46 @@ const interventionSchema = interventionBaseSchema.superRefine((body, ctx) => {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: error });
   }
   if (body.anesthesiologistPercent > 0) {
+    const hasId = Boolean(body.anesthesiologistId?.trim());
     const name = body.anesthesiologistName?.trim() || "";
-    if (name.length < 2) {
+    if (!hasId && name.length < 2) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Saisissez le nom de l'assistant chirurgie (2 caractères min.).",
+        message: "Liez un médecin ou saisissez le nom de l'assistant chirurgie (2 caractères min.).",
       });
     }
   }
 });
 
 const interventionUpdateSchema = interventionBaseSchema.partial().superRefine((body, ctx) => {
-  if (body.surgeonPercent === undefined && body.anesthesiologistPercent === undefined) return;
+  if (
+    body.surgeonPercent === undefined &&
+    body.anesthesiologistPercent === undefined &&
+    body.anesthesiologistId === undefined &&
+    body.anesthesiologistName === undefined
+  ) {
+    return;
+  }
   const surgeonPercent = body.surgeonPercent ?? 0;
   const anesthesiologistPercent = body.anesthesiologistPercent ?? 0;
-  const error = validateInterventionPercents(
-    surgeonPercent > 0 ? surgeonPercent : 1,
-    anesthesiologistPercent,
-  );
-  if (error && body.surgeonPercent !== undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: error });
+  if (body.surgeonPercent !== undefined || body.anesthesiologistPercent !== undefined) {
+    const error = validateInterventionPercents(
+      surgeonPercent > 0 ? surgeonPercent : 1,
+      anesthesiologistPercent,
+    );
+    if (error && body.surgeonPercent !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: error });
+    }
+  }
+  if (body.anesthesiologistPercent !== undefined && body.anesthesiologistPercent > 0) {
+    const hasId = Boolean(body.anesthesiologistId?.trim());
+    const name = body.anesthesiologistName?.trim() || "";
+    if (!hasId && name.length < 2 && body.anesthesiologistName !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Liez un médecin ou saisissez le nom de l'assistant chirurgie (2 caractères min.).",
+      });
+    }
   }
 });
 
@@ -119,6 +154,15 @@ router.get("/me", async (req, res) => {
     clinicServiceName: ctx.service.name,
     clinicServiceIds: ctx.ids,
   });
+});
+
+router.get("/doctors", async (_req, res) => {
+  const doctors = await prisma.user.findMany({
+    where: selectableDoctorWhere,
+    select: { id: true, firstName: true, lastName: true },
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+  });
+  return res.json(doctors);
 });
 
 router.get("/", async (req, res) => {
@@ -160,8 +204,20 @@ router.post("/", async (req, res) => {
       );
     }
 
-    const assistantName =
-      body.anesthesiologistPercent > 0 ? body.anesthesiologistName?.trim() || null : null;
+    const assistant =
+      body.anesthesiologistPercent > 0
+        ? resolveAssistantFields(body)
+        : { anesthesiologistId: null, anesthesiologistName: null };
+
+    if (assistant.anesthesiologistId) {
+      const doctor = await prisma.user.findFirst({
+        where: selectableDoctorByIdWhere(assistant.anesthesiologistId),
+        select: { id: true },
+      });
+      if (!doctor) {
+        return res.status(400).json({ error: "Assistant chirurgie introuvable." });
+      }
+    }
 
     const item = await prisma.interventionType.create({
       data: {
@@ -174,8 +230,7 @@ router.post("/", async (req, res) => {
         clinicServiceId: ctx.service.id,
         surgeonId: ctx.userId,
         surgeonName: null,
-        anesthesiologistId: null,
-        anesthesiologistName: assistantName,
+        ...assistant,
         active: body.active ?? true,
       },
       include: interventionInclude,
@@ -227,6 +282,53 @@ router.put("/:id", async (req, res) => {
       body.anesthesiologistPercent !== undefined
         ? body.anesthesiologistPercent
         : existing.anesthesiologistPercent;
+    const nextSurgeonPercent =
+      body.surgeonPercent !== undefined ? body.surgeonPercent : existing.surgeonPercent;
+    const percentError = validateInterventionPercents(nextSurgeonPercent, nextAssistantPercent);
+    if (percentError) {
+      return res.status(400).json({ error: percentError });
+    }
+
+    let assistantData:
+      | { anesthesiologistId: string | null; anesthesiologistName: string | null }
+      | undefined;
+    if (
+      body.anesthesiologistPercent !== undefined ||
+      body.anesthesiologistId !== undefined ||
+      body.anesthesiologistName !== undefined
+    ) {
+      if (nextAssistantPercent <= 0) {
+        assistantData = { anesthesiologistId: null, anesthesiologistName: null };
+      } else {
+        assistantData = resolveAssistantFields({
+          anesthesiologistId:
+            body.anesthesiologistId !== undefined
+              ? body.anesthesiologistId
+              : existing.anesthesiologistId,
+          anesthesiologistName:
+            body.anesthesiologistName !== undefined
+              ? body.anesthesiologistName
+              : existing.anesthesiologistName,
+        });
+        if (
+          !assistantData.anesthesiologistId &&
+          !(assistantData.anesthesiologistName && assistantData.anesthesiologistName.length >= 2)
+        ) {
+          return res.status(400).json({
+            error: "Liez un médecin ou saisissez le nom de l'assistant chirurgie (2 caractères min.).",
+          });
+        }
+        if (assistantData.anesthesiologistId) {
+          const doctor = await prisma.user.findFirst({
+            where: selectableDoctorByIdWhere(assistantData.anesthesiologistId),
+            select: { id: true },
+          });
+          if (!doctor) {
+            return res.status(400).json({ error: "Assistant chirurgie introuvable." });
+          }
+        }
+      }
+    }
 
     const item = await prisma.interventionType.update({
       where: { id: existing.id },
@@ -239,17 +341,7 @@ router.put("/:id", async (req, res) => {
         ...(body.anesthesiologistPercent !== undefined
           ? { anesthesiologistPercent: body.anesthesiologistPercent }
           : {}),
-        ...(body.anesthesiologistName !== undefined || body.anesthesiologistPercent !== undefined
-          ? {
-              anesthesiologistId: null,
-              anesthesiologistName:
-                nextAssistantPercent > 0
-                  ? (body.anesthesiologistName?.trim() ||
-                      existing.anesthesiologistName ||
-                      null)
-                  : null,
-            }
-          : {}),
+        ...(assistantData ?? {}),
         ...(body.active !== undefined ? { active: body.active } : {}),
         surgeonId: existing.surgeonId ?? ctx.userId,
       },

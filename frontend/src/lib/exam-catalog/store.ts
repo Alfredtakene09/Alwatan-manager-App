@@ -55,27 +55,20 @@ type CatalogCacheKey = string
 
 
 type CatalogApiResponse = Record<
-
   ExamKindSlug,
-
   Array<{
-
     id: string
-
     code: string
-
     label: string
-
     category: string | null
-
     priceFcfa: number
-
     clinicServiceId?: string | null
-
     clinicServiceName?: string | null
-
+    anesthesiologistPercent?: number
+    anesthesiologistId?: string | null
+    anesthesiologistName?: string | null
+    hasAssistant?: boolean
   }>
-
 > & {
   specialtyServiceName?: string | null
   specialtyServices?: Array<{
@@ -114,41 +107,31 @@ function cacheKey(doctorId?: string | null, serviceId?: string | null): CatalogC
 
 
 function mapApiItem(item: {
-
   id: string
-
   code: string
-
   label: string
-
   category: string | null
-
   priceFcfa: number
-
   clinicServiceId?: string | null
-
   clinicServiceName?: string | null
-
+  anesthesiologistPercent?: number
+  anesthesiologistId?: string | null
+  anesthesiologistName?: string | null
+  hasAssistant?: boolean
 }): CatalogExam {
-
   return {
-
     id: item.id,
-
     code: item.code,
-
     label: item.label,
-
     category: item.category ?? '—',
-
     priceFcfa: item.priceFcfa,
-
     clinicServiceId: item.clinicServiceId ?? null,
-
     clinicServiceName: item.clinicServiceName ?? null,
-
+    anesthesiologistPercent: item.anesthesiologistPercent,
+    anesthesiologistId: item.anesthesiologistId ?? null,
+    anesthesiologistName: item.anesthesiologistName ?? null,
+    hasAssistant: item.hasAssistant ?? (item.anesthesiologistPercent ?? 0) > 0,
   }
-
 }
 
 

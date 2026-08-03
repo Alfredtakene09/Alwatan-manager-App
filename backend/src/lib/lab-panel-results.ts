@@ -69,11 +69,35 @@ function knownSlugs(): string[] {
 }
 
 function resolveLabPanelSlug(label: string): string | undefined {
-  const dynamic = Object.entries(dynamicLabelBySlug).find(([, panelLabel]) => panelLabel === label)?.[0];
+  const trimmed = label.trim();
+  const dynamic = Object.entries(dynamicLabelBySlug).find(([, panelLabel]) => panelLabel === trimmed)?.[0];
   if (dynamic) return dynamic;
-  const current = Object.entries(LAB_PANEL_LABELS).find(([, panelLabel]) => panelLabel === label)?.[0];
+  const current = Object.entries(LAB_PANEL_LABELS).find(([, panelLabel]) => panelLabel === trimmed)?.[0];
   if (current) return current;
-  return LEGACY_LAB_PANEL_LABELS[label];
+  const legacy = LEGACY_LAB_PANEL_LABELS[trimmed];
+  if (legacy) return legacy;
+
+  // Comparaison insensible à la casse (libellés historiques légèrement différents).
+  const lower = trimmed.toLowerCase();
+  const dynamicCi = Object.entries(dynamicLabelBySlug).find(
+    ([, panelLabel]) => panelLabel.toLowerCase() === lower,
+  )?.[0];
+  if (dynamicCi) return dynamicCi;
+  const currentCi = Object.entries(LAB_PANEL_LABELS).find(
+    ([, panelLabel]) => panelLabel.toLowerCase() === lower,
+  )?.[0];
+  if (currentCi) return currentCi;
+  return undefined;
+}
+
+function slugFallbackFromLabel(label: string) {
+  const slug = label
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "panel";
 }
 
 // Accepte les libellés contenant des parenthèses, ex. "Panel (v2)"
@@ -91,8 +115,7 @@ export function parseLabPanelResults(notes?: string | null): Record<string, Reco
     const match = line.trim().match(PANEL_LINE_RE);
     if (!match) continue;
     const label = match[1];
-    const slug = resolveLabPanelSlug(label);
-    if (!slug) continue;
+    const slug = resolveLabPanelSlug(label) ?? slugFallbackFromLabel(label);
     try {
       result[slug] = JSON.parse(match[2]) as Record<string, string>;
     } catch {
