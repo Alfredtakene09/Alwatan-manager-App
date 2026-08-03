@@ -39,7 +39,6 @@ import {
   doctorIsFixedSalary,
   doctorNeedsConsultationAmountInput,
   doctorQuotaHint,
-  doctorSelectSuffix,
   doctorMatchesService,
   doctorShowsFixedConsultationPrice,
   resolveConsultationAmountForDoctor,
@@ -1320,7 +1319,7 @@ onUnmounted(clearAlert)
               formServiceDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin sur ce service')
             }}</option>
             <option v-for="doctor in formServiceDoctors" :key="doctor.id" :value="doctor.id">
-              Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
+              Dr {{ fullName(doctor.firstName, doctor.lastName) }}
             </option>
           </UiSelect>
         </div>
@@ -1436,7 +1435,7 @@ onUnmounted(clearAlert)
               editServiceDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin sur ce service')
             }}</option>
             <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
-              Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
+              Dr {{ fullName(doctor.firstName, doctor.lastName) }}
             </option>
           </UiSelect>
         </div>
@@ -1444,7 +1443,7 @@ onUnmounted(clearAlert)
         <UiSelect v-model="editForm.treatingDoctorId" label="Médecin traitant (dossier)">
           <option value="">{{ uiText('Aucun (optionnel)') }}</option>
           <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
-            Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
+            Dr {{ fullName(doctor.firstName, doctor.lastName) }}
           </option>
         </UiSelect>
 
@@ -1562,7 +1561,7 @@ onUnmounted(clearAlert)
             <UiSelect v-model="reconsultForm.doctorId" label="Médecin" required>
               <option value="" disabled>{{ sortedDoctors.length ? uiText('Sélectionner un médecin') : uiText('Aucun médecin disponible') }}</option>
               <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
-                Dr {{ fullName(doctor.firstName, doctor.lastName) }}{{ uiText(doctorSelectSuffix(doctor)) }}
+                Dr {{ fullName(doctor.firstName, doctor.lastName) }}
               </option>
             </UiSelect>
             <UiInput

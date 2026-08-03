@@ -58,8 +58,14 @@ const viewVitals = computed(() => viewVisit.value?.vitalSigns?.[0] ?? null)
 
 const visitCountLabel = computed(() => {
   if (loading.value) return 'Chargement…'
-  if (!visits.value.length) return 'Aucun patient consulté en attente de suivi'
-  return `${visits.value.length} patient(s) en attente de paiement`
+  if (!visits.value.length) return 'Aucun patient consulté pour le moment'
+  const pending = visits.value.filter((v) => v.status !== 'COMPLETED').length
+  const closed = visits.value.length - pending
+  if (closed && pending) {
+    return `${pending} en attente de paiement · ${closed} clôturé(s) aujourd'hui`
+  }
+  if (closed) return `${closed} consultation(s) clôturée(s) aujourd'hui`
+  return `${pending} patient(s) en attente de paiement`
 })
 
 async function loadVisits() {
@@ -117,7 +123,7 @@ onMounted(loadVisits)
     <section class="page-with-table__head">
       <UiPageHeader
         title="Déjà consulté"
-        subtitle="Patients consultés — en attente de paiement à la réception"
+        subtitle="Patients consultés — en attente de paiement, ou clôturés aujourd'hui"
         :icon="CheckCircle2"
       />
 
@@ -141,7 +147,7 @@ onMounted(loadVisits)
         </template>
 
         <p v-if="!loading && !visits.length" class="empty">
-          Aucun patient consulté pour le moment. Les dossiers en attente de paiement apparaîtront ici.
+          Aucun patient consulté pour le moment. Les dossiers prescrits ou clôturés aujourd'hui apparaîtront ici.
         </p>
         <ConsultedPatientsDataTable
           v-else-if="visits.length || loading"

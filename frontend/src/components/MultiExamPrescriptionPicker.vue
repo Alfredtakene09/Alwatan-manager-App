@@ -22,10 +22,12 @@ import {
   emptyExamCommentsByKind,
   getCatalogForKind,
   getSpecialtyServiceName,
+  getSpecialtyServices,
   loadExamCatalog,
   type ExamCommentsByKind,
   type ExamKindSlug,
   type ExamsByKind,
+  type SpecialtyServiceInfo,
 } from '@/lib/exam-catalog'
 import {
   CLINICAL_CONSULTATION_EXAM_LABEL,
@@ -34,7 +36,7 @@ import {
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 
-type ActivePanel = 'consultation' | ExamKindSlug
+type ActivePanel = 'consultation' | ExamKindSlug | `specialty:${string}`
 
 const props = withDefaults(
   defineProps<{
@@ -49,12 +51,15 @@ const props = withDefaults(
     /** Filtre examens selon le médecin (service lié + Laboratoire/Hospitalisation). */
     doctorId?: string | null
     serviceId?: string | null
+    /** Bouton Consultation (désactivé pour patient externe : le service suffit). */
+    showConsultation?: boolean
   }>(),
   {
     comments: () => emptyExamCommentsByKind(),
     showComments: true,
     commentKinds: () => INVOICE_EXAM_COMMENT_KINDS,
     hospitalisationDays: null,
+    showConsultation: true,
   },
 )
 
@@ -62,6 +67,13 @@ const emit = defineEmits<{
   'update:modelValue': [value: ExamsByKind]
   'update:comments': [value: ExamCommentsByKind]
   'update:hospitalisationDays': [value: number | null]
+  'active-service-change': [
+    payload: {
+      kind: ExamKindSlug | 'consultation' | null
+      clinicServiceId: string | null
+      clinicServiceName: string | null
+    },
+  ]
 }>()
 
 const { uiText, localeCode } = useAppI18n()
@@ -72,18 +84,39 @@ const catalogReady = ref(false)
 const catalogEpoch = ref(0)
 const specialtyExamCount = ref(0)
 const specialtyServiceLabel = ref<string | null>(null)
+const specialtyServiceTabs = ref<SpecialtyServiceInfo[]>([])
 
 const examsByKind = computed({
   get: () => props.modelValue,
   set: (value: ExamsByKind) => emit('update:modelValue', value),
 })
 
+const specialtyTabs = computed(() => {
+  void catalogEpoch.value
+  const base = props.kinds ?? EXAM_KIND_ORDER
+  if (!base.includes('specialty') && !base.includes('operation')) return []
+  // Médecin : masquer services sans nomenclature. Patient externe : garder les services vides (choix destination).
+  const tabs = props.showConsultation
+    ? specialtyServiceTabs.value.filter((svc) => svc.hasExams || svc.hasOperations)
+    : specialtyServiceTabs.value
+  if (!base.includes('specialty')) {
+    return tabs.filter((svc) => svc.hasOperations)
+  }
+  return tabs
+})
+
 const visibleKinds = computed(() => {
   void catalogEpoch.value
   const base = props.kinds ?? EXAM_KIND_ORDER
   return base.filter((kind) => {
-    if (kind !== 'specialty') return true
-    return specialtyExamCount.value > 0
+    if (kind === 'specialty') {
+      if (specialtyTabs.value.length > 0) return false
+      return specialtyExamCount.value > 0
+    }
+    if (kind === 'operation') {
+      return getCatalogForKind('operation', props.doctorId, props.serviceId).length > 0
+    }
+    return true
   })
 })
 
@@ -96,6 +129,24 @@ const consultationAlreadyPrescribed = computed(() =>
 const specialtySummaryExams = computed(() =>
   (examsByKind.value.specialty ?? []).filter((label) => label !== CLINICAL_CONSULTATION_EXAM_LABEL),
 )
+
+const activeSpecialtyClinicServiceId = computed(() => {
+  if (typeof activePanel.value === 'string' && activePanel.value.startsWith('specialty:')) {
+    return activePanel.value.slice('specialty:'.length)
+  }
+  return null
+})
+
+function activeSpecialtyTab(): SpecialtyServiceInfo | null {
+  const id = activeSpecialtyClinicServiceId.value
+  if (!id) return null
+  return specialtyTabs.value.find((svc) => svc.id === id) ?? null
+}
+
+/** Sur un onglet service : examens si dispo, sinon opérations du service. */
+function specialtyTabUsesOperations(tab: SpecialtyServiceInfo | null): boolean {
+  return !!tab && !tab.hasExams && tab.hasOperations
+}
 
 function kindLabel(kind: ExamKindSlug) {
   void localeCode.value
@@ -111,19 +162,51 @@ async function refreshCatalogState() {
   await loadExamCatalog({
     doctorId: props.doctorId,
     serviceId: props.serviceId,
+    force: true,
   })
   specialtyExamCount.value = getCatalogForKind('specialty', props.doctorId, props.serviceId).filter(
     (exam) => exam.label !== CLINICAL_CONSULTATION_EXAM_LABEL,
   ).length
   specialtyServiceLabel.value = getSpecialtyServiceName(props.doctorId, props.serviceId)
+  // Garder les services avec examens OU opérations (Tromatologie = ops seulement)
+  specialtyServiceTabs.value = getSpecialtyServices(props.doctorId, props.serviceId)
   catalogEpoch.value += 1
   catalogReady.value = true
 
-  if (activePanel.value === 'consultation') return
+  if (activePanel.value === 'consultation') {
+    if (!props.showConsultation) {
+      activePanel.value = specialtyTabs.value[0]
+        ? `specialty:${specialtyTabs.value[0].id}`
+        : (visibleKinds.value[0] ?? 'examen')
+    } else {
+      return
+    }
+  }
+  if (typeof activePanel.value === 'string' && activePanel.value.startsWith('specialty:')) {
+    const id = activePanel.value.slice('specialty:'.length)
+    if (specialtyTabs.value.some((svc) => svc.id === id)) return
+  }
+  if (specialtyTabs.value.length > 0 && (activePanel.value === 'examen' || !props.showConsultation)) {
+    if (activePanel.value === 'examen' || !visibleKinds.value.includes(activePanel.value as ExamKindSlug)) {
+      activePanel.value = `specialty:${specialtyTabs.value[0].id}`
+      return
+    }
+  }
   if (visibleKinds.value.includes('specialty') && activePanel.value === 'examen') {
     activePanel.value = 'specialty'
-  } else if (!visibleKinds.value.includes(activePanel.value)) {
-    activePanel.value = visibleKinds.value[0] ?? 'examen'
+    return
+  }
+  if (
+    !String(activePanel.value).startsWith('specialty:') &&
+    !visibleKinds.value.includes(activePanel.value as ExamKindSlug)
+  ) {
+    if (visibleKinds.value[0]) {
+      activePanel.value = visibleKinds.value[0]
+    } else if (specialtyTabs.value[0]) {
+      activePanel.value = `specialty:${specialtyTabs.value[0].id}`
+    } else {
+      activePanel.value = 'examen'
+    }
   }
 }
 
@@ -134,9 +217,34 @@ const emptyCartHint = computed(() => {
   )
 })
 
-const activeKind = computed(() =>
-  activePanel.value === 'consultation' ? 'specialty' : activePanel.value,
-)
+const activeKind = computed<ExamKindSlug>(() => {
+  if (activePanel.value === 'consultation') return 'specialty'
+  if (String(activePanel.value).startsWith('specialty:')) {
+    return specialtyTabUsesOperations(activeSpecialtyTab()) ? 'operation' : 'specialty'
+  }
+  return activePanel.value as ExamKindSlug
+})
+
+const activeSpecialtyCart = computed(() => {
+  void catalogEpoch.value
+  const serviceId = activeSpecialtyClinicServiceId.value
+  const tab = activeSpecialtyTab()
+  if (!serviceId) {
+    return specialtyTabUsesOperations(tab)
+      ? (examsByKind.value.operation ?? [])
+      : specialtySummaryExams.value
+  }
+  if (specialtyTabUsesOperations(tab)) {
+    const labels = new Set(
+      getCatalogForKind('operation', props.doctorId, props.serviceId, serviceId).map((e) => e.label),
+    )
+    return (examsByKind.value.operation ?? []).filter((label) => labels.has(label))
+  }
+  const labels = new Set(
+    getCatalogForKind('specialty', props.doctorId, props.serviceId, serviceId).map((e) => e.label),
+  )
+  return specialtySummaryExams.value.filter((label) => labels.has(label))
+})
 
 const activeCommentLabel = computed(() => {
   void localeCode.value
@@ -192,6 +300,30 @@ function kindCount(kind: ExamKindSlug) {
   return examsByKind.value[kind]?.length ?? 0
 }
 
+function specialtyServiceCount(serviceId: string) {
+  void catalogEpoch.value
+  const tab = specialtyTabs.value.find((svc) => svc.id === serviceId)
+  if (specialtyTabUsesOperations(tab ?? null)) {
+    const labels = new Set(
+      getCatalogForKind('operation', props.doctorId, props.serviceId, serviceId).map((e) => e.label),
+    )
+    return (examsByKind.value.operation ?? []).filter((label) => labels.has(label)).length
+  }
+  const examLabels = new Set(
+    getCatalogForKind('specialty', props.doctorId, props.serviceId, serviceId).map((e) => e.label),
+  )
+  const examCount = specialtySummaryExams.value.filter((label) => examLabels.has(label)).length
+  // Badge = examens + opérations du service (ex. Ophtalmologie)
+  if (tab?.hasOperations) {
+    const opLabels = new Set(
+      getCatalogForKind('operation', props.doctorId, props.serviceId, serviceId).map((e) => e.label),
+    )
+    const opCount = (examsByKind.value.operation ?? []).filter((label) => opLabels.has(label)).length
+    return examCount + opCount
+  }
+  return examCount
+}
+
 function kindComment(kind: ExamKindSlug) {
   return commentsByKind.value[kind]?.trim() ?? ''
 }
@@ -211,12 +343,109 @@ function clearConsultation() {
     (examsByKind.value.specialty ?? []).filter((label) => label !== CLINICAL_CONSULTATION_EXAM_LABEL),
   )
   if (activePanel.value === 'consultation') {
-    activePanel.value = visibleKinds.value[0] ?? 'examen'
+    activePanel.value = specialtyTabs.value[0]
+      ? `specialty:${specialtyTabs.value[0].id}`
+      : (visibleKinds.value[0] ?? 'examen')
   }
 }
 
 function selectKind(kind: ExamKindSlug) {
   activePanel.value = kind
+}
+
+function selectSpecialtyService(serviceId: string) {
+  activePanel.value = `specialty:${serviceId}`
+}
+
+const KIND_SERVICE_NAME_HINTS: Partial<Record<ExamKindSlug, string[]>> = {
+  examen: ['Laboratoire', 'Labo'],
+  radio: ['Imagerie', 'Radio'],
+  echo: ['Echographie', 'Échographie', 'Écho', 'Echo'],
+  odonto: ['Odontologie', 'Odonto'],
+  operation: ['Bloc opératoire', 'Opération'],
+}
+
+function emitActiveService() {
+  const specialtyId = activeSpecialtyClinicServiceId.value
+  if (specialtyId) {
+    const tab = specialtyTabs.value.find((svc) => svc.id === specialtyId)
+    emit('active-service-change', {
+      kind: specialtyTabUsesOperations(tab ?? null) ? 'operation' : 'specialty',
+      clinicServiceId: specialtyId,
+      clinicServiceName: tab?.name ?? null,
+    })
+    return
+  }
+  if (activePanel.value === 'consultation') {
+    emit('active-service-change', {
+      kind: 'consultation',
+      clinicServiceId: null,
+      clinicServiceName: 'Consultation',
+    })
+    return
+  }
+  const kind = activePanel.value as ExamKindSlug
+  emit('active-service-change', {
+    kind,
+    clinicServiceId: null,
+    clinicServiceName: KIND_SERVICE_NAME_HINTS[kind]?.[0] ?? EXAM_KIND_LABELS[kind] ?? null,
+  })
+}
+
+watch(
+  () => [activePanel.value, specialtyTabs.value, catalogEpoch.value] as const,
+  () => {
+    emitActiveService()
+  },
+  { immediate: true },
+)
+
+function updateSpecialtyForActiveService(selected: string[]) {
+  const serviceId = activeSpecialtyClinicServiceId.value
+  if (!serviceId) {
+    updateKind(
+      'specialty',
+      [
+        ...(consultationSelected.value ? [CLINICAL_CONSULTATION_EXAM_LABEL] : []),
+        ...selected.filter((label) => label !== CLINICAL_CONSULTATION_EXAM_LABEL),
+      ],
+    )
+    return
+  }
+  const serviceLabels = new Set(
+    getCatalogForKind('specialty', props.doctorId, props.serviceId, serviceId).map((e) => e.label),
+  )
+  const kept = specialtySummaryExams.value.filter((label) => !serviceLabels.has(label))
+  updateKind('specialty', [
+    ...(consultationSelected.value ? [CLINICAL_CONSULTATION_EXAM_LABEL] : []),
+    ...kept,
+    ...selected.filter((label) => label !== CLINICAL_CONSULTATION_EXAM_LABEL),
+  ])
+}
+
+function updateOperationForActiveService(selected: string[]) {
+  const serviceId = activeSpecialtyClinicServiceId.value
+  if (!serviceId) {
+    updateKind('operation', selected)
+    return
+  }
+  const serviceLabels = new Set(
+    getCatalogForKind('operation', props.doctorId, props.serviceId, serviceId).map((e) => e.label),
+  )
+  const kept = (examsByKind.value.operation ?? []).filter((label) => !serviceLabels.has(label))
+  updateKind('operation', [...kept, ...selected])
+}
+
+function onActivePickerUpdate(selected: string[]) {
+  if (String(activePanel.value).startsWith('specialty:')) {
+    if (specialtyTabUsesOperations(activeSpecialtyTab())) {
+      updateOperationForActiveService(selected)
+      return
+    }
+    updateSpecialtyForActiveService(selected)
+    return
+  }
+  updateKind(activeKind.value, selected)
 }
 
 onMounted(async () => {
@@ -233,7 +462,7 @@ watch(
 watch(
   consultationSelected,
   (selected) => {
-    if (selected) activePanel.value = 'consultation'
+    if (selected && props.showConsultation) activePanel.value = 'consultation'
   },
   { immediate: true },
 )
@@ -243,6 +472,7 @@ watch(
   <div class="multi-exam-picker">
     <div class="multi-exam-picker__tabs" role="tablist" :aria-label="uiText('Types d\'examens')">
       <button
+        v-if="showConsultation"
         type="button"
         class="multi-exam-picker__tab multi-exam-picker__tab--consultation"
         :class="{ 'multi-exam-picker__tab--active': activePanel === 'consultation' }"
@@ -260,6 +490,26 @@ watch(
           :title="uiText('Déjà prescrite')"
         >
           ✓
+        </span>
+      </button>
+
+      <button
+        v-for="svc in specialtyTabs"
+        :key="`specialty-${svc.id}`"
+        type="button"
+        class="multi-exam-picker__tab"
+        :class="{ 'multi-exam-picker__tab--active': activePanel === `specialty:${svc.id}` }"
+        role="tab"
+        :aria-selected="activePanel === `specialty:${svc.id}`"
+        @click="selectSpecialtyService(svc.id)"
+      >
+        <component
+          :is="specialtyTabUsesOperations(svc) ? Scissors : Stethoscope"
+          :size="15"
+        />
+        {{ uiText(svc.name) }}
+        <span v-if="specialtyServiceCount(svc.id)" class="multi-exam-picker__badge">
+          {{ specialtyServiceCount(svc.id) }}
         </span>
       </button>
 
@@ -287,7 +537,26 @@ watch(
     <div v-if="!catalogReady" class="multi-exam-picker__loading">{{ uiText('Chargement des catalogues…') }}</div>
 
     <template v-else>
-      <div v-if="activePanel === 'consultation'" class="multi-exam-picker__consultation">
+      <div
+        v-if="
+          activeSpecialtyClinicServiceId &&
+          activeSpecialtyTab() &&
+          !activeSpecialtyTab()!.hasExams &&
+          !activeSpecialtyTab()!.hasOperations
+        "
+        class="multi-exam-picker__empty-service"
+      >
+        <p class="multi-exam-picker__consultation-title">{{ uiText(activeSpecialtyTab()!.name) }}</p>
+        <p class="multi-exam-picker__consultation-hint">
+          {{
+            uiText(
+              'Aucune nomenclature liée pour l’instant. Ajoutez des examens (nomenclature médecin) ou des types d’opérations pour ce service.',
+            )
+          }}
+        </p>
+      </div>
+
+      <div v-else-if="activePanel === 'consultation'" class="multi-exam-picker__consultation">
         <p class="multi-exam-picker__consultation-title">{{ uiText('Consultation clinique') }}</p>
         <p class="multi-exam-picker__consultation-hint">
           {{
@@ -311,10 +580,14 @@ watch(
 
       <ExamPrescriptionPicker
         v-else
-        :key="`${activeKind}-${doctorId ?? ''}-${serviceId ?? ''}`"
+        :key="`${activePanel}-${activeKind}-${doctorId ?? ''}-${serviceId ?? ''}`"
         :kind="activeKind"
         :model-value="
-          activeKind === 'specialty' ? specialtySummaryExams : examsByKind[activeKind]
+          String(activePanel).startsWith('specialty:')
+            ? activeSpecialtyCart
+            : activeKind === 'specialty'
+              ? specialtySummaryExams
+              : examsByKind[activeKind]
         "
         :exclude-labels="[
           ...(excludeByKind?.[activeKind] ?? []),
@@ -323,17 +596,8 @@ watch(
         :hospitalisation-days="prescribedHospitalisationDays"
         :doctor-id="doctorId"
         :service-id="serviceId"
-        @update:model-value="
-          updateKind(
-            activeKind,
-            activeKind === 'specialty'
-              ? [
-                  ...(consultationSelected ? [CLINICAL_CONSULTATION_EXAM_LABEL] : []),
-                  ...$event.filter((label) => label !== CLINICAL_CONSULTATION_EXAM_LABEL),
-                ]
-              : $event,
-          )
-        "
+        :clinic-service-id="activeSpecialtyClinicServiceId"
+        @update:model-value="onActivePickerUpdate"
         @update:hospitalisation-days="prescribedHospitalisationDays = $event"
       />
 
@@ -414,6 +678,8 @@ watch(
   border-radius: 10px;
   background: var(--surface-muted);
   border: 1px solid var(--primary-100);
+  max-height: 7.5rem;
+  overflow-y: auto;
 }
 
 .multi-exam-picker__tab {

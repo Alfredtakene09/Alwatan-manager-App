@@ -60,6 +60,7 @@ const tableData = computed(() =>
     const exams = formatPrescribedExamsPreview(notes)
     const examCount = countPrescribedExams(notes)
     const labSent = Boolean(v.consultation?.labSentToLabAt)
+    const closed = v.status === 'COMPLETED'
     return {
       id: v.id,
       code: v.patient.code,
@@ -74,6 +75,9 @@ const tableData = computed(() =>
       consultedTime: consultedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
       consultedSort: consultedAt.getTime(),
       labSent,
+      closed,
+      statusLabel: closed ? 'Clôturé' : 'En attente paiement',
+      statusVariant: closed ? 'success' : 'warning',
     }
   }),
 )
@@ -120,7 +124,11 @@ const columns = [
     title: 'Statut',
     orderable: false,
     responsivePriority: 5,
-    render: () => statusBadge('En attente paiement', 'warning'),
+    render: (
+      _d: unknown,
+      _t: string,
+      row: { statusLabel: string; statusVariant: 'success' | 'warning' },
+    ) => statusBadge(row.statusLabel, row.statusVariant),
   },
   {
     data: null,
@@ -128,13 +136,17 @@ const columns = [
     orderable: false,
     className: 'dt-actions-col dt-actions-col--consulted all',
     responsivePriority: 1,
-    render: (_d: unknown, _t: string, row: { id: string; labSent: boolean }) => `
+    render: (
+      _d: unknown,
+      _t: string,
+      row: { id: string; labSent: boolean; closed: boolean },
+    ) => `
       <div class="dt-row-actions dt-medecin-actions" data-id="${row.id}">
         <button type="button" class="dt-btn dt-btn--icon dt-btn--icon-soft" data-action="view" title="Voir les examens prescrits" aria-label="Voir les examens prescrits">
           ${DT_ICONS.view}
         </button>
         ${
-          row.labSent
+          row.labSent || row.closed
             ? ''
             : `<button type="button" class="dt-btn dt-btn--icon dt-btn--icon-soft" data-action="edit" title="Modifier la prescription" aria-label="Modifier la prescription">
           ${DT_ICONS.edit}

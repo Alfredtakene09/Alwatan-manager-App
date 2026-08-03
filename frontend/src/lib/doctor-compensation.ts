@@ -198,26 +198,9 @@ export function formatDoctorQuotaShare(doctor: DoctorOption) {
   return '—'
 }
 
-export function doctorSelectSuffix(doctor: DoctorOption) {
-  const names = doctorClinicServiceNames(doctor)
-  const serviceName =
-    names.length > 1 ? names.join(' / ') : names[0] ?? doctor.clinicService?.name ?? doctor.service ?? null
-  const servicePrefix = serviceName ? `${serviceName} · ` : ''
-  if (doctorIsFixedSalary(doctor)) return ` — ${servicePrefix}salaire fixe`.replace(' —  · ', ' — ')
-  const combinedPrefix = doctor.doctorCompensationType === 'COMBINED' ? 'salaire + ' : ''
-  const total = doctor.consultationTotalFcfa
-  const validity =
-    doctor.consultationValidityDays != null
-      ? ` · val. ${doctor.consultationValidityDays}j`
-      : ''
-  if (total && total > 0) {
-    const share =
-      doctor.doctorConsultationShareFcfa ??
-      computeDoctorConsultationShares(total, doctor).doctorShareFcfa
-    const quotaLabel = formatDoctorQuotaShare(doctor)
-    return ` — ${servicePrefix}${combinedPrefix}${formatFcfa(total)} (part ${quotaLabel} · ${formatFcfa(share)})${validity}`
-  }
-  return ` — ${servicePrefix}${combinedPrefix}quota${validity}`
+/** Libellé complémentaire dans les <select> médecin — volontairement vide (nom seul). */
+export function doctorSelectSuffix(_doctor: DoctorOption) {
+  return ''
 }
 
 export function doctorServiceName(doctor?: DoctorOption | null) {

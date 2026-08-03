@@ -259,6 +259,29 @@ export function isSpecialtyClinicServiceName(serviceName: string | null | undefi
   );
 }
 
+/**
+ * Services affichés comme onglets dans le modal patient externe / prescription réception.
+ * Exclut les libellés déjà couverts par d'autres boutons (Consultation, Opération globale, etc.).
+ */
+const PRESCRIPTION_TAB_EXCLUDED_SERVICE_NAMES = [
+  "Consultation",
+  "Pharmacie",
+  "Accueil / Réception",
+  "Bloc opératoire",
+] as const;
+
+export function isPrescriptionDestinationServiceName(
+  serviceName: string | null | undefined,
+): boolean {
+  if (!isSpecialtyClinicServiceName(serviceName)) return false;
+  const name = String(serviceName ?? "")
+    .trim()
+    .toLowerCase();
+  return !PRESCRIPTION_TAB_EXCLUDED_SERVICE_NAMES.some(
+    (excluded) => excluded.toLowerCase() === name,
+  );
+}
+
 /** Élément affiché sur un onglet type (sans filtre service actif). */
 export function isExamVisibleOnKindTab(item: {
   clinicServiceId?: string | null;

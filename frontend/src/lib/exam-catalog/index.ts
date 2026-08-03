@@ -8,6 +8,8 @@ export {
   getExamCatalogSync,
   getCatalogForKind,
   getSpecialtyServiceName,
+  getSpecialtyServices,
   getExamPriceFcfa,
   invalidateExamCatalogCache,
+  type SpecialtyServiceInfo,
 } from './store'

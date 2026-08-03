@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
 import { Building2, Plus, Save, RefreshCw, Pencil, Trash2 } from '@lucide/vue'
 import api from '@/api/client'
+import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -194,6 +195,7 @@ async function saveService() {
       message.value = 'Service créé.'
     }
     messageType.value = 'success'
+    invalidateExamCatalogCache()
     closeModal()
     await reloadAll()
   } catch (error: unknown) {
@@ -217,6 +219,7 @@ async function deleteService(row: ClinicService) {
     await api.delete(`${apiBase.value}/services/${row.id}`)
     message.value = 'Service supprimé.'
     messageType.value = 'success'
+    invalidateExamCatalogCache()
     await reloadAll()
   } catch (error: unknown) {
     message.value = apiErrorMessage(error, 'Suppression impossible.')

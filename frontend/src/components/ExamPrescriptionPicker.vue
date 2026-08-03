@@ -23,6 +23,8 @@ const props = defineProps<{
   /** Filtre le catalogue selon le médecin (service + Laboratoire/Hospitalisation). */
   doctorId?: string | null
   serviceId?: string | null
+  /** Filtre les examens de spécialité sur un service clinique précis. */
+  clinicServiceId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -37,7 +39,9 @@ const dropdownOpen = ref(false)
 const rootRef = ref<HTMLElement | null>(null)
 const catalogReady = ref(false)
 const catalogEpoch = ref(0)
-const catalogItems = ref(getCatalogForKind(props.kind, props.doctorId, props.serviceId))
+const catalogItems = ref(
+  getCatalogForKind(props.kind, props.doctorId, props.serviceId, props.clinicServiceId),
+)
 
 const cart = computed({
   get: () => props.modelValue,
@@ -47,6 +51,10 @@ const cart = computed({
 const kindLabel = computed(() => {
   void localeCode.value
   void catalogEpoch.value
+  if (props.clinicServiceId) {
+    const match = catalogItems.value.find((exam) => exam.clinicServiceId === props.clinicServiceId)
+    if (match?.clinicServiceName) return uiText(match.clinicServiceName)
+  }
   if (props.kind === 'specialty') {
     const serviceName = getSpecialtyServiceName(props.doctorId, props.serviceId)
     if (serviceName) return uiText(serviceName)
@@ -83,13 +91,18 @@ async function refreshCatalog() {
     doctorId: props.doctorId,
     serviceId: props.serviceId,
   })
-  catalogItems.value = getCatalogForKind(props.kind, props.doctorId, props.serviceId)
+  catalogItems.value = getCatalogForKind(
+    props.kind,
+    props.doctorId,
+    props.serviceId,
+    props.clinicServiceId,
+  )
   catalogEpoch.value += 1
   catalogReady.value = true
 }
 
 watch(
-  () => [props.doctorId, props.serviceId] as const,
+  () => [props.doctorId, props.serviceId, props.clinicServiceId, props.kind] as const,
   () => {
     void refreshCatalog()
   },

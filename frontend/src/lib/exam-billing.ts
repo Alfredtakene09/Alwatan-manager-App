@@ -1,4 +1,9 @@
-import { EXAM_KIND_ORDER, LAB_BILLABLE_EXAM_KINDS, type ExamKindSlug } from '@/lib/exam-catalog/types'
+import {
+  EXAM_KIND_ORDER,
+  LAB_BILLABLE_EXAM_KINDS,
+  CASHIER_PAYMENT_QUEUE_KINDS,
+  type ExamKindSlug,
+} from '@/lib/exam-catalog/types'
 import type { LabExamLine } from '@/lib/lab-exam-pending'
 import { isClinicalConsultationExamLabel } from '@/lib/lab-notes'
 
@@ -50,14 +55,14 @@ export function emptyExamReductionsByKind(): ExamReductionsByKind {
   }
 }
 
-export { LAB_BILLABLE_EXAM_KINDS }
+export { LAB_BILLABLE_EXAM_KINDS, CASHIER_PAYMENT_QUEUE_KINDS }
 
 export function buildExamSheetsFromBlocks(
   examsByKind: ExamsByKindBlocks,
   reductions: ExamReductionsByKind,
   options?: { billableOnly?: boolean },
 ): ExamKindPaymentSheet[] {
-  const kinds = options?.billableOnly ? LAB_BILLABLE_EXAM_KINDS : EXAM_KIND_ORDER
+  const kinds = options?.billableOnly ? CASHIER_PAYMENT_QUEUE_KINDS : EXAM_KIND_ORDER
   return kinds.flatMap((kind) => {
     const block = examsByKind[kind]
     if (!block?.lines.length) return []

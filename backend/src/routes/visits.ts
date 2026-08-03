@@ -1,12 +1,12 @@
 import { Router } from "express";
 import { z } from "zod";
-import { InvoiceStatus, InvoiceType, PatientCategory, Prisma, UserRole, VisitStatus } from "@prisma/client";
+import { InvoiceStatus, InvoiceType, PatientCategory, Prisma, SurgeryStatus, UserRole, VisitStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
 import { backfillClinicServiceDoctorLinks } from "../lib/clinic-service-doctors.js";
 import {
   EXAMS_PRESCRIBED_PREFIX,
-  LAB_BILLABLE_EXAM_KINDS,
+  CASHIER_PAYMENT_QUEUE_KINDS,
   appendPaidExamKindMarker,
   hasExamsPrescribed,
   buildPrescribedExamsNotes,
@@ -15,7 +15,11 @@ import {
   type ExamKindSlug,
 } from "../lib/lab-notes.js";
 import {
-  medecinDejaConsulteVisitWhere,
+  interventionVisibleForServicesWhere,
+  resolveDoctorClinicServices,
+} from "../lib/clinic-service-exam.js";
+import {
+  medecinDejaConsulteListVisitWhere,
   medecinPendingConsultationVisitWhere,
   visitBelongsToDoctor,
 } from "../lib/medecin-queues.js";
@@ -284,7 +288,9 @@ router.get("/", async (req, res) => {
   }
 
   if (queue === "consulted" && canAccessModule(user.role, "consultation")) {
-    Object.assign(where, medecinDejaConsulteVisitWhere(user.id));
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    Object.assign(where, medecinDejaConsulteListVisitWhere(user.id, startOfToday));
   }
 
   if (queue === "my-patients" && canAccessModule(user.role, "consultation")) {
@@ -863,6 +869,7 @@ const examsByKindSchema = z.object({
   radio: z.array(z.string().min(1)).default([]),
   echo: z.array(z.string().min(1)).default([]),
   odonto: z.array(z.string().min(1)).default([]),
+  operation: z.array(z.string().min(1)).default([]),
 });
 
 const externalLabOrderSchema = z
@@ -880,6 +887,8 @@ const externalLabOrderSchema = z
     exams: z.array(z.string().min(1)).optional(),
     examsByKind: examsByKindSchema.optional(),
     reductionFcfa: z.number().int().min(0).default(0),
+    /** Montant net facturé (surcharge le calcul catalogue − réduction). */
+    amountFcfa: z.number().int().min(0).optional(),
   })
   .refine((data) => data.patientId || (data.firstName && data.lastName), {
     message: "Patient requis",
@@ -1096,14 +1105,27 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
     const examLabels = body.examsByKind
       ? flattenPrescribedExams(body.examsByKind as Record<ExamKindSlug, string[]>)
       : body.exams ?? [];
-    const grossFcfa = computeGrossFcfaFromExamLabels(examLabels);
+    const catalogGrossFcfa = computeGrossFcfaFromExamLabels(examLabels);
 
-    if (grossFcfa <= 0) {
+    if (catalogGrossFcfa <= 0 && body.amountFcfa == null) {
       return res.status(400).json({ error: "Aucun examen facturable." });
     }
-    if (body.reductionFcfa > grossFcfa) {
+    if (body.amountFcfa == null && body.reductionFcfa > catalogGrossFcfa) {
       return res.status(400).json({ error: "La réduction ne peut pas dépasser le montant total." });
     }
+
+    const netFcfa =
+      body.amountFcfa != null
+        ? body.amountFcfa
+        : Math.max(0, catalogGrossFcfa - body.reductionFcfa);
+    if (netFcfa <= 0) {
+      return res.status(400).json({ error: "Le montant à facturer doit être supérieur à 0." });
+    }
+    const examReduction =
+      body.amountFcfa != null
+        ? Math.max(0, catalogGrossFcfa - body.amountFcfa)
+        : body.reductionFcfa;
+    const grossFcfa = Math.max(catalogGrossFcfa, netFcfa);
 
     let assignedDoctorId: string | null = null;
     if (requestedDoctorId) {
@@ -1172,13 +1194,11 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
         throw new Error("ACTIVE_VISIT_EXISTS");
       }
 
-      const examReduction = body.reductionFcfa;
-      const netFcfa = grossFcfa - examReduction;
       const paidAt = new Date();
 
       let notesWithPayment = clinicalNotes;
       if (body.examsByKind) {
-        for (const kind of LAB_BILLABLE_EXAM_KINDS) {
+        for (const kind of CASHIER_PAYMENT_QUEUE_KINDS) {
           const exams = (body.examsByKind as Record<ExamKindSlug, string[]>)[kind];
           if (exams?.length) {
             notesWithPayment = appendPaidExamKindMarker(notesWithPayment, kind, paidAt);
@@ -1258,6 +1278,64 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
             issuedById: user.id,
             paidAt: new Date(),
           },
+        });
+      }
+
+      // Opération prescrite : créer le dossier bloc si un médecin est assigné
+      const operationLabel = body.examsByKind?.operation?.find(Boolean);
+      if (operationLabel && assignedDoctorId) {
+        const doctorServices = await resolveDoctorClinicServices(assignedDoctorId);
+        const serviceIds = doctorServices?.ids ?? [];
+        const intervention = await tx.interventionType.findFirst({
+          where: {
+            label: operationLabel,
+            active: true,
+            ...(serviceIds.length
+              ? interventionVisibleForServicesWhere(serviceIds)
+              : {}),
+          },
+        });
+        if (intervention) {
+          const operationLabels = body.examsByKind?.operation ?? [];
+          const operationOnly =
+            examLabels.length > 0 &&
+            operationLabels.length === examLabels.length;
+          const totalCostFcfa =
+            operationOnly && body.amountFcfa != null
+              ? body.amountFcfa
+              : intervention.totalCostFcfa;
+          const surgeonShare = Math.round(
+            (totalCostFcfa * intervention.surgeonPercent) / 100,
+          );
+          await tx.surgeryCase.upsert({
+            where: { visitId },
+            update: {
+              interventionTypeId: intervention.id,
+              surgeonId: assignedDoctorId,
+              totalCostFcfa,
+              surgeonShareFcfa: surgeonShare,
+              clinicShareFcfa: totalCostFcfa - surgeonShare,
+              status: SurgeryStatus.NOTIFIED,
+            },
+            create: {
+              visitId,
+              interventionTypeId: intervention.id,
+              surgeonId: assignedDoctorId,
+              totalCostFcfa,
+              surgeonShareFcfa: surgeonShare,
+              clinicShareFcfa: totalCostFcfa - surgeonShare,
+              status: SurgeryStatus.NOTIFIED,
+            },
+          });
+          await tx.consultation.update({
+            where: { id: consultation.id },
+            data: { needsSurgery: true },
+          });
+        }
+      } else if (operationLabel) {
+        await tx.consultation.update({
+          where: { id: consultation.id },
+          data: { needsSurgery: true },
         });
       }
 

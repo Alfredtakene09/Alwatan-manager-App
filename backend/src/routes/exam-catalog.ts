@@ -6,6 +6,8 @@ import { HOSPITALISATION_PRESCRIPTION_LABEL } from "../lib/hospitalization-refer
 import {
   examCatalogVisibleForServiceWhere,
   interventionVisibleForServicesWhere,
+  isExamVisibleOnKindTab,
+  isPrescriptionDestinationServiceName,
   isSpecialtyClinicServiceName,
   resolveDoctorClinicServices,
 } from "../lib/clinic-service-exam.js";
@@ -64,6 +66,7 @@ router.get("/", async (req, res) => {
 
   let filterServiceIds: string[] = [];
   const specialtyServiceIds = new Set<string>();
+  const specialtyServicesById = new Map<string, string>();
   let specialtyServiceName: string | null = null;
 
   if (doctorId) {
@@ -73,6 +76,7 @@ router.get("/", async (req, res) => {
       for (const svc of doctorServices.all) {
         if (!isSpecialtyClinicServiceName(svc.name)) continue;
         specialtyServiceIds.add(svc.id);
+        specialtyServicesById.set(svc.id, svc.name);
         if (svc.id === doctorServices.default.id || !specialtyServiceName) {
           specialtyServiceName = svc.name;
         }
@@ -87,8 +91,26 @@ router.get("/", async (req, res) => {
       filterServiceIds = [service.id];
       if (isSpecialtyClinicServiceName(service.name)) {
         specialtyServiceIds.add(service.id);
+        specialtyServicesById.set(service.id, service.name);
         specialtyServiceName = service.name;
       }
+    }
+  } else {
+    // Réception / patient externe : tous les services de prescription actifs
+    // (nouveaux services inclus même sans nomenclature encore).
+    const specialtyServices = await prisma.clinicService.findMany({
+      where: { active: true },
+      select: { id: true, name: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
+    for (const svc of specialtyServices) {
+      if (!isPrescriptionDestinationServiceName(svc.name)) continue;
+      specialtyServiceIds.add(svc.id);
+      specialtyServicesById.set(svc.id, svc.name);
+      if (!specialtyServiceName) specialtyServiceName = svc.name;
+    }
+    if (specialtyServiceIds.size > 1) {
+      specialtyServiceName = null;
     }
   }
 
@@ -179,7 +201,7 @@ router.get("/", async (req, res) => {
       clinicServiceName: item.clinicService?.name ?? null,
     };
 
-    // Examens des services spécialisés du médecin → onglet dédié
+    // Examens des services spécialisés → onglet(s) dédié(s)
     if (
       item.clinicServiceId &&
       specialtyServiceIds.has(item.clinicServiceId)
@@ -193,15 +215,28 @@ router.get("/", async (req, res) => {
 
     const slug = KIND_TO_SLUG[item.kind];
     if (slug === "examen" || slug === "radio" || slug === "echo" || slug === "odonto") {
+      // Ne pas mélanger les nomenclatures de spécialité dans Labo/Radio/Écho/Odonto
+      if (!isExamVisibleOnKindTab(item, item.kind)) continue;
       grouped[slug].push(dto);
     }
   }
 
   grouped.specialty.sort((a, b) => a.label.localeCompare(b.label, "fr"));
 
+  const specialtyServices = [...specialtyServicesById.entries()]
+    .map(([id, name]) => {
+      const hasExams = grouped.specialty.some((exam) => exam.clinicServiceId === id);
+      const hasOperations = grouped.operation.some((op) => op.clinicServiceId === id);
+      return { id, name, hasExams, hasOperations };
+    })
+    // Toujours renvoyer le service (même vide) pour qu'il apparaisse dès sa création
+    .sort((a, b) => a.name.localeCompare(b.name, "fr"));
+
   return res.json({
     ...grouped,
-    specialtyServiceName,
+    specialtyServiceName:
+      specialtyServices.length === 1 ? specialtyServices[0].name : specialtyServiceName,
+    specialtyServices,
   });
 });
 

@@ -13,7 +13,7 @@ import { showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { fullName } from '@/lib/roles'
 import { parsePatientAge, splitPatientFullName, formatPatientAge } from '@/lib/patient-name'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
-import { doctorSelectSuffix, doctorMatchesService, type DoctorOption } from '@/lib/doctor-compensation'
+import { doctorMatchesService, type DoctorOption } from '@/lib/doctor-compensation'
 import { CLINIC } from '@/lib/clinic'
 import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
 import { useAppI18n } from '@/i18n/useAppI18n'
@@ -360,8 +360,7 @@ onMounted(() => {
               }}
             </option>
             <option v-for="doctor in filteredDoctors" :key="doctor.id" :value="doctor.id">
-              Dr {{ fullName(doctor.firstName, doctor.lastName)
-              }}{{ uiText(doctorSelectSuffix(doctor)) }}
+              Dr {{ fullName(doctor.firstName, doctor.lastName) }}
             </option>
           </UiSelect>
         </div>
@@ -377,8 +376,7 @@ onMounted(() => {
         <UiSelect v-model="form.treatingDoctorId" label="Médecin traitant (dossier)">
           <option value="">{{ uiText('Aucun (optionnel)') }}</option>
           <option v-for="doctor in filteredDoctors" :key="doctor.id" :value="doctor.id">
-            Dr {{ fullName(doctor.firstName, doctor.lastName)
-            }}{{ uiText(doctorSelectSuffix(doctor)) }}
+            Dr {{ fullName(doctor.firstName, doctor.lastName) }}
           </option>
         </UiSelect>
 

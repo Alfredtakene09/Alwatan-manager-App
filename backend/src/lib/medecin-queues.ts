@@ -30,8 +30,8 @@ const prescribedConsultationWhere: Prisma.ConsultationWhereInput = {
 };
 
 /**
- * File « Déjà consulté » :
- * patients avec examens prescrits, paiement réception en attente (labSentToLabAt null)
+ * File « Déjà consulté » (compteur / file paiement) :
+ * examens prescrits, paiement réception en attente (labSentToLabAt null).
  */
 export function medecinDejaConsulteVisitWhere(doctorId: string): Prisma.VisitWhereInput {
   return {
@@ -46,6 +46,45 @@ export function medecinDejaConsulteVisitWhere(doctorId: string): Prisma.VisitWhe
             labSentToLabAt: null,
           },
         },
+      },
+    ],
+  };
+}
+
+/**
+ * Liste page « Déjà consulté » :
+ * — en attente de paiement (comme ci-dessus)
+ * — + consultations clôturées aujourd'hui (ex. acte « Consultation » seule)
+ */
+export function medecinDejaConsulteListVisitWhere(
+  doctorId: string,
+  startOfToday: Date,
+): Prisma.VisitWhereInput {
+  return {
+    AND: [
+      medecinMatchWhere(doctorId),
+      {
+        patient: { category: { in: [PatientCategory.STANDARD, PatientCategory.ONG] } },
+        OR: [
+          {
+            status: { notIn: [VisitStatus.COMPLETED, VisitStatus.CANCELLED] },
+            consultation: {
+              is: {
+                ...prescribedConsultationWhere,
+                labSentToLabAt: null,
+              },
+            },
+          },
+          {
+            status: VisitStatus.COMPLETED,
+            consultation: {
+              is: {
+                doctorId,
+                completedAt: { gte: startOfToday },
+              },
+            },
+          },
+        ],
       },
     ],
   };

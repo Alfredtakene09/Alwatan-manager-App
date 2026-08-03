@@ -77,19 +77,26 @@ type CatalogApiResponse = Record<
   }>
 
 > & {
-
   specialtyServiceName?: string | null
-
+  specialtyServices?: Array<{
+    id: string
+    name: string
+    hasExams?: boolean
+    hasOperations?: boolean
+  }>
 }
 
-
+export type SpecialtyServiceInfo = {
+  id: string
+  name: string
+  hasExams: boolean
+  hasOperations: boolean
+}
 
 let catalogCache = new Map<CatalogCacheKey, GroupedExamCatalog>()
-
 let specialtyNameCache = new Map<CatalogCacheKey, string | null>()
-
+let specialtyServicesCache = new Map<CatalogCacheKey, SpecialtyServiceInfo[]>()
 let priceCache = new Map<string, number>()
-
 let loadPromises = new Map<CatalogCacheKey, Promise<GroupedExamCatalog>>()
 
 
@@ -147,19 +154,60 @@ function mapApiItem(item: {
 
 
 function rebuildPriceCache(catalog: GroupedExamCatalog) {
-
   priceCache = new Map()
-
   for (const exams of Object.values(catalog)) {
-
     for (const exam of exams) {
-
       priceCache.set(exam.label, exam.priceFcfa)
-
     }
+  }
+}
 
+function buildSpecialtyServicesList(
+  catalog: GroupedExamCatalog,
+  fromApi: Array<{
+    id: string
+    name: string
+    hasExams?: boolean
+    hasOperations?: boolean
+  }> | undefined,
+): SpecialtyServiceInfo[] {
+  const byId = new Map<string, SpecialtyServiceInfo>()
+
+  for (const s of fromApi ?? []) {
+    if (!s?.id || !s?.name) continue
+    byId.set(String(s.id), {
+      id: String(s.id),
+      name: String(s.name),
+      hasExams: Boolean(s.hasExams),
+      hasOperations: Boolean(s.hasOperations),
+    })
   }
 
+  // Repli : déduire depuis examens & opérations liés (Tromatologie = ops seulement).
+  for (const exam of catalog.specialty) {
+    const id = exam.clinicServiceId?.trim()
+    if (!id) continue
+    const prev = byId.get(id)
+    byId.set(id, {
+      id,
+      name: exam.clinicServiceName?.trim() || prev?.name || 'Spécialité',
+      hasExams: true,
+      hasOperations: prev?.hasOperations ?? false,
+    })
+  }
+  for (const op of catalog.operation) {
+    const id = op.clinicServiceId?.trim()
+    if (!id) continue
+    const prev = byId.get(id)
+    byId.set(id, {
+      id,
+      name: op.clinicServiceName?.trim() || prev?.name || 'Opération',
+      hasExams: prev?.hasExams ?? false,
+      hasOperations: true,
+    })
+  }
+
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr'))
 }
 
 
@@ -233,16 +281,13 @@ export async function loadExamCatalog(
       catalogCache.set(key, resolved)
 
       specialtyNameCache.set(
-
         key,
-
         typeof data.specialtyServiceName === 'string' && data.specialtyServiceName.trim()
-
           ? data.specialtyServiceName.trim()
-
           : null,
-
       )
+
+      specialtyServicesCache.set(key, buildSpecialtyServicesList(resolved, data.specialtyServices))
 
       rebuildPriceCache(resolved)
 
@@ -257,6 +302,8 @@ export async function loadExamCatalog(
       catalogCache.set(key, fallback)
 
       specialtyNameCache.set(key, null)
+
+      specialtyServicesCache.set(key, buildSpecialtyServicesList(fallback, []))
 
       rebuildPriceCache(fallback)
 
@@ -289,31 +336,32 @@ export function getExamCatalogSync(doctorId?: string | null, serviceId?: string 
 
 
 export function getSpecialtyServiceName(
-
   doctorId?: string | null,
-
   serviceId?: string | null,
-
 ): string | null {
-
   return specialtyNameCache.get(cacheKey(doctorId, serviceId)) ?? null
-
 }
 
-
+export function getSpecialtyServices(
+  doctorId?: string | null,
+  serviceId?: string | null,
+): SpecialtyServiceInfo[] {
+  return specialtyServicesCache.get(cacheKey(doctorId, serviceId)) ?? []
+}
 
 export function getCatalogForKind(
-
   kind: ExamKindSlug,
-
   doctorId?: string | null,
-
   serviceId?: string | null,
-
+  clinicServiceId?: string | null,
 ): CatalogExam[] {
-
-  return getExamCatalogSync(doctorId, serviceId)[kind] ?? []
-
+  const items = getExamCatalogSync(doctorId, serviceId)[kind] ?? []
+  const filterId = clinicServiceId?.trim()
+  if (!filterId) return items
+  if (kind === 'specialty' || kind === 'operation') {
+    return items.filter((exam) => exam.clinicServiceId === filterId)
+  }
+  return items
 }
 
 
@@ -327,15 +375,11 @@ export function getExamPriceFcfa(label: string): number {
 
 
 export function invalidateExamCatalogCache() {
-
   catalogCache = new Map()
-
   specialtyNameCache = new Map()
-
+  specialtyServicesCache = new Map()
   priceCache = new Map()
-
   loadPromises = new Map()
-
 }
 
 

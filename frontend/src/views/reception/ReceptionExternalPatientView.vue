@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   UserRound,
   FlaskConical,
@@ -24,15 +24,20 @@ import MultiExamPrescriptionPicker from '@/components/MultiExamPrescriptionPicke
 import {
   emptyExamsByKind,
   countExamsByKind,
-  LAB_BILLABLE_EXAM_KINDS,
+  EXTERNAL_PATIENT_EXAM_KINDS,
   EXAM_KIND_LABELS,
   type ExamKindSlug,
   type ExamsByKind,
 } from '@/lib/exam-catalog'
+import {
+  doctorClinicServiceNames,
+  type DoctorOption,
+} from '@/lib/doctor-compensation'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
+import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
@@ -121,10 +126,104 @@ const editForm = ref({
 
 const examsByKind = ref<ExamsByKind>(emptyExamsByKind())
 const reductionFcfa = ref(0)
+/** Montant net facturé (éditable) — défaut = tarif catalogue. */
+const amountFcfa = ref('')
+const amountManuallyEdited = ref(false)
 const submitting = ref(false)
 const savingEdit = ref(false)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
+
+const doctors = ref<DoctorOption[]>([])
+const selectedDoctorId = ref('')
+const activeServiceContext = ref<{
+  kind: ExamKindSlug | 'consultation' | null
+  clinicServiceId: string | null
+  clinicServiceName: string | null
+}>({ kind: null, clinicServiceId: null, clinicServiceName: null })
+
+const KIND_SERVICE_ALIASES: Partial<Record<ExamKindSlug, string[]>> = {
+  examen: ['Laboratoire', 'Labo'],
+  radio: ['Imagerie', 'Radio'],
+  echo: ['Echographie', 'Échographie', 'Écho', 'Echo'],
+  odonto: ['Odontologie', 'Odonto'],
+  operation: ['Bloc opératoire', 'Opération', 'Ophtalmologie', 'Tromatologie', 'Traumatologie'],
+}
+
+function doctorMatchesActiveService(doctor: DoctorOption): boolean {
+  const ctx = activeServiceContext.value
+  if (ctx.clinicServiceId) {
+    const ids = doctor.clinicServiceIds ?? []
+    if (ids.includes(ctx.clinicServiceId) || doctor.clinicServiceId === ctx.clinicServiceId) {
+      return true
+    }
+  }
+  const names = doctorClinicServiceNames(doctor).map((n) => n.toLowerCase())
+  if (ctx.clinicServiceName) {
+    const target = ctx.clinicServiceName.toLowerCase()
+    if (names.some((n) => n === target || n.includes(target) || target.includes(n))) return true
+  }
+  const kind = ctx.kind
+  if (kind && kind !== 'consultation' && kind !== 'specialty') {
+    const aliases = KIND_SERVICE_ALIASES[kind as ExamKindSlug] ?? []
+    if (
+      aliases.some((alias) =>
+        names.some((n) => n === alias.toLowerCase() || n.includes(alias.toLowerCase())),
+      )
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+const doctorsForActiveService = computed(() => {
+  const list = doctors.value.filter(
+    (d) => d.acceptingPatients !== false && doctorMatchesActiveService(d),
+  )
+  // Si aucun médecin lié au service, ne pas bloquer : liste vide → message
+  return list.sort((a, b) =>
+    fullName(a.firstName, a.lastName).localeCompare(fullName(b.firstName, b.lastName), 'fr'),
+  )
+})
+
+const doctorSelectRequired = computed(() => doctorsForActiveService.value.length > 0)
+
+const activeServiceLabel = computed(() => {
+  void localeCode.value
+  const name = activeServiceContext.value.clinicServiceName
+  if (name) return uiText(name)
+  const kind = activeServiceContext.value.kind
+  if (kind && kind !== 'consultation') return uiText(EXAM_KIND_LABELS[kind as ExamKindSlug] ?? kind)
+  return uiText('Service')
+})
+
+function onActiveServiceChange(payload: {
+  kind: ExamKindSlug | 'consultation' | null
+  clinicServiceId: string | null
+  clinicServiceName: string | null
+}) {
+  activeServiceContext.value = payload
+}
+
+watch(doctorsForActiveService, (list) => {
+  if (!list.length) {
+    selectedDoctorId.value = ''
+    return
+  }
+  if (!list.some((d) => d.id === selectedDoctorId.value)) {
+    selectedDoctorId.value = list.length === 1 ? list[0].id : ''
+  }
+})
+
+async function loadDoctors() {
+  try {
+    const { data } = await api.get<DoctorOption[]>('/visits/doctors')
+    doctors.value = Array.isArray(data) ? data : []
+  } catch {
+    doctors.value = []
+  }
+}
 
 const parsedName = computed(() => splitPatientFullName(patientForm.value.fullName))
 const parsedAge = computed(() => parsePatientAge(patientForm.value.age, patientForm.value.ageUnit))
@@ -132,7 +231,47 @@ const editParsedName = computed(() => splitPatientFullName(editForm.value.fullNa
 const editParsedAge = computed(() => parsePatientAge(editForm.value.age, editForm.value.ageUnit))
 
 const grossFcfa = computed(() => computeGrossFcfaFromExamsByKind(examsByKind.value))
-const netFcfa = computed(() => Math.max(0, grossFcfa.value - (Number(reductionFcfa.value) || 0)))
+const netFcfa = computed(() => {
+  const typed = Number(amountFcfa.value)
+  if (Number.isFinite(typed) && amountFcfa.value !== '') return Math.max(0, Math.floor(typed))
+  return Math.max(0, grossFcfa.value - (Number(reductionFcfa.value) || 0))
+})
+
+watch(grossFcfa, (gross) => {
+  if (amountManuallyEdited.value) {
+    const amount = Number(amountFcfa.value)
+    if (Number.isFinite(amount) && amountFcfa.value !== '' && amount <= gross) {
+      reductionFcfa.value = Math.max(0, gross - Math.floor(amount))
+    }
+    return
+  }
+  amountFcfa.value = gross > 0 ? String(gross) : ''
+  reductionFcfa.value = 0
+})
+
+function onAmountInput(value: string | number) {
+  amountManuallyEdited.value = true
+  const raw = String(value ?? '').trim()
+  amountFcfa.value = raw
+  const amount = Number(raw)
+  if (!Number.isFinite(amount) || raw === '') {
+    reductionFcfa.value = 0
+    return
+  }
+  const rounded = Math.max(0, Math.floor(amount))
+  if (rounded <= grossFcfa.value) {
+    reductionFcfa.value = Math.max(0, grossFcfa.value - rounded)
+  } else {
+    reductionFcfa.value = 0
+  }
+}
+
+function onReductionInput(value: string | number) {
+  amountManuallyEdited.value = true
+  const reduction = Math.max(0, Math.floor(Number(value) || 0))
+  reductionFcfa.value = Math.min(reduction, grossFcfa.value)
+  amountFcfa.value = String(Math.max(0, grossFcfa.value - reductionFcfa.value))
+}
 
 const newPatientExamCount = computed(() => countExamsByKind(examsByKind.value))
 
@@ -143,7 +282,11 @@ const canConfirmNewPatient = computed(() => {
 
 /** Enregistrement + prescription directe (paiement) en une étape. */
 const canConfirmNewPatientWithExams = computed(
-  () => canConfirmNewPatient.value && newPatientExamCount.value > 0 && netFcfa.value > 0,
+  () =>
+    canConfirmNewPatient.value &&
+    newPatientExamCount.value > 0 &&
+    netFcfa.value > 0 &&
+    (!doctorSelectRequired.value || !!selectedDoctorId.value),
 )
 
 const canSaveEdit = computed(() => {
@@ -152,13 +295,17 @@ const canSaveEdit = computed(() => {
 })
 
 const canSubmitExams = computed(
-  () => !!activeRow.value && countExamsByKind(examsByKind.value) > 0 && netFcfa.value > 0,
+  () =>
+    !!activeRow.value &&
+    countExamsByKind(examsByKind.value) > 0 &&
+    netFcfa.value > 0 &&
+    (!doctorSelectRequired.value || !!selectedDoctorId.value),
 )
 
-const externalExamKinds = LAB_BILLABLE_EXAM_KINDS
+const externalExamKinds = EXTERNAL_PATIENT_EXAM_KINDS
 
 function destinationServicesLabel(byKind: ExamsByKind): string {
-  const labels = (LAB_BILLABLE_EXAM_KINDS as ExamKindSlug[])
+  const labels = (EXTERNAL_PATIENT_EXAM_KINDS as ExamKindSlug[])
     .filter((kind) => (byKind[kind]?.length ?? 0) > 0)
     .map((kind) => uiText(EXAM_KIND_LABELS[kind]))
   if (!labels.length) return uiText('laboratoire')
@@ -168,7 +315,10 @@ function destinationServicesLabel(byKind: ExamsByKind): string {
 
 /** Service dérivé des types d'examens choisis (plus de champ Service manuel). */
 function serviceFromExams(byKind: ExamsByKind): string | undefined {
-  const labels = (LAB_BILLABLE_EXAM_KINDS as ExamKindSlug[])
+  if (activeServiceContext.value.clinicServiceName) {
+    return activeServiceContext.value.clinicServiceName
+  }
+  const labels = (EXTERNAL_PATIENT_EXAM_KINDS as ExamKindSlug[])
     .filter((kind) => (byKind[kind]?.length ?? 0) > 0)
     .map((kind) => EXAM_KIND_LABELS[kind])
   return labels.length ? labels.join(', ') : undefined
@@ -254,6 +404,17 @@ function closeNewPatientModal() {
 function resetExamsForm() {
   examsByKind.value = emptyExamsByKind()
   reductionFcfa.value = 0
+  amountFcfa.value = ''
+  amountManuallyEdited.value = false
+  selectedDoctorId.value = ''
+}
+
+function billingPayload() {
+  return {
+    examsByKind: examsByKind.value,
+    reductionFcfa: Number(reductionFcfa.value) || 0,
+    amountFcfa: netFcfa.value,
+  }
 }
 
 function openExamsModal(row: ExternalQueueRow) {
@@ -459,8 +620,8 @@ async function confirmNewPatient() {
       const { data } = await api.post('/visits/external-lab-order', {
         ...basePayload,
         service: serviceFromExams(examsByKind.value),
-        examsByKind: examsByKind.value,
-        reductionFcfa: Number(reductionFcfa.value) || 0,
+        ...billingPayload(),
+        doctorId: selectedDoctorId.value || undefined,
       })
       const destination = destinationServicesLabel(examsByKind.value)
       message.value = data.invoice
@@ -512,9 +673,9 @@ async function submitExams() {
   try {
     const { data } = await api.post('/visits/external-lab-order', {
       patientId: activeRow.value.patientId,
-      examsByKind: examsByKind.value,
-      reductionFcfa: Number(reductionFcfa.value) || 0,
+      ...billingPayload(),
       service: serviceFromExams(examsByKind.value) ?? activeRow.value.service ?? undefined,
+      doctorId: selectedDoctorId.value || undefined,
     })
     message.value = data.invoice
       ? translateTemplate(
@@ -577,6 +738,7 @@ async function saveEdit() {
 
 onMounted(() => {
   loadQueue()
+  loadDoctors()
 })
 </script>
 
@@ -716,7 +878,7 @@ onMounted(() => {
           <p class="form-panel__hint">
             {{
               uiText(
-                'Choisissez le service (Laboratoire, Radio, Écho, Odonto) puis les examens — le patient y est envoyé sans consultation médecin.',
+                'Choisissez le service puis les examens ou opérations. Sélectionnez le médecin du service si disponible.',
               )
             }}
           </p>
@@ -724,20 +886,48 @@ onMounted(() => {
             v-model="examsByKind"
             :kinds="externalExamKinds"
             :show-comments="false"
+            :show-consultation="false"
+            @active-service-change="onActiveServiceChange"
           />
+          <div v-if="activeServiceContext.kind || activeServiceContext.clinicServiceId" class="doctor-service-row">
+            <UiSelect
+              v-model="selectedDoctorId"
+              :label="translateTemplate('Médecin — {service}', { service: activeServiceLabel })"
+              :required="doctorSelectRequired"
+              :disabled="!doctorsForActiveService.length"
+            >
+              <option value="">
+                {{
+                  doctorsForActiveService.length
+                    ? uiText('Sélectionner un médecin…')
+                    : uiText('Aucun médecin lié à ce service')
+                }}
+              </option>
+              <option v-for="doctor in doctorsForActiveService" :key="doctor.id" :value="doctor.id">
+                {{ fullName(doctor.firstName, doctor.lastName) }}
+              </option>
+            </UiSelect>
+          </div>
           <div class="form-grid-2">
             <UiInput
-              v-model="reductionFcfa"
+              :model-value="reductionFcfa"
               :label="uiText('Réduction (FCFA)')"
               type="number"
               min="0"
               :max="grossFcfa"
               placeholder="0"
               :icon="Percent"
+              @update:model-value="onReductionInput"
             />
-            <div class="total-preview">
-              <span>{{ formLabels.netDue }}</span>
-              <strong>{{ formatFcfa(netFcfa) }}</strong>
+            <div class="total-preview total-preview--editable">
+              <UiInput
+                :model-value="amountFcfa"
+                :label="formLabels.netDue"
+                type="number"
+                min="0"
+                placeholder="0"
+                @update:model-value="onAmountInput"
+              />
               <small>{{ subtotalLabel }}</small>
             </div>
           </div>
@@ -824,7 +1014,7 @@ onMounted(() => {
         <p class="form-panel__hint">
           {{
             uiText(
-              'Choisissez le service (Laboratoire, Radio, Écho, Odonto) puis les examens — le patient y est envoyé sans consultation médecin.',
+              'Choisissez le service puis les examens ou opérations. Sélectionnez le médecin du service si disponible.',
             )
           }}
         </p>
@@ -832,21 +1022,49 @@ onMounted(() => {
           v-model="examsByKind"
           :kinds="externalExamKinds"
           :show-comments="false"
+          :show-consultation="false"
+          @active-service-change="onActiveServiceChange"
         />
+        <div v-if="activeServiceContext.kind || activeServiceContext.clinicServiceId" class="doctor-service-row">
+          <UiSelect
+            v-model="selectedDoctorId"
+            :label="translateTemplate('Médecin — {service}', { service: activeServiceLabel })"
+            :required="doctorSelectRequired"
+            :disabled="!doctorsForActiveService.length"
+          >
+            <option value="">
+              {{
+                doctorsForActiveService.length
+                  ? uiText('Sélectionner un médecin…')
+                  : uiText('Aucun médecin lié à ce service')
+              }}
+            </option>
+            <option v-for="doctor in doctorsForActiveService" :key="doctor.id" :value="doctor.id">
+              {{ fullName(doctor.firstName, doctor.lastName) }}
+            </option>
+          </UiSelect>
+        </div>
 
         <div class="form-grid-2">
           <UiInput
-            v-model="reductionFcfa"
+            :model-value="reductionFcfa"
             :label="uiText('Réduction (FCFA)')"
             type="number"
             min="0"
             :max="grossFcfa"
             placeholder="0"
             :icon="Percent"
+            @update:model-value="onReductionInput"
           />
-          <div class="total-preview">
-            <span>{{ formLabels.netDue }}</span>
-            <strong>{{ formatFcfa(netFcfa) }}</strong>
+          <div class="total-preview total-preview--editable">
+            <UiInput
+              :model-value="amountFcfa"
+              :label="formLabels.netDue"
+              type="number"
+              min="0"
+              placeholder="0"
+              @update:model-value="onAmountInput"
+            />
             <small>{{ subtotalLabel }}</small>
           </div>
         </div>
@@ -1006,6 +1224,13 @@ onMounted(() => {
   border-radius: var(--radius-sm);
 }
 
+.total-preview--editable {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  gap: 0.35rem;
+}
+
 .total-preview span {
   font-size: 0.75rem;
   font-weight: 600;
@@ -1059,6 +1284,10 @@ onMounted(() => {
   font-weight: 600;
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+.doctor-service-row {
+  margin: 0.75rem 0 0.25rem;
 }
 
 .empty {

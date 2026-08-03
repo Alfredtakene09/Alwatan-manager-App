@@ -613,6 +613,22 @@ router.post("/prescribe-exams", async (req, res) => {
         return completed;
       }
 
+      // Réouverture si le médecin ajoute examens / opération après une clôture « Consultation ».
+      if (visit.status === VisitStatus.COMPLETED) {
+        const hasOperation = (examsByKind?.operation?.length ?? 0) > 0;
+        let nextStatus: VisitStatus = VisitStatus.IN_CONSULTATION;
+        if (hasOperation) nextStatus = VisitStatus.NEEDS_SURGERY;
+        else if (hasHospitalisation) nextStatus = VisitStatus.NEEDS_HOSPITALIZATION;
+        await tx.consultation.update({
+          where: { id: consultation.id },
+          data: { completedAt: null },
+        });
+        await tx.visit.update({
+          where: { id: body.visitId },
+          data: { status: nextStatus },
+        });
+      }
+
       if (
         !shouldCreateImmediateInvoice(visit.patient.category) &&
         hasExams &&

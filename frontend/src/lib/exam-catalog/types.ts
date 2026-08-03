@@ -93,20 +93,27 @@ export const EXAM_KIND_ORDER: ExamKindSlug[] = [
 
 
 /** Types facturables via l'encaissement examens (réception / comptabilité). */
-
 export const LAB_BILLABLE_EXAM_KINDS: ExamKindSlug[] = [
-
   'specialty',
-
   'examen',
-
   'radio',
-
   'echo',
-
   'odonto',
-
 ]
+
+/** Types encaissables à la réception (inclut les opérations). */
+export const CASHIER_PAYMENT_QUEUE_KINDS: ExamKindSlug[] = [
+  ...LAB_BILLABLE_EXAM_KINDS,
+  'operation',
+]
+
+/** Prescription directe patient externe (services + opération). */
+export const EXTERNAL_PATIENT_EXAM_KINDS: ExamKindSlug[] = [...CASHIER_PAYMENT_QUEUE_KINDS]
+
+export type SpecialtyServiceTab = {
+  id: string
+  name: string
+}
 
 
 
