@@ -143,6 +143,7 @@ function panelSections(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
         label: key,
         type: 'text' as const,
         value: String(value).trim(),
+        unit: undefined as string | undefined,
         comment: comment || undefined,
       }
     })

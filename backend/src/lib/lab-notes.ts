@@ -1,4 +1,4 @@
-import { PatientCategory } from "@prisma/client";
+import { InvoiceStatus, InvoiceType, PatientCategory } from "@prisma/client";
 
 export const EXAMS_PRESCRIBED_PREFIX = "Examens prescrits";
 export const EXAMS_PAID_PREFIX = "Examens payés";
@@ -235,17 +235,35 @@ export function labsPendingApprovalWhere() {
 
 export function labsPaidExamsWhere() {
   return {
-    OR: [
-      { labSentToLabAt: { not: null } },
-      ...EXAM_KIND_ORDER.map((kind) => ({
-        clinicalNotes: { contains: `${EXAMS_PAID_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]})` },
-      })),
-    ],
-    visit: {
-      patient: {
-        category: PatientCategory.STANDARD,
+    AND: [
+      {
+        visit: {
+          patient: {
+            category: PatientCategory.STANDARD,
+          },
+        },
       },
-    },
+      {
+        OR: [
+          { labSentToLabAt: { not: null } },
+          ...EXAM_KIND_ORDER.map((kind) => ({
+            clinicalNotes: { contains: `${EXAMS_PAID_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]})` },
+          })),
+          // Tranches déjà encaissées (pas encore soldées → pas de marqueur « payé »).
+          {
+            visit: {
+              invoices: {
+                some: {
+                  type: InvoiceType.LAB_EXAM,
+                  status: { in: [InvoiceStatus.PAID, InvoiceStatus.PARTIALLY_PAID] },
+                  paidAmountFcfa: { gt: 0 },
+                },
+              },
+            },
+          },
+        ],
+      },
+    ],
   };
 }
 

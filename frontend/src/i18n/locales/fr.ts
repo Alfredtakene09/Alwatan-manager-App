@@ -138,7 +138,11 @@ export default {
     'Aucun paiement enregistré pour ce patient.': 'Aucun paiement enregistré pour ce patient.',
     'Total facturé': 'Total facturé',
     Encaissé: 'Encaissé',
+    'Déjà encaissé': 'Déjà encaissé',
+    'Total dû': 'Total dû',
     'Reste à payer': 'Reste à payer',
+    'Payé partiellement': 'Payé partiellement',
+    Reste: 'Reste',
     Soldé: 'Soldé',
     'En cours': 'En cours',
     'Total {amount}': 'Total {amount}',
@@ -336,6 +340,10 @@ export default {
     Examens: 'Examens',
     'Net payé': 'Net payé',
     'Payé le': 'Payé le',
+    "Détail de l'encaissement": "Détail de l'encaissement",
+    Paiement: 'Paiement',
+    'Montant brut': 'Montant brut',
+    'Aucun examen': 'Aucun examen',
     Montant: 'Montant',
     'Prescrit le': 'Prescrit le',
     'Examens payés': 'Examens payés',
@@ -1209,6 +1217,10 @@ export default {
     'Valider et transmettre les résultats au médecin ? Le dossier passera dans Examens terminés.': 'Valider et transmettre les résultats au médecin ? Le dossier passera dans Examens terminés.',
     'Dossier clôturé — résultats transmis au médecin.': 'Dossier clôturé — résultats transmis au médecin.',
     'Impossible de clôturer le dossier.': 'Impossible de clôturer le dossier.',
+    'Aucun résultat saisi — saisissez au moins un formulaire avant de clôturer.':
+      'Aucun résultat saisi — saisissez au moins un formulaire avant de clôturer.',
+    'Aucun résultat saisi — impossible de clôturer le dossier.':
+      'Aucun résultat saisi — impossible de clôturer le dossier.',
     Clôturé: 'Clôturé',
     'Envoyé par': 'Envoyé par',
     'Constantes réception': 'Constantes réception',
@@ -1888,6 +1900,16 @@ export default {
       unavailable: 'Backend indisponible. Lancez .\\scripts\\lancer-serveur.ps1 ou npm run dev dans le dossier backend.',
       badRequest: "Nom d'utilisateur ou mot de passe invalide.",
       generic: 'Erreur de connexion. Réessayez dans un instant.',
+      sessionExpired:
+        'Session expirée ou cookie non accepté sur ce poste. Reconnectez-vous (vérifiez l’URL Wi‑Fi du serveur, pas une ancienne IP).',
+      sessionIdle: 'Session expirée après 30 minutes sans activité. Veuillez vous reconnecter.',
+      sessionActive:
+        'Une session est déjà active pour cet utilisateur sur un autre poste. Déconnectez-vous d’abord là-bas, ou attendez 30 minutes d’inactivité.',
+      sessionReplaced: 'Cette session a été invalidée. Veuillez vous reconnecter.',
+      lastAttempt:
+        'Mot de passe incorrect. Attention : dernière tentative avant verrouillage du compte.',
+      locked:
+        'Compte verrouillé suite à trop de tentatives incorrectes. Contactez un administrateur pour le déverrouiller.',
     },
   },
   pwa: {
@@ -1915,6 +1937,7 @@ export default {
     iosStep3: 'Choisissez « Sur l’écran d’accueil » puis « Ajouter ».',
     updateAvailable: 'Une nouvelle version est disponible sur le serveur.',
     updateReload: 'Mettre à jour',
+    updating: 'Mise à jour…',
     offline:
       'Réseau ou serveur indisponible. Les données patients ne sont pas accessibles hors ligne — vérifiez le poste serveur et la connexion LAN.',
   },
@@ -1988,6 +2011,12 @@ export default {
     'vous (compte connecté)': 'vous (compte connecté)',
     'Avec assistant chirurgie': 'Avec assistant chirurgie',
     'Part clinique': 'Part clinique',
+    'Montant de l’opération': 'Montant de l’opération',
+    'Prix modifiable pour « {op} » — les parts appliquent les % définis.':
+      'Prix modifiable pour « {op} » — les parts appliquent les % définis.',
+    'Montant (FCFA)': 'Montant (FCFA)',
+    'Part chirurgien': 'Part chirurgien',
+    'Part assistant': 'Part assistant',
     'Impossible de charger les types d’opération.': 'Impossible de charger les types d’opération.',
     'Libellé et coût total sont obligatoires.': 'Libellé et coût total sont obligatoires.',
     "Saisissez le nom de l'assistant chirurgie (2 caractères min.).":
@@ -2002,6 +2031,56 @@ export default {
     'Suppression impossible. Désactivez plutôt si elle a déjà été utilisée.':
       'Suppression impossible. Désactivez plutôt si elle a déjà été utilisée.',
     Employés: 'Employés',
+    'Infos clinique': 'Infos clinique',
+    'Coordonnées affichées sur les tickets, PDF et exports de tous les modules.':
+      'Coordonnées affichées sur les tickets, PDF et exports de tous les modules.',
+    'Impossible de charger les infos clinique.': 'Impossible de charger les infos clinique.',
+    'Valeurs d’usine': 'Valeurs d’usine',
+    'Valeurs d’usine rechargées dans le formulaire — enregistrez pour appliquer.':
+      'Valeurs d’usine rechargées dans le formulaire — enregistrez pour appliquer.',
+    'Informations clinique enregistrées. Elles s’appliquent aux tickets et PDF.':
+      'Informations clinique enregistrées. Elles s’appliquent aux tickets et PDF.',
+    'Le nom français doit contenir au moins 2 caractères.':
+      'Le nom français doit contenir au moins 2 caractères.',
+    'Le nom arabe est obligatoire.': 'Le nom arabe est obligatoire.',
+    'Le téléphone est obligatoire.': 'Le téléphone est obligatoire.',
+    'Adresse e-mail invalide.': 'Adresse e-mail invalide.',
+    Identité: 'Identité',
+    'Nom (français)': 'Nom (français)',
+    'Nom (arabe)': 'Nom (arabe)',
+    'Nom court (tickets)': 'Nom court (tickets)',
+    'Chemin du logo': 'Chemin du logo',
+    'Chemin public, ex. /logo-alwatan.jpeg': 'Chemin public, ex. /logo-alwatan.jpeg',
+    Logo: 'Logo',
+    'Téléverser un logo': 'Téléverser un logo',
+    'Téléversement…': 'Téléversement…',
+    'JPEG, PNG, WebP ou GIF — max. 5 Mo. Enregistré directement sur le disque du serveur.':
+      'JPEG, PNG, WebP ou GIF — max. 5 Mo. Enregistré directement sur le disque du serveur.',
+    'Sélectionnez une image (JPEG, PNG, WebP ou GIF).':
+      'Sélectionnez une image (JPEG, PNG, WebP ou GIF).',
+    'Le logo ne doit pas dépasser 5 Mo.': 'Le logo ne doit pas dépasser 5 Mo.',
+    'Logo téléversé et enregistré sur le disque.': 'Logo téléversé et enregistré sur le disque.',
+    'Upload du logo impossible.': 'Upload du logo impossible.',
+    'Adresse & contact': 'Adresse & contact',
+    'Ville / pays': 'Ville / pays',
+    Adresse: 'Adresse',
+    'Adresse complète (impressions)': 'Adresse complète (impressions)',
+    'Laisser vide pour composer automatiquement ville + adresse.':
+      'Laisser vide pour composer automatiquement ville + adresse.',
+    'Téléphone(s)': 'Téléphone(s)',
+    'Libellé téléphone': 'Libellé téléphone',
+    'Ex. Tel : +235 … — laisser vide pour générer depuis les téléphones.':
+      'Ex. Tel : +235 … — laisser vide pour générer depuis les téléphones.',
+    'E-mail': 'E-mail',
+    'Infos fiscales': 'Infos fiscales',
+    NIF: 'NIF',
+    RC: 'RC',
+    'Mention / pied de page': 'Mention / pied de page',
+    'Texte optionnel sous le contact sur les impressions.':
+      'Texte optionnel sous le contact sur les impressions.',
+    'Aperçu en-tête': 'Aperçu en-tête',
+    'Ces informations sont utilisées par tous les modules lors des impressions et exports PDF.':
+      'Ces informations sont utilisées par tous les modules lors des impressions et exports PDF.',
     Utilisateurs: 'Utilisateurs',
     Administration: 'Administration',
     "Pour créer, modifier ou supprimer une opération, utilisez Paramètres → Types opérations.":
@@ -2024,6 +2103,18 @@ export default {
     'Analyses en attente': 'Analyses en attente',
     'Examens terminés': 'Examens terminés',
     'Formulaires de résultats': 'Formulaires de résultats',
+    'Rechercher un formulaire…': 'Rechercher un formulaire…',
+    'Rechercher un formulaire': 'Rechercher un formulaire',
+    '{shown} / {total} formulaire(s)': '{shown} / {total} formulaire(s)',
+    '{n} enregistré(s)': '{n} enregistré(s)',
+    Prescrit: 'Prescrit',
+    Enregistré: 'Enregistré',
+    'Aucun formulaire ne correspond à la recherche.': 'Aucun formulaire ne correspond à la recherche.',
+    'Aucun formulaire enregistré pour ce dossier.': 'Aucun formulaire enregistré pour ce dossier.',
+    'Aucun formulaire disponible.': 'Aucun formulaire disponible.',
+    'Choisissez un formulaire dans la liste (tous sont proposés), ou filtrez par nom':
+      'Choisissez un formulaire dans la liste (tous sont proposés), ou filtrez par nom',
+    '— Aucun formulaire disponible —': '— Aucun formulaire disponible —',
     'Formulaires labo': 'Formulaires labo',
     'Stock laboratoire': 'Stock laboratoire',
     Trésorerie: 'Trésorerie',

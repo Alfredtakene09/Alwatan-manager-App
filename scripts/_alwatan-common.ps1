@@ -242,6 +242,11 @@ function Test-AlwatanProductionApp {
     try {
         $health = Invoke-WebRequest -Uri "http://${HostName}:${Port}/api/health" -UseBasicParsing -TimeoutSec $TimeoutSec
         if ($health.StatusCode -lt 200 -or $health.StatusCode -ge 400) { return $false }
+        # Mode Dev met SERVE_FRONTEND=0 : l'API répond mais sans interface sur :4000
+        $frontendHealth = Invoke-WebRequest -Uri "http://${HostName}:${Port}/api/health/frontend" -UseBasicParsing -TimeoutSec $TimeoutSec
+        if ($frontendHealth.StatusCode -lt 200 -or $frontendHealth.StatusCode -ge 400) { return $false }
+        $payload = $frontendHealth.Content | ConvertFrom-Json
+        if (-not $payload.ready) { return $false }
         $homePage = Invoke-WebRequest -Uri "http://${HostName}:${Port}/" -UseBasicParsing -TimeoutSec $TimeoutSec
         return $homePage.StatusCode -ge 200 -and $homePage.StatusCode -lt 400
     } catch {
@@ -540,6 +545,242 @@ function Show-AlwatanCabinetHelp {
     Write-Host '  Dernier recours (mesh) : scripts\activer-acces-mesh.cmd (Tailscale)' -ForegroundColor DarkGray
 }
 
+function Ensure-AlwatanAppBrowserProfile {
+    <#
+      Profil Edge/Chrome dédié au mode --app :
+      désactive les en-têtes/pieds d'impression (date, URL, 1/1)
+      que l'utilisateur ne peut pas régler facilement dans la fenêtre appli.
+    #>
+    $profileRoot = Join-Path $env:LOCALAPPDATA 'CliniqueAlwatan\app-browser'
+    $defaultDir = Join-Path $profileRoot 'Default'
+    if (-not (Test-Path -LiteralPath $defaultDir)) {
+        New-Item -ItemType Directory -Path $defaultDir -Force | Out-Null
+    }
+
+    $prefsPath = Join-Path $defaultDir 'Preferences'
+    $prefsObj = $null
+    if (Test-Path -LiteralPath $prefsPath) {
+        try {
+            $prefsObj = Get-Content -LiteralPath $prefsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        } catch {
+            $prefsObj = $null
+        }
+    }
+    if (-not $prefsObj) {
+        $prefsObj = [pscustomobject]@{}
+    }
+
+    $printing = $prefsObj.printing
+    if (-not $printing) {
+        $printing = [pscustomobject]@{}
+        $prefsObj | Add-Member -NotePropertyName printing -NotePropertyValue $printing -Force
+    }
+    $printing | Add-Member -NotePropertyName print_header_footer -NotePropertyValue $false -Force
+
+    $stickyApp = '{"version":2,"isHeaderFooterEnabled":false,"isCssBackgroundEnabled":true,"isLandscapeEnabled":false}'
+    $sticky = $printing.print_preview_sticky_settings
+    if (-not $sticky) {
+        $sticky = [pscustomobject]@{ appState = $stickyApp }
+        $printing | Add-Member -NotePropertyName print_preview_sticky_settings -NotePropertyValue $sticky -Force
+    } else {
+        try {
+            $sticky | Add-Member -NotePropertyName appState -NotePropertyValue $stickyApp -Force
+        } catch {
+            $printing | Add-Member -NotePropertyName print_preview_sticky_settings -NotePropertyValue ([pscustomobject]@{ appState = $stickyApp }) -Force
+        }
+    }
+
+    try {
+        $json = $prefsObj | ConvertTo-Json -Depth 40 -Compress:$false
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($prefsPath, $json, $utf8NoBom)
+    } catch {
+        Write-AlwatanClientLaunchLog "Impossible d'écrire le profil impression : $($_.Exception.Message)"
+    }
+
+    return $profileRoot
+}
+
+function Get-AlwatanLaunchScreenBounds {
+    <#
+      Zone utile de l'écran sous le curseur (celui où le raccourci est lancé).
+      Retourne $null si indisponible.
+    #>
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        $screen = $null
+        try {
+            $screen = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position)
+        } catch {
+            $screen = [System.Windows.Forms.Screen]::PrimaryScreen
+        }
+        if (-not $screen) { $screen = [System.Windows.Forms.Screen]::PrimaryScreen }
+        $b = $screen.WorkingArea
+        if ($b.Width -gt 0 -and $b.Height -gt 0) {
+            return @{ X = [int]$b.X; Y = [int]$b.Y; Width = [int]$b.Width; Height = [int]$b.Height }
+        }
+    } catch { }
+    return $null
+}
+
+function Ensure-AlwatanWin32Maximize {
+    if ('AlwatanWin32Maximize' -as [type]) { return }
+    Add-Type -TypeDefinition @"
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class AlwatanWin32Maximize {
+    public const int SW_RESTORE = 9;
+    public const int SW_SHOWMAXIMIZED = 3;
+    public const int SW_MAXIMIZE = 3;
+
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
+    public static List<IntPtr> FindVisibleWindowsForPid(int processId) {
+        var list = new List<IntPtr>();
+        EnumWindows((hWnd, lParam) => {
+            if (!IsWindowVisible(hWnd)) return true;
+            uint pid;
+            GetWindowThreadProcessId(hWnd, out pid);
+            if ((int)pid != processId) return true;
+            var cls = new StringBuilder(256);
+            GetClassName(hWnd, cls, cls.Capacity);
+            // Fenêtres Chromium / Edge (Chrome_WidgetWin_1) — ignorer popups invisibles / tray
+            string c = cls.ToString();
+            if (c.IndexOf("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase) < 0 &&
+                c.IndexOf("Chrome_WidgetWin_1", StringComparison.OrdinalIgnoreCase) < 0) {
+                // Accepter aussi toute fenêtre visible suffisamment grande
+                RECT r;
+                if (!GetWindowRect(hWnd, out r)) return true;
+                int w = r.Right - r.Left;
+                int h = r.Bottom - r.Top;
+                if (w < 200 || h < 200) return true;
+            }
+            list.Add(hWnd);
+            return true;
+        }, IntPtr.Zero);
+        return list;
+    }
+}
+"@ -ErrorAction Stop
+}
+
+function Set-AlwatanAppWindowPlacementPrefs {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProfileRoot,
+        $Bounds
+    )
+    if (-not $Bounds) { return }
+    $prefsPath = Join-Path $ProfileRoot 'Default\Preferences'
+    if (-not (Test-Path -LiteralPath $prefsPath)) { return }
+    try {
+        $prefsObj = Get-Content -LiteralPath $prefsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not $prefsObj) { return }
+        $placement = [pscustomobject]@{
+            maximized         = $true
+            left              = [int]$Bounds.X
+            top               = [int]$Bounds.Y
+            right             = [int]($Bounds.X + $Bounds.Width)
+            bottom            = [int]($Bounds.Y + $Bounds.Height)
+            work_area_left    = [int]$Bounds.X
+            work_area_top     = [int]$Bounds.Y
+            work_area_right   = [int]($Bounds.X + $Bounds.Width)
+            work_area_bottom  = [int]($Bounds.Y + $Bounds.Height)
+        }
+        if (-not $prefsObj.browser) {
+            $prefsObj | Add-Member -NotePropertyName browser -NotePropertyValue ([pscustomobject]@{}) -Force
+        }
+        $prefsObj.browser | Add-Member -NotePropertyName window_placement -NotePropertyValue $placement -Force
+        # Mode --app : Chromium stocke aussi parfois ici
+        if (-not $prefsObj.app) {
+            $prefsObj | Add-Member -NotePropertyName app -NotePropertyValue ([pscustomobject]@{}) -Force
+        }
+        $prefsObj.app | Add-Member -NotePropertyName window_placement -NotePropertyValue $placement -Force
+
+        $json = $prefsObj | ConvertTo-Json -Depth 40 -Compress:$false
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($prefsPath, $json, $utf8NoBom)
+    } catch {
+        Write-AlwatanClientLaunchLog "Prefs fenêtre maximisée : $($_.Exception.Message)"
+    }
+}
+
+function Maximize-AlwatanAppWindow {
+    <#
+      Edge/Chrome en --app ignore souvent --start-maximized.
+      On place la fenêtre sur l'écran cible puis on force Maximize (Win32).
+    #>
+    param(
+        $Bounds,
+        [int]$TimeoutMs = 20000
+    )
+    try {
+        Ensure-AlwatanWin32Maximize
+    } catch {
+        Write-AlwatanClientLaunchLog "Win32 Maximize indisponible : $($_.Exception.Message)"
+        return $false
+    }
+
+    $deadline = [Environment]::TickCount + $TimeoutMs
+    while ([Environment]::TickCount -lt $deadline) {
+        $procs = @(
+            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                Where-Object {
+                    ($_.Name -match '^(msedge|chrome)\.exe$') -and
+                    $_.CommandLine -and
+                    ($_.CommandLine -like '*CliniqueAlwatan\app-browser*' -or $_.CommandLine -like '*CliniqueAlwatan/app-browser*')
+                }
+        )
+        foreach ($p in $procs) {
+            try {
+                $hwnds = [AlwatanWin32Maximize]::FindVisibleWindowsForPid([int]$p.ProcessId)
+            } catch {
+                $hwnds = @()
+            }
+            foreach ($hwnd in $hwnds) {
+                if ($hwnd -eq [IntPtr]::Zero) { continue }
+                # Restaurer puis placer sur le bon écran, puis maximiser
+                [AlwatanWin32Maximize]::ShowWindow($hwnd, [AlwatanWin32Maximize]::SW_RESTORE) | Out-Null
+                if ($Bounds) {
+                    [AlwatanWin32Maximize]::MoveWindow(
+                        $hwnd,
+                        [int]$Bounds.X,
+                        [int]$Bounds.Y,
+                        [int]$Bounds.Width,
+                        [int]$Bounds.Height,
+                        $true
+                    ) | Out-Null
+                    Start-Sleep -Milliseconds 80
+                }
+                [AlwatanWin32Maximize]::ShowWindow($hwnd, [AlwatanWin32Maximize]::SW_SHOWMAXIMIZED) | Out-Null
+                [AlwatanWin32Maximize]::SetForegroundWindow($hwnd) | Out-Null
+                Write-AlwatanClientLaunchLog "Fenêtre maximisée (PID $($p.ProcessId))"
+                return $true
+            }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    Write-AlwatanClientLaunchLog 'Impossible de maximiser la fenêtre appli (timeout)'
+    return $false
+}
+
 function Open-AlwatanBrowser {
     param([Parameter(Mandatory = $true)][string]$Url)
 
@@ -556,17 +797,62 @@ function Open-AlwatanBrowser {
         }
     } catch { }
 
+    $profileDir = Ensure-AlwatanAppBrowserProfile
+
+    # Fermer les anciennes fenêtres --app de ce profil pour recharger les prefs d'impression
+    try {
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                ($_.Name -match '^(msedge|chrome)\.exe$') -and
+                $_.CommandLine -and
+                ($_.CommandLine -like '*CliniqueAlwatan\app-browser*' -or $_.CommandLine -like '*CliniqueAlwatan/app-browser*')
+            } |
+            ForEach-Object {
+                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+        Start-Sleep -Milliseconds 500
+    } catch { }
+
+    # Écran où le raccourci est lancé (curseur), sinon écran principal
+    $bounds = Get-AlwatanLaunchScreenBounds
+    Set-AlwatanAppWindowPlacementPrefs -ProfileRoot $profileDir -Bounds $bounds
+
+    $browserArgs = @(
+        "--user-data-dir=$profileDir",
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--start-maximized'
+    )
+    if ($bounds) {
+        $browserArgs += @(
+            "--window-position=$($bounds.X),$($bounds.Y)",
+            "--window-size=$($bounds.Width),$($bounds.Height)"
+        )
+    }
+    $browserArgs += "--app=$appUrl"
+
     $browserCandidates = @(
         "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
         "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+        "$env:LocalAppData\Microsoft\Edge\Application\msedge.exe",
         "$env:LocalAppData\Google\Chrome\Application\chrome.exe",
-        "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
+        "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+        "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
     )
 
     foreach ($browser in $browserCandidates) {
         if (Test-Path $browser) {
             try {
-                Start-Process -FilePath $browser -ArgumentList "--app=$appUrl"
+                Start-Process -FilePath $browser -ArgumentList $browserArgs
+                $screenInfo = if ($bounds) { "écran $($bounds.Width)x$($bounds.Height)@$($bounds.X),$($bounds.Y)" } else { 'maximisé' }
+                Write-AlwatanClientLaunchLog "Navigateur appli : $browser ($screenInfo)"
+                # Force maximize après ouverture (Edge/Chrome --app ignore souvent --start-maximized)
+                $ok = Maximize-AlwatanAppWindow -Bounds $bounds -TimeoutMs 20000
+                if ($ok) {
+                    # Certaines builds Edge redimensionnent juste après le 1er affichage
+                    Start-Sleep -Milliseconds 800
+                    $null = Maximize-AlwatanAppWindow -Bounds $bounds -TimeoutMs 4000
+                }
                 return
             } catch { }
         }
@@ -950,10 +1236,168 @@ function Ensure-AlwatanIcon {
     return $null
 }
 
+function Get-AlwatanLogDir {
+    $dir = Join-Path $env:LOCALAPPDATA 'CliniqueAlwatan'
+    if (-not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    return $dir
+}
+
+function Get-AlwatanServerLogPath {
+    return (Join-Path (Get-AlwatanLogDir) 'server.log')
+}
+
+function Show-AlwatanTrayTip {
+    param(
+        [Parameter(Mandatory = $true)][string]$Title,
+        [Parameter(Mandatory = $true)][string]$Message,
+        [ValidateSet('Info', 'Warning', 'Error')]
+        [string]$Icon = 'Info',
+        [int]$DurationMs = 6000
+    )
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        $notify = New-Object System.Windows.Forms.NotifyIcon
+        $notify.Icon = [System.Drawing.SystemIcons]::Information
+        if ($Icon -eq 'Warning') { $notify.Icon = [System.Drawing.SystemIcons]::Warning }
+        if ($Icon -eq 'Error') { $notify.Icon = [System.Drawing.SystemIcons]::Error }
+        $notify.Visible = $true
+        $tipIcon = [System.Windows.Forms.ToolTipIcon]::Info
+        if ($Icon -eq 'Warning') { $tipIcon = [System.Windows.Forms.ToolTipIcon]::Warning }
+        if ($Icon -eq 'Error') { $tipIcon = [System.Windows.Forms.ToolTipIcon]::Error }
+        $notify.BalloonTipIcon = $tipIcon
+        $notify.BalloonTipTitle = $Title
+        $notify.BalloonTipText = $Message
+        $notify.ShowBalloonTip($DurationMs)
+        Start-Sleep -Milliseconds 400
+        # Laisse le toast visible ; destruction différée
+        Start-Job -ScriptBlock {
+            param($ms)
+            Start-Sleep -Milliseconds ($ms + 1500)
+        } -ArgumentList $DurationMs | Out-Null
+        # Ne pas disposer immédiatement sinon le toast disparaît
+        $script:AlwatanTrayTips = @($script:AlwatanTrayTips) + @($notify)
+    } catch {
+        Write-AlwatanClientLaunchLog ("TrayTip impossible : {0}" -f $_.Exception.Message)
+    }
+}
+
+function Start-AlwatanHiddenNodeServer {
+    <#
+      Démarre node dist/index.js sans fenêtre (pas de npm.cmd = fiable en mode Hidden).
+      Sortie redirigée vers server.log / server.err.log.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$NodeDir,
+        [Parameter(Mandatory = $true)][string]$BackendDir,
+        [Parameter(Mandatory = $true)][string]$CorsOrigin,
+        [string]$LogPath = (Get-AlwatanServerLogPath),
+        [string]$HostBind = '0.0.0.0',
+        [string]$ServeFrontend = '1',
+        [string]$Title = 'Serveur cabinet'
+    )
+
+    $nodeExe = Join-Path $NodeDir 'node.exe'
+    if (-not (Test-Path -LiteralPath $nodeExe)) {
+        throw "node.exe introuvable : $nodeExe"
+    }
+    $entry = Join-Path $BackendDir 'dist\index.js'
+    if (-not (Test-Path -LiteralPath $entry)) {
+        throw "Build manquant : $entry"
+    }
+
+    $logDir = Split-Path -Parent $LogPath
+    if (-not (Test-Path $logDir)) {
+        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    }
+
+    $errPath = Join-Path $logDir 'server.err.log'
+    $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    # Start-Process -RedirectStandardOutput ecrase le fichier : entete uniquement dans last-launch.log
+    Write-AlwatanClientLaunchLog ("Demarrage {0} a {1}" -f $Title, $stamp)
+
+    # Hérite de l'environnement du processus courant (Start-Process + Redirect = UseShellExecute false)
+    $prev = @{
+        Path           = $env:Path
+        HOST           = $env:HOST
+        SERVE_FRONTEND = $env:SERVE_FRONTEND
+        CORS_ORIGIN    = $env:CORS_ORIGIN
+    }
+    $env:Path = "$NodeDir;" + $env:Path
+    $env:HOST = $HostBind
+    $env:SERVE_FRONTEND = $ServeFrontend
+    $env:CORS_ORIGIN = $CorsOrigin
+
+    try {
+        $proc = Start-Process -FilePath $nodeExe `
+            -ArgumentList @('dist\index.js') `
+            -WorkingDirectory $BackendDir `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $LogPath `
+            -RedirectStandardError $errPath `
+            -PassThru
+    } finally {
+        $env:Path = $prev.Path
+        if ($null -eq $prev.HOST) { Remove-Item Env:HOST -ErrorAction SilentlyContinue } else { $env:HOST = $prev.HOST }
+        if ($null -eq $prev.SERVE_FRONTEND) { Remove-Item Env:SERVE_FRONTEND -ErrorAction SilentlyContinue } else { $env:SERVE_FRONTEND = $prev.SERVE_FRONTEND }
+        if ($null -eq $prev.CORS_ORIGIN) { Remove-Item Env:CORS_ORIGIN -ErrorAction SilentlyContinue } else { $env:CORS_ORIGIN = $prev.CORS_ORIGIN }
+    }
+
+    if (-not $proc) {
+        throw 'Impossible de démarrer le processus node.'
+    }
+
+    Write-AlwatanClientLaunchLog ("Node masque demarre PID={0} ({1}) - log : {2}" -f $proc.Id, $Title, $LogPath)
+    return @{
+        LogPath   = $LogPath
+        ErrPath   = $errPath
+        ProcessId = $proc.Id
+    }
+}
+
+function Start-AlwatanHiddenPowerShell {
+    <#
+      Lance une commande via cmd.exe /c sans fenêtre (npm/vite).
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Command,
+        [string]$WorkingDirectory = '',
+        [string]$LogPath = (Get-AlwatanServerLogPath),
+        [string]$Title = 'Alwatan'
+    )
+
+    $logDir = Split-Path -Parent $LogPath
+    if (-not (Test-Path $logDir)) {
+        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    }
+
+    $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    try {
+        Add-Content -LiteralPath $LogPath -Value ("`r`n==== {0}  {1} ====`r`n" -f $stamp, $Title) -Encoding UTF8
+    } catch { }
+
+    $tmpCmd = Join-Path $logDir ('run-hidden-{0}.cmd' -f [guid]::NewGuid().ToString('N'))
+    $lines = New-Object System.Collections.Generic.List[string]
+    [void]$lines.Add('@echo off')
+    if ($WorkingDirectory) {
+        [void]$lines.Add(('cd /d "{0}"' -f $WorkingDirectory))
+    }
+    [void]$lines.Add(('echo ==== %DATE% %TIME% %s ====>> "{0}"' -f $LogPath))
+    [void]$lines.Add(('{0} >> "{1}" 2>&1' -f $Command, $LogPath))
+    Set-Content -LiteralPath $tmpCmd -Value ($lines -join "`r`n") -Encoding ASCII
+
+    Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', "`"$tmpCmd`"") -WindowStyle Hidden | Out-Null
+    Write-AlwatanClientLaunchLog ("CMD masque demarre ({0}) - log : {1}" -f $Title, $LogPath)
+    return $LogPath
+}
+
 function Update-AlwatanSilentLauncher {
     param(
         [Parameter(Mandatory = $true)][string]$ScriptBaseName,
-        [string]$ScriptsDir = $PSScriptRoot
+        [string]$ScriptsDir = $PSScriptRoot,
+        [string]$ExtraArgs = ''
     )
 
     $ps1Path = Join-Path $ScriptsDir "$ScriptBaseName.ps1"
@@ -962,9 +1406,10 @@ function Update-AlwatanSilentLauncher {
     }
 
     $vbsPath = Join-Path $ScriptsDir "$ScriptBaseName-silencieux.vbs"
+    $argsPart = if ($ExtraArgs) { " $ExtraArgs" } else { '' }
     # -Sta : MessageBox Windows Forms fiable ; log en cas d'échec
     $vbsContent = @"
-' Lancement Alwatan Manager (poste client)
+' Lancement Alwatan Manager
 Set objShell = CreateObject("WScript.Shell")
 Set objFSO = CreateObject("Scripting.FileSystemObject")
 strDir = objFSO.GetParentFolderName(WScript.ScriptFullName)
@@ -973,7 +1418,7 @@ strLog = objShell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\CliniqueAlwatan
 On Error Resume Next
 objFSO.CreateFolder objShell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\CliniqueAlwatan"
 On Error GoTo 0
-strCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -WindowStyle Hidden -File """ & strPs1 & """"
+strCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -WindowStyle Hidden -File """ & strPs1 & """$argsPart"
 objShell.Run strCmd, 0, False
 "@
     Set-Content -LiteralPath $vbsPath -Value $vbsContent -Encoding ASCII

@@ -49,6 +49,8 @@ type InterventionItem = {
   surgeon?: DoctorOption | null
   anesthesiologist?: DoctorOption | null
   clinicService?: { id: string; name: string } | null
+  authorizedSurgeons?: DoctorOption[]
+  surgeonIds?: string[]
   active: boolean
 }
 
@@ -84,6 +86,7 @@ const newItem = ref({
   anesthesiologistName: '',
   surgeonPercent: '',
   anesthesiologistPercent: '',
+  surgeonIds: [] as string[],
 })
 
 const operationCountLabel = computed(() =>
@@ -268,10 +271,26 @@ function resetNewItemForm() {
     anesthesiologistName: '',
     surgeonPercent: '',
     anesthesiologistPercent: '',
+    surgeonIds: [],
   }
   medecinRole.value = 'surgeon'
   surgeonInputMode.value = 'select'
   assistantInputMode.value = 'select'
+}
+
+function toggleAuthorizedSurgeon(doctorId: string) {
+  const set = new Set(newItem.value.surgeonIds)
+  if (set.has(doctorId)) set.delete(doctorId)
+  else set.add(doctorId)
+  newItem.value.surgeonIds = [...set]
+}
+
+function onPrimarySurgeonChange() {
+  const id = newItem.value.surgeonId
+  if (!id) return
+  if (!newItem.value.surgeonIds.includes(id)) {
+    newItem.value.surgeonIds = [...newItem.value.surgeonIds, id]
+  }
 }
 
 function onSurgeonInputModeChange(mode: 'select' | 'custom') {
@@ -327,6 +346,9 @@ function openEditModal(id: string) {
     anesthesiologistName: item.anesthesiologistName ?? '',
     surgeonPercent: String(item.surgeonPercent),
     anesthesiologistPercent: hasAssistant ? String(item.anesthesiologistPercent) : '',
+    surgeonIds: item.surgeonIds?.length
+      ? [...item.surgeonIds]
+      : (item.authorizedSurgeons ?? []).map((d) => d.id),
   }
   surgeonInputMode.value = surgeonFromList ? 'select' : 'custom'
   assistantInputMode.value = assistantFromList ? 'select' : 'custom'
@@ -476,6 +498,15 @@ function buildOperationPayload() {
           : null,
       surgeonPercent,
       anesthesiologistPercent,
+      surgeonIds:
+        surgeonInputMode.value === 'select'
+          ? [
+              ...new Set([
+                ...newItem.value.surgeonIds,
+                ...(newItem.value.surgeonId ? [newItem.value.surgeonId] : []),
+              ]),
+            ]
+          : newItem.value.surgeonIds,
     },
   }
 }
@@ -794,6 +825,7 @@ onMounted(async () => {
                     v-if="surgeonInputMode === 'select'"
                     v-model="newItem.surgeonId"
                     label="Médecin chirurgien"
+                    @update:model-value="onPrimarySurgeonChange"
                   >
                     <option value="">— Sélectionner —</option>
                     <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
@@ -814,6 +846,24 @@ onMounted(async () => {
                     max="99"
                   />
                 </div>
+                <fieldset v-if="surgeonInputMode === 'select'" class="surgeons-fieldset">
+                  <legend>Chirurgiens autorisés</legend>
+                  <p class="hint">
+                    Cochez les médecins qui pourront utiliser cette opération (en plus du chirurgien principal).
+                  </p>
+                  <label
+                    v-for="doctor in doctors"
+                    :key="`auth-${doctor.id}`"
+                    class="surgeon-check"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="newItem.surgeonIds.includes(doctor.id)"
+                      @change="toggleAuthorizedSurgeon(doctor.id)"
+                    />
+                    Dr {{ fullName(doctor.firstName, doctor.lastName) }}
+                  </label>
+                </fieldset>
               </div>
 
               <div v-else class="assistant-fields">
@@ -1147,5 +1197,36 @@ onMounted(async () => {
 .operation-detail__amount {
   font-weight: 700;
   color: var(--primary-800);
+}
+
+.surgeons-fieldset {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(15, 40, 80, 0.12);
+  border-radius: 10px;
+}
+
+.surgeons-fieldset legend {
+  padding: 0 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.surgeons-fieldset .hint {
+  margin: 0 0 0.4rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.surgeon-check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+  font-size: 0.875rem;
+  cursor: pointer;
 }
 </style>

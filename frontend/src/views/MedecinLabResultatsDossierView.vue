@@ -13,7 +13,7 @@ import {
   type LabPanelSlug,
 } from '@/lib/lab-form-panels'
 import { useLabPanelsStore } from '@/stores/lab-panels'
-import { buildPrescribedByLabel, printLabPanelResult } from '@/lib/lab-panel-print'
+import { buildPrescribedByLabel, printLabPanelResult, resolveLabReceptionist } from '@/lib/lab-panel-print'
 import { fetchAndPrintLabVisitResults } from '@/lib/lab-visit-print'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -80,7 +80,10 @@ const prescribedExamsFull = computed(() =>
 )
 
 const doctorLabel = computed(() =>
-  buildPrescribedByLabel(visit.value?.consultation?.doctor ?? visit.value?.assignedDoctor ?? null),
+  buildPrescribedByLabel(
+    visit.value?.consultation?.doctor ?? visit.value?.assignedDoctor ?? null,
+    resolveLabReceptionist(visit.value),
+  ),
 )
 
 const validatorLabel = computed(() => {
@@ -321,7 +324,7 @@ onMounted(async () => {
           </div>
           <div>
             <dt>Examens laboratoire</dt>
-            <dd :title="prescribedExamsFull">{{ prescribedExamsPreview }}</dd>
+            <dd class="prescribed-exams-text" :title="prescribedExamsFull">{{ prescribedExamsPreview }}</dd>
           </div>
           <div v-if="doctorComment" class="info-grid__full">
             <dt>Commentaire à la prescription</dt>
@@ -460,6 +463,11 @@ onMounted(async () => {
 .info-grid dd {
   margin: 0;
   font-size: 0.875rem;
+}
+
+.prescribed-exams-text {
+  color: var(--brand-red-700, #b71c1c);
+  font-weight: 800;
 }
 
 .info-grid__full {

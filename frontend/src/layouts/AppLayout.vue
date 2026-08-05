@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { LogOut, Menu, X } from '@lucide/vue'
 import { useAuthStore } from '@/stores/auth'
 import { fullName, canAccessModule, getDefaultRoute } from '@/lib/roles'
-import { CLINIC } from '@/lib/clinic'
+import { CLINIC, loadClinicInfo } from '@/lib/clinic'
 import { getNavigation, type NavChildItem, type NavItem } from '@/lib/navigation'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import api from '@/api/client'
@@ -15,12 +15,15 @@ import SidebarNavSections from '@/components/layout/SidebarNavSections.vue'
 import ProfileAccountModal from '@/components/ProfileAccountModal.vue'
 import GlobalAlertsBell from '@/components/layout/GlobalAlertsBell.vue'
 import DoctorOvertimeSubmitButton from '@/components/layout/DoctorOvertimeSubmitButton.vue'
+import { useSessionIdle } from '@/composables/useSessionIdle'
 
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const { t, isArabic, localeCode, navLabel, roleLabel } = useAppI18n()
 const showProfileModal = ref(false)
+
+useSessionIdle(computed(() => Boolean(auth.user)))
 
 type NavBadges = {
   depenses?: number
@@ -53,6 +56,7 @@ async function loadNavBadges() {
 
 onMounted(() => {
   void loadNavBadges()
+  void loadClinicInfo()
   badgesTimer = setInterval(() => {
     void loadNavBadges()
   }, 90_000)
@@ -62,6 +66,7 @@ onUnmounted(() => {
 })
 watch(() => auth.user?.id, () => {
   void loadNavBadges()
+  if (auth.user) void loadClinicInfo({ force: true })
 })
 
 const navConfig = computed(() =>

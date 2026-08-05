@@ -28,12 +28,27 @@ async function submit() {
   } catch (e) {
     if (axios.isAxiosError(e) && !e.response) {
       error.value = t('login.errors.unreachable')
-    } else if (axios.isAxiosError(e) && e.response?.status === 401) {
-      error.value = t('login.errors.invalid')
-    } else if (axios.isAxiosError(e) && (e.response?.status === 502 || e.response?.status === 503)) {
-      error.value = t('login.errors.unavailable')
-    } else if (axios.isAxiosError(e) && e.response?.status === 400) {
-      error.value = t('login.errors.badRequest')
+    } else if (axios.isAxiosError(e)) {
+      const code = String(e.response?.data?.code ?? '')
+      const apiMsg =
+        typeof e.response?.data?.error === 'string' ? e.response.data.error : ''
+      if (code === 'ACCOUNT_LOCKED') {
+        error.value = apiMsg || t('login.errors.locked')
+      } else if (code === 'SESSION_ACTIVE' || e.response?.status === 409) {
+        error.value = apiMsg || t('login.errors.sessionActive')
+      } else if (code === 'LAST_ATTEMPT') {
+        error.value = apiMsg || t('login.errors.lastAttempt')
+      } else if (e.response?.status === 403) {
+        error.value = apiMsg || t('login.errors.locked')
+      } else if (e.response?.status === 401) {
+        error.value = apiMsg || t('login.errors.invalid')
+      } else if (e.response?.status === 502 || e.response?.status === 503) {
+        error.value = t('login.errors.unavailable')
+      } else if (e.response?.status === 400) {
+        error.value = t('login.errors.badRequest')
+      } else {
+        error.value = t('login.errors.generic')
+      }
     } else {
       error.value = t('login.errors.generic')
     }
@@ -41,6 +56,23 @@ async function submit() {
 }
 
 onMounted(async () => {
+  sessionStorage.removeItem('alwatan-auth-redirect')
+  const params = new URLSearchParams(window.location.search)
+  const sessionReason = params.get('session')
+  if (sessionReason === 'expired') {
+    error.value = t('login.errors.sessionExpired')
+  } else if (sessionReason === 'idle') {
+    error.value = t('login.errors.sessionIdle')
+  } else if (sessionReason === 'locked') {
+    error.value = t('login.errors.locked')
+  } else if (sessionReason === 'replaced') {
+    error.value = t('login.errors.sessionReplaced')
+  }
+  if (sessionReason) {
+    params.delete('session')
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}`
+    window.history.replaceState({}, '', next)
+  }
   await nextTick()
   usernameInputRef.value?.focus()
 })

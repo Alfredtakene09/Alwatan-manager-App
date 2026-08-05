@@ -1,5 +1,5 @@
 import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
-import { CLINIC } from '@/lib/clinic'
+import { CLINIC, clinicTaxLine } from '@/lib/clinic'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { parsePrescribedHospitalisationDays } from '@/lib/lab-notes'
 import { translateUi } from '@/i18n/translate'
@@ -436,7 +436,7 @@ function buildHospitalizationProfileBodyHtml(form: HospitalizationAdmissionForm)
 
     <p class="hosp-adm-footer">
       ${CLINIC.nameFr} — ${CLINIC.fullAddress}<br />
-      ${CLINIC.phoneLabel} · ${CLINIC.email}
+      ${CLINIC.phoneLabel} · ${CLINIC.email}${clinicTaxLine() ? `<br />${clinicTaxLine()}` : ''}${CLINIC.printFooter ? `<br />${CLINIC.printFooter}` : ''}
     </p>
 
     <div class="hosp-adm-wave"></div>

@@ -22,6 +22,16 @@ export default {
     Activer: 'Enable',
     Désactiver: 'Disable',
     Régler: 'Settle',
+    'Régler en espèces': 'Settle in cash',
+    'Sélectionnez un médecin pour afficher le bouton de règlement.':
+      'Select a doctor to show the settlement button.',
+    'Rien à régler pour ce médecin.': 'Nothing to settle for this doctor.',
+    'Parts réglées en espèces — la carte est à jour.':
+      'Shares settled in cash — the card is up to date.',
+    'Impossible de régler ces parts en espèces.':
+      'Unable to settle these shares in cash.',
+    'Confirmer le règlement cash de {amount} pour {name} ? La carte repassera à zéro.':
+      'Confirm cash settlement of {amount} for {name}? The card will return to zero.',
     Payer: 'Pay',
     Rechercher: 'Search',
     Enregistrer: 'Save',
@@ -138,7 +148,11 @@ export default {
     'Aucun paiement enregistré pour ce patient.': 'No payment recorded for this patient.',
     'Total facturé': 'Total billed',
     Encaissé: 'Collected',
+    'Déjà encaissé': 'Already collected',
+    'Total dû': 'Amount due',
     'Reste à payer': 'Remaining',
+    'Payé partiellement': 'Partially paid',
+    Reste: 'Left',
     Soldé: 'Settled',
     'En cours': 'In progress',
     'Total {amount}': 'Total {amount}',
@@ -336,6 +350,10 @@ export default {
     Examens: 'Exams',
     'Net payé': 'Net paid',
     'Payé le': 'Paid on',
+    "Détail de l'encaissement": 'Payment details',
+    Paiement: 'Payment',
+    'Montant brut': 'Gross amount',
+    'Aucun examen': 'No exam',
     Montant: 'Amount',
     'Prescrit le': 'Prescribed on',
     'Examens payés': 'Paid exams',
@@ -1333,6 +1351,10 @@ export default {
     'Valider et transmettre les résultats au médecin ? Le dossier passera dans Examens terminés.': 'Validate and send results to the doctor? The record will move to Completed exams.',
     'Dossier clôturé — résultats transmis au médecin.': 'Record closed — results sent to the doctor.',
     'Impossible de clôturer le dossier.': 'Unable to close the record.',
+    'Aucun résultat saisi — saisissez au moins un formulaire avant de clôturer.':
+      'No result entered — fill at least one form before closing.',
+    'Aucun résultat saisi — impossible de clôturer le dossier.':
+      'No result entered — unable to close the record.',
     'Créez et modifiez les formulaires de saisie des résultats du laboratoire': 'Create and edit lab result entry forms',
     'Chaque formulaire regroupe les champs saisis par le laboratoire (avec unité et valeur de référence)': 'Each form groups fields entered by the lab (with unit and reference value)',
     'Nouveau formulaire': 'New form',
@@ -1907,6 +1929,15 @@ export default {
       unavailable: 'Backend unavailable. Run .\\scripts\\lancer-serveur.ps1 or npm run dev in the backend folder.',
       badRequest: 'Invalid username or password.',
       generic: 'Sign-in error. Please try again shortly.',
+      sessionExpired:
+        'Session expired or cookie rejected on this PC. Sign in again (use the current Wi‑Fi server URL, not an old IP).',
+      sessionIdle: 'Session expired after 30 minutes of inactivity. Please sign in again.',
+      sessionActive:
+        'A session is already active for this user on another device. Sign out there first, or wait 30 minutes of inactivity.',
+      sessionReplaced: 'This session was invalidated. Please sign in again.',
+      lastAttempt: 'Incorrect password. Warning: this is your last attempt before the account is locked.',
+      locked:
+        'Account locked after too many failed attempts. Contact an administrator to unlock it.',
     },
   },
   pwa: {
@@ -1934,6 +1965,7 @@ export default {
     iosStep3: 'Choose “Add to Home Screen”, then “Add”.',
     updateAvailable: 'A new version is available on the server.',
     updateReload: 'Update',
+    updating: 'Updating…',
     offline:
       'Network or server unavailable. Patient data is not available offline — check the server PC and LAN connection.',
   },
@@ -2007,6 +2039,12 @@ export default {
     'vous (compte connecté)': 'you (signed-in account)',
     'Avec assistant chirurgie': 'With surgical assistant',
     'Part clinique': 'Clinic share',
+    'Montant de l’opération': 'Operation amount',
+    'Prix modifiable pour « {op} » — les parts appliquent les % définis.':
+      'Editable price for “{op}” — shares use the defined percentages.',
+    'Montant (FCFA)': 'Amount (FCFA)',
+    'Part chirurgien': 'Surgeon share',
+    'Part assistant': 'Assistant share',
     'Impossible de charger les types d’opération.': 'Unable to load operation types.',
     'Libellé et coût total sont obligatoires.': 'Label and total cost are required.',
     "Saisissez le nom de l'assistant chirurgie (2 caractères min.).":
@@ -2021,6 +2059,58 @@ export default {
     'Suppression impossible. Désactivez plutôt si elle a déjà été utilisée.':
       'Cannot delete. Deactivate it instead if it has already been used.',
     Employés: 'Employees',
+    'Infos clinique': 'Clinic details',
+    'Coordonnées affichées sur les tickets, PDF et exports de tous les modules.':
+      'Details shown on tickets, PDFs and exports across all modules.',
+    'Impossible de charger les infos clinique.': 'Unable to load clinic details.',
+    'Valeurs d’usine': 'Factory defaults',
+    'Valeurs d’usine rechargées dans le formulaire — enregistrez pour appliquer.':
+      'Factory defaults loaded in the form — save to apply.',
+    'Informations clinique enregistrées. Elles s’appliquent aux tickets et PDF.':
+      'Clinic details saved. They apply to tickets and PDFs.',
+    'Le nom français doit contenir au moins 2 caractères.':
+      'French name must contain at least 2 characters.',
+    'Le nom arabe est obligatoire.': 'Arabic name is required.',
+    'Le téléphone est obligatoire.': 'Phone number is required.',
+    'Adresse e-mail invalide.': 'Invalid email address.',
+    'Enregistrement…': 'Saving…',
+    'Enregistrement impossible.': 'Unable to save.',
+    Identité: 'Identity',
+    'Nom (français)': 'Name (French)',
+    'Nom (arabe)': 'Name (Arabic)',
+    'Nom court (tickets)': 'Short name (tickets)',
+    'Chemin du logo': 'Logo path',
+    'Chemin public, ex. /logo-alwatan.jpeg': 'Public path, e.g. /logo-alwatan.jpeg',
+    Logo: 'Logo',
+    'Téléverser un logo': 'Upload a logo',
+    'Téléversement…': 'Uploading…',
+    'JPEG, PNG, WebP ou GIF — max. 5 Mo. Enregistré directement sur le disque du serveur.':
+      'JPEG, PNG, WebP or GIF — max 5 MB. Saved directly to the server disk.',
+    'Sélectionnez une image (JPEG, PNG, WebP ou GIF).':
+      'Select an image (JPEG, PNG, WebP or GIF).',
+    'Le logo ne doit pas dépasser 5 Mo.': 'Logo must not exceed 5 MB.',
+    'Logo téléversé et enregistré sur le disque.': 'Logo uploaded and saved to disk.',
+    'Upload du logo impossible.': 'Unable to upload logo.',
+    'Adresse & contact': 'Address & contact',
+    'Ville / pays': 'City / country',
+    Adresse: 'Address',
+    'Adresse complète (impressions)': 'Full address (prints)',
+    'Laisser vide pour composer automatiquement ville + adresse.':
+      'Leave blank to auto-build city + address.',
+    'Téléphone(s)': 'Phone(s)',
+    'Libellé téléphone': 'Phone label',
+    'Ex. Tel : +235 … — laisser vide pour générer depuis les téléphones.':
+      'E.g. Tel: +235 … — leave blank to generate from phones.',
+    'E-mail': 'Email',
+    'Infos fiscales': 'Tax details',
+    NIF: 'TIN',
+    RC: 'Trade register',
+    'Mention / pied de page': 'Footer mention',
+    'Texte optionnel sous le contact sur les impressions.':
+      'Optional text under contact details on prints.',
+    'Aperçu en-tête': 'Header preview',
+    'Ces informations sont utilisées par tous les modules lors des impressions et exports PDF.':
+      'These details are used by all modules for prints and PDF exports.',
     Utilisateurs: 'Users',
     Administration: 'Administration',
     "Pour créer, modifier ou supprimer une opération, utilisez Paramètres → Types opérations.":
@@ -2043,6 +2133,30 @@ export default {
     'Analyses en attente': 'Pending analyses',
     'Examens terminés': 'Completed exams',
     'Formulaires de résultats': 'Result forms',
+    'Rechercher un formulaire…': 'Search for a form…',
+    'Rechercher un formulaire': 'Search for a form',
+    '{shown} / {total} formulaire(s)': '{shown} / {total} form(s)',
+    '{n} enregistré(s)': '{n} saved',
+    Prescrit: 'Prescribed',
+    Enregistré: 'Saved',
+    'Aucun formulaire ne correspond à la recherche.': 'No form matches your search.',
+    'Aucun formulaire enregistré pour ce dossier.': 'No saved forms for this record.',
+    'Aucun formulaire disponible.': 'No forms available.',
+    'Tous les formulaires sont listés — cherchez par nom, puis sélectionnez celui à remplir':
+      'All forms are listed — search by name, then select the one to fill in',
+    'Choisissez un formulaire dans la liste (tous sont proposés), ou filtrez par nom':
+      'Choose a form from the list (all are offered), or filter by name',
+    '— Aucun formulaire disponible —': '— No form available —',
+    'Cherchez et sélectionnez un formulaire déjà enregistré pour le corriger':
+      'Search and select a saved form to edit it',
+    "Cherchez et sélectionnez un formulaire enregistré pour le consulter ou l'imprimer":
+      'Search and select a saved form to view or print it',
+    'Ce formulaire n’a pas encore de champs — complétez-le dans Formulaires laboratoire.':
+      'This form has no fields yet — complete it under Laboratory forms.',
+    'Ajoutez un formulaire supplémentaire — cherchez par nom puis sélectionnez-le.':
+      'Add another form — search by name then select it.',
+    'Dossier clôturé. Vous pouvez encore consulter ou imprimer les formulaires enregistrés.':
+      'Record closed. You can still view or print saved forms.',
     'Formulaires labo': 'Lab forms',
     'Stock laboratoire': 'Laboratory stock',
     Trésorerie: 'Treasury',

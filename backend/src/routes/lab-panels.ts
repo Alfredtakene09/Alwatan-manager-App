@@ -12,7 +12,7 @@ const router = Router();
 router.use(requireAuth);
 
 /** Lecture des formulaires : labo + médecins (consultation des résultats). */
-router.get("/", requireAnyModule("laboratoire", "consultation"), async (_req, res) => {
+router.get("/", requireAnyModule("laboratoire", "consultation", "comptabilite", "dossier-patient"), async (_req, res) => {
   const panels = await prisma.labPanel.findMany({
     include: panelInclude,
     orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
@@ -40,7 +40,8 @@ const panelCreateSchema = z.object({
   isEntry: z.boolean().optional(),
   active: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
-  fields: z.array(fieldSchema).min(1),
+  /** Vide autorisé : formulaire créé depuis un examen catalogue, champs à compléter plus tard. */
+  fields: z.array(fieldSchema).default([]),
 });
 
 const panelUpdateSchema = z.object({
@@ -48,7 +49,7 @@ const panelUpdateSchema = z.object({
   isEntry: z.boolean().optional(),
   active: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
-  fields: z.array(fieldSchema).min(1).optional(),
+  fields: z.array(fieldSchema).optional(),
 });
 
 function slugify(value: string) {

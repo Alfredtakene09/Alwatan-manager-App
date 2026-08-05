@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { confirmAppModal } from '@/lib/api-modal-helper'
-import { Users, Plus, RefreshCw, Save, Eye, Search } from '@lucide/vue'
+import { Users, Plus, RefreshCw, Save, Eye, Search, Unlock } from '@lucide/vue'
 import api from '@/api/client'
 import {
   fullName,
@@ -12,7 +12,7 @@ import {
   type AdminAssignableUserRole,
 } from '@/lib/roles'
 import { isHiddenPlatformAdminEmployee } from '@/lib/employee-app-account'
-import { catalogRowActionsHtml, statusBadge } from '@/lib/datatable-defaults'
+import { catalogRowActionsHtml, DT_ICONS, statusBadge } from '@/lib/datatable-defaults'
 import { shiftButtonLabel, type ShiftSlot } from '@/lib/cash-shift'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -24,6 +24,7 @@ import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
+import { useAuthStore } from '@/stores/auth'
 
 type LinkedEmployee = {
   id: string
@@ -46,6 +47,9 @@ type PlatformUser = {
   lastName: string
   role: AppUserRole
   active: boolean
+  locked?: boolean
+  lockedAt?: string | null
+  failedLoginAttempts?: number
   employeeId: string
   cashShiftSlot?: ShiftSlot | null
   employee?: LinkedEmployee | null
@@ -54,16 +58,24 @@ type PlatformUser = {
   relatedDataCount?: number
 }
 
+const auth = useAuthStore()
+const isAdmin = computed(() => auth.user?.role === 'ADMIN')
+
 const users = ref<PlatformUser[]>([])
 const employeeOptions = ref<EmployeeOption[]>([])
 const loading = ref(false)
 const saving = ref(false)
+const unlocking = ref(false)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const modalOpen = ref(false)
 const viewModalOpen = ref(false)
+const unlockModalOpen = ref(false)
 const editingId = ref<string | null>(null)
 const viewingUser = ref<PlatformUser | null>(null)
+const unlockingUser = ref<PlatformUser | null>(null)
+const unlockPassword = ref('')
+const unlockPasswordConfirm = ref('')
 const employeeFilter = ref<'ALL' | 'MEDECINS'>('ALL')
 const searchQuery = ref('')
 const roleFilter = ref<'ALL' | AppUserRole>('ALL')
@@ -175,6 +187,7 @@ const filteredUsers = computed(() => {
         user.employee ? fullName(user.employee.firstName, user.employee.lastName) : '',
         user.employee?.jobTitle ?? '',
         user.active ? 'actif' : 'inactif',
+        user.locked ? 'verrouille' : '',
       ]
         .join(' ')
         .toLowerCase()
@@ -190,23 +203,32 @@ const filteredUsers = computed(() => {
 
 const tableRows = computed(() => {
   localeCode.value
-  return filteredUsers.value.map((user) => ({
-    id: user.id,
-    name: fullName(user.firstName, user.lastName),
-    username: user.username,
-    email: user.email,
-    employeeLabel: user.employee
-      ? fullName(user.employee.firstName, user.employee.lastName)
-      : 'Employé indisponible',
-    roleLabel: roleLabel(user.role),
-    role: user.role,
-    statusLabel: user.active ? uiText('Actif') : uiText('Inactif'),
-    statusVariant: user.active ? 'success' : 'danger',
-    toggleLabel: user.active ? uiText('Désactiver') : uiText('Activer'),
-    isActive: user.active,
-    canDelete: user.canDelete ?? false,
-    relatedDataCount: user.relatedDataCount ?? 0,
-  }))
+  return filteredUsers.value.map((user) => {
+    const locked = Boolean(user.locked)
+    return {
+      id: user.id,
+      name: fullName(user.firstName, user.lastName),
+      username: user.username,
+      email: user.email,
+      employeeLabel: user.employee
+        ? fullName(user.employee.firstName, user.employee.lastName)
+        : 'Employé indisponible',
+      roleLabel: roleLabel(user.role),
+      role: user.role,
+      statusLabel: locked
+        ? uiText('Verrouillé')
+        : user.active
+          ? uiText('Actif')
+          : uiText('Inactif'),
+      statusVariant: locked ? 'warning' : user.active ? 'success' : 'danger',
+      toggleLabel: user.active ? uiText('Désactiver') : uiText('Activer'),
+      isActive: user.active,
+      locked,
+      canUnlock: isAdmin.value && locked,
+      canDelete: user.canDelete ?? false,
+      relatedDataCount: user.relatedDataCount ?? 0,
+    }
+  })
 })
 
 const columns = [
@@ -234,7 +256,7 @@ const columns = [
     responsivePriority: 1,
     className: 'dt-col-status',
     render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
+      statusBadge(label, row.statusVariant as 'success' | 'danger' | 'warning'),
   },
   {
     data: 'employeeLabel',
@@ -257,16 +279,28 @@ const columns = [
     render: (
       _d: unknown,
       _t: string,
-      row: { id: string; toggleLabel: string; isActive: boolean; canDelete: boolean },
-    ) =>
-      catalogRowActionsHtml({
+      row: {
+        id: string
+        toggleLabel: string
+        isActive: boolean
+        canDelete: boolean
+        canUnlock: boolean
+      },
+    ) => {
+      const base = catalogRowActionsHtml({
         ...row,
         showView: true,
         showEdit: true,
         showToggle: true,
-        // Toujours afficher le bouton supprimer : le handler explique si c’est bloqué.
         canDelete: true,
-      }),
+      })
+      if (!row.canUnlock) return base
+      const unlockLabel = uiText('Déverrouiller')
+      return base.replace(
+        '</div>',
+        `<button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-on" data-action="unlock" title="${unlockLabel}" aria-label="${unlockLabel}">${DT_ICONS.undo}</button></div>`,
+      )
+    },
   },
 ]
 
@@ -463,6 +497,11 @@ async function saveUser() {
     messageType.value = 'error'
     return
   }
+  if (isEditing && form.value.password.trim() && !isAdmin.value) {
+    message.value = 'Seul un administrateur peut réinitialiser le mot de passe.'
+    messageType.value = 'error'
+    return
+  }
   saving.value = true
   message.value = ''
   try {
@@ -478,7 +517,7 @@ async function saveUser() {
         active,
       }
       if (email) payload.email = email
-      if (form.value.password.trim()) payload.password = form.value.password
+      if (isAdmin.value && form.value.password.trim()) payload.password = form.value.password
       await api.put(`/admin/users/${currentId}`, payload)
       message.value = 'Utilisateur mis à jour.'
     } else {
@@ -603,6 +642,63 @@ function onTableAction({ action, id }: { action: string; id: string }) {
   if (action === 'edit') openEditModal(id)
   if (action === 'toggle') toggleUser(id)
   if (action === 'delete') deleteUser(id)
+  if (action === 'unlock') openUnlockModal(id)
+}
+
+function openUnlockModal(id: string) {
+  if (!isAdmin.value) {
+    message.value = 'Seul un administrateur peut déverrouiller un compte.'
+    messageType.value = 'error'
+    return
+  }
+  const user = usersById.value.get(id)
+  if (!user?.locked) return
+  unlockingUser.value = user
+  unlockPassword.value = ''
+  unlockPasswordConfirm.value = ''
+  unlockModalOpen.value = true
+  message.value = ''
+}
+
+function closeUnlockModal() {
+  unlockModalOpen.value = false
+  unlockingUser.value = null
+  unlockPassword.value = ''
+  unlockPasswordConfirm.value = ''
+}
+
+async function confirmUnlock() {
+  if (!unlockingUser.value || !isAdmin.value) return
+  if (unlockPassword.value.length < 6) {
+    message.value = 'Le nouveau mot de passe doit contenir au moins 6 caractères.'
+    messageType.value = 'error'
+    return
+  }
+  if (unlockPassword.value !== unlockPasswordConfirm.value) {
+    message.value = 'La confirmation du mot de passe ne correspond pas.'
+    messageType.value = 'error'
+    return
+  }
+  unlocking.value = true
+  message.value = ''
+  try {
+    await api.post(`/admin/users/${unlockingUser.value.id}/unlock`, {
+      newPassword: unlockPassword.value,
+    })
+    message.value = 'Compte déverrouillé. L’utilisateur peut se reconnecter.'
+    messageType.value = 'success'
+    closeUnlockModal()
+    await loadUsers()
+  } catch (error: unknown) {
+    const apiMessage =
+      axios.isAxiosError(error) && typeof error.response?.data?.error === 'string'
+        ? error.response.data.error
+        : null
+    message.value = apiMessage ?? 'Impossible de déverrouiller ce compte.'
+    messageType.value = 'error'
+  } finally {
+    unlocking.value = false
+  }
 }
 
 watch(
@@ -785,7 +881,7 @@ onMounted(loadUsers)
           </UiSelect>
         </div>
 
-        <div class="form-grid-2">
+        <div v-if="!editingId || isAdmin" class="form-grid-2">
           <UiInput
             v-model="form.password"
             :label="editingId ? 'Nouveau mot de passe (optionnel)' : 'Mot de passe'"
@@ -805,12 +901,76 @@ onMounted(loadUsers)
             placeholder="Retapez le mot de passe"
           />
         </div>
+        <p v-else-if="editingId && !isAdmin" class="employee-hint employee-hint--inline">
+          {{ uiText('Seul un administrateur peut réinitialiser le mot de passe.') }}
+        </p>
+        <UiAlert
+          v-if="editingId && usersById.get(editingId)?.locked"
+          type="warning"
+          :message="
+            isAdmin
+              ? uiText('Compte verrouillé — définissez un nouveau mot de passe pour le déverrouiller, ou utilisez le bouton Déverrouiller.')
+              : uiText('Compte verrouillé — seul un administrateur peut le déverrouiller.')
+          "
+        />
       </section>
 
       <template #footer>
         <UiButton variant="ghost" @click="closeModal">Annuler</UiButton>
         <UiButton variant="primary" :icon="Save" :disabled="saving" @click="saveUser">
           {{ saving ? 'Enregistrement…' : 'Enregistrer' }}
+        </UiButton>
+      </template>
+    </UiFormModal>
+
+    <UiFormModal
+      v-if="unlockModalOpen && unlockingUser"
+      title-id="user-unlock-title"
+      :title="uiText('Déverrouiller le compte')"
+      :icon="Unlock"
+      @close="closeUnlockModal"
+    >
+      <UiAlert v-if="message && unlockModalOpen" :type="messageType" :message="message" />
+      <p class="employee-hint employee-hint--inline">
+        {{
+          translateTemplate(
+            'Définir un nouveau mot de passe pour {name} ({username}).',
+            {
+              name: fullName(unlockingUser.firstName, unlockingUser.lastName),
+              username: unlockingUser.username,
+            },
+          )
+        }}
+      </p>
+      <div class="form-grid-2">
+        <UiInput
+          v-model="unlockPassword"
+          :label="uiText('Nouveau mot de passe')"
+          type="password"
+          required
+          revealable
+          autocomplete="new-password"
+          placeholder="Minimum 6 caractères"
+        />
+        <UiInput
+          v-model="unlockPasswordConfirm"
+          :label="uiText('Confirmer le mot de passe')"
+          type="password"
+          required
+          revealable
+          autocomplete="new-password"
+          placeholder="Retapez le mot de passe"
+        />
+      </div>
+      <template #footer>
+        <UiButton variant="ghost" @click="closeUnlockModal">Annuler</UiButton>
+        <UiButton
+          variant="primary"
+          :icon="Unlock"
+          :disabled="unlocking"
+          @click="confirmUnlock"
+        >
+          {{ unlocking ? uiText('Déverrouillage…') : uiText('Déverrouiller') }}
         </UiButton>
       </template>
     </UiFormModal>

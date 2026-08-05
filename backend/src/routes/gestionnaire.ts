@@ -71,6 +71,7 @@ import {
   applyValidatedOvertimeToPayroll,
   sumValidatedOvertimeByEmployee,
 } from "../lib/doctor-overtime.js";
+import { applyPendingShareClaimsToPayroll } from "../lib/doctor-share-claims.js";
 import { employeeSelect, serializeEmployee, dedupeEmployeesForSelection, isHiddenPlatformAdminEmployee, hiddenPlatformAdminEmployeeWhere } from "../lib/employee.js";
 import {
   deleteOrDeactivateEmployee,
@@ -1216,13 +1217,21 @@ router.post("/payroll/:id/pay", async (req, res) => {
       row.month,
     );
     const paidAt = body.paidAt ? new Date(body.paidAt) : new Date();
-    const primeFcfa = await applyValidatedOvertimeToPayroll(tx, {
+    const overtimePrimeFcfa = await applyValidatedOvertimeToPayroll(tx, {
       employeeId: row.employeeId,
       year: row.year,
       month: row.month,
       paidById: user.id,
       paidAt,
     });
+    const sharePrimeFcfa = await applyPendingShareClaimsToPayroll(tx, {
+      employeeId: row.employeeId,
+      year: row.year,
+      month: row.month,
+      paidById: user.id,
+      paidAt,
+    });
+    const primeFcfa = overtimePrimeFcfa + sharePrimeFcfa;
     return tx.employeePayroll.update({
       where: { id: row.id },
       data: {

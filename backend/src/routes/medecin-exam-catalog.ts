@@ -10,6 +10,7 @@ import {
 import { findDuplicateExamCatalogItem } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { refreshExamPriceCache } from "../lib/lab-exam-prices.js";
+import { ensureLabPanelLinkedToExam } from "../lib/exam-lab-panel.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -53,11 +54,13 @@ const examCatalogSelect = {
   category: true,
   priceFcfa: true,
   clinicServiceId: true,
+  labPanelId: true,
   active: true,
   sortOrder: true,
   createdAt: true,
   updatedAt: true,
   clinicService: { select: { id: true, name: true } },
+  labPanel: { select: { id: true, slug: true, label: true, active: true } },
 } as const;
 
 async function requireDoctorService(req: Request, res: Response) {
@@ -176,8 +179,13 @@ router.post("/", async (req, res) => {
       ),
     );
 
+    await ensureLabPanelLinkedToExam(item.id);
+    const linked = await prisma.examCatalogItem.findUnique({
+      where: { id: item.id },
+      select: examCatalogSelect,
+    });
     await refreshExamPriceCache();
-    return res.status(201).json(item);
+    return res.status(201).json(linked ?? item);
   } catch {
     return res.status(400).json({ error: "Données invalides ou code déjà utilisé" });
   }
@@ -240,8 +248,13 @@ router.put("/:id", async (req, res) => {
       },
       select: examCatalogSelect,
     });
+    await ensureLabPanelLinkedToExam(item.id);
+    const linked = await prisma.examCatalogItem.findUnique({
+      where: { id: item.id },
+      select: examCatalogSelect,
+    });
     await refreshExamPriceCache();
-    return res.json(item);
+    return res.json(linked ?? item);
   } catch {
     return res.status(400).json({ error: "Mise à jour impossible" });
   }

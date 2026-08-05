@@ -129,6 +129,8 @@ const reductionFcfa = ref(0)
 /** Montant net facturé (éditable) — défaut = tarif catalogue. */
 const amountFcfa = ref('')
 const amountManuallyEdited = ref(false)
+/** Montant opération personnalisé (depuis le sélecteur). */
+const operationAmountFcfa = ref<number | null>(null)
 const submitting = ref(false)
 const savingEdit = ref(false)
 const message = ref('')
@@ -230,7 +232,13 @@ const parsedAge = computed(() => parsePatientAge(patientForm.value.age, patientF
 const editParsedName = computed(() => splitPatientFullName(editForm.value.fullName))
 const editParsedAge = computed(() => parsePatientAge(editForm.value.age, editForm.value.ageUnit))
 
-const grossFcfa = computed(() => computeGrossFcfaFromExamsByKind(examsByKind.value))
+const grossFcfa = computed(() => {
+  const base = computeGrossFcfaFromExamsByKind(examsByKind.value)
+  const opLabels = examsByKind.value.operation ?? []
+  if (!opLabels.length || operationAmountFcfa.value == null) return base
+  const catalogOp = opLabels.reduce((sum, label) => sum + getLabExamPriceFcfa(label), 0)
+  return Math.max(0, base - catalogOp + operationAmountFcfa.value)
+})
 const netFcfa = computed(() => {
   const typed = Number(amountFcfa.value)
   if (Number.isFinite(typed) && amountFcfa.value !== '') return Math.max(0, Math.floor(typed))
@@ -407,6 +415,7 @@ function resetExamsForm() {
   amountFcfa.value = ''
   amountManuallyEdited.value = false
   selectedDoctorId.value = ''
+  operationAmountFcfa.value = null
 }
 
 function billingPayload() {
@@ -414,6 +423,11 @@ function billingPayload() {
     examsByKind: examsByKind.value,
     reductionFcfa: Number(reductionFcfa.value) || 0,
     amountFcfa: netFcfa.value,
+    ...(
+      (examsByKind.value.operation?.length ?? 0) > 0 && operationAmountFcfa.value != null
+        ? { operationAmountFcfa: operationAmountFcfa.value }
+        : {}
+    ),
   }
 }
 
@@ -884,6 +898,7 @@ onMounted(() => {
           </p>
           <MultiExamPrescriptionPicker
             v-model="examsByKind"
+            v-model:operation-amount-fcfa="operationAmountFcfa"
             :kinds="externalExamKinds"
             :show-comments="false"
             :show-consultation="false"
@@ -1020,6 +1035,7 @@ onMounted(() => {
         </p>
         <MultiExamPrescriptionPicker
           v-model="examsByKind"
+          v-model:operation-amount-fcfa="operationAmountFcfa"
           :kinds="externalExamKinds"
           :show-comments="false"
           :show-consultation="false"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CLINIC } from '@/lib/clinic'
+import { CLINIC, clinicTaxLine } from '@/lib/clinic'
 
 defineProps<{
   docTitle?: string
@@ -15,6 +15,8 @@ defineProps<{
       <p>{{ CLINIC.fullAddress }}</p>
       <p>{{ CLINIC.phoneLabel }}</p>
       <p>Email : {{ CLINIC.email }}</p>
+      <p v-if="clinicTaxLine()">{{ clinicTaxLine() }}</p>
+      <p v-if="CLINIC.printFooter">{{ CLINIC.printFooter }}</p>
       <p v-if="docTitle" class="clinic-letterhead__doc">{{ docTitle }}</p>
     </div>
   </header>

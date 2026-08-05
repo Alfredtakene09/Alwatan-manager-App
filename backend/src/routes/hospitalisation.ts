@@ -34,10 +34,18 @@ const roomSchema = z.object({
   name: z.string().min(2),
   type: z.enum(["VIP", "SIMPLE"]),
   description: z.string().optional(),
-  dailyRateFcfa: z.number().int().positive(),
-  active: z.boolean().optional(),
+  // coerce : les <select>/<input> HTML envoient souvent des chaînes
+  dailyRateFcfa: z.coerce.number().int().positive(),
+  active: z
+    .union([z.boolean(), z.enum(["true", "false", "1", "0"])])
+    .optional()
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      if (typeof value === "boolean") return value;
+      return value === "true" || value === "1";
+    }),
   /** Nombre de lits à créer (sinon défaut VIP=1 / SIMPLE=2) */
-  bedsCount: z.number().int().min(1).max(20).optional(),
+  bedsCount: z.coerce.number().int().min(1).max(20).optional(),
 });
 
 const hospitalizationSchema = z.object({
@@ -269,7 +277,13 @@ router.put("/rooms/:id", requireManageAccess, async (req, res) => {
       });
     });
     return res.json(room);
-  } catch {
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        error: error.issues[0]?.message ?? "Mise à jour impossible",
+      });
+    }
+    console.error("[hospitalisation] PUT /rooms/:id", error);
     return res.status(400).json({ error: "Mise à jour impossible" });
   }
 });

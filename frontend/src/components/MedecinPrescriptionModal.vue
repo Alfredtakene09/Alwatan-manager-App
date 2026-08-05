@@ -81,6 +81,7 @@ const examCommentsByKind = ref<ExamCommentsByKind>(emptyExamCommentsByKind())
 const hospitalisationDays = ref<number | null>(null)
 const doctorComment = ref('')
 const pharmacyOrdonnance = ref<PharmacyOrdonnanceLine[]>([])
+const operationAmountFcfa = ref<number | null>(null)
 
 const latestVitals = computed(() => sessionVisit.value?.vitalSigns?.[0] ?? null)
 
@@ -153,6 +154,7 @@ function resetForm() {
     hospitalisationDays.value = null
     doctorComment.value = ''
     pharmacyOrdonnance.value = []
+    operationAmountFcfa.value = null
     return
   }
   if (props.mode === 'append') {
@@ -161,12 +163,14 @@ function resetForm() {
     hospitalisationDays.value = null
     doctorComment.value = ''
     pharmacyOrdonnance.value = []
+    operationAmountFcfa.value = null
   } else {
     selectedExamsByKind.value = parsePrescribedExamsByKind(sessionVisit.value.consultation?.clinicalNotes)
     examCommentsByKind.value = parsePrescribedExamCommentsByKind(sessionVisit.value.consultation?.clinicalNotes)
     hospitalisationDays.value = parsePrescribedHospitalisationDays(sessionVisit.value.consultation?.clinicalNotes)
     doctorComment.value = sessionVisit.value.consultation?.doctorComment?.trim() ?? ''
     pharmacyOrdonnance.value = parsePharmacyOrdonnanceLines(sessionVisit.value.consultation?.clinicalNotes)
+    operationAmountFcfa.value = null
   }
   errorMessage.value = ''
 }
@@ -214,6 +218,11 @@ async function submit() {
       doctorComment: doctorComment.value.trim() || undefined,
       pharmacyOrdonnance: showConsultationPanel.value ? pharmacyOrdonnance.value : undefined,
       append: props.mode === 'append',
+      ...(
+        (selectedExamsByKind.value.operation?.length ?? 0) > 0 && operationAmountFcfa.value != null
+          ? { operationAmountFcfa: operationAmountFcfa.value }
+          : {}
+      ),
     })
     if (showConsultationPanel.value && pharmacyOrdonnance.value.length) {
       const { printPharmacyOrdonnance } = await import('@/lib/pharmacy-ordonnance-print')
@@ -336,6 +345,7 @@ async function submit() {
               v-model="selectedExamsByKind"
               v-model:comments="examCommentsByKind"
               v-model:hospitalisation-days="hospitalisationDays"
+              v-model:operation-amount-fcfa="operationAmountFcfa"
               :exclude-by-kind="excludeByKind"
               :doctor-id="auth.user?.id"
             />

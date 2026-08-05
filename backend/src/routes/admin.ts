@@ -58,7 +58,7 @@ import {
   findDuplicateRoomByName,
 } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
-import { requireAuth, requireAnyModule, requireModule } from "../middleware/auth.js";
+import { requireAuth, requireAdmin, requireAnyModule, requireModule } from "../middleware/auth.js";
 import {
   currentPayrollPeriod,
   ensurePayrollForMonth,
@@ -72,6 +72,7 @@ import {
   sumPendingAdvancesByEmployee,
 } from "../lib/salary-advances.js";
 import { applyValidatedOvertimeToPayroll, sumValidatedOvertimeByEmployee } from "../lib/doctor-overtime.js";
+import { applyPendingShareClaimsToPayroll } from "../lib/doctor-share-claims.js";
 import { parseBusinessDate, formatBusinessDate } from "../lib/cash-shift.js";
 
 const router = Router();
@@ -255,6 +256,8 @@ const userSelect = {
   lastName: true,
   role: true,
   active: true,
+  failedLoginAttempts: true,
+  lockedAt: true,
   employeeId: true,
   cashShiftSlot: true,
   createdAt: true,
@@ -287,6 +290,8 @@ function serializeUser(
     lastName: string;
     role: UserRole;
     active: boolean;
+    failedLoginAttempts: number;
+    lockedAt: Date | null;
     employeeId: string;
     cashShiftSlot: ReceptionShiftSlot | null;
     createdAt: Date;
@@ -309,6 +314,9 @@ function serializeUser(
     lastName: user.lastName,
     role: user.role,
     active: user.active,
+    locked: Boolean(user.lockedAt),
+    lockedAt: user.lockedAt,
+    failedLoginAttempts: user.failedLoginAttempts,
     employeeId: user.employeeId,
     cashShiftSlot: user.cashShiftSlot,
     employee: user.employee,
@@ -927,6 +935,17 @@ router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
             body.cashShiftSlot !== undefined ? body.cashShiftSlot : existing.cashShiftSlot,
           )
         : undefined;
+
+    // Compte verrouillé / reset MDP : seul un ADMIN peut définir le mot de passe.
+    if (body.password && currentUser.role !== UserRole.ADMIN) {
+      return res.status(403).json({
+        error: existing.lockedAt
+          ? "Ce compte est verrouillé. Seul un administrateur peut réinitialiser le mot de passe et le déverrouiller."
+          : "Seul un administrateur peut définir ou réinitialiser le mot de passe d'un compte.",
+        code: existing.lockedAt ? "ADMIN_UNLOCK_REQUIRED" : "ADMIN_ONLY",
+      });
+    }
+
     const passwordHash = body.password ? await bcrypt.hash(body.password, 10) : undefined;
     const user = await prisma.user.update({
       where: { id: userId },
@@ -940,7 +959,16 @@ router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
         ...(employeeChanged ? { employeeId: body.employeeId } : {}),
         ...(cashShiftSlot !== undefined ? { cashShiftSlot } : {}),
         ...(employeeNames ?? {}),
-        ...(passwordHash ? { passwordHash } : {}),
+        ...(passwordHash
+          ? {
+              passwordHash,
+              failedLoginAttempts: 0,
+              lockedAt: null,
+              // Invalide toute session en cours après reset MDP admin
+              sessionTokenId: null,
+              lastActivityAt: null,
+            }
+          : {}),
       },
       select: userSelect,
     });
@@ -969,6 +997,49 @@ router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
     return res.status(400).json({ error: zodErrorMessage(error, "Mise à jour impossible") });
   }
 });
+
+const unlockUserSchema = z.object({
+  newPassword: z.string().min(6, "Le nouveau mot de passe doit contenir au moins 6 caractères."),
+});
+
+/** Déverrouille un compte et impose un nouveau MDP — réservé à ADMIN. */
+router.post(
+  "/users/:id/unlock",
+  requireModule("user-accounts"),
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const userId = String(req.params.id);
+      const body = unlockUserSchema.parse(req.body);
+      const existing = await prisma.user.findUnique({ where: { id: userId } });
+      if (!existing) return res.status(404).json({ error: "Utilisateur introuvable" });
+
+      const passwordHash = await bcrypt.hash(body.newPassword, 10);
+      const user = await prisma.user.update({
+        where: { id: userId },
+        data: {
+          passwordHash,
+          failedLoginAttempts: 0,
+          lockedAt: null,
+          sessionTokenId: null,
+          lastActivityAt: null,
+          active: true,
+        },
+        select: userSelect,
+      });
+
+      return res.json({
+        ...(await enrichUserForAdmin(user, req.user!.id)),
+        message: "Compte déverrouillé. L'utilisateur peut se reconnecter avec le nouveau mot de passe.",
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.issues[0]?.message ?? "Données invalides." });
+      }
+      return res.status(400).json({ error: "Déverrouillage impossible." });
+    }
+  },
+);
 
 router.delete("/users/:id", requireModule("user-accounts"), async (req, res) => {
   const userId = String(req.params.id);
@@ -1534,13 +1605,21 @@ router.post("/payroll/:id/pay", async (req, res) => {
       row.month,
     );
     const paidAt = new Date();
-    const primeFcfa = await applyValidatedOvertimeToPayroll(tx, {
+    const overtimePrimeFcfa = await applyValidatedOvertimeToPayroll(tx, {
       employeeId: row.employeeId,
       year: row.year,
       month: row.month,
       paidById: user.id,
       paidAt,
     });
+    const sharePrimeFcfa = await applyPendingShareClaimsToPayroll(tx, {
+      employeeId: row.employeeId,
+      year: row.year,
+      month: row.month,
+      paidById: user.id,
+      paidAt,
+    });
+    const primeFcfa = overtimePrimeFcfa + sharePrimeFcfa;
     return tx.employeePayroll.update({
       where: { id: row.id },
       data: {

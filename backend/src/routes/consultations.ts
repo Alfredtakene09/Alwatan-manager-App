@@ -4,6 +4,7 @@ import {
   SurgeryStatus,
   VisitStatus,
   PatientCategory,
+  InvoiceType,
 } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import {
@@ -59,6 +60,7 @@ import {
   interventionVisibleForServicesWhere,
   resolveDoctorClinicServices,
 } from "../lib/clinic-service-exam.js";
+import { computeInterventionCostShares } from "../lib/surgery-cost-shares.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -100,6 +102,8 @@ const prescribeExamsSchema = z
     examCommentsByKind: examCommentsByKindSchema.optional(),
     doctorComment: z.string().max(5000).optional(),
     hospitalisationDays: z.number().int().min(1).max(365).optional(),
+    /** Montant opération saisi (applique les % chirurgien / clinique du type). */
+    operationAmountFcfa: z.number().int().min(0).optional(),
     notes: z.string().optional(),
     append: z.boolean().optional().default(false),
     pharmacyOrdonnance: z
@@ -138,6 +142,7 @@ async function syncPrescribedProcedures(
   visitId: string,
   examsByKind: Partial<Record<ExamKindSlug, string[]>>,
   doctorId: string,
+  operationAmountFcfa?: number | null,
 ) {
   const operationLabel = examsByKind.operation?.find(Boolean);
   if (operationLabel) {
@@ -147,30 +152,43 @@ async function syncPrescribedProcedures(
       where: {
         label: operationLabel,
         active: true,
-        ...interventionVisibleForServicesWhere(serviceIds),
+        ...interventionVisibleForServicesWhere(serviceIds, { doctorUserId: doctorId }),
       },
     });
     if (intervention) {
-      const surgeonShare = Math.round(
-        (intervention.totalCostFcfa * intervention.surgeonPercent) / 100,
-      );
+      const totalCostFcfa =
+        operationAmountFcfa != null && Number.isFinite(operationAmountFcfa)
+          ? Math.max(0, Math.round(operationAmountFcfa))
+          : intervention.totalCostFcfa;
+      const shares = computeInterventionCostShares(totalCostFcfa, intervention.surgeonPercent);
+      const existing = await tx.surgeryCase.findUnique({ where: { visitId } });
+      const keepPaidStatuses = new Set<SurgeryStatus>([
+        SurgeryStatus.PAID,
+        SurgeryStatus.AUTHORIZED,
+        SurgeryStatus.IN_PROGRESS,
+        SurgeryStatus.COMPLETED,
+      ]);
+      const nextStatus =
+        existing && keepPaidStatuses.has(existing.status)
+          ? existing.status
+          : SurgeryStatus.NOTIFIED;
       await tx.surgeryCase.upsert({
         where: { visitId },
         update: {
           interventionTypeId: intervention.id,
           surgeonId: doctorId,
-          totalCostFcfa: intervention.totalCostFcfa,
-          surgeonShareFcfa: surgeonShare,
-          clinicShareFcfa: intervention.totalCostFcfa - surgeonShare,
-          status: SurgeryStatus.NOTIFIED,
+          totalCostFcfa: shares.totalCostFcfa,
+          surgeonShareFcfa: shares.surgeonShareFcfa,
+          clinicShareFcfa: shares.clinicShareFcfa,
+          status: nextStatus,
         },
         create: {
           visitId,
           interventionTypeId: intervention.id,
           surgeonId: doctorId,
-          totalCostFcfa: intervention.totalCostFcfa,
-          surgeonShareFcfa: surgeonShare,
-          clinicShareFcfa: intervention.totalCostFcfa - surgeonShare,
+          totalCostFcfa: shares.totalCostFcfa,
+          surgeonShareFcfa: shares.surgeonShareFcfa,
+          clinicShareFcfa: shares.clinicShareFcfa,
           status: SurgeryStatus.NOTIFIED,
         },
       });
@@ -329,6 +347,36 @@ router.get("/labs-en-attente", async (req, res) => {
   return res.json(visits);
 });
 
+const labPersonSelect = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  employee: { select: { firstName: true, lastName: true } },
+} as const;
+
+const labResultsVisitInclude = {
+  patient: {
+    include: {
+      createdBy: { select: labPersonSelect },
+    },
+  },
+  assignedDoctor: { select: labPersonSelect },
+  invoices: {
+    where: { type: InvoiceType.LAB_EXAM },
+    select: {
+      issuedBy: { select: labPersonSelect },
+    },
+    orderBy: { createdAt: "asc" as const },
+  },
+  vitalSigns: { orderBy: { recordedAt: "desc" as const }, take: 1 },
+  consultation: {
+    include: {
+      doctor: { select: labPersonSelect },
+      labApprovedBy: { select: labPersonSelect },
+    },
+  },
+} as const;
+
 router.get("/labs-resultats", async (req, res) => {
   const doctorId = req.user!.id;
 
@@ -336,12 +384,7 @@ router.get("/labs-resultats", async (req, res) => {
     where: {
       AND: [medecinMatchWhere(doctorId), { consultation: { is: labsResultsWhere() } }],
     },
-    include: {
-      patient: true,
-      assignedDoctor: { select: { id: true, firstName: true, lastName: true } },
-      vitalSigns: { orderBy: { recordedAt: "desc" }, take: 1 },
-      consultation: true,
-    },
+    include: labResultsVisitInclude,
     orderBy: { updatedAt: "desc" },
     take: 100,
   });
@@ -357,17 +400,7 @@ router.get("/labs-resultats/:visitId", async (req, res) => {
       id: String(req.params.visitId),
       AND: [medecinMatchWhere(doctorId), { consultation: { is: labsResultsWhere() } }],
     },
-    include: {
-      patient: true,
-      assignedDoctor: { select: { id: true, firstName: true, lastName: true } },
-      vitalSigns: { orderBy: { recordedAt: "desc" }, take: 1 },
-      consultation: {
-        include: {
-          doctor: { select: { firstName: true, lastName: true } },
-          labApprovedBy: { select: { firstName: true, lastName: true } },
-        },
-      },
-    },
+    include: labResultsVisitInclude,
   });
 
   if (!visit?.consultation) {
@@ -600,7 +633,13 @@ router.post("/prescribe-exams", async (req, res) => {
       });
 
       if (hasExams && examsByKind) {
-        await syncPrescribedProcedures(tx, body.visitId, examsByKind, user.id);
+        await syncPrescribedProcedures(
+          tx,
+          body.visitId,
+          examsByKind,
+          user.id,
+          body.operationAmountFcfa,
+        );
       }
 
       const directClinical =
@@ -730,7 +769,9 @@ router.post("/", async (req, res) => {
         const defaultIntervention = await tx.interventionType.findFirst({
           where: {
             active: true,
-            ...interventionVisibleForServicesWhere(doctorServices?.ids ?? []),
+            ...interventionVisibleForServicesWhere(doctorServices?.ids ?? [], {
+              doctorUserId: user.id,
+            }),
           },
           orderBy: { category: "asc" },
         });

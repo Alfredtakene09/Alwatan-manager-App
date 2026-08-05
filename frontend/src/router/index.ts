@@ -361,6 +361,12 @@ const router = createRouter({
           meta: { modules: ['utilisateurs', 'gestionnaire'] },
         },
         {
+          path: 'admin/parametres/clinique',
+          name: 'admin-clinic-info',
+          component: () => import('@/views/admin/AdminClinicInfoView.vue'),
+          meta: { roles: ['ADMIN', 'GESTIONNAIRE'] },
+        },
+        {
           path: 'admin/depenses',
           name: 'admin-depenses',
           component: () => import('@/views/admin/AdminDepensesView.vue'),
@@ -497,10 +503,16 @@ router.beforeEach(async (to) => {
     return true
   }
 
+  const allowedRoles = to.meta.roles as string[] | undefined
+  if (allowedRoles?.length && !allowedRoles.includes(auth.user.role)) {
+    return getDefaultRoute(auth.user.role)
+  }
+
   const modules = (to.meta.modules as string[] | undefined) ?? [
     (to.meta.module as string) ?? 'consultation',
   ]
-  if (!canAccessAnyModule(auth.user.role, modules)) {
+  // Routes restreintes par rôle explicite : ne pas imposer le module par défaut.
+  if (!allowedRoles?.length && !canAccessAnyModule(auth.user.role, modules)) {
     return getDefaultRoute(auth.user.role)
   }
 

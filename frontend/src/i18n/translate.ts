@@ -67,18 +67,24 @@ function activeBundle(): MessageBundle {
  * Les données BD / dynamiques ne sont pas dans le dictionnaire : inchangées.
  */
 export function translateUi(text: string | null | undefined): string {
+  return translateUiLocale(text, activeLocale())
+}
+
+/** Traduction figée vers une locale (ex. tickets thermiques toujours en arabe). */
+export function translateUiLocale(
+  text: string | null | undefined,
+  locale: AppLocale,
+): string {
   if (text == null) return ''
   const key = normalizeKey(text)
   if (!key) return text
 
-  const locale = activeLocale()
   const fromUi = NORMALIZED_UI[locale]?.[key]
   if (fromUi != null) return fromUi
   const fromNav = NORMALIZED_NAV[locale]?.[key]
   if (fromNav != null) return fromNav
 
-  // Repli live (évite un cache NORMALIZED_* obsolète après HMR / mise à jour partielle)
-  const bundle = activeBundle()
+  const bundle = CATALOGS[locale] ?? CATALOGS.fr
   const liveUi = bundle.ui?.[key] ?? bundle.ui?.[text]
   if (liveUi != null) return liveUi
   const liveNav = bundle.nav?.[key] ?? bundle.nav?.[text]

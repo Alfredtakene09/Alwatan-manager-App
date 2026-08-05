@@ -4,6 +4,8 @@ import type { LabPanelSlug } from '@/lib/lab-form-panels'
 import {
   buildPrescribedByLabel,
   printLabVisitPanelResults,
+  resolveLabReceptionist,
+  type PrescribedByPerson,
 } from '@/lib/lab-panel-print'
 import { fullName, type SessionUser } from '@/lib/roles'
 import { formatAppDate } from '@/i18n/locale-format'
@@ -19,12 +21,15 @@ type PrintableLabVisit = {
     firstName: string
     lastName: string
     code: string
+    createdBy?: PrescribedByPerson | null
   }
   consultation?: {
     clinicalNotes?: string | null
-    doctor?: { firstName: string; lastName: string } | null
+    doctor?: PrescribedByPerson | null
+    labApprovedBy?: PrescribedByPerson | null
   } | null
-  assignedDoctor?: { firstName: string; lastName: string } | null
+  assignedDoctor?: PrescribedByPerson | null
+  invoices?: Array<{ issuedBy?: PrescribedByPerson | null }> | null
 }
 
 export type LabPrintApiSource = 'laboratoire' | 'medecin'
@@ -58,6 +63,7 @@ export async function fetchAndPrintLabVisitResults(
       patientCode: visit.patient.code,
       prescribedBy: buildPrescribedByLabel(
         visit.consultation?.doctor ?? visit.assignedDoctor ?? null,
+        resolveLabReceptionist(visit),
       ),
       validatedBy: validatorLabel,
       date: formatAppDate(completedAt ?? new Date()),

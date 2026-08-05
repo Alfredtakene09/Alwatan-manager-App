@@ -32,6 +32,8 @@ type InterventionItem = {
   anesthesiologistName?: string | null
   anesthesiologist?: { id: string; firstName: string; lastName: string } | null
   clinicService?: { id: string; name: string } | null
+  authorizedSurgeons?: DoctorOption[]
+  surgeonIds?: string[]
   active: boolean
 }
 
@@ -60,6 +62,7 @@ const { uiText, localeCode } = useAppI18n()
 
 const items = ref<InterventionItem[]>([])
 const doctors = ref<DoctorOption[]>([])
+const serviceDoctors = ref<DoctorOption[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
@@ -80,6 +83,7 @@ const emptyForm = () => ({
   anesthesiologistId: '',
   anesthesiologistName: '',
   assistantInputMode: 'select' as AssistantInputMode,
+  surgeonIds: [] as string[],
 })
 
 const newItem = ref(emptyForm())
@@ -98,6 +102,19 @@ function assistantDisplay(item: InterventionItem) {
     return doctorLabel(item.anesthesiologist)
   }
   return item.anesthesiologistName?.trim() || uiText('Assistant chirurgie')
+}
+
+function surgeonsDisplay(item: InterventionItem) {
+  const list = item.authorizedSurgeons ?? []
+  if (!list.length) return uiText('Tout le service')
+  return list.map((doctor) => doctorLabel(doctor)).join(', ')
+}
+
+function toggleSurgeonId(form: ReturnType<typeof emptyForm>, doctorId: string) {
+  const set = new Set(form.surgeonIds)
+  if (set.has(doctorId)) set.delete(doctorId)
+  else set.add(doctorId)
+  form.surgeonIds = [...set]
 }
 
 const filteredItems = computed(() => {
@@ -130,6 +147,7 @@ const tableRows = computed(() => {
     priceSort: item.totalCostFcfa,
     splits: `${item.surgeonPercent}% / ${item.anesthesiologistPercent}% / ${item.clinicPercent}%`,
     assistant: assistantDisplay(item),
+    surgeons: surgeonsDisplay(item),
     statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),
     statusVariant: item.active ? 'success' : 'danger',
     toggleLabel: item.active ? uiText('Désactiver') : uiText('Activer'),
@@ -148,6 +166,7 @@ const columns = [
       `<span class="dt-amount">${row.price}</span>`,
   },
   { data: 'splits', title: 'Chirurgien / Assist. / Clinique' },
+  { data: 'surgeons', title: 'Chirurgiens autorisés' },
   { data: 'assistant', title: 'Assistant' },
   {
     data: 'statusLabel',
@@ -171,10 +190,15 @@ function resetMessages() {
 
 async function loadDoctors() {
   try {
-    const { data } = await api.get<DoctorOption[]>('/consultation/operation-types/doctors')
-    doctors.value = Array.isArray(data) ? data : []
+    const [{ data: all }, { data: service }] = await Promise.all([
+      api.get<DoctorOption[]>('/consultation/operation-types/doctors'),
+      api.get<DoctorOption[]>('/consultation/operation-types/service-doctors'),
+    ])
+    doctors.value = Array.isArray(all) ? all : []
+    serviceDoctors.value = Array.isArray(service) ? service : []
   } catch {
     doctors.value = []
+    serviceDoctors.value = []
   }
 }
 
@@ -221,6 +245,9 @@ function openEditModal(id: string) {
     anesthesiologistId: item.anesthesiologistId ?? '',
     anesthesiologistName: item.anesthesiologistName ?? '',
     assistantInputMode: fromList || !item.anesthesiologistName ? 'select' : 'custom',
+    surgeonIds: item.surgeonIds?.length
+      ? [...item.surgeonIds]
+      : (item.authorizedSurgeons ?? []).map((d) => d.id),
   }
 }
 
@@ -271,6 +298,7 @@ function buildPayload(form: ReturnType<typeof emptyForm>) {
         form.withAssistant && form.assistantInputMode === 'custom'
           ? form.anesthesiologistName.trim()
           : null,
+      surgeonIds: form.surgeonIds,
     },
   }
 }
@@ -461,7 +489,7 @@ onMounted(() => {
       <section class="form-panel">
         <p class="form-panel__hint">
           {{ uiText('Service') }}: <strong>{{ serviceName }}</strong>
-          · {{ uiText('Chirurgien') }}: {{ uiText('vous (compte connecté)') }}
+          · {{ uiText('Vous êtes toujours inclus comme chirurgien.') }}
         </p>
         <div class="form-grid-2">
           <UiInput v-model="newItem.label" label="Libellé" placeholder="Ex. Appendicectomie" />
@@ -473,6 +501,31 @@ onMounted(() => {
           <UiInput v-model="newItem.totalCostFcfa" label="Coût total (FCFA)" type="number" min="1" />
           <UiInput v-model="newItem.surgeonPercent" label="% Chirurgien" type="number" min="1" max="99" />
         </div>
+        <fieldset class="surgeons-fieldset">
+          <legend>{{ uiText('Chirurgiens autorisés (même service)') }}</legend>
+          <p class="form-panel__hint">
+            {{
+              uiText(
+                'Cochez les médecins du service qui pourront utiliser cette opération. Sans cocher : vous seul.',
+              )
+            }}
+          </p>
+          <div v-if="!serviceDoctors.length" class="form-panel__hint">
+            {{ uiText('Aucun autre médecin actif trouvé sur votre service.') }}
+          </div>
+          <label
+            v-for="doctor in serviceDoctors"
+            :key="doctor.id"
+            class="surgeon-check"
+          >
+            <input
+              type="checkbox"
+              :checked="newItem.surgeonIds.includes(doctor.id)"
+              @change="toggleSurgeonId(newItem, doctor.id)"
+            />
+            {{ doctorLabel(doctor) }}
+          </label>
+        </fieldset>
         <label class="assistant-toggle">
           <input v-model="newItem.withAssistant" type="checkbox" />
           {{ uiText('Avec assistant chirurgie') }}
@@ -554,6 +607,21 @@ onMounted(() => {
           <UiInput v-model="editForm.totalCostFcfa" label="Coût total (FCFA)" type="number" min="1" />
           <UiInput v-model="editForm.surgeonPercent" label="% Chirurgien" type="number" min="1" max="99" />
         </div>
+        <fieldset class="surgeons-fieldset">
+          <legend>{{ uiText('Chirurgiens autorisés (même service)') }}</legend>
+          <label
+            v-for="doctor in serviceDoctors"
+            :key="doctor.id"
+            class="surgeon-check"
+          >
+            <input
+              type="checkbox"
+              :checked="editForm.surgeonIds.includes(doctor.id)"
+              @change="toggleSurgeonId(editForm, doctor.id)"
+            />
+            {{ doctorLabel(doctor) }}
+          </label>
+        </fieldset>
         <label class="assistant-toggle">
           <input v-model="editForm.withAssistant" type="checkbox" />
           {{ uiText('Avec assistant chirurgie') }}
@@ -691,6 +759,31 @@ onMounted(() => {
   background: #fff;
   color: var(--text);
   box-shadow: 0 1px 3px rgba(15, 40, 80, 0.12);
+}
+
+.surgeons-fieldset {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(15, 40, 80, 0.12);
+  border-radius: 10px;
+}
+
+.surgeons-fieldset legend {
+  padding: 0 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.surgeon-check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+  font-size: 0.875rem;
+  cursor: pointer;
 }
 
 @media (max-width: 720px) {

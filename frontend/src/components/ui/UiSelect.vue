@@ -53,13 +53,16 @@ const labelText = computed(() => {
 
 .ui-select {
   width: 100%;
-  padding: 0.55rem 0.75rem;
+  padding: 0.7rem 0.9rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-family: inherit;
-  font-size: 0.875rem;
+  /* Hérite / suit l’échelle globale des selects (--app-select-scale) */
+  font-size: calc(0.875rem * var(--app-select-scale, 1.3) / var(--app-text-scale, 1.15));
+  font-weight: 600;
   color: var(--text);
   background: #fff;
+  min-height: 2.85rem;
 }
 
 .ui-select:disabled {

@@ -187,6 +187,17 @@ export function upsertLabPanelResult(
   return upsertPanelReceivedStamp(withPanel, slug);
 }
 
+/** Au moins une valeur non vide dans un formulaire labo. */
+export function labPanelValuesHaveEntry(values: Record<string, string> | null | undefined) {
+  if (!values) return false;
+  return Object.values(values).some((value) => String(value ?? "").trim().length > 0);
+}
+
+/** Au moins un formulaire enregistré avec un résultat saisi. */
+export function hasFilledLabPanelResults(notes?: string | null) {
+  return Object.values(parseLabPanelResults(notes)).some(labPanelValuesHaveEntry);
+}
+
 /** Chaque validation (y compris résultats tardifs) ajoute un horodatage distinct. */
 export function appendLabResultsCompletion(notes: string | null | undefined) {
   const base = (notes ?? "").trim();

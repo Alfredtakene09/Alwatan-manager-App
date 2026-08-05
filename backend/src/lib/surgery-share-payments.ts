@@ -1,4 +1,4 @@
-import type { SurgeryCase } from "@prisma/client";
+import { SharePaymentMethod, type SurgeryCase } from "@prisma/client";
 
 export type OperationShareKind = "surgeon" | "assistant" | "clinic";
 
@@ -64,14 +64,18 @@ export function buildSharePaymentUpdate(
   shares: OperationShareKind[],
   userId: string,
   now = new Date(),
+  method: SharePaymentMethod = SharePaymentMethod.CASH,
 ) {
   const data: {
     surgeonPaidAt?: Date;
     surgeonPaidById?: string;
+    surgeonPaidMethod?: SharePaymentMethod;
     assistantPaidAt?: Date;
     assistantPaidById?: string;
+    assistantPaidMethod?: SharePaymentMethod;
     clinicPaidAt?: Date;
     clinicPaidById?: string;
+    clinicPaidMethod?: SharePaymentMethod;
   } = {};
 
   for (const share of shares) {
@@ -85,12 +89,15 @@ export function buildSharePaymentUpdate(
     if (share === "surgeon") {
       data.surgeonPaidAt = now;
       data.surgeonPaidById = userId;
+      data.surgeonPaidMethod = method;
     } else if (share === "assistant") {
       data.assistantPaidAt = now;
       data.assistantPaidById = userId;
+      data.assistantPaidMethod = method;
     } else {
       data.clinicPaidAt = now;
       data.clinicPaidById = userId;
+      data.clinicPaidMethod = method;
     }
   }
 
@@ -101,9 +108,12 @@ export function clearSharePaymentFields() {
   return {
     surgeonPaidAt: null,
     surgeonPaidById: null,
+    surgeonPaidMethod: null,
     assistantPaidAt: null,
     assistantPaidById: null,
+    assistantPaidMethod: null,
     clinicPaidAt: null,
     clinicPaidById: null,
+    clinicPaidMethod: null,
   };
 }

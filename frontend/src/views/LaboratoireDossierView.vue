@@ -15,8 +15,7 @@ import {
   type LabPanelSlug,
 } from '@/lib/lab-form-panels'
 import { useLabPanelsStore } from '@/stores/lab-panels'
-import { buildPrescribedByLabel, printLabPanelResult } from '@/lib/lab-panel-print'
-import { fetchAndPrintLabVisitResults } from '@/lib/lab-visit-print'
+import { buildPrescribedByLabel, printLabPanelResult, resolveLabReceptionist } from '@/lib/lab-panel-print'
 import { panelFormHasValues } from '@/lib/lab-visit-search'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import { useAppI18n } from '@/i18n/useAppI18n'
@@ -38,18 +37,18 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const labPanels = useLabPanelsStore()
-const { uiText, dateTimeText, numberText, roleLabel } = useAppI18n()
+const { uiText, dateTimeText, numberText, roleLabel, localeCode } = useAppI18n()
 
 const visit = ref<LabsWaitingVisitRow | null>(null)
 const panelResults = ref<DossierResponse['panelResults']>({})
 const dossierCompleted = ref(false)
 const selectedPanelSlug = ref('')
 const activePanel = ref<LabPanelSlug | null>(null)
+const panelSearchQuery = ref('')
 const formValues = reactive<Record<string, string>>({})
 const loading = ref(false)
 const saving = ref(false)
 const completing = ref(false)
-const printingAll = ref(false)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 
@@ -79,7 +78,10 @@ const prescribedExamsFull = computed(() =>
 )
 
 const doctorLabel = computed(() =>
-  buildPrescribedByLabel(visit.value?.consultation?.doctor ?? visit.value?.assignedDoctor ?? null),
+  buildPrescribedByLabel(
+    visit.value?.consultation?.doctor ?? visit.value?.assignedDoctor ?? null,
+    resolveLabReceptionist(visit.value),
+  ),
 )
 
 const validatorLabel = computed(() => {
@@ -98,15 +100,33 @@ const savedPanelCount = computed(
 
 const entryPanels = computed(() => labPanels.entryPanels)
 
+function normalizeSearchText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .trim()
+}
+
+/** Tous les formulaires actifs — saisie, consultation et modification. */
+const listedPanels = computed(() => {
+  void localeCode.value
+  return entryPanels.value.slice().sort((a, b) =>
+    uiText(a.label).localeCompare(uiText(b.label), localeCode.value, { sensitivity: 'base' }),
+  )
+})
+
+/** Filtre rapide selon la langue affichée (libellé traduit). */
 const selectablePanels = computed(() => {
-  if (isConsultMode.value || isEditMode.value) {
-    return labPanels.panels
-      .filter((panel) => isPanelFilled(panel.slug))
-      .slice()
-      .sort((a, b) => uiText(a.label).localeCompare(uiText(b.label), undefined, { sensitivity: 'base' }))
-  }
-  // Tous les formulaires actifs non encore saisis (tri alphabétique)
-  return entryPanels.value.filter((panel) => !isPanelFilled(panel.slug))
+  void localeCode.value
+  const q = normalizeSearchText(panelSearchQuery.value)
+  if (!q) return listedPanels.value
+  return listedPanels.value.filter((panel) => {
+    const label = normalizeSearchText(uiText(panel.label))
+    const raw = normalizeSearchText(panel.label)
+    const slug = normalizeSearchText(panel.slug)
+    return label.includes(q) || raw.includes(q) || slug.includes(q)
+  })
 })
 
 const isActivePanelReadOnly = computed(() => {
@@ -117,7 +137,12 @@ const isActivePanelReadOnly = computed(() => {
 })
 
 function panelOptionLabel(slug: LabPanelSlug) {
-  return uiText(getLabFormPanel(slug)?.label ?? slug)
+  void localeCode.value
+  const base = uiText(getLabFormPanel(slug)?.label ?? slug)
+  if (isPanelFilled(slug)) {
+    return `${base} (${uiText('Enregistré')})`
+  }
+  return base
 }
 
 function labFieldDisplayLabel(field: LabFormField) {
@@ -158,6 +183,7 @@ async function loadDossier() {
   loading.value = true
   message.value = ''
   try {
+    await labPanels.fetchPanels()
     const { data } = await api.get<DossierResponse>(`/laboratoire/visits/${visitId.value}`)
     visit.value = data.visit
     panelResults.value = data.panelResults
@@ -219,7 +245,14 @@ function goBack() {
 }
 
 async function completeDossier() {
-  if (!savedPanelCount.value || dossierCompleted.value) return
+  if (dossierCompleted.value) return
+  if (!savedPanelCount.value) {
+    showMessage(
+      uiText('Aucun résultat saisi — saisissez au moins un formulaire avant de clôturer.'),
+      'error',
+    )
+    return
+  }
   const ok = await confirmAppModal({
     title: 'Clôturer le dossier',
     message:
@@ -235,19 +268,19 @@ async function completeDossier() {
     dossierCompleted.value = true
     showMessage(uiText('Dossier clôturé — résultats transmis au médecin.'))
     setTimeout(() => router.push({ name: 'laboratoire-termines' }), 1200)
-  } catch {
-    showMessage(uiText('Impossible de clôturer le dossier.'), 'error')
+  } catch (error: unknown) {
+    const apiMessage =
+      error &&
+      typeof error === 'object' &&
+      'response' in error &&
+      (error as { response?: { data?: { error?: unknown } } }).response?.data?.error
+    showMessage(
+      uiText(typeof apiMessage === 'string' ? apiMessage : 'Impossible de clôturer le dossier.'),
+      'error',
+    )
   } finally {
     completing.value = false
   }
-}
-
-async function printAllDossier() {
-  if (!visit.value || !savedPanelCount.value) return
-  printingAll.value = true
-  const result = await fetchAndPrintLabVisitResults(visit.value, auth.user, 'laboratoire')
-  if (!result.ok) showMessage(result.error, 'error')
-  printingAll.value = false
 }
 
 function printPanel() {
@@ -268,7 +301,7 @@ watch(selectedPanelSlug, (slug) => {
   selectPanel(null)
 })
 
-watch(selectablePanels, (panels) => {
+watch(listedPanels, (panels) => {
   if (activePanel.value && !panels.some((panel) => panel.slug === activePanel.value)) {
     selectedPanelSlug.value = ''
     activePanel.value = null
@@ -280,6 +313,7 @@ watch(
   () => {
     selectedPanelSlug.value = ''
     activePanel.value = null
+    panelSearchQuery.value = ''
     loadDossier()
   },
 )
@@ -308,16 +342,6 @@ onMounted(async () => {
         >
           {{ completing ? 'Clôture…' : 'Clôturer le dossier' }}
         </UiButton>
-        <UiButton
-          v-if="savedPanelCount"
-          variant="outline"
-          size="sm"
-          :icon="Printer"
-          :disabled="printingAll"
-          @click="printAllDossier"
-        >
-          {{ printingAll ? 'Impression…' : 'Imprimer tout le dossier' }}
-        </UiButton>
         <UiButton variant="ghost" size="sm" :icon="ArrowLeft" @click="goBack">
           Retour
         </UiButton>
@@ -328,27 +352,22 @@ onMounted(async () => {
     <UiAlert
       v-if="isEditMode && !loading"
       type="info"
-      message="Mode modification — sélectionnez un formulaire enregistré, corrigez les valeurs puis enregistrez."
+      :message="uiText('Mode modification — sélectionnez un formulaire enregistré, corrigez les valeurs puis enregistrez.')"
     />
     <UiAlert
-      v-else-if="isAddMode && !loading && selectablePanels.length"
+      v-else-if="isAddMode && !loading"
       type="info"
-      message="Ajout de formulaire — seuls les types non encore saisis sont proposés."
-    />
-    <UiAlert
-      v-else-if="isAddMode && !loading && !selectablePanels.length"
-      type="warning"
-      message="Tous les types de formulaire sont déjà saisis pour ce dossier."
+      :message="uiText('Ajoutez un formulaire supplémentaire — cherchez par nom puis sélectionnez-le.')"
     />
     <UiAlert
       v-else-if="isConsultMode && !loading"
       type="info"
-      message="Consultation en lecture seule — utilisez Modifier depuis Examens terminés pour corriger un formulaire."
+      :message="uiText('Consultation en lecture seule — utilisez Modifier depuis Examens terminés pour corriger un formulaire.')"
     />
     <UiAlert
-      v-else-if="dossierCompleted && !loading && !isEditMode && !isAddMode && !isConsultMode && !selectablePanels.length"
+      v-else-if="dossierCompleted && !loading && !isEditMode && !isAddMode && !isConsultMode"
       type="success"
-      message="Tous les formulaires sont enregistrés. Le dossier est dans Examens terminés."
+      :message="uiText('Dossier clôturé. Vous pouvez encore consulter ou imprimer les formulaires enregistrés.')"
     />
 
     <p v-if="loading" class="hint">{{ uiText('Chargement du dossier…') }}</p>
@@ -383,7 +402,9 @@ onMounted(async () => {
           </p>
           <p class="info-compact__row info-compact__row--exams">
             <span class="info-compact__label">{{ uiText('Examens laboratoire') }}</span>
-            <strong :title="prescribedExamsFull">{{ prescribedExamsPreview }}</strong>
+            <strong class="info-compact__exams-text" :title="prescribedExamsFull">{{
+              prescribedExamsPreview
+            }}</strong>
           </p>
         </div>
       </UiCard>
@@ -391,63 +412,65 @@ onMounted(async () => {
       <UiCard
         :title="
           isEditMode
-            ? 'Modifier les formulaires'
+            ? uiText('Modifier les formulaires')
             : isAddMode
-              ? 'Ajouter un formulaire'
+              ? uiText('Ajouter un formulaire')
               : isConsultMode
-                ? 'Consulter les formulaires'
-                : 'Formulaires de résultats'
+                ? uiText('Consulter les formulaires')
+                : uiText('Formulaires de résultats')
         "
         :description="
           isEditMode
-            ? 'Sélectionnez un formulaire déjà enregistré pour corriger les résultats'
-            : isAddMode
-              ? 'Choisissez un type non saisi, remplissez les résultats puis enregistrez'
-              : isConsultMode
-                ? 'Sélectionnez un formulaire enregistré pour le consulter ou l\'imprimer'
-                : 'Enregistrez le formulaire pour l\'imprimer — les types déjà remplis disparaissent de la liste'
+            ? uiText('Sélectionnez un formulaire déjà enregistré pour corriger les résultats')
+            : isConsultMode
+              ? uiText('Sélectionnez un formulaire enregistré pour le consulter ou l\'imprimer')
+              : uiText('Choisissez un formulaire dans la liste (tous sont proposés), ou filtrez par nom')
         "
         icon-variant="teal"
         :icon="FlaskConical"
       >
-        <UiSelect
-          v-model="selectedPanelSlug"
-          label="Type de formulaire"
-          :required="false"
-        >
-          <option value="">
+        <div class="panel-select">
+          <UiInput
+            v-model="panelSearchQuery"
+            :label="uiText('Rechercher')"
+            :placeholder="uiText('Rechercher un formulaire…')"
+            :required="false"
+          />
+          <UiSelect
+            v-model="selectedPanelSlug"
+            :label="uiText('Type de formulaire')"
+            :required="false"
+          >
+            <option value="">
+              {{
+                selectablePanels.length
+                  ? uiText('— Choisir un formulaire —')
+                  : panelSearchQuery.trim()
+                    ? uiText('Aucun formulaire ne correspond à la recherche.')
+                    : isEditMode || isConsultMode
+                      ? uiText('— Aucun formulaire enregistré —')
+                      : uiText('— Aucun formulaire disponible —')
+              }}
+            </option>
+            <option v-for="panel in selectablePanels" :key="panel.slug" :value="panel.slug">
+              {{ panelOptionLabel(panel.slug) }}
+            </option>
+          </UiSelect>
+          <p v-if="listedPanels.length" class="panel-select__meta">
             {{
-              selectablePanels.length
-                ? uiText('— Choisir un formulaire —')
-                : isEditMode
-                  ? uiText('— Aucun formulaire enregistré —')
-                  : isAddMode
-                    ? uiText('— Tous les types sont déjà saisis —')
-                    : uiText('— Tous les formulaires sont enregistrés —')
+              uiText('{shown} / {total} formulaire(s)')
+                .replace('{shown}', numberText(selectablePanels.length))
+                .replace('{total}', numberText(listedPanels.length))
             }}
-          </option>
-          <option v-for="panel in selectablePanels" :key="panel.slug" :value="panel.slug">
-            {{ panelOptionLabel(panel.slug) }}
-          </option>
-        </UiSelect>
-
-        <p v-if="savedPanelCount && (isAddMode || (!isEditMode && !isConsultMode))" class="saved-hint">
-          {{
-            uiText('{n} formulaire(s) déjà enregistré(s) — non proposés dans la liste.').replace(
-              '{n}',
-              numberText(savedPanelCount),
-            )
-          }}
-        </p>
-        <p
-          v-else-if="!selectablePanels.length && !isEditMode && !isConsultMode && savedPanelCount"
-          class="saved-hint saved-hint--completed"
-        >
-          {{ uiText('Tous les types de formulaire disponibles ont été enregistrés.') }}
-        </p>
+          </p>
+        </div>
 
         <template v-if="activePanelConfig">
           <div class="form-divider" />
+
+          <p v-if="!activePanelConfig.sections.some((s) => s.fields.length)" class="saved-hint">
+            {{ uiText('Ce formulaire n’a pas encore de champs — complétez-le dans Formulaires laboratoire.') }}
+          </p>
 
           <div v-for="section in activePanelConfig.sections" :key="section.title ?? 'main'" class="form-section">
             <h3 v-if="section.title" class="form-section__title">{{ uiText(section.title) }}</h3>
@@ -485,7 +508,7 @@ onMounted(async () => {
               :disabled="!activePanel"
               @click="printPanel"
             >
-              Imprimer
+              {{ uiText('Imprimer') }}
             </UiButton>
             <UiButton
               v-else
@@ -496,12 +519,12 @@ onMounted(async () => {
             >
               {{
                 saving
-                  ? 'Enregistrement…'
+                  ? uiText('Enregistrement…')
                   : isEditMode
-                    ? 'Enregistrer les modifications'
+                    ? uiText('Enregistrer les modifications')
                     : isAddMode
-                      ? 'Ajouter et imprimer'
-                      : 'Enregistrer et imprimer'
+                      ? uiText('Ajouter et imprimer')
+                      : uiText('Enregistrer et imprimer')
               }}
             </UiButton>
           </div>
@@ -567,9 +590,12 @@ onMounted(async () => {
   color: var(--text);
 }
 
-.info-compact__row--exams strong {
+.info-compact__row--exams strong,
+.info-compact__exams-text {
   flex: 1;
   min-width: 0;
+  color: var(--brand-red-700, #b71c1c);
+  font-weight: 800;
 }
 
 .saved-hint {
@@ -579,6 +605,18 @@ onMounted(async () => {
 }
 
 .saved-hint--completed {
+  color: var(--text-muted);
+}
+
+.panel-select {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.panel-select__meta {
+  margin: -0.35rem 0 0;
+  font-size: 0.8125rem;
   color: var(--text-muted);
 }
 
@@ -594,14 +632,14 @@ onMounted(async () => {
 }
 
 .form-section__title {
-  margin: 0 0 0.75rem;
-  font-size: 0.875rem;
+  margin: 0 0 0.65rem;
+  font-size: 0.8125rem;
   color: var(--primary-700);
 }
 
 .form-grid {
   display: grid;
-  gap: 0.85rem;
+  gap: 0.65rem;
 }
 
 .form-grid--cols-2 {
@@ -610,17 +648,28 @@ onMounted(async () => {
 
 .form-grid--cols-4 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.65rem 0.75rem;
+  gap: 0.5rem 0.65rem;
 }
 
 .form-grid--cols-4 :deep(.ui-field__label) {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   line-height: 1.25;
 }
 
 .form-grid--cols-4 :deep(.ui-field__input) {
-  padding: 0.5rem 0.6rem;
+  padding: 0.4rem 0.55rem;
   font-size: 0.8125rem;
+}
+
+.lab-dossier :deep(.panel-select .ui-field__label),
+.lab-dossier :deep(.form-section .ui-field__label) {
+  font-size: 0.75rem;
+}
+
+.lab-dossier :deep(.form-section .ui-field__input) {
+  font-size: 0.875rem;
+  padding: 0.5rem 0.7rem;
+  min-height: 2.35rem;
 }
 
 .lab-field {

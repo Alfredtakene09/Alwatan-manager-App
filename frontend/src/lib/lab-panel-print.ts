@@ -91,34 +91,48 @@ function renderResultCell(field: LabPanelField, values: Record<string, string>) 
   return `<td class="lab-sheet-table__result">${resultLine}${commentLine}</td>`
 }
 
+function fieldReference(field: LabPanelField) {
+  return field.reference?.trim() || ''
+}
+
+function sectionsHaveReference(sections: LabPanelSection[]) {
+  return sections.some((section) => section.fields.some((field) => Boolean(fieldReference(field))))
+}
+
 function renderSectionTable(
   section: LabPanelSection,
   values: Record<string, string>,
   densityClass: string,
+  showNrColumn: boolean,
 ) {
   if (!section.fields.length) return ''
 
   const rows = section.fields
-    .map(
-      (field) => `
+    .map((field) => {
+      const refCell = showNrColumn
+        ? `<td class="lab-sheet-table__ref">${escapeHtml(fieldReference(field) || '—')}</td>`
+        : ''
+      return `
       <tr>
         <td class="lab-sheet-table__test">${escapeHtml(translateUi(field.label))}</td>
         ${renderResultCell(field, values)}
-        <td class="lab-sheet-table__ref">${escapeHtml(field.reference ?? '—')}</td>
+        ${refCell}
       </tr>
-    `,
-    )
+    `
+    })
     .join('')
 
   const density = densityClass ? ` ${densityClass}` : ''
+  const nrHeader = showNrColumn ? `<th>N.R</th>` : ''
+  const tableMod = showNrColumn ? '' : ' lab-sheet-table--no-nr'
 
   return `
-    <table class="lab-sheet-table${density}">
+    <table class="lab-sheet-table${density}${tableMod}">
       <thead>
         <tr>
           <th>${escapeHtml(translateUi('Test'))}</th>
           <th>${escapeHtml(translateUi('Result'))}</th>
-          <th>N.R</th>
+          ${nrHeader}
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -126,10 +140,15 @@ function renderSectionTable(
   `
 }
 
-function renderPanelTables(sections: LabPanelSection[], values: Record<string, string>, densityClass: string) {
+function renderPanelTables(
+  sections: LabPanelSection[],
+  values: Record<string, string>,
+  densityClass: string,
+  showNrColumn: boolean,
+) {
   return sections
     .map((section) => {
-      const table = renderSectionTable(section, values, densityClass)
+      const table = renderSectionTable(section, values, densityClass, showNrColumn)
       if (!table) return ''
       if (!section.title) {
         return `<div class="lab-sheet-block">${table}</div>`
@@ -184,6 +203,8 @@ export function buildLabPanelPrintHtml(
   const densityClass = tableDensityClass(rowCount)
   const scale = initialPrintScale(rowCount)
   const formTitle = formatFormTitle(panel.label)
+  const showNrColumn = sectionsHaveReference(filledSections)
+  const validator = context.validatedBy?.trim() || '—'
 
   return `
     <article
@@ -195,11 +216,11 @@ export function buildLabPanelPrintHtml(
         ${renderPatientBand(context, date)}
         <h2 class="lab-result-print__form-name">${escapeHtml(formTitle)}</h2>
         <div class="lab-result-print__body">
-          ${renderPanelTables(filledSections, values, densityClass)}
+          ${renderPanelTables(filledSections, values, densityClass, showNrColumn)}
         </div>
         <footer class="lab-result-print__footer">
           <span class="lab-result-print__footer-label">${escapeHtml(translateUi('Validé par'))}</span>
-          <strong>${escapeHtml(context.validatedBy)}</strong>
+          <strong class="lab-result-print__footer-name">${escapeHtml(validator)}</strong>
         </footer>
       </div>
     </article>
@@ -229,61 +250,66 @@ const LAB_PANEL_PRINT_STYLES = `
     transform: scale(var(--lab-print-scale));
     transform-origin: top left;
     width: calc(100% / var(--lab-print-scale));
+    min-height: ${A4_PRINTABLE_HEIGHT_MM}mm;
     box-sizing: border-box;
     color: #0f172a;
+    direction: ltr;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
   }
   .lab-result-print .clinic-header {
-    margin-bottom: 10px;
-    padding: 0 96px 10px;
-    min-height: 88px;
+    margin-bottom: 8px;
+    padding: 0 80px 8px;
+    min-height: 72px;
     border-bottom: 2px solid #0f766e;
   }
   .lab-result-print .clinic-logo {
-    width: 88px;
-    height: 88px;
+    width: 70px;
+    height: 70px;
   }
   .lab-result-print .clinic-logo--right {
     left: auto;
     right: 0;
   }
   .lab-result-print .clinic-info h1 {
-    font-size: 26px;
-    margin-bottom: 3px;
+    font-size: 18px;
+    margin-bottom: 2px;
   }
   .lab-result-print .clinic-ar {
-    margin-bottom: 4px;
-    font-size: 22px;
+    margin-bottom: 2px;
+    font-size: 15px;
   }
   .lab-result-print .clinic-contact {
-    font-size: 16px;
-    line-height: 1.4;
-    margin-bottom: 2px;
+    font-size: 11px;
+    line-height: 1.35;
+    margin-bottom: 1px;
   }
   .lab-result-print__patient {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px 24px;
-    margin: 0 0 14px;
-    padding: 10px 14px;
-    border: 1.5px solid #cbd5e1;
+    gap: 6px 18px;
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border: 1px solid #cbd5e1;
     border-radius: 6px;
     background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
   }
   .lab-result-print__field {
     display: flex;
     align-items: baseline;
-    gap: 8px;
-    font-size: 16px;
-    line-height: 1.35;
+    gap: 6px;
+    font-size: 12px;
+    line-height: 1.3;
   }
   .lab-result-print__field-label {
     flex-shrink: 0;
-    min-width: 110px;
+    min-width: 90px;
     color: #64748b;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.02em;
-    font-size: 13px;
+    font-size: 10px;
   }
   .lab-result-print__field-label::after {
     content: ' :';
@@ -294,35 +320,35 @@ const LAB_PANEL_PRINT_STYLES = `
     color: #0f172a;
   }
   .lab-result-print__form-name {
-    margin: 0 0 14px;
-    padding: 12px 14px;
+    margin: 0 0 10px;
+    padding: 8px 10px;
     text-align: center;
-    font-size: 32px;
+    font-size: 16px;
     font-weight: 800;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     color: #0f172a;
     background: #fff;
-    border-top: 3px solid #0f766e;
-    border-bottom: 3px solid #0f766e;
-    box-shadow: inset 0 1px 0 #ecfdf5;
+    border-top: 2px solid #0f766e;
+    border-bottom: 2px solid #0f766e;
   }
   .lab-result-print__body {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 10px;
+    flex: 1 1 auto;
   }
   .lab-sheet-block {
     margin: 0;
   }
   .lab-sheet-block__heading {
-    margin: 0 0 8px;
-    padding: 8px 12px;
+    margin: 0 0 6px;
+    padding: 5px 8px;
     background: #ecfdf5;
-    border-left: 5px solid #0d9488;
-    font-size: 22.5px;
+    border-left: 4px solid #0d9488;
+    font-size: 12px;
     font-weight: 800;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     color: #0f766e;
   }
@@ -331,8 +357,8 @@ const LAB_PANEL_PRINT_STYLES = `
     border-collapse: separate;
     border-spacing: 0;
     table-layout: fixed;
-    font-size: 25.5px;
-    border: 1.5px solid #0d9488;
+    font-size: 12.5px;
+    border: 1px solid #0d9488;
     border-radius: 6px;
     overflow: hidden;
     margin: 0;
@@ -340,22 +366,24 @@ const LAB_PANEL_PRINT_STYLES = `
   .lab-sheet-table thead th {
     background: linear-gradient(180deg, #0f766e 0%, #0d9488 100%);
     color: #fff;
-    padding: 10px 12px;
-    font-size: 22.5px;
+    padding: 6px 8px;
+    font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.04em;
     text-align: left;
     border: none;
   }
   .lab-sheet-table thead th:nth-child(2) {
     text-align: center;
-    width: 22%;
+    width: 28%;
   }
-  .lab-sheet-table thead th:nth-child(1) { width: 36%; }
-  .lab-sheet-table thead th:nth-child(3) { width: 42%; }
+  .lab-sheet-table thead th:nth-child(1) { width: 40%; }
+  .lab-sheet-table thead th:nth-child(3) { width: 32%; }
+  .lab-sheet-table--no-nr thead th:nth-child(1) { width: 55%; }
+  .lab-sheet-table--no-nr thead th:nth-child(2) { width: 45%; }
   .lab-sheet-table tbody td {
-    padding: 10px 12px;
+    padding: 6px 8px;
     vertical-align: middle;
     border-top: 1px solid #e2e8f0;
     line-height: 1.3;
@@ -384,8 +412,8 @@ const LAB_PANEL_PRINT_STYLES = `
     line-height: 1.3;
   }
   .lab-sheet-table__result-comment {
-    margin-top: 4px;
-    font-size: 21px;
+    margin-top: 3px;
+    font-size: 11px;
     font-weight: 500;
     color: #475569;
     text-align: left;
@@ -394,63 +422,68 @@ const LAB_PANEL_PRINT_STYLES = `
   }
   .lab-sheet-table__unit {
     display: inline-block;
-    margin-left: 6px;
+    margin-left: 4px;
     font-weight: 500;
     color: #64748b;
-    font-size: 22.5px;
+    font-size: 11px;
   }
   .lab-sheet-table__ref {
-    font-size: 22.5px;
+    font-size: 11px;
     color: #475569;
     line-height: 1.25;
     font-style: italic;
   }
   .lab-sheet-table--compact {
-    font-size: 22.5px;
+    font-size: 11.5px;
   }
   .lab-sheet-table--compact thead th {
-    padding: 8px 10px;
-    font-size: 21px;
+    padding: 5px 7px;
+    font-size: 10.5px;
   }
   .lab-sheet-table--compact tbody td {
-    padding: 7px 10px;
+    padding: 5px 7px;
   }
   .lab-sheet-table--compact .lab-sheet-table__ref {
-    font-size: 21px;
+    font-size: 10.5px;
   }
   .lab-sheet-table--dense {
-    font-size: 21px;
+    font-size: 11px;
   }
   .lab-sheet-table--dense thead th {
-    padding: 6px 8px;
-    font-size: 19.5px;
+    padding: 4px 6px;
+    font-size: 10px;
   }
   .lab-sheet-table--dense tbody td {
-    padding: 5px 8px;
+    padding: 4px 6px;
   }
   .lab-sheet-table--dense .lab-sheet-table__ref {
-    font-size: 19.5px;
+    font-size: 10px;
     line-height: 1.15;
   }
   .lab-result-print__footer {
     display: flex;
     justify-content: flex-end;
-    align-items: center;
-    gap: 10px;
-    margin-top: 16px;
-    padding-top: 12px;
-    border-top: 1.5px solid #cbd5e1;
-    font-size: 25.5px;
+    align-items: baseline;
+    gap: 8px;
+    margin-top: auto;
+    padding-top: 14px;
+    border-top: 1px solid #cbd5e1;
+    font-size: 12px;
   }
   .lab-result-print__footer-label {
     color: #64748b;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-size: 22.5px;
     font-weight: 600;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.03em;
   }
   .lab-result-print__footer-label::after {
     content: ' :';
+  }
+  .lab-result-print__footer-name {
+    color: #0f172a;
+    font-size: 13px;
+    font-weight: 800;
   }
   @media print {
     .lab-result-print--single-page {
@@ -522,7 +555,7 @@ export function printLabVisitPanelResults(
   openPrintDocument(
     title,
     `<style>${LAB_PANEL_PRINT_STYLES}</style>${body}${LAB_PANEL_FIT_SCRIPT}`,
-    { pageSize: 'A4', autoPrint: false },
+    { pageSize: 'A4', autoPrint: false, forceLtr: true },
   )
 
   return true
@@ -540,10 +573,50 @@ export function printLabPanelResult(
   openPrintDocument(
     `${panel?.label ?? 'Résultat'} — ${context.patientCode}`,
     `<style>${LAB_PANEL_PRINT_STYLES}</style>${body}${LAB_PANEL_FIT_SCRIPT}`,
-    { pageSize: 'A4', autoPrint: false },
+    { pageSize: 'A4', autoPrint: false, forceLtr: true },
   )
 }
 
-export function buildPrescribedByLabel(doctor?: { firstName: string; lastName: string } | null) {
-  return doctor ? `Dr ${fullName(doctor.firstName, doctor.lastName)}` : 'Réception'
+export type PrescribedByPerson = {
+  firstName: string
+  lastName: string
+  employee?: { firstName: string; lastName: string } | null
 }
+
+/** Nom puis prénom, en privilégiant la fiche employé liée. */
+function personNomPrenom(person: PrescribedByPerson) {
+  const firstName = person.employee?.firstName?.trim() || person.firstName
+  const lastName = person.employee?.lastName?.trim() || person.lastName
+  return `${lastName} ${firstName}`.trim()
+}
+
+function personPrenomNom(person: PrescribedByPerson) {
+  const firstName = person.employee?.firstName?.trim() || person.firstName
+  const lastName = person.employee?.lastName?.trim() || person.lastName
+  return fullName(firstName, lastName)
+}
+
+/** Réceptionniste ayant enregistré / envoyé l’examen (employé lié si disponible). */
+export function resolveLabReceptionist(visit?: {
+  consultation?: { labApprovedBy?: PrescribedByPerson | null } | null
+  invoices?: Array<{ issuedBy?: PrescribedByPerson | null }> | null
+  patient?: { createdBy?: PrescribedByPerson | null } | null
+} | null): PrescribedByPerson | null {
+  if (!visit) return null
+  return (
+    visit.consultation?.labApprovedBy ??
+    visit.invoices?.find((invoice) => invoice.issuedBy)?.issuedBy ??
+    visit.patient?.createdBy ??
+    null
+  )
+}
+
+export function buildPrescribedByLabel(
+  doctor?: PrescribedByPerson | null,
+  receptionist?: PrescribedByPerson | null,
+) {
+  if (doctor) return `Dr ${personPrenomNom(doctor)}`
+  if (receptionist) return personNomPrenom(receptionist)
+  return 'Réception'
+}
+

@@ -11,6 +11,7 @@ import {
 import { DT_ICONS } from '@/lib/datatable-defaults'
 import { formatAppDate, formatAppTime } from '@/i18n/locale-format'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+import type { PrescribedByPerson } from '@/lib/lab-panel-print'
 
 export type LabsResultsVisitRow = {
   id: string
@@ -23,8 +24,12 @@ export type LabsResultsVisitRow = {
     code: string
     phone?: string | null
     category?: string
+    createdBy?: PrescribedByPerson | null
   }
-  assignedDoctor?: { firstName: string; lastName: string } | null
+  assignedDoctor?: PrescribedByPerson | null
+  invoices?: Array<{
+    issuedBy?: PrescribedByPerson | null
+  }>
   vitalSigns?: Array<{
     weightKg?: number | null
     bloodPressure?: string | null
@@ -36,8 +41,8 @@ export type LabsResultsVisitRow = {
     clinicalNotes?: string | null
     doctorComment?: string | null
     updatedAt?: string
-    doctor?: { firstName: string; lastName: string } | null
-    labApprovedBy?: { firstName: string; lastName: string } | null
+    doctor?: PrescribedByPerson | null
+    labApprovedBy?: PrescribedByPerson | null
   } | null
 }
 

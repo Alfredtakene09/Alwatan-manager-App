@@ -51,7 +51,8 @@ const editForm = ref({
   type: 'SIMPLE',
   description: '',
   dailyRateFcfa: '',
-  active: true,
+  /** string : UiSelect émet toujours des chaînes HTML */
+  active: 'true',
 })
 
 const roomsById = computed(() => new Map(rooms.value.map((room) => [room.id, room])))
@@ -202,7 +203,7 @@ function openEditModal(id: string) {
     type: room.type,
     description: room.description ?? '',
     dailyRateFcfa: String(room.dailyRateFcfa),
-    active: room.active,
+    active: room.active ? 'true' : 'false',
   }
 }
 
@@ -212,6 +213,12 @@ function closeEditModal() {
 
 async function saveEdit() {
   if (!editingId.value) return
+  const rate = Number(editForm.value.dailyRateFcfa)
+  if (!editForm.value.name.trim() || !Number.isFinite(rate) || rate < 1) {
+    message.value = 'Nom et tarif sont obligatoires.'
+    messageType.value = 'error'
+    return
+  }
   saving.value = true
   resetMessages()
   try {
@@ -219,15 +226,19 @@ async function saveEdit() {
       name: editForm.value.name.trim(),
       type: editForm.value.type,
       description: editForm.value.description.trim() || undefined,
-      dailyRateFcfa: Number(editForm.value.dailyRateFcfa),
-      active: editForm.value.active,
+      dailyRateFcfa: Math.round(rate),
+      active: editForm.value.active === 'true',
     })
     message.value = 'Salle mise à jour.'
     messageType.value = 'success'
     closeEditModal()
     await load()
-  } catch {
-    message.value = 'Mise à jour impossible.'
+  } catch (error: unknown) {
+    const apiError =
+      error && typeof error === 'object' && 'response' in error
+        ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined
+    message.value = apiError || 'Mise à jour impossible.'
     messageType.value = 'error'
   } finally {
     saving.value = false
@@ -391,8 +402,8 @@ onMounted(load)
           <UiInput v-model="editForm.dailyRateFcfa" label="Tarif nuitée (FCFA)" type="number" min="1" />
           <UiInput v-model="editForm.description" label="Description" placeholder="Optionnel" />
           <UiSelect v-model="editForm.active" label="Statut de la salle">
-            <option :value="true">Active</option>
-            <option :value="false">Inactive</option>
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
           </UiSelect>
         </div>
       </section>

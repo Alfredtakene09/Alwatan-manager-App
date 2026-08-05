@@ -18,6 +18,7 @@ import {
   interventionVisibleForServicesWhere,
   resolveDoctorClinicServices,
 } from "../lib/clinic-service-exam.js";
+import { computeInterventionCostShares } from "../lib/surgery-cost-shares.js";
 import {
   medecinDejaConsulteListVisitWhere,
   medecinPendingConsultationVisitWhere,
@@ -889,6 +890,8 @@ const externalLabOrderSchema = z
     reductionFcfa: z.number().int().min(0).default(0),
     /** Montant net facturé (surcharge le calcul catalogue − réduction). */
     amountFcfa: z.number().int().min(0).optional(),
+    /** Montant dédié à l’opération (parts % appliquées sur le SurgeryCase). */
+    operationAmountFcfa: z.number().int().min(0).optional(),
   })
   .refine((data) => data.patientId || (data.firstName && data.lastName), {
     message: "Patient requis",
@@ -1291,7 +1294,9 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
             label: operationLabel,
             active: true,
             ...(serviceIds.length
-              ? interventionVisibleForServicesWhere(serviceIds)
+              ? interventionVisibleForServicesWhere(serviceIds, {
+                  doctorUserId: assignedDoctorId,
+                })
               : {}),
           },
         });
@@ -1301,29 +1306,32 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
             examLabels.length > 0 &&
             operationLabels.length === examLabels.length;
           const totalCostFcfa =
-            operationOnly && body.amountFcfa != null
-              ? body.amountFcfa
-              : intervention.totalCostFcfa;
-          const surgeonShare = Math.round(
-            (totalCostFcfa * intervention.surgeonPercent) / 100,
+            body.operationAmountFcfa != null
+              ? body.operationAmountFcfa
+              : operationOnly && body.amountFcfa != null
+                ? body.amountFcfa
+                : intervention.totalCostFcfa;
+          const shares = computeInterventionCostShares(
+            totalCostFcfa,
+            intervention.surgeonPercent,
           );
           await tx.surgeryCase.upsert({
             where: { visitId },
             update: {
               interventionTypeId: intervention.id,
               surgeonId: assignedDoctorId,
-              totalCostFcfa,
-              surgeonShareFcfa: surgeonShare,
-              clinicShareFcfa: totalCostFcfa - surgeonShare,
+              totalCostFcfa: shares.totalCostFcfa,
+              surgeonShareFcfa: shares.surgeonShareFcfa,
+              clinicShareFcfa: shares.clinicShareFcfa,
               status: SurgeryStatus.NOTIFIED,
             },
             create: {
               visitId,
               interventionTypeId: intervention.id,
               surgeonId: assignedDoctorId,
-              totalCostFcfa,
-              surgeonShareFcfa: surgeonShare,
-              clinicShareFcfa: totalCostFcfa - surgeonShare,
+              totalCostFcfa: shares.totalCostFcfa,
+              surgeonShareFcfa: shares.surgeonShareFcfa,
+              clinicShareFcfa: shares.clinicShareFcfa,
               status: SurgeryStatus.NOTIFIED,
             },
           });

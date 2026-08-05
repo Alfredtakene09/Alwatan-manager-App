@@ -15,11 +15,12 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\_alwatan-common.ps1"
 
 $TaskName = 'Alwatan-Demarrage-Serveur'
+$silentVbs = Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-serveur' -ExtraArgs '-Production'
 $launcherCmd = Join-Path $PSScriptRoot 'lancer-serveur.cmd'
 $startupLnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Alwatan Manager (Serveur).lnk'
 
-if (-not (Test-Path $launcherCmd)) {
-    throw "Lanceur introuvable : $launcherCmd"
+if (-not (Test-Path $silentVbs)) {
+    throw "Lanceur silencieux introuvable : $silentVbs"
 }
 
 if ($Uninstall) {
@@ -32,8 +33,10 @@ if ($Uninstall) {
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 if (Test-Path $startupLnk) { Remove-Item $startupLnk -Force }
 
+# wscript //B = aucune fenêtre
 $action = New-ScheduledTaskAction `
-    -Execute $launcherCmd `
+    -Execute 'wscript.exe' `
+    -Argument "//B `"$silentVbs`"" `
     -WorkingDirectory $PSScriptRoot
 
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
@@ -57,16 +60,18 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description 'Démarre Alwatan Manager (API + interface) à l''ouverture de session' `
+    -Description 'Démarre Alwatan Manager (API + interface) à l''ouverture de session — sans fenêtre console' `
     -Force | Out-Null
 
 Write-Host ''
-Write-Host 'Démarrage automatique installé.' -ForegroundColor Green
+Write-Host 'Démarrage automatique installé (mode cabinet, port 4000, sans terminal).' -ForegroundColor Green
 Write-Host "  Tâche planifiée : $TaskName"
 Write-Host "  Déclencheur     : ouverture de session ($env:USERNAME)"
 Write-Host "  Délai           : ${DelaySeconds}s (PostgreSQL / réseau)"
-Write-Host "  Script          : $launcherCmd"
+Write-Host "  Lanceur         : $silentVbs"
+Write-Host "  Journal         : $env:LOCALAPPDATA\CliniqueAlwatan\server.log"
 Write-Host ''
 Write-Host 'Au prochain redémarrage, le serveur Alwatan démarrera tout seul.' -ForegroundColor Cyan
+Write-Host 'Relance manuelle : raccourci Bureau « Alwatan Manager (Serveur) » (pas Serveur Auto).' -ForegroundColor Cyan
 Write-Host 'Pour désinstaller : .\scripts\installer-demarrage-auto.ps1 -Uninstall' -ForegroundColor DarkGray
 Write-Host ''

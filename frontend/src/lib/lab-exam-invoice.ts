@@ -143,6 +143,9 @@ export type ExamKindInvoiceMeta = {
   grossFcfa?: number
   reductionFcfa?: number
   netFcfa?: number
+  paidFcfa?: number
+  remainingFcfa?: number
+  isFullyPaid?: boolean
 }
 
 function buildPatientContext(item: LabExamPendingItem) {
@@ -162,20 +165,38 @@ function buildPatientContext(item: LabExamPendingItem) {
   }
 }
 
+function resolveReceiptPaymentMeta(meta?: ExamKindInvoiceMeta) {
+  const paidFcfa = meta?.paidFcfa
+  const remainingFcfa = meta?.remainingFcfa
+  const isPartial =
+    meta?.isFullyPaid === false ||
+    (remainingFcfa != null && remainingFcfa > 0) ||
+    (paidFcfa != null && meta?.netFcfa != null && paidFcfa < meta.netFcfa)
+  return {
+    paidFcfa,
+    remainingFcfa,
+    status: isPartial ? 'Payé partiellement' : 'Payé',
+  }
+}
+
 function buildKindInvoiceSection(
   item: LabExamPendingItem,
   kind: ExamKindSlug,
   reductionFcfa = 0,
   status = 'En attente',
-  invoiceNumber?: string,
+  invoiceMeta?: ExamKindInvoiceMeta | string,
 ): string | null {
   const normalized = normalizeLabExamPendingItem(item)
   const block = normalized.examsByKind[kind]
   if (!block?.lines.length) return null
 
-  const grossFcfa = block.grossFcfa
-  const reduction = Math.min(Math.max(0, Number(reductionFcfa) || 0), grossFcfa)
-  const totalFcfa = Math.max(0, grossFcfa - reduction)
+  const meta = typeof invoiceMeta === 'string' ? { invoiceNumber: invoiceMeta } : invoiceMeta
+  const grossFcfa = meta?.grossFcfa ?? block.grossFcfa
+  const reduction = Math.min(
+    Math.max(0, Number(meta?.reductionFcfa ?? reductionFcfa) || 0),
+    grossFcfa,
+  )
+  const totalFcfa = Math.max(0, meta?.netFcfa ?? grossFcfa - reduction)
   const kindComment =
     INVOICE_EXAM_COMMENT_KINDS.includes(kind) && normalized.clinicalNotes
       ? parsePrescribedExamCommentsByKind(normalized.clinicalNotes)[kind]?.trim() ?? ''
@@ -192,8 +213,10 @@ function buildKindInvoiceSection(
     grossFcfa,
     reductionFcfa: reduction,
     totalFcfa,
+    paidFcfa: meta?.paidFcfa,
+    remainingFcfa: meta?.remainingFcfa,
     status,
-    invoiceNumber,
+    invoiceNumber: meta?.invoiceNumber,
     kindComment: kindComment || undefined,
   })
 }
@@ -220,9 +243,9 @@ export function printLabExamKindInvoice(
   kind: ExamKindSlug,
   reductionFcfa = 0,
   status = 'En attente',
-  invoiceNumber?: string,
+  invoiceMeta?: ExamKindInvoiceMeta | string,
 ) {
-  const section = buildKindInvoiceSection(item, kind, reductionFcfa, status, invoiceNumber)
+  const section = buildKindInvoiceSection(item, kind, reductionFcfa, status, invoiceMeta)
   if (!section) return
 
   openPrintDocument(
@@ -250,12 +273,13 @@ export function printAllPendingLabExamInvoices(
 
   const sections = sheets
     .map((sheet) => {
+      const meta = invoicesByKind?.[sheet.kind]
       const html = buildKindInvoiceSection(
         normalized,
         sheet.kind,
         sheet.reductionFcfa,
         status,
-        invoicesByKind?.[sheet.kind]?.invoiceNumber,
+        meta,
       )
       return html ? `<div class="print-invoice-page">${html}</div>` : null
     })
@@ -286,18 +310,40 @@ export function printLabExamPaymentReceipts(
     for (const kind of payload.kinds) {
       paidReductions[kind] = payload.reductionsByKind[kind] ?? 0
     }
-    printAllPendingLabExamInvoices(normalized, paidReductions, 'Payé', invoicesByKind, payload.kinds)
+    const sections = payload.kinds
+      .map((kind) => {
+        const meta = invoicesByKind?.[kind]
+        const payment = resolveReceiptPaymentMeta(meta)
+        return buildKindInvoiceSection(
+          normalized,
+          kind,
+          payload.reductionsByKind[kind] ?? 0,
+          payment.status,
+          meta,
+        )
+      })
+      .filter(Boolean)
+      .map((html) => `<div class="print-invoice-page">${html}</div>`)
+      .join('')
+    if (!sections) return
+    openPrintDocument(
+      `Factures examens — ${normalized.visit.patient.code}`,
+      sections,
+      { pageSize: '80mm' },
+    )
     return
   }
 
   const kind = payload.kinds[0]
   if (!kind) return
+  const meta = invoicesByKind?.[kind]
+  const payment = resolveReceiptPaymentMeta(meta)
   printLabExamKindInvoice(
     normalized,
     kind,
     payload.reductionsByKind[kind] ?? 0,
-    'Payé',
-    invoicesByKind?.[kind]?.invoiceNumber,
+    payment.status,
+    meta,
   )
 }
 

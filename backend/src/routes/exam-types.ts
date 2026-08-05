@@ -12,11 +12,18 @@ import {
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorWhere } from "../lib/doctor-compensation.js";
 import {
+  authorizedSurgeonsInclude,
+  resolveAuthorizedSurgeonIds,
+  serializeAuthorizedSurgeons,
+  syncInterventionAuthorizedSurgeons,
+} from "../lib/intervention-authorized-surgeons.js";
+import {
   resolveClinicServiceById,
   suggestExamCatalogKindFromServiceName,
   isExamVisibleOnKindTab,
   examCatalogServiceScopeKey,
 } from "../lib/clinic-service-exam.js";
+import { ensureLabPanelLinkedToExam } from "../lib/exam-lab-panel.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -61,11 +68,13 @@ const examCatalogSelect = {
   category: true,
   priceFcfa: true,
   clinicServiceId: true,
+  labPanelId: true,
   active: true,
   sortOrder: true,
   createdAt: true,
   updatedAt: true,
   clinicService: { select: { id: true, name: true } },
+  labPanel: { select: { id: true, slug: true, label: true, active: true } },
 } as const;
 
 const serviceTabSchema = z.object({
@@ -107,6 +116,8 @@ const interventionBaseSchema = z.object({
     (v) => (v === "" || v === undefined ? null : v),
     z.string().min(1).nullable().optional(),
   ),
+  /** Liste des chirurgiens autorisés (User ids). Si omise à la création : [surgeonId]. */
+  surgeonIds: z.array(z.string().min(1)).optional(),
   active: z.boolean().optional(),
 });
 
@@ -214,6 +225,7 @@ const interventionInclude = {
   surgeon: { select: { id: true, firstName: true, lastName: true } },
   anesthesiologist: { select: { id: true, firstName: true, lastName: true } },
   clinicService: { select: { id: true, name: true } },
+  ...authorizedSurgeonsInclude,
 } as const;
 
 async function resolveInterventionClinicServiceId(
@@ -248,10 +260,18 @@ function serializeIntervention(item: {
   surgeon: { id: string; firstName: string; lastName: string } | null;
   anesthesiologist: { id: string; firstName: string; lastName: string } | null;
   clinicService?: { id: string; name: string } | null;
+  authorizedSurgeons?: Array<{
+    userId: string;
+    user: { id: string; firstName: string; lastName: string };
+  }>;
 }) {
+  const { authorizedSurgeons, ...rest } = item;
+  const surgeons = serializeAuthorizedSurgeons(authorizedSurgeons);
   return {
-    ...item,
+    ...rest,
     clinicPercent: clinicPercentFromSplits(item.surgeonPercent, item.anesthesiologistPercent),
+    authorizedSurgeons: surgeons,
+    surgeonIds: surgeons.map((d) => d.id),
   };
 }
 
@@ -532,8 +552,13 @@ router.post("/catalog/:kindSlug", async (req, res) => {
       },
       select: examCatalogSelect,
     });
+    await ensureLabPanelLinkedToExam(item.id);
+    const linked = await prisma.examCatalogItem.findUnique({
+      where: { id: item.id },
+      select: examCatalogSelect,
+    });
     await refreshExamPriceCache();
-    return res.status(201).json(item);
+    return res.status(201).json(linked ?? item);
   } catch (error) {
     if (error instanceof Error && error.message === "SERVICE_INVALID") {
       return res.status(400).json({ error: "Service clinique introuvable ou inactif." });
@@ -618,8 +643,13 @@ router.put("/catalog/:kindSlug/:id", async (req, res) => {
       },
       select: examCatalogSelect,
     });
+    await ensureLabPanelLinkedToExam(item.id);
+    const linked = await prisma.examCatalogItem.findUnique({
+      where: { id: item.id },
+      select: examCatalogSelect,
+    });
     await refreshExamPriceCache();
-    return res.json(item);
+    return res.json(linked ?? item);
   } catch (error) {
     if (error instanceof Error && error.message === "SERVICE_INVALID") {
       return res.status(400).json({ error: "Service clinique introuvable ou inactif." });
@@ -709,7 +739,18 @@ router.post("/operations", async (req, res) => {
       },
       include: interventionInclude,
     });
-    return res.status(201).json(serializeIntervention(item));
+
+    const surgeonIds = await resolveAuthorizedSurgeonIds(
+      body.surgeonIds?.length ? body.surgeonIds : surgeon.surgeonId ? [surgeon.surgeonId] : [],
+      { alwaysInclude: surgeon.surgeonId },
+    );
+    await syncInterventionAuthorizedSurgeons(item.id, surgeonIds);
+
+    const refreshed = await prisma.interventionType.findUniqueOrThrow({
+      where: { id: item.id },
+      include: interventionInclude,
+    });
+    return res.status(201).json(serializeIntervention(refreshed));
   } catch (error) {
     if (error instanceof Error && error.message === "SERVICE_INVALID") {
       return res.status(400).json({ error: "Service clinique introuvable ou inactif." });
@@ -791,7 +832,26 @@ router.put("/operations/:id", async (req, res) => {
       },
       include: interventionInclude,
     });
-    return res.json(serializeIntervention(item));
+
+    if (body.surgeonIds !== undefined || surgeon?.surgeonId) {
+      const nextPrimary =
+        surgeon?.surgeonId !== undefined ? surgeon.surgeonId : item.surgeonId;
+      const surgeonIds = await resolveAuthorizedSurgeonIds(
+        body.surgeonIds !== undefined
+          ? body.surgeonIds
+          : nextPrimary
+            ? [nextPrimary]
+            : [],
+        { alwaysInclude: nextPrimary },
+      );
+      await syncInterventionAuthorizedSurgeons(item.id, surgeonIds);
+    }
+
+    const refreshed = await prisma.interventionType.findUniqueOrThrow({
+      where: { id: item.id },
+      include: interventionInclude,
+    });
+    return res.json(serializeIntervention(refreshed));
   } catch (error) {
     if (error instanceof Error && error.message === "SERVICE_INVALID") {
       return res.status(400).json({ error: "Service clinique introuvable." });

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
@@ -21,6 +22,7 @@ import dashboardRoutes from "./routes/dashboard.js";
 import hospitalisationRoutes from "./routes/hospitalisation.js";
 import { refreshExamPriceCache } from "./lib/lab-exam-prices.js";
 import { backfillLegacyConsultationInvoices } from "./lib/revenue-stats.js";
+import { backfillLabReceptionistApprovals } from "./lib/lab-receptionist-backfill.js";
 import examCatalogRoutes from "./routes/exam-catalog.js";
 import examTypesRoutes from "./routes/exam-types.js";
 import medecinExamCatalogRoutes from "./routes/medecin-exam-catalog.js";
@@ -30,6 +32,7 @@ import laboratoireRoutes from "./routes/laboratoire.js";
 import labPanelsRoutes from "./routes/lab-panels.js";
 import { seedLabPanelsIfEmpty } from "./lib/lab-panels-seed.js";
 import { refreshLabPanelRegistry } from "./lib/lab-panels-registry.js";
+import { syncAllExamLabPanelLinks } from "./lib/exam-lab-panel.js";
 import surgeriesRoutes from "./routes/surgeries.js";
 import cashSettlementsRoutes from "./routes/cash-settlements.js";
 import cashDeskRoutes from "./routes/cash-desk.js";
@@ -38,6 +41,9 @@ import logistiqueRoutes from "./routes/logistique.js";
 import labStockRoutes from "./routes/lab-stock.js";
 import clientSetupRoutes from "./routes/client-setup.js";
 import doctorOvertimeRoutes from "./routes/doctor-overtime.js";
+import doctorSharesRoutes from "./routes/doctor-shares.js";
+import clinicInfoRoutes from "./routes/clinic-info.js";
+import { ensureClinicInfoRow } from "./lib/clinic.js";
 import { getLanIpv4, getTailscaleIpv4, isPrivateLanOrigin, parseCorsOrigins } from "./lib/lan-host.js";
 
 const app = express();
@@ -129,6 +135,7 @@ app.use("/api/bloc-salles", blocSallesRoutes);
 app.use("/api/pharmacie", pharmacieRoutes);
 app.use("/api/factures", facturesRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/clinic-info", clinicInfoRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/hospitalisation", hospitalisationRoutes);
 app.use("/api/exam-catalog", examCatalogRoutes);
@@ -146,9 +153,14 @@ app.use("/api/logistique", logistiqueRoutes);
 app.use("/api/lab-stock", labStockRoutes);
 app.use("/api/client-setup", clientSetupRoutes);
 app.use("/api/doctor-overtime", doctorOvertimeRoutes);
+app.use("/api/doctor-shares", doctorSharesRoutes);
 
 refreshExamPriceCache().catch((error) => {
   console.error("Impossible de charger le cache des tarifs examens:", error);
+});
+
+ensureClinicInfoRow().catch((error) => {
+  console.error("Impossible d'initialiser les infos clinique:", error);
 });
 
 seedLabPanelsIfEmpty()
@@ -157,6 +169,14 @@ seedLabPanelsIfEmpty()
       console.log(`${created} formulaire(s) de résultats laboratoire initialisé(s).`);
     }
     return refreshLabPanelRegistry();
+  })
+  .then(() => syncAllExamLabPanelLinks())
+  .then((sync) => {
+    if (sync.created > 0 || sync.linked > 0) {
+      console.log(
+        `Examens ↔ formulaires labo : ${sync.scanned} examen(s), ${sync.linked} lié(s), ${sync.created} formulaire(s) créé(s).`,
+      );
+    }
   })
   .catch((error) => {
     console.error("Impossible d'initialiser les formulaires laboratoire:", error);
@@ -176,8 +196,85 @@ backfillLegacyConsultationInvoices()
     console.error("Synchronisation factures consultation:", error);
   });
 
-const serveFrontend =
+backfillLabReceptionistApprovals()
+  .then((count) => {
+    if (count > 0) {
+      console.log(`${count} dossier(s) labo : réceptionniste rétabli pour « Prescrit par ».`);
+    }
+  })
+  .catch((error) => {
+    console.error("Synchronisation réceptionnistes labo:", error);
+  });
+
+/**
+ * frontend/dist est ignoré par Git : après clone/pull/nettoyage il disparaît.
+ * Sans index.html Express répondait « Cannot GET / ». On reconstruit puis,
+ * si échec, on affiche une page d’aide claire (jamais le 404 Express brut).
+ */
+function tryBuildFrontend(): boolean {
+  if (process.env.AUTO_BUILD_FRONTEND === "0") return false;
+  const frontendRoot = path.join(projectRoot, "frontend");
+  if (!fs.existsSync(path.join(frontendRoot, "package.json"))) return false;
+
+  console.warn(
+    "Interface absente (frontend/dist) — compilation automatique… (1–3 min)",
+  );
+  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+  const result = spawnSync(npmCmd, ["run", "build"], {
+    cwd: frontendRoot,
+    stdio: "inherit",
+    env: process.env,
+    shell: true,
+  });
+  const ok = result.status === 0 && fs.existsSync(frontendIndex);
+  if (!ok) {
+    console.error(
+      "Échec compilation frontend. Sur le serveur : scripts\\lancer-serveur.cmd (mode cabinet) ou cd frontend && npm run build",
+    );
+  }
+  return ok;
+}
+
+function sendFrontendUnavailablePage(res: express.Response) {
+  res
+    .status(503)
+    .type("html")
+    .setHeader("Cache-Control", "no-store")
+    .send(`<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Alwatan — Interface indisponible</title>
+  <style>
+    body { font-family: Segoe UI, system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1.25rem; color: #1a2332; line-height: 1.5; }
+    h1 { font-size: 1.35rem; margin-bottom: 0.5rem; }
+    code { background: #eef2f7; padding: 0.1em 0.35em; border-radius: 4px; }
+    ol { padding-left: 1.25rem; }
+    a { color: #0b5fff; }
+  </style>
+</head>
+<body>
+  <h1>L’application clinique n’est pas prête</h1>
+  <p>Le serveur API répond, mais l’interface compilée (<code>frontend/dist</code>) est absente.</p>
+  <p><strong>Sur le PC serveur</strong>, faites l’une de ces actions puis rechargez cette page :</p>
+  <ol>
+    <li>Double-cliquez <code>scripts\\lancer-serveur.cmd</code> (mode cabinet recommandé)</li>
+    <li>Ou dans un terminal : <code>cd frontend</code> puis <code>npm run build</code>, ensuite redémarrez le backend</li>
+  </ol>
+  <p>Contrôle technique : <a href="/api/health/frontend">/api/health/frontend</a> doit afficher <code>"ready": true</code>.</p>
+</body>
+</html>`);
+}
+
+let serveFrontend =
   process.env.SERVE_FRONTEND !== "0" && fs.existsSync(frontendIndex);
+if (!serveFrontend && process.env.SERVE_FRONTEND !== "0") {
+  if (tryBuildFrontend()) {
+    serveFrontend = true;
+  }
+}
+
 if (serveFrontend) {
   app.use(
     express.static(frontendDist, {
@@ -198,6 +295,11 @@ if (serveFrontend) {
   });
   console.log(`Interface servie depuis ${frontendDist}`);
 } else {
+  app.use((req, res, next) => {
+    if (req.method !== "GET" && req.method !== "HEAD") return next();
+    if (req.path.startsWith("/api")) return next();
+    sendFrontendUnavailablePage(res);
+  });
   console.warn(
     `Interface non servie (index introuvable ou SERVE_FRONTEND=0) : ${frontendIndex}`,
   );

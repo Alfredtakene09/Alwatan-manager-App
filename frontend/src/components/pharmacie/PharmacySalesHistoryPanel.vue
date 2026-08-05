@@ -6,7 +6,7 @@ import { formatFcfa, fullName } from '@/lib/roles'
 import { CLINIC } from '@/lib/clinic'
 import { formatPatientTableDate } from '@/lib/patient-datatable-columns'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
-import { openPrintDocument } from '@/lib/print-document'
+import { buildThermalClinicHeaderHtml, openPrintDocument, thermalAr, thermalBi, thermalMetaRow } from '@/lib/print-document'
 import { translateUi } from '@/i18n/translate'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -155,58 +155,61 @@ async function loadItems() {
 }
 
 function printSale(sale: SaleRecord) {
-  const t = translateUi
   const isExternal = Boolean(sale.externalClient) || sale.buyerType === 'external'
   const buyerLabel = saleBuyerName(sale)
   const buyerCode = saleBuyerCode(sale)
   const invoiceNumber = sale.invoiceNumber ?? sale.id.slice(0, 8).toUpperCase()
   const date = new Date(sale.createdAt).toLocaleString('fr-FR')
   const thermalRows = sale.lines
-    .map(
-      (line) => `
-    <tr>
-      <td>${line.productName}${line.sku ? ` (${line.sku})` : ''}</td>
-      <td>${line.quantity}</td>
-      <td>${formatFcfa(line.lineTotalFcfa)}</td>
-    </tr>`,
+    .map((line) =>
+      thermalMetaRow(
+        `${line.productName}${line.sku ? ` (${line.sku})` : ''} × ${line.quantity}`,
+        formatFcfa(line.lineTotalFcfa),
+        '',
+      ),
     )
     .join('')
+  const titleFr = isExternal ? 'Vente pharmacie' : 'Ordonnance pharmacie'
+  const titleAr = thermalAr(titleFr)
 
   openPrintDocument(
-    `${t(isExternal ? 'Vente' : 'Ordonnance')} ${buyerCode}`,
+    `${isExternal ? 'Vente' : 'Ordonnance'} ${buyerCode}`,
     `
 <div class="thermal-receipt">
-  <header class="thermal-receipt__head">
-    <img src="${CLINIC.logo}" alt="${CLINIC.nameFr}" class="thermal-receipt__logo" />
-    <p class="thermal-receipt__name-ar" dir="rtl">${CLINIC.nameAr}</p>
-    <p class="thermal-receipt__name">${CLINIC.nameFr}</p>
-    <p class="thermal-receipt__contact">${CLINIC.fullAddress}</p>
-    <p class="thermal-receipt__contact">${CLINIC.phones}</p>
-  </header>
+  ${buildThermalClinicHeaderHtml({
+    name: CLINIC.nameFr,
+    nameAr: CLINIC.nameAr,
+    contact: `${CLINIC.city} · ${CLINIC.phones}`,
+    logo: CLINIC.logo,
+  })}
 
   <hr class="thermal-receipt__rule" />
-  <h1 class="thermal-receipt__title">${isExternal ? t('Vente pharmacie') : t('Ordonnance pharmacie')}</h1>
-  <p class="thermal-receipt__subtitle">${invoiceNumber}</p>
+  <div class="thermal-receipt__title-row">
+    <div class="thermal-receipt__title-bi">
+      <h1 class="thermal-receipt__title thermal-receipt__title--fr" dir="ltr">${titleFr}</h1>
+      ${titleAr ? `<h1 class="thermal-receipt__title thermal-receipt__title--ar" dir="rtl" lang="ar">${titleAr}</h1>` : ''}
+    </div>
+    <p class="thermal-receipt__subtitle-no" dir="ltr">${invoiceNumber}</p>
+  </div>
   <hr class="thermal-receipt__rule" />
 
   <div class="thermal-receipt__fields">
-    <div class="thermal-receipt__row"><span>${t('Date')}</span><strong>${date}</strong></div>
-    <div class="thermal-receipt__row thermal-receipt__row--stack"><span>${t('Acheteur')}</span><strong>${buyerLabel}</strong></div>
-    <div class="thermal-receipt__row"><span>${t('Référence')}</span><strong>${buyerCode}</strong></div>
-    <div class="thermal-receipt__row"><span>${t('Pharmacien')}</span><strong>${fullName(sale.pharmacist.firstName, sale.pharmacist.lastName)}</strong></div>
+    ${thermalMetaRow('Date', date)}
+    ${thermalMetaRow('Acheteur', buyerLabel)}
+    ${thermalMetaRow('Référence', buyerCode)}
+    ${thermalMetaRow('Pharmacien', fullName(sale.pharmacist.firstName, sale.pharmacist.lastName))}
   </div>
 
   <hr class="thermal-receipt__rule" />
-  <table>
-    <thead><tr><th>${t('Produit')}</th><th>${t('Qté')}</th><th>${t('Total')}</th></tr></thead>
-    <tbody>${thermalRows}</tbody>
-  </table>
-  <div class="thermal-receipt__fields">
-    <div class="thermal-receipt__row"><span>${t('Total payé')}</span><strong>${formatFcfa(sale.totalFcfa)}</strong></div>
+  <div class="thermal-receipt__lines">
+    ${thermalRows}
   </div>
-  ${sale.notes ? `<p class="thermal-receipt__note"><strong>${t('Notes:')}</strong> ${sale.notes}</p>` : ''}
+  <div class="thermal-receipt__fields">
+    ${thermalMetaRow('Total payé', formatFcfa(sale.totalFcfa))}
+  </div>
+  ${sale.notes ? `<p class="thermal-receipt__note"><span dir="ltr">${thermalBi('Notes:')}</span> <span dir="ltr">${sale.notes}</span></p>` : ''}
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks">${t('Merci de votre confiance')}</p>
+  <p class="thermal-receipt__thanks">${thermalBi('Merci de votre confiance')}</p>
 </div>
 `,
     { pageSize: '80mm', autoPrint: true },

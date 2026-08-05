@@ -64,6 +64,8 @@ type CatalogApiResponse = Record<
     priceFcfa: number
     clinicServiceId?: string | null
     clinicServiceName?: string | null
+    labPanelId?: string | null
+    labPanelSlug?: string | null
     anesthesiologistPercent?: number
     anesthesiologistId?: string | null
     anesthesiologistName?: string | null
@@ -114,10 +116,13 @@ function mapApiItem(item: {
   priceFcfa: number
   clinicServiceId?: string | null
   clinicServiceName?: string | null
+  labPanelId?: string | null
+  labPanelSlug?: string | null
   anesthesiologistPercent?: number
   anesthesiologistId?: string | null
   anesthesiologistName?: string | null
   hasAssistant?: boolean
+  surgeonPercent?: number
 }): CatalogExam {
   return {
     id: item.id,
@@ -127,10 +132,13 @@ function mapApiItem(item: {
     priceFcfa: item.priceFcfa,
     clinicServiceId: item.clinicServiceId ?? null,
     clinicServiceName: item.clinicServiceName ?? null,
+    labPanelId: item.labPanelId ?? null,
+    labPanelSlug: item.labPanelSlug ?? null,
     anesthesiologistPercent: item.anesthesiologistPercent,
     anesthesiologistId: item.anesthesiologistId ?? null,
     anesthesiologistName: item.anesthesiologistName ?? null,
     hasAssistant: item.hasAssistant ?? (item.anesthesiologistPercent ?? 0) > 0,
+    surgeonPercent: item.surgeonPercent,
   }
 }
 

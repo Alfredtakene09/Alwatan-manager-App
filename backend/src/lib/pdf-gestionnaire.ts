@@ -1,15 +1,17 @@
 import PDFDocument from "pdfkit";
 import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { CLINIC } from "./clinic.js";
+import { CLINIC, clinicTaxLine, getClinicInfo } from "./clinic.js";
+import { resolveClinicLogoAbsolutePath } from "./clinic-logo.js";
 import type { JournalDaySummary, JournalMonthDailySummary } from "./gestionnaire-journal.js";
 
-const LOGO_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "../assets/logo-alwatan.jpeg");
 const ARABIC_FONT_PATH = process.env.PDF_ARABIC_FONT_PATH?.trim() || null;
 const PAGE_LEFT = 36;
 const PAGE_RIGHT = 806;
 const PAGE_BOTTOM = 552;
+
+function clinicLogoPath() {
+  return resolveClinicLogoAbsolutePath(CLINIC.logo);
+}
 
 function drawArabicClinicName(
   doc: PDFKit.PDFDocument,
@@ -72,8 +74,9 @@ function drawJournalLetterhead(
   const contentWidth = PAGE_RIGHT - PAGE_LEFT;
   let headerBottom = 42;
 
-  if (fs.existsSync(LOGO_PATH)) {
-    doc.image(LOGO_PATH, PAGE_LEFT, 36, { width: 56 });
+  const logoPath = clinicLogoPath();
+  if (logoPath && fs.existsSync(logoPath)) {
+    doc.image(logoPath, PAGE_LEFT, 36, { width: 56 });
     headerBottom = 102;
   }
 
@@ -96,6 +99,10 @@ function drawJournalLetterhead(
     width: contentWidth,
     align: "center",
   });
+  const taxLine = clinicTaxLine();
+  if (taxLine) {
+    doc.text(taxLine, PAGE_LEFT, doc.y + 2, { width: contentWidth, align: "center" });
+  }
 
   doc
     .fillColor("#78350f")
@@ -381,6 +388,7 @@ export async function generatePayslipPdf(params: {
   netFcfa: number;
   gestionnaireName: string;
 }) {
+  await getClinicInfo();
   const doc = new PDFDocument({ margin: 50, size: "A4" });
   const monthLabel = new Date(params.year, params.month - 1, 1).toLocaleDateString("fr-FR", {
     month: "long",
@@ -390,7 +398,8 @@ export async function generatePayslipPdf(params: {
   const contentWidth = pageWidth - 100;
   const leftX = 50;
   const rightX = leftX + contentWidth;
-  const hasLogo = fs.existsSync(LOGO_PATH);
+  const logoPath = clinicLogoPath();
+  const hasLogo = Boolean(logoPath && fs.existsSync(logoPath));
 
   // En-tête clinique (logo à gauche, infos centrées)
   const headerH = 98;
@@ -403,8 +412,8 @@ export async function generatePayslipPdf(params: {
     .roundedRect(leftX, 36, contentWidth, headerH, 10)
     .stroke();
 
-  if (hasLogo) {
-    doc.image(LOGO_PATH, leftX + 12, 52, { width: 54 });
+  if (hasLogo && logoPath) {
+    doc.image(logoPath, leftX + 12, 52, { width: 54 });
   }
   const centerTextWidth = contentWidth - 160;
   doc
@@ -432,6 +441,12 @@ export async function generatePayslipPdf(params: {
     width: centerTextWidth,
     align: "center",
   });
+  {
+    const taxLine = clinicTaxLine();
+    if (taxLine) {
+      doc.text(taxLine, leftX, doc.y + 1, { width: centerTextWidth, align: "center" });
+    }
+  }
 
   doc
     .fillColor("#78350f")
@@ -554,6 +569,7 @@ export async function generateJournalPdf(
   }>,
   totals: { inflowsFcfa: number; outflowsFcfa: number; balanceFcfa: number },
 ) {
+  await getClinicInfo();
   const doc = new PDFDocument({ margin: 40, size: "A4", layout: "landscape" });
   drawHeader(doc, title);
 
@@ -604,6 +620,7 @@ export async function generateJournalDailyPdf(
   totals: { inflowsFcfa: number; outflowsFcfa: number; balanceFcfa: number },
   options?: { periodLabel?: string; filtersLabel?: string },
 ) {
+  await getClinicInfo();
   const doc = new PDFDocument({ margin: 36, size: "A4", layout: "landscape" });
 
   drawJournalLetterhead(doc, title, options?.periodLabel, options?.filtersLabel);

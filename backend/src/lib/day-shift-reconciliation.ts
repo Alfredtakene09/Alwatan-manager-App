@@ -9,7 +9,7 @@ import {
   SHIFT_SLOT_LABELS,
   shiftHoursLabel,
 } from "./cash-shift.js";
-import { collectedInvoicesWhere, invoiceCollectedAt } from "./revenue-stats.js";
+import { collectedInvoicesWhere, collectedAmountFcfa, invoiceCollectedAt } from "./revenue-stats.js";
 
 /**
  * Réconciliation « Recettes du jour » vs créneaux caisse.
@@ -142,17 +142,18 @@ function getOrCreateCashierAcc(
     });
   }
   const acc = map.get(key)!;
-  acc.totalFcfa += invoice.amountFcfa;
+  const amount = collectedAmountFcfa(invoice);
+  acc.totalFcfa += amount;
   acc.transactionCount += 1;
   acc._invoices.push(invoice);
 
   const bucketLabel = OFF_SHIFT_BUCKET_LABELS[bucketId] ?? bucketId;
   const existingBucket = acc.buckets.find((b) => b.id === bucketId);
   if (existingBucket) {
-    existingBucket.totalFcfa += invoice.amountFcfa;
+    existingBucket.totalFcfa += amount;
     existingBucket.count += 1;
   } else {
-    acc.buckets.push({ id: bucketId, label: bucketLabel, totalFcfa: invoice.amountFcfa, count: 1 });
+    acc.buckets.push({ id: bucketId, label: bucketLabel, totalFcfa: amount, count: 1 });
   }
 
   return acc;
@@ -190,38 +191,39 @@ export async function buildDayShiftReconciliation(businessDate: Date): Promise<D
     const collectedAt = invoiceCollectedAt(invoice);
     if (!collectedAt) continue;
 
-    dayTotalFcfa += invoice.amountFcfa;
+    const amount = collectedAmountFcfa(invoice);
+    dayTotalFcfa += amount;
 
     if (!isCashCollectorRole(invoice.issuedBy.role)) {
-      offShiftTotalFcfa += invoice.amountFcfa;
+      offShiftTotalFcfa += amount;
       offShiftCount += 1;
-      addGlobalBucket(globalBucketMap, "non_cashier", invoice.amountFcfa);
+      addGlobalBucket(globalBucketMap, "non_cashier", amount);
       continue;
     }
 
     if (inHalfOpenWindow(collectedAt, morningWin.from, morningWin.to)) {
-      morningTotalFcfa += invoice.amountFcfa;
+      morningTotalFcfa += amount;
       morningCount += 1;
       continue;
     }
 
     if (inHalfOpenWindow(collectedAt, eveningWin.from, eveningWin.to)) {
-      eveningTotalFcfa += invoice.amountFcfa;
+      eveningTotalFcfa += amount;
       eveningCount += 1;
       continue;
     }
 
     if (isNightHoursOnCalendarDay(collectedAt)) {
-      nightTotalFcfa += invoice.amountFcfa;
+      nightTotalFcfa += amount;
       nightCount += 1;
       continue;
     }
 
-    offShiftTotalFcfa += invoice.amountFcfa;
+    offShiftTotalFcfa += amount;
     offShiftCount += 1;
 
     const bucketId = offShiftBucketId(collectedAt);
-    addGlobalBucket(globalBucketMap, bucketId, invoice.amountFcfa);
+    addGlobalBucket(globalBucketMap, bucketId, amount);
     getOrCreateCashierAcc(cashierOffShiftMap, invoice, bucketId);
   }
 

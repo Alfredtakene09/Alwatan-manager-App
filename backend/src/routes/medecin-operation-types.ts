@@ -2,11 +2,20 @@ import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { InterventionCategory } from "@prisma/client";
 import { prisma } from "../lib/db.js";
-import { resolveDoctorClinicServices } from "../lib/clinic-service-exam.js";
+import {
+  interventionVisibleForServicesWhere,
+  resolveDoctorClinicServices,
+} from "../lib/clinic-service-exam.js";
 import { clinicPercentFromSplits, validateInterventionPercents } from "../lib/intervention-splits.js";
 import { findDuplicateIntervention } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere, selectableDoctorWhere } from "../lib/doctor-compensation.js";
+import {
+  authorizedSurgeonsInclude,
+  resolveAuthorizedSurgeonIds,
+  serializeAuthorizedSurgeons,
+  syncInterventionAuthorizedSurgeons,
+} from "../lib/intervention-authorized-surgeons.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -16,6 +25,7 @@ const interventionInclude = {
   surgeon: { select: { id: true, firstName: true, lastName: true } },
   anesthesiologist: { select: { id: true, firstName: true, lastName: true } },
   clinicService: { select: { id: true, name: true } },
+  ...authorizedSurgeonsInclude,
 } as const;
 
 const interventionBaseSchema = z.object({
@@ -31,6 +41,8 @@ const interventionBaseSchema = z.object({
     (v) => (v === "" || v === undefined ? null : v),
     z.string().min(1).nullable().optional(),
   ),
+  /** Chirurgiens autorisés (User ids) — le créateur est toujours inclus côté serveur. */
+  surgeonIds: z.array(z.string().min(1)).optional(),
   active: z.boolean().optional(),
 });
 
@@ -73,10 +85,18 @@ function serializeIntervention(item: {
   surgeon: { id: string; firstName: string; lastName: string } | null;
   anesthesiologist: { id: string; firstName: string; lastName: string } | null;
   clinicService?: { id: string; name: string } | null;
+  authorizedSurgeons?: Array<{
+    userId: string;
+    user: { id: string; firstName: string; lastName: string };
+  }>;
 }) {
+  const { authorizedSurgeons, ...rest } = item;
+  const surgeons = serializeAuthorizedSurgeons(authorizedSurgeons);
   return {
-    ...item,
+    ...rest,
     clinicPercent: clinicPercentFromSplits(item.surgeonPercent, item.anesthesiologistPercent),
+    authorizedSurgeons: surgeons,
+    surgeonIds: surgeons.map((d) => d.id),
   };
 }
 
@@ -165,12 +185,52 @@ router.get("/doctors", async (_req, res) => {
   return res.json(doctors);
 });
 
+/** Médecins du même service (avec compte User) pour cocher les chirurgiens autorisés. */
+router.get("/service-doctors", async (req, res) => {
+  const ctx = await requireDoctorService(req, res);
+  if (!ctx) return;
+
+  const links = await prisma.clinicServiceDoctor.findMany({
+    where: {
+      clinicServiceId: { in: ctx.ids },
+      employee: {
+        isMedecin: true,
+        active: true,
+        user: { isNot: null },
+      },
+    },
+    select: {
+      employee: {
+        select: {
+          user: { select: { id: true } },
+        },
+      },
+    },
+  });
+
+  const userIds = [
+    ...new Set(
+      links
+        .map((link) => link.employee.user?.id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  if (!userIds.length) return res.json([]);
+
+  const doctors = await prisma.user.findMany({
+    where: { id: { in: userIds }, ...selectableDoctorWhere },
+    select: { id: true, firstName: true, lastName: true },
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+  });
+  return res.json(doctors);
+});
+
 router.get("/", async (req, res) => {
   const ctx = await requireDoctorService(req, res);
   if (!ctx) return;
 
   const items = await prisma.interventionType.findMany({
-    where: { clinicServiceId: { in: ctx.ids } },
+    where: interventionVisibleForServicesWhere(ctx.ids, { doctorUserId: ctx.userId }),
     include: interventionInclude,
     orderBy: [{ label: "asc" }, { category: "asc" }],
   });
@@ -219,6 +279,10 @@ router.post("/", async (req, res) => {
       }
     }
 
+    const surgeonIds = await resolveAuthorizedSurgeonIds(body.surgeonIds, {
+      alwaysInclude: ctx.userId,
+    });
+
     const item = await prisma.interventionType.create({
       data: {
         code,
@@ -235,7 +299,13 @@ router.post("/", async (req, res) => {
       },
       include: interventionInclude,
     });
-    return res.status(201).json(serializeIntervention(item));
+
+    await syncInterventionAuthorizedSurgeons(item.id, surgeonIds);
+    const refreshed = await prisma.interventionType.findUniqueOrThrow({
+      where: { id: item.id },
+      include: interventionInclude,
+    });
+    return res.status(201).json(serializeIntervention(refreshed));
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.issues[0]?.message ?? "Données invalides" });
@@ -251,7 +321,10 @@ router.put("/:id", async (req, res) => {
   try {
     const body = interventionUpdateSchema.parse(req.body);
     const existing = await prisma.interventionType.findFirst({
-      where: { id: String(req.params.id), clinicServiceId: { in: ctx.ids } },
+      where: {
+        id: String(req.params.id),
+        ...interventionVisibleForServicesWhere(ctx.ids, { doctorUserId: ctx.userId }),
+      },
     });
     if (!existing) return res.status(404).json({ error: "Opération introuvable" });
 
@@ -330,7 +403,7 @@ router.put("/:id", async (req, res) => {
       }
     }
 
-    const item = await prisma.interventionType.update({
+    await prisma.interventionType.update({
       where: { id: existing.id },
       data: {
         ...(body.code !== undefined ? { code: body.code } : {}),
@@ -345,6 +418,17 @@ router.put("/:id", async (req, res) => {
         ...(body.active !== undefined ? { active: body.active } : {}),
         surgeonId: existing.surgeonId ?? ctx.userId,
       },
+    });
+
+    if (body.surgeonIds !== undefined) {
+      const surgeonIds = await resolveAuthorizedSurgeonIds(body.surgeonIds, {
+        alwaysInclude: existing.surgeonId ?? ctx.userId,
+      });
+      await syncInterventionAuthorizedSurgeons(existing.id, surgeonIds);
+    }
+
+    const item = await prisma.interventionType.findUniqueOrThrow({
+      where: { id: existing.id },
       include: interventionInclude,
     });
     return res.json(serializeIntervention(item));
@@ -362,7 +446,10 @@ router.delete("/:id", async (req, res) => {
 
   try {
     const existing = await prisma.interventionType.findFirst({
-      where: { id: String(req.params.id), clinicServiceId: { in: ctx.ids } },
+      where: {
+        id: String(req.params.id),
+        ...interventionVisibleForServicesWhere(ctx.ids, { doctorUserId: ctx.userId }),
+      },
       select: { id: true },
     });
     if (!existing) return res.status(404).json({ error: "Opération introuvable" });

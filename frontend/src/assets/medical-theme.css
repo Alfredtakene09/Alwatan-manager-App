@@ -1,5 +1,9 @@
 :root {
   --font: 'Plus Jakarta Sans', system-ui, sans-serif;
+  /* Échelle typographique globale (textes de l’app) */
+  --app-text-scale: 1.15;
+  /* Selects : double de l’augmentation des textes (+30 %) */
+  --app-select-scale: 1.3;
 
   /*
    * Breakpoints canoniques (réutiliser ces valeurs littérales dans @media) :
@@ -152,9 +156,14 @@ body,
   overflow: hidden;
 }
 
+html {
+  font-size: calc(100% * var(--app-text-scale));
+}
+
 body {
   margin: 0;
   font-family: var(--font);
+  font-size: 1rem;
   color: var(--text);
   background: var(--bg-app);
   -webkit-font-smoothing: antialiased;
@@ -170,6 +179,22 @@ select,
 textarea,
 button {
   font: inherit;
+}
+
+/* Champs de sélection : +30 % vs taille d’origine (2× l’augmentation des textes) */
+select,
+.ui-select {
+  font-size: calc(0.875rem * var(--app-select-scale) / var(--app-text-scale));
+  font-weight: 600;
+  line-height: 1.4;
+  min-height: 2.85rem;
+  padding-block: 0.7rem;
+}
+
+select option,
+.ui-select option {
+  font-size: inherit;
+  font-weight: 600;
 }
 
 /* Layout helpers */
@@ -312,9 +337,12 @@ button {
 
 @media (max-width: 1023px) {
   input,
-  select,
   textarea {
-    font-size: 16px;
+    font-size: max(16px, 1rem);
+  }
+  select,
+  .ui-select {
+    font-size: max(16px, calc(0.875rem * var(--app-select-scale) / var(--app-text-scale)));
   }
 }
 

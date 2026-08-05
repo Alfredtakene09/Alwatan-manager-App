@@ -198,8 +198,18 @@ function toggleInstallment(kind: ExamKindSlug, enabled: boolean, netFcfa: number
 function resolveInstallmentAmount(kind: ExamKindSlug, netFcfa: number) {
   if (!installmentEnabledByKind.value[kind]) return undefined
   const remaining = remainingForKind(kind, netFcfa)
-  const parsed = Math.min(remaining, Math.max(1, Number(installmentAmountByKind.value[kind]) || 0))
-  return parsed
+  const raw = String(installmentAmountByKind.value[kind] ?? '')
+    .replace(/\s/g, '')
+    .replace(',', '.')
+  const parsed = Math.round(Number(raw))
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined
+  return Math.min(remaining, parsed)
+}
+
+function installmentLabel(kind: ExamKindSlug, netFcfa: number) {
+  const amount = resolveInstallmentAmount(kind, netFcfa)
+  if (amount == null) return 'Encaisser une tranche'
+  return `Encaisser une tranche (${formatFcfa(amount)})`
 }
 
 function buildPayableReductions(kinds: ExamKindSlug[]): ExamReductionsByKind {
@@ -220,12 +230,30 @@ function confirmAll() {
   if (!kinds.length) return
   const reductions = buildPayableReductions(kinds)
   const reductionFcfa = kinds.reduce((sum, kind) => sum + (reductions[kind] ?? 0), 0)
+
+  const installmentsByKind: Partial<Record<ExamKindSlug, number>> = {}
+  for (const kind of kinds) {
+    const card = kindCards.value.find((row) => row.kind === kind)
+    if (!card) continue
+    const amount = resolveInstallmentAmount(kind, card.netFcfa)
+    if (amount != null) installmentsByKind[kind] = amount
+  }
+  const hasInstallments = Object.keys(installmentsByKind).length > 0
+
   payingKind.value = null
   emit('confirm', {
     consultationId: props.item.id,
     kinds,
     reductionFcfa,
     reductionsByKind: reductions,
+    ...(hasInstallments
+      ? {
+          installmentsByKind,
+          ...(kinds.length === 1
+            ? { installmentAmountFcfa: installmentsByKind[kinds[0]!] }
+            : {}),
+        }
+      : {}),
   })
 }
 
@@ -233,7 +261,16 @@ function confirmKind(kind: ExamKindSlug) {
   if (!props.item) return
   const card = kindCards.value.find((row) => row.kind === kind)
   if (!card?.hasExams || card.isPaid) return
+  const remaining = remainingForKind(kind, card.netFcfa)
   const installmentAmountFcfa = resolveInstallmentAmount(kind, card.netFcfa)
+  if (
+    installmentEnabledByKind.value[kind] &&
+    (installmentAmountFcfa == null ||
+      installmentAmountFcfa <= 0 ||
+      installmentAmountFcfa > remaining)
+  ) {
+    return
+  }
   payingKind.value = kind
   emit('confirm', {
     consultationId: props.item.id,
@@ -244,6 +281,9 @@ function confirmKind(kind: ExamKindSlug) {
       [kind]: reductionsByKind.value[kind] ?? 0,
     },
     installmentAmountFcfa,
+    ...(installmentAmountFcfa != null
+      ? { installmentsByKind: { [kind]: installmentAmountFcfa } }
+      : {}),
   })
 }
 
@@ -438,14 +478,19 @@ function updateReduction(kind: ExamKindSlug, value: string | number, max: number
                   variant="success"
                   size="sm"
                   :icon="Banknote"
-                  :disabled="submitting || (submittingKind != null && submittingKind !== card.kind)"
+                  :disabled="
+                    submitting ||
+                    (submittingKind != null && submittingKind !== card.kind) ||
+                    (Boolean(installmentEnabledByKind[card.kind]) &&
+                      resolveInstallmentAmount(card.kind, card.netFcfa) == null)
+                  "
                   @click="confirmKind(card.kind)"
                 >
                   {{
                     submitting && (submittingKind === card.kind || payingKind === card.kind)
                       ? 'Validation…'
                       : installmentEnabledByKind[card.kind]
-                        ? `Encaisser une tranche`
+                        ? installmentLabel(card.kind, card.netFcfa)
                         : `Encaisser ${card.kindLabel}`
                   }}
                 </UiButton>

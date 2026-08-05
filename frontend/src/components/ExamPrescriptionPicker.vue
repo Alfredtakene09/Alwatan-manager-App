@@ -505,8 +505,8 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
   align-items: center;
   gap: 0.55rem;
   padding: 0.45rem 0.5rem;
-  background: var(--primary-50);
-  border: 1px solid var(--primary-100);
+  background: var(--brand-red-50, #fdecea);
+  border: 1px solid var(--brand-red-100, #f9c7c5);
   border-radius: 8px;
 }
 
@@ -517,8 +517,8 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  background: var(--primary-100);
-  color: var(--primary-800);
+  background: var(--brand-red-100, #f9c7c5);
+  color: var(--brand-red-800, #8e1515);
   font-size: 0.6875rem;
   font-weight: 700;
   flex-shrink: 0;
@@ -528,8 +528,9 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
   flex: 1;
   min-width: 0;
   font-size: 0.8125rem;
-  font-weight: 500;
+  font-weight: 700;
   line-height: 1.3;
+  color: var(--brand-red-700, #b71c1c);
 }
 
 .exam-picker__cart-remove {

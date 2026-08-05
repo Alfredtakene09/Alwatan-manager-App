@@ -20,7 +20,7 @@ import {
   parsePrescribedExamCommentsByKind,
   parseLabResultsCompletedAt,
 } from '@/lib/lab-notes'
-import { buildPrescribedByLabel } from '@/lib/lab-panel-print'
+import { buildPrescribedByLabel, resolveLabReceptionist } from '@/lib/lab-panel-print'
 import { patientCategoryLabel, type PatientCategory } from '@/lib/patient-category'
 import UiButton from '@/components/ui/UiButton.vue'
 import type { LabsWaitingVisitRow } from '@/components/ui/LabsWaitingDataTable.vue'
@@ -60,6 +60,7 @@ const doctorLabel = computed(() => {
   if (!props.visit) return '—'
   return buildPrescribedByLabel(
     props.visit.consultation?.doctor ?? props.visit.assignedDoctor ?? null,
+    resolveLabReceptionist(props.visit),
   )
 })
 

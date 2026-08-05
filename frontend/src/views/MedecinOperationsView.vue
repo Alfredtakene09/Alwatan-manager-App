@@ -28,13 +28,28 @@ import {
   todayDateKey,
   type DateFilterMode,
 } from '@/lib/date-filters'
-import { isAwaitingPerformance } from '@/lib/surgery-status'
+import { isAwaitingPayment, isAwaitingPerformance, isDoctorAwaiting } from '@/lib/surgery-status'
+import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiBadge from '@/components/ui/UiBadge.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
+
+type DoctorReceivableItem = {
+  kind: 'CONSULTATION' | 'OPERATION_SURGEON' | 'OPERATION_ASSISTANT'
+  amountFcfa: number
+}
+
+type DoctorReceivablePayload = {
+  totals: {
+    surgeryShareFcfa: number
+    totalShareFcfa: number
+  }
+  me?: { items?: DoctorReceivableItem[] }
+  doctors?: Array<{ items?: DoctorReceivableItem[] }>
+}
 
 const DATE_MODES: { id: DateFilterMode; label: string; icon: typeof CalendarDays }[] = [
   { id: 'day', label: 'Jour', icon: CalendarDays },
@@ -43,7 +58,10 @@ const DATE_MODES: { id: DateFilterMode; label: string; icon: typeof CalendarDays
 ]
 
 const surgeries = ref<SurgeryCaseRow[]>([])
+const surgeryReceivableFcfa = ref(0)
+const surgeryReceivableCount = ref(0)
 const loading = ref(false)
+const actionId = ref<string | null>(null)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const filterTab = ref<'awaiting' | 'completed'>('awaiting')
@@ -54,7 +72,8 @@ const filterMonth = ref(currentMonthKey())
 const filterFrom = ref('')
 const filterTo = ref('')
 
-const isAwaiting = (surgery: SurgeryCaseRow) => isAwaitingPerformance(surgery.status)
+const isAwaiting = (surgery: SurgeryCaseRow) => isDoctorAwaiting(surgery.status)
+const isUnpaidCase = (surgery: SurgeryCaseRow) => isAwaitingPayment(surgery.status)
 
 const awaitingSurgeries = computed(() => surgeries.value.filter(isAwaiting))
 
@@ -100,33 +119,31 @@ function mySharePaid(surgery: SurgeryCaseRow) {
 }
 
 const stats = computed(() => {
-  const completedAll = surgeries.value.filter((s) => s.status === 'COMPLETED')
   const completedPeriod = completedSurgeries.value
-  let unpaidFcfa = 0
-  let unpaidCount = 0
   let paidFcfa = 0
 
-  for (const surgery of completedAll) {
+  for (const surgery of surgeries.value.filter((s) => s.status === 'COMPLETED')) {
     const kind = myShareKind(surgery)
-    const amount = getShareAmountFcfa(surgery, kind)
     if (isSharePaid(surgery, kind)) {
-      paidFcfa += amount
-    } else {
-      unpaidFcfa += amount
-      unpaidCount += 1
+      paidFcfa += getShareAmountFcfa(surgery, kind)
     }
   }
 
   return {
     awaiting: awaitingSurgeries.value.length,
     completedPeriod: completedPeriod.length,
-    unpaidCount,
-    unpaidFcfa,
+    unpaidCount: surgeryReceivableCount.value,
+    unpaidFcfa: surgeryReceivableFcfa.value,
     paidFcfa,
   }
 })
 
 function evolutionLabel(surgery: SurgeryCaseRow) {
+  if (isUnpaidCase(surgery)) {
+    return surgery.status === 'QUOTED'
+      ? 'Devis — en attente de paiement'
+      : 'Prescrite — en attente de paiement'
+  }
   if (isAwaiting(surgery)) {
     if (!surgery.operationScheduledAt) return 'Payée — date d\'opération à fixer'
     const scheduled = new Date(surgery.operationScheduledAt)
@@ -139,6 +156,7 @@ function evolutionLabel(surgery: SurgeryCaseRow) {
 }
 
 function paymentLabel(surgery: SurgeryCaseRow) {
+  if (isUnpaidCase(surgery)) return 'Patient non encaissé'
   if (isAwaiting(surgery)) return '—'
   const kind = myShareKind(surgery)
   if (isSharePaid(surgery, kind)) {
@@ -159,18 +177,76 @@ function roleLabel(surgery: SurgeryCaseRow) {
   return myShareKind(surgery) === 'assistant' ? 'Assistant' : 'Chirurgien'
 }
 
+function canMarkCompleted(surgery: SurgeryCaseRow) {
+  return isAwaitingPerformance(surgery.status)
+}
+
+async function markCompleted(surgery: SurgeryCaseRow) {
+  const patient = fullName(surgery.visit.patient.firstName, surgery.visit.patient.lastName)
+  const ok = await confirmAppModal({
+    title: 'Marquer comme effectuée',
+    message: `Confirmer que « ${surgery.interventionType.label} » pour ${patient} a bien été réalisée ?`,
+    confirmLabel: 'Oui, effectuée',
+    type: 'CONFIRM',
+  })
+  if (!ok) return
+
+  actionId.value = surgery.id
+  message.value = ''
+  try {
+    await api.post(`/surgeries/mine/${surgery.id}/complete`)
+    message.value = 'Opération marquée comme effectuée — visible dans l’onglet Effectuées / À percevoir.'
+    messageType.value = 'success'
+    await load()
+    filterTab.value = 'completed'
+  } catch (error: unknown) {
+    const shown = await showApiErrorModal(error, 'Impossible de marquer l’opération comme effectuée.')
+    if (!shown) {
+      const err = error as { response?: { data?: { error?: string } } }
+      message.value =
+        err.response?.data?.error || 'Impossible de marquer l’opération comme effectuée.'
+      messageType.value = 'error'
+    }
+  } finally {
+    actionId.value = null
+  }
+}
+
+async function loadReceivableShares() {
+  try {
+    const { data } = await api.get<DoctorReceivablePayload>('/doctor-shares/receivable', {
+      params: { period: 'month', month: currentMonthKey() },
+    })
+    const items =
+      data.me?.items ?? data.doctors?.[0]?.items ?? ([] as DoctorReceivableItem[])
+    const surgeryItems = items.filter((item) => item.kind !== 'CONSULTATION')
+    surgeryReceivableFcfa.value =
+      data.totals.surgeryShareFcfa ??
+      surgeryItems.reduce((sum, item) => sum + item.amountFcfa, 0)
+    surgeryReceivableCount.value = surgeryItems.length
+  } catch {
+    surgeryReceivableFcfa.value = 0
+    surgeryReceivableCount.value = 0
+  }
+}
+
 async function load() {
   loading.value = true
   message.value = ''
   try {
-    const { data } = await api.get<SurgeryCaseRow[]>('/surgeries/mine', {
-      params: { scope: 'all' },
-    })
+    const [{ data }, ] = await Promise.all([
+      api.get<SurgeryCaseRow[]>('/surgeries/mine', {
+        params: { scope: 'all' },
+      }),
+      loadReceivableShares(),
+    ])
     surgeries.value = data
   } catch {
     message.value = 'Impossible de charger vos opérations.'
     messageType.value = 'error'
     surgeries.value = []
+    surgeryReceivableFcfa.value = 0
+    surgeryReceivableCount.value = 0
   } finally {
     loading.value = false
   }
@@ -193,8 +269,21 @@ onMounted(load)
       <div class="stats-grid ops-stats">
         <UiStatCard mini label="En attente" :value="stats.awaiting" :icon="Clock" variant="amber" />
         <UiStatCard mini label="Effectuées" :value="stats.completedPeriod" :icon="CheckCircle2" variant="teal" />
-        <UiStatCard mini label="À percevoir" :value="formatFcfa(stats.unpaidFcfa)" :icon="CircleDollarSign" variant="rose" />
+        <UiStatCard
+          mini
+          label="À percevoir"
+          :value="formatFcfa(stats.unpaidFcfa)"
+          :icon="CircleDollarSign"
+          variant="rose"
+        />
       </div>
+      <p class="ops-receivable-hint">
+        {{
+          stats.unpaidCount > 0
+            ? `${stats.unpaidCount} part(s) opération — % calculé sur le montant déjà encaissé (tranches incluses)`
+            : 'Aucune part opération à percevoir pour le moment'
+        }}
+      </p>
 
       <div v-if="filterTab === 'completed'" class="filter-bar" role="region" aria-label="Filtrer par date">
         <div class="filter-bar__row">
@@ -243,7 +332,7 @@ onMounted(load)
     <section class="page-with-table__body">
       <UiCard
         title="Suivi opératoire"
-        description="Lecture seule — le règlement est enregistré par la comptabilité"
+        description="Les parts % sur le montant déjà encaissé apparaissent dans À percevoir ; marquez effectuée pour finaliser après le solde"
         class="ui-card--table-panel"
         :icon="Scissors"
         icon-variant="green"
@@ -290,6 +379,7 @@ onMounted(load)
                 <th>Évolution</th>
                 <th>Ma part</th>
                 <th>Règlement</th>
+                <th v-if="filterTab === 'awaiting'">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -309,11 +399,33 @@ onMounted(load)
                   </span>
                 </td>
                 <td>
-                  <UiBadge v-if="isAwaiting(surgery)" variant="warning">Non applicable</UiBadge>
+                  <UiBadge v-if="isUnpaidCase(surgery)" variant="warning">
+                    {{ paymentLabel(surgery) }}
+                  </UiBadge>
+                  <UiBadge v-else-if="canMarkCompleted(surgery)" variant="info">
+                    Payée — à clôturer
+                  </UiBadge>
                   <UiBadge v-else-if="mySharePaid(surgery)" variant="success">
                     {{ paymentLabel(surgery) }}
                   </UiBadge>
                   <UiBadge v-else variant="danger">{{ paymentLabel(surgery) }}</UiBadge>
+                </td>
+                <td v-if="filterTab === 'awaiting'">
+                  <UiButton
+                    v-if="canMarkCompleted(surgery)"
+                    size="sm"
+                    variant="primary"
+                    :icon="CheckCircle2"
+                    :loading="actionId === surgery.id"
+                    :disabled="!!actionId"
+                    @click="markCompleted(surgery)"
+                  >
+                    Effectuée
+                  </UiButton>
+                  <span v-else-if="isUnpaidCase(surgery)" class="ops-table__hint">
+                    En attente de paiement patient
+                  </span>
+                  <span v-else class="ops-table__hint">—</span>
                 </td>
               </tr>
             </tbody>
@@ -330,6 +442,12 @@ onMounted(load)
   grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
   gap: 0.75rem;
   margin-top: 0.5rem;
+}
+
+.ops-receivable-hint {
+  margin: 0.45rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
 .filter-bar {
@@ -475,6 +593,12 @@ onMounted(load)
   margin-top: 0.15rem;
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+.ops-table__hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 500;
 }
 
 .ops-empty {

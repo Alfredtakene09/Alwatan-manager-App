@@ -13,6 +13,7 @@ import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
 import { DT_ICONS, labCompletedRowActionsHtml } from '@/lib/datatable-defaults'
 import { formatAppDate, formatAppTime } from '@/i18n/locale-format'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
+import type { PrescribedByPerson } from '@/lib/lab-panel-print'
 
 export type LabsWaitingVisitRow = {
   id: string
@@ -28,13 +29,15 @@ export type LabsWaitingVisitRow = {
     gender?: string | null
     category?: string
     ongName?: string | null
+    createdBy?: PrescribedByPerson | null
   }
-  assignedDoctor?: { firstName: string; lastName: string } | null
+  assignedDoctor?: PrescribedByPerson | null
   invoices?: Array<{
     invoiceNumber: string
     amountFcfa: number
     type: string
     createdAt: string
+    issuedBy?: PrescribedByPerson | null
   }>
   vitalSigns?: Array<{
     weightKg?: number | null
@@ -48,8 +51,8 @@ export type LabsWaitingVisitRow = {
     clinicalNotes?: string | null
     labSentToLabAt?: string | null
     labExamReductionFcfa?: number
-    labApprovedBy?: { firstName: string; lastName: string } | null
-    doctor?: { firstName: string; lastName: string } | null
+    labApprovedBy?: PrescribedByPerson | null
+    doctor?: PrescribedByPerson | null
     updatedAt?: string
   } | null
 }

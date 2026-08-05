@@ -1,5 +1,4 @@
 @echo off
-title Alwatan Manager - Serveur
+REM Lance Alwatan sans fenêtre console (mode cabinet).
 cd /d "%~dp0"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0lancer-serveur.ps1"
-if errorlevel 1 pause
+wscript.exe //B "%~dp0lancer-serveur-silencieux.vbs"

@@ -439,6 +439,8 @@
 .ui-dt .dt-exam-preview .dt-sub--truncate {
   margin-top: 0;
   max-width: 11rem;
+  color: var(--brand-red-700, #b71c1c);
+  font-weight: 700;
 }
 
 .ui-dt .dt-exam-count {
@@ -451,8 +453,8 @@
   border-radius: 999px;
   font-size: 0.6875rem;
   font-weight: 700;
-  background: #ccfbf1;
-  color: #0f766e;
+  background: var(--brand-red-100, #f9c7c5);
+  color: var(--brand-red-800, #8e1515);
   flex-shrink: 0;
 }
 
@@ -502,6 +504,39 @@
 
 .ui-dt .dt-exams-col .dt-exam-preview .dt-sub--truncate {
   max-width: 10.25rem;
+}
+
+/* Examens payés : liste complète visible (sans troncature) */
+.ui-dt .dt-exams-col--full {
+  max-width: none;
+  width: auto;
+  min-width: 14rem;
+  white-space: normal;
+  vertical-align: top;
+}
+
+.ui-dt .dt-exam-full {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  max-width: 100%;
+}
+
+.ui-dt .dt-exam-full__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.ui-dt .dt-exam-line {
+  display: block;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--brand-red-700, #b71c1c);
 }
 
 .ui-dt .dt-actions-col--lab-completed {
@@ -717,6 +752,79 @@
 .ui-dt .dt-amount {
   font-weight: 700;
   color: var(--text);
+}
+
+.ui-dt .dt-amount--nowrap {
+  display: inline-block;
+  white-space: nowrap;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.ui-dt .dt-amount-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  max-width: 100%;
+}
+
+.ui-dt .dt-amount-remaining {
+  display: block;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--brand-red-700, #b71c1c);
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.ui-dt .dt-amount--due {
+  color: var(--brand-red-700, #b71c1c);
+}
+
+.ui-dt .dt-amount-collected {
+  display: block;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--success, #15803d);
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.ui-dt .dt-amount-col {
+  white-space: nowrap;
+  vertical-align: middle;
+  text-align: right;
+}
+
+.ui-dt .dt-amount-col--pending {
+  min-width: 10.5rem;
+  white-space: normal;
+  vertical-align: top;
+}
+
+.ui-dt .dt-amount-col--paid {
+  min-width: 10.5rem;
+  width: 10.5rem;
+  padding-inline-end: 0.85rem !important;
+  white-space: normal;
+  vertical-align: top;
+}
+
+.ui-dt table.dataTable thead th.dt-amount-col,
+.ui-dt table.dataTable tbody td.dt-amount-col {
+  text-align: right;
+}
+
+.ui-dt table.dataTable thead th.dt-amount-col--paid,
+.ui-dt table.dataTable tbody td.dt-amount-col--paid {
+  min-width: 9.5rem;
+  width: 9.5rem;
+  white-space: nowrap;
 }
 
 .ui-dt .dt-pill {

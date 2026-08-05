@@ -12,6 +12,7 @@ import LabExamsPendingDataTable, {
   type LabExamPendingRow,
 } from '@/components/ui/LabExamsPendingDataTable.vue'
 import ExamReclamationModal from '@/components/comptabilite/ExamReclamationModal.vue'
+import ExamPaidDetailModal from '@/components/comptabilite/ExamPaidDetailModal.vue'
 import ExamensPayesSubnav from '@/components/comptabilite/ExamensPayesSubnav.vue'
 import { normalizeLabExamPendingItem, type LabExamPendingItem } from '@/lib/lab-exam-pending'
 import { printAllPendingLabExamInvoices } from '@/lib/lab-exam-invoice'
@@ -27,6 +28,8 @@ const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const reclamationItem = ref<LabExamPendingItem | null>(null)
 const reclamationOpen = ref(false)
+const detailItem = ref<LabExamPendingItem | null>(null)
+const detailOpen = ref(false)
 
 const printableIds = computed(() => {
   const ids = new Set<string>()
@@ -39,7 +42,22 @@ const printableIds = computed(() => {
 
 function resolvePaidKinds(item: LabExamPendingItem): ExamKindSlug[] {
   if (item.paidKinds?.length) return item.paidKinds
+  const fromInvoices = Object.entries(item.invoicesByKind ?? {})
+    .filter(([, inv]) => inv && (inv.paidFcfa ?? inv.netFcfa) > 0)
+    .map(([kind]) => kind as ExamKindSlug)
+  if (fromInvoices.length) return fromInvoices
   return Object.keys(item.invoicesByKind ?? {}) as ExamKindSlug[]
+}
+
+function resolvePrintStatus(item: LabExamPendingItem): string {
+  const remaining =
+    item.remainingFcfa ??
+    Object.values(item.invoicesByKind ?? {}).reduce(
+      (sum, inv) => sum + Math.max(0, inv?.remainingFcfa ?? 0),
+      0,
+    )
+  if (remaining > 0) return 'Payé partiellement'
+  return 'Payé'
 }
 
 async function load() {
@@ -77,7 +95,7 @@ function onPrint(id: string) {
   const printed = printAllPendingLabExamInvoices(
     normalized,
     item.reductionsByKind ?? emptyExamReductionsByKind(),
-    'Payé',
+    resolvePrintStatus(item),
     item.invoicesByKind,
     kinds,
   )
@@ -93,9 +111,19 @@ function openReclamation(id: string) {
   reclamationOpen.value = !!reclamationItem.value
 }
 
+function openDetail(id: string) {
+  detailItem.value = paidItems.value.find((row) => row.id === id) ?? null
+  detailOpen.value = !!detailItem.value
+}
+
 function closeReclamation() {
   reclamationOpen.value = false
   reclamationItem.value = null
+}
+
+function closeDetail() {
+  detailOpen.value = false
+  detailItem.value = null
 }
 
 function onReclamationSubmitted() {
@@ -149,9 +177,16 @@ onMounted(load)
           :printable-ids="printableIds"
           @print="onPrint"
           @reclaim="openReclamation"
+          @view="openDetail"
         />
       </UiCard>
     </section>
+
+    <ExamPaidDetailModal
+      v-model:open="detailOpen"
+      :item="detailItem"
+      @close="closeDetail"
+    />
 
     <ExamReclamationModal
       v-model:open="reclamationOpen"

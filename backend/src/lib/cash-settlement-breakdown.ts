@@ -1,7 +1,7 @@
 import { InvoiceType } from "@prisma/client";
 import { buildExamSheetsByKind } from "./exam-billing.js";
 import { EXAM_KIND_SECTION_LABELS, type ExamKindSlug } from "./lab-notes.js";
-import { INVOICE_TYPE_LABELS } from "./revenue-stats.js";
+import { collectedAmountFcfa, INVOICE_TYPE_LABELS } from "./revenue-stats.js";
 
 export type SettlementBreakdownLine = {
   label: string;
@@ -33,6 +33,7 @@ const KIND_TO_LABEL: Record<ExamKindSlug, string> = {
 type InvoiceForBreakdown = {
   type: InvoiceType;
   amountFcfa: number;
+  paidAmountFcfa?: number | null;
   surgeryCaseId: string | null;
   hospitalizationId: string | null;
   visit?: { consultation: { clinicalNotes: string | null } | null } | null;
@@ -92,7 +93,7 @@ export function buildSettlementBreakdown(invoices: InvoiceForBreakdown[]): Settl
     const label = classifyInvoiceForSettlement(invoice);
     const row = grouped.get(label) ?? { label, count: 0, totalFcfa: 0 };
     row.count += 1;
-    row.totalFcfa += invoice.amountFcfa;
+    row.totalFcfa += collectedAmountFcfa(invoice);
     grouped.set(label, row);
   }
 

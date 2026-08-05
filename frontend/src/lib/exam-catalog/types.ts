@@ -28,10 +28,13 @@ export type CatalogExam = {
   priceFcfa: number
   clinicServiceId?: string | null
   clinicServiceName?: string | null
+  labPanelId?: string | null
+  labPanelSlug?: string | null
   anesthesiologistPercent?: number
   anesthesiologistId?: string | null
   anesthesiologistName?: string | null
   hasAssistant?: boolean
+  surgeonPercent?: number
 }
 
 

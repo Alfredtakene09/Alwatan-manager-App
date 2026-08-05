@@ -221,6 +221,7 @@ model Employee {
   payrolls EmployeePayroll[]
   salaryAdvances SalaryAdvance[]
   overtimeEntries DoctorOvertimeEntry[]
+  doctorShareClaims DoctorShareClaim[]
 
   @@index([clinicServiceId])
 }
@@ -236,6 +237,14 @@ model User {
   active        Boolean             @default(true)
   /// Médecin disponible pour de nouveaux patients à la réception (false = en pause)
   acceptingPatients Boolean         @default(true)
+  /// Tentatives de mot de passe incorrectes consécutives
+  failedLoginAttempts Int           @default(0)
+  /// Verrouillage après trop d'échecs — seul un ADMIN peut déverrouiller / réinitialiser le MDP
+  lockedAt            DateTime?
+  /// jti JWT de la session unique active (une seule connexion à la fois)
+  sessionTokenId      String?
+  /// Dernière activité API — session expirée après 30 min d'inactivité
+  lastActivityAt      DateTime?
   employeeId    String              @unique
   /// Créneau caisse assigné (obligatoire pour les réceptionnistes)
   cashShiftSlot ReceptionShiftSlot?
@@ -252,6 +261,7 @@ model User {
   clinicSharePayments   SurgeryCase[]       @relation("ClinicPayer")
   interventionsAsSurgeon          InterventionType[] @relation("InterventionSurgeon")
   interventionsAsAnesthesiologist InterventionType[] @relation("InterventionAnesthesiologist")
+  interventionTypeAuthorizations  InterventionTypeSurgeon[] @relation("InterventionAuthorizedSurgeons")
   hospitalizations      Hospitalization[]   @relation("HospitalizationAccountant")
   invoices              Invoice[]
   invoicePaymentsRecorded InvoicePayment[] @relation("InvoicePaymentRecordedBy")
@@ -278,6 +288,9 @@ model User {
   overtimeEntriesRecorded                DoctorOvertimeEntry[]     @relation("OvertimeRecordedBy")
   overtimeEntriesValidated               DoctorOvertimeEntry[]     @relation("OvertimeValidatedBy")
   overtimeEntriesPaid                    DoctorOvertimeEntry[]     @relation("OvertimePaidBy")
+  doctorShareClaimsAsDoctor              DoctorShareClaim[]        @relation("DoctorShareClaims")
+  doctorShareClaimsRequested             DoctorShareClaim[]        @relation("DoctorShareRequestedBy")
+  doctorShareClaimsSettled               DoctorShareClaim[]        @relation("DoctorShareSettledBy")
   pharmacyStockMovements                 StockMovement[]
   logisticsStockMovements                LogisticsStockMovement[]
   logisticsRequestsCreated               LogisticsRequest[]        @relation("LogisticsRequestRequestedBy")
@@ -443,12 +456,29 @@ model InterventionType {
   clinicServiceId         String?
   active                  Boolean              @default(true)
 
-  surgeon          User?          @relation("InterventionSurgeon", fields: [surgeonId], references: [id])
-  anesthesiologist User?          @relation("InterventionAnesthesiologist", fields: [anesthesiologistId], references: [id])
-  clinicService    ClinicService? @relation(fields: [clinicServiceId], references: [id], onDelete: SetNull)
-  surgeryCases     SurgeryCase[]
+  surgeon              User?                      @relation("InterventionSurgeon", fields: [surgeonId], references: [id])
+  anesthesiologist     User?                      @relation("InterventionAnesthesiologist", fields: [anesthesiologistId], references: [id])
+  clinicService        ClinicService?             @relation(fields: [clinicServiceId], references: [id], onDelete: SetNull)
+  surgeryCases         SurgeryCase[]
+  /// Chirurgiens autorisés à utiliser / voir ce type (en plus du service)
+  authorizedSurgeons   InterventionTypeSurgeon[]
 
   @@index([clinicServiceId])
+}
+
+/// Chirurgiens explicitement liés à un type d'opération (plusieurs médecins d'un même service).
+model InterventionTypeSurgeon {
+  id                 String   @id @default(cuid())
+  interventionTypeId String
+  userId             String
+  createdAt          DateTime @default(now())
+
+  interventionType InterventionType @relation(fields: [interventionTypeId], references: [id], onDelete: Cascade)
+  user             User             @relation("InterventionAuthorizedSurgeons", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([interventionTypeId, userId])
+  @@index([userId])
+  @@index([interventionTypeId])
 }
 
 model ExamCatalogItem {
@@ -460,6 +490,8 @@ model ExamCatalogItem {
   priceFcfa       Int
   /// Service clinique auquel l'examen est rattaché (Laboratoire / Hospitalisation = visibles pour tous)
   clinicServiceId String?
+  /// Formulaire de résultats labo lié (examens Laboratoire uniquement).
+  labPanelId      String?         @unique
   /// Périmètre d'unicité du code : "_" = nomenclature globale du type, sinon id du service.
   serviceScopeKey String          @default("_")
   active          Boolean         @default(true)
@@ -468,6 +500,7 @@ model ExamCatalogItem {
   updatedAt       DateTime        @updatedAt
 
   clinicService ClinicService? @relation(fields: [clinicServiceId], references: [id], onDelete: SetNull)
+  labPanel      LabPanel?      @relation(fields: [labPanelId], references: [id], onDelete: SetNull)
 
   @@unique([kind, code, serviceScopeKey])
   @@index([kind, active])
@@ -500,7 +533,8 @@ model LabPanel {
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
 
-  fields    LabPanelField[]
+  fields           LabPanelField[]
+  examCatalogItems ExamCatalogItem[]
 
   @@index([active])
 }
@@ -544,6 +578,10 @@ model SurgeryCase {
   assistantPaidById  String?
   clinicPaidAt       DateTime?
   clinicPaidById     String?
+  /// Mode de règlement de la part chirurgien (espèces vs paie)
+  surgeonPaidMethod  SharePaymentMethod?
+  assistantPaidMethod SharePaymentMethod?
+  clinicPaidMethod   SharePaymentMethod?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
@@ -555,6 +593,7 @@ model SurgeryCase {
   assistantPaidBy  User?            @relation("AssistantPayer", fields: [assistantPaidById], references: [id])
   clinicPaidBy     User?            @relation("ClinicPayer", fields: [clinicPaidById], references: [id])
   invoice          Invoice?
+  doctorShareClaims DoctorShareClaim[]
 }
 
 model Room {
@@ -641,6 +680,7 @@ model Invoice {
   pharmacyLines      PharmacySaleLine[]
   cashSettlementLine ReceptionCashSettlementLine?
   payments           InvoicePayment[]
+  doctorShareClaims  DoctorShareClaim[]
 
   @@index([patientId])
   @@index([externalClientId])
@@ -934,6 +974,30 @@ enum DoctorOvertimeStatus {
   CANCELLED
 }
 
+/** Nature de la créance médecin (consultations ≠ opérations). */
+enum DoctorShareKind {
+  CONSULTATION
+  OPERATION_SURGEON
+  OPERATION_ASSISTANT
+}
+
+/** Règlement d’une part : espèces distinct du salaire. */
+enum SharePaymentMethod {
+  CASH
+  PAYROLL
+}
+
+enum DoctorShareClaimStatus {
+  /// Médecin a demandé l’ajout au salaire (salarié / combiné)
+  PENDING_PAYROLL
+  /// Réglé en espèces par admin / gestionnaire
+  SETTLED_CASH
+  /// Inclus dans la paie du mois
+  SETTLED_PAYROLL
+  REJECTED
+  CANCELLED
+}
+
 /** Indice / motif prédéfini pour le formulaire de dépense clinique. */
 model ClinicExpenseIndice {
   id          String   @id @default(cuid())
@@ -1068,6 +1132,47 @@ model DoctorOvertimeEntry {
   validatedBy User?    @relation("OvertimeValidatedBy", fields: [validatedById], references: [id])
   paidBy      User?    @relation("OvertimePaidBy", fields: [paidById], references: [id])
 
+  @@index([employeeId, status])
+  @@index([businessDate])
+  @@index([status])
+  @@index([payrollYear, payrollMonth])
+}
+
+/**
+ * Créance médecin (consultation ou opération) :
+ * règlement espèces (admin/gest) OU demande d’ajout au salaire (médecin salarié).
+ * À percevoir = parts non réglées et hors PENDING_PAYROLL.
+ */
+model DoctorShareClaim {
+  id              String                 @id @default(cuid())
+  employeeId      String
+  doctorUserId    String
+  kind            DoctorShareKind
+  amountFcfa      Int
+  businessDate    DateTime               @db.Date
+  surgeryCaseId   String?
+  invoiceId       String?
+  status          DoctorShareClaimStatus @default(PENDING_PAYROLL)
+  payrollYear     Int?
+  payrollMonth    Int?
+  comment         String?
+  rejectionReason String?
+  requestedById   String
+  settledById     String?
+  settledAt       DateTime?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  employee    Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  doctorUser  User         @relation("DoctorShareClaims", fields: [doctorUserId], references: [id])
+  surgeryCase SurgeryCase? @relation(fields: [surgeryCaseId], references: [id], onDelete: Cascade)
+  invoice     Invoice?     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  requestedBy User         @relation("DoctorShareRequestedBy", fields: [requestedById], references: [id])
+  settledBy   User?        @relation("DoctorShareSettledBy", fields: [settledById], references: [id])
+
+  @@unique([surgeryCaseId, kind])
+  @@unique([invoiceId, kind])
+  @@index([doctorUserId, status])
   @@index([employeeId, status])
   @@index([businessDate])
   @@index([status])
@@ -1342,4 +1447,27 @@ model LabStockMovement {
 
   @@index([itemId, createdAt])
   @@index([createdAt])
+}
+
+/// Profil établissement (singleton) — en-têtes tickets / PDF / exports.
+model ClinicInfo {
+  id          String   @id @default("default")
+  nameFr      String
+  nameAr      String
+  shortName   String
+  logo        String
+  city        String
+  address     String
+  fullAddress String
+  phones      String
+  phoneLabel  String
+  email       String
+  /// Identifiant fiscal (NIF)
+  nif         String   @default("")
+  /// Registre de commerce (RC)
+  rc          String   @default("")
+  /// Mention libre affichée en pied d’impression
+  printFooter String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

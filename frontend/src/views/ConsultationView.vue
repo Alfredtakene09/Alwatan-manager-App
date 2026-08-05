@@ -48,6 +48,7 @@ const submitting = ref(false)
 const transferring = ref(false)
 const selectedExamsByKind = ref<ExamsByKind>(emptyExamsByKind())
 const examCommentsByKind = ref<ExamCommentsByKind>(emptyExamCommentsByKind())
+const operationAmountFcfa = ref<number | null>(null)
 const hospitalisationDays = ref<number | null>(null)
 const doctorComment = ref('')
 const pharmacyOrdonnance = ref<PharmacyOrdonnanceLine[]>([])
@@ -193,6 +194,7 @@ function resetExamForm() {
   hospitalisationDays.value = null
   doctorComment.value = ''
   pharmacyOrdonnance.value = []
+  operationAmountFcfa.value = null
 }
 
 async function openConsultModal(id: string) {
@@ -288,6 +290,12 @@ async function submitExams() {
       payload.examCommentsByKind = filterInvoiceExamComments(examCommentsByKind.value)
       if (hospitalisationPrescribed.value && hospitalisationDays.value && hospitalisationDays.value >= 1) {
         payload.hospitalisationDays = hospitalisationDays.value
+      }
+      if (
+        (selectedExamsByKind.value.operation?.length ?? 0) > 0 &&
+        operationAmountFcfa.value != null
+      ) {
+        payload.operationAmountFcfa = operationAmountFcfa.value
       }
     }
     if (showConsultationPanel.value && pharmacyOrdonnance.value.length > 0) {
@@ -497,6 +505,7 @@ onMounted(async () => {
                 v-model="selectedExamsByKind"
                 v-model:comments="examCommentsByKind"
                 v-model:hospitalisation-days="hospitalisationDays"
+                v-model:operation-amount-fcfa="operationAmountFcfa"
                 :doctor-id="auth.user?.id"
               />
             </section>

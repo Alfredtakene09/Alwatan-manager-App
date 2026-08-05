@@ -29,6 +29,7 @@ import {
   Warehouse,
   TrendingUp,
   ListChecks,
+  Hospital,
 } from '@lucide/vue'
 import type { AppUserRole } from './roles'
 import { canAccessModule, canManageLabStock, canManagePharmacyCatalog } from './roles'
@@ -50,6 +51,8 @@ export type NavChildItem = {
   pharmacyCatalog?: boolean
   /** Stock laboratoire — gestionnaire & Direction uniquement */
   labStock?: boolean
+  /** Si défini, n’afficher que pour ces rôles (en plus du module). */
+  roles?: AppUserRole[]
   children?: NavChildItem[]
 }
 
@@ -508,6 +511,14 @@ const clinicParametresChildren = [
 
 /** Paramètres Clinique — identiques pour Direction et Gestionnaire. */
 const parametresChildren = [
+  {
+    to: '/admin/parametres/clinique',
+    label: 'Infos clinique',
+    icon: Hospital,
+    module: 'admin',
+    roles: ['ADMIN', 'GESTIONNAIRE'] as AppUserRole[],
+    description: 'Nom, adresse, contact et infos fiscales pour les impressions',
+  },
   ...clinicParametresChildren,
   {
     to: '/admin/employes',
@@ -697,6 +708,7 @@ const SIDEBAR_TITLES: Record<AppUserRole, string> = {
 }
 
 function filterNavChild(child: NavChildItem, role: AppUserRole): NavChildItem | null {
+  if (child.roles && !child.roles.includes(role)) return null
   if (hasNavChildChildren(child)) {
     const children = child.children
       .map((nested) => filterNavChild(nested, role))

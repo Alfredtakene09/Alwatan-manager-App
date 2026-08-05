@@ -37,6 +37,7 @@ export function endOfDay(date: Date) {
  * - PAID → paidAt
  * - CONSULTATION + PENDING (legacy réception) → createdAt (encaissée à l'accueil sans passage PAID)
  * Les créneaux matin/soir filtrent cette date dans getShiftWindow — voir cash-shift.ts.
+ * Les factures PARTIALLY_PAID (tranches) ne comptent pas en recette tant qu'elles ne sont pas soldées.
  */
 export function invoiceCollectedAt(invoice: {
   type: InvoiceType;
@@ -55,6 +56,19 @@ export function invoiceCollectedAt(invoice: {
     return invoice.createdAt;
   }
   return null;
+}
+
+/**
+ * Montant réellement encaissé à enregistrer en recette.
+ * Priorité au cumul des paiements (paidAmountFcfa) ; sinon montant facture (legacy).
+ */
+export function collectedAmountFcfa(invoice: {
+  amountFcfa: number;
+  paidAmountFcfa?: number | null;
+}): number {
+  const paid = Math.max(0, Number(invoice.paidAmountFcfa) || 0);
+  if (paid > 0) return paid;
+  return Math.max(0, Number(invoice.amountFcfa) || 0);
 }
 
 export function isCollectedInvoice(invoice: {
@@ -123,6 +137,7 @@ export function sumCollectedBreakdown(invoices: Array<{
   type: InvoiceType;
   status: InvoiceStatus;
   amountFcfa: number;
+  paidAmountFcfa?: number | null;
   paidAt: Date | null;
   createdAt: Date;
 }>): CollectedBreakdown {
@@ -132,26 +147,27 @@ export function sumCollectedBreakdown(invoices: Array<{
     const collectedAt = invoiceCollectedAt(invoice);
     if (!collectedAt) continue;
 
+    const amount = collectedAmountFcfa(invoice);
     result.totalCount += 1;
-    result.totalFcfa += invoice.amountFcfa;
+    result.totalFcfa += amount;
 
     switch (invoice.type) {
       case InvoiceType.CONSULTATION:
         result.consultationsCount += 1;
-        result.consultationsFcfa += invoice.amountFcfa;
+        result.consultationsFcfa += amount;
         break;
       case InvoiceType.LAB_EXAM:
         result.examsCount += 1;
-        result.examsFcfa += invoice.amountFcfa;
+        result.examsFcfa += amount;
         break;
       case InvoiceType.SURGERY:
         result.surgeryCount += 1;
-        result.surgeryFcfa += invoice.amountFcfa;
+        result.surgeryFcfa += amount;
         break;
       case InvoiceType.HOSPITALIZATION_DEPOSIT:
       case InvoiceType.HOSPITALIZATION_FINAL:
         result.hospitalizationCount += 1;
-        result.hospitalizationFcfa += invoice.amountFcfa;
+        result.hospitalizationFcfa += amount;
         break;
     }
   }
@@ -166,6 +182,7 @@ export async function aggregateCollectedBetween(from: Date, to: Date) {
       type: true,
       status: true,
       amountFcfa: true,
+      paidAmountFcfa: true,
       paidAt: true,
       createdAt: true,
     },
@@ -209,10 +226,11 @@ export async function aggregateDayRoleTotals(from: Date, to: Date) {
   let comptabiliteFcfa = 0;
   for (const invoice of invoices) {
     if (!invoiceCollectedAt(invoice)) continue;
+    const amount = collectedAmountFcfa(invoice);
     if (invoice.issuedBy.role === "RECEPTIONNISTE") {
-      receptionFcfa += invoice.amountFcfa;
+      receptionFcfa += amount;
     } else {
-      comptabiliteFcfa += invoice.amountFcfa;
+      comptabiliteFcfa += amount;
     }
   }
 
@@ -252,6 +270,7 @@ export async function buildRevenueLast7Days(): Promise<RevenueDayRow[]> {
       type: true,
       status: true,
       amountFcfa: true,
+      paidAmountFcfa: true,
       paidAt: true,
       createdAt: true,
     },

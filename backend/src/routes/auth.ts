@@ -1,11 +1,25 @@
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "../lib/db.js";
-import { COOKIE_NAME, createSessionToken, type SessionUser } from "../lib/auth.js";
+import {
+  COOKIE_NAME,
+  createSessionToken,
+  newSessionId,
+  sessionCookieOptions,
+  type SessionUser,
+} from "../lib/auth.js";
 import { getDefaultRoute } from "../lib/roles.js";
 import { requireAuth } from "../middleware/auth.js";
+import {
+  hasActiveConcurrentSession,
+  isAccountLocked,
+  isSessionIdle,
+  LAST_ATTEMPT_WARNING_AT,
+  MAX_FAILED_LOGIN_ATTEMPTS,
+  SESSION_ACTIVITY_TOUCH_MS,
+} from "../lib/session-security.js";
 
 const router = Router();
 
@@ -30,13 +44,6 @@ const passwordSchema = z.object({
   newPassword: z.string().min(6, "Le nouveau mot de passe doit contenir au moins 6 caractères."),
 });
 
-const SESSION_COOKIE_OPTIONS = {
-  httpOnly: true,
-  sameSite: "lax" as const,
-  secure: ["1", "true", "yes"].includes((process.env.COOKIE_SECURE ?? "").toLowerCase()),
-  maxAge: 12 * 60 * 60 * 1000,
-};
-
 function toSessionUser(user: {
   id: string;
   username: string;
@@ -55,9 +62,13 @@ function toSessionUser(user: {
   };
 }
 
-async function attachSession(res: Response, user: SessionUser) {
-  const token = await createSessionToken(user);
-  res.cookie(COOKIE_NAME, token, SESSION_COOKIE_OPTIONS);
+async function attachSession(res: Response, user: SessionUser, sessionId: string, req?: Request) {
+  const token = await createSessionToken(user, sessionId);
+  res.cookie(COOKIE_NAME, token, sessionCookieOptions(req));
+}
+
+async function clearSessionCookie(req: Request, res: Response) {
+  res.clearCookie(COOKIE_NAME, sessionCookieOptions(req));
 }
 
 router.post("/login", async (req, res) => {
@@ -76,19 +87,91 @@ router.post("/login", async (req, res) => {
     });
 
     if (!user) {
-      return res.status(401).json({ error: "Identifiants invalides" });
+      return res.status(401).json({
+        error: "Identifiants invalides",
+        code: "INVALID_CREDENTIALS",
+      });
     }
+
     if (!user.active) {
-      return res.status(401).json({ error: "Compte désactivé. Contactez l'administrateur." });
+      return res.status(401).json({
+        error: "Compte désactivé. Contactez l'administrateur.",
+        code: "ACCOUNT_DISABLED",
+      });
+    }
+
+    if (isAccountLocked(user.lockedAt)) {
+      return res.status(403).json({
+        error:
+          "Compte verrouillé suite à trop de tentatives incorrectes. Seul un administrateur peut le déverrouiller.",
+        code: "ACCOUNT_LOCKED",
+      });
     }
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
-      return res.status(401).json({ error: "Identifiants invalides" });
+      const nextAttempts = user.failedLoginAttempts + 1;
+
+      if (nextAttempts >= MAX_FAILED_LOGIN_ATTEMPTS) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            failedLoginAttempts: nextAttempts,
+            lockedAt: new Date(),
+            sessionTokenId: null,
+            lastActivityAt: null,
+          },
+        });
+        return res.status(403).json({
+          error:
+            "Compte verrouillé après trop de mots de passe incorrects. Contactez un administrateur pour le déverrouiller.",
+          code: "ACCOUNT_LOCKED",
+        });
+      }
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { failedLoginAttempts: nextAttempts },
+      });
+
+      if (nextAttempts === LAST_ATTEMPT_WARNING_AT) {
+        return res.status(401).json({
+          error:
+            "Mot de passe incorrect. Attention : il s'agit de votre dernière tentative avant verrouillage du compte.",
+          code: "LAST_ATTEMPT",
+          attemptsRemaining: 1,
+        });
+      }
+
+      return res.status(401).json({
+        error: "Identifiants invalides",
+        code: "INVALID_CREDENTIALS",
+        attemptsRemaining: MAX_FAILED_LOGIN_ATTEMPTS - nextAttempts,
+      });
     }
 
+    if (hasActiveConcurrentSession(user.sessionTokenId, user.lastActivityAt)) {
+      return res.status(409).json({
+        error:
+          "Une session est déjà active pour cet utilisateur sur un autre poste. Déconnectez-vous d'abord sur l'autre appareil, ou attendez 30 minutes d'inactivité.",
+        code: "SESSION_ACTIVE",
+      });
+    }
+
+    const sessionId = newSessionId();
+    const now = new Date();
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        failedLoginAttempts: 0,
+        lockedAt: null,
+        sessionTokenId: sessionId,
+        lastActivityAt: now,
+      },
+    });
+
     const sessionUser = toSessionUser(user);
-    await attachSession(res, sessionUser);
+    await attachSession(res, sessionUser, sessionId, req);
 
     return res.json({ success: true, user: sessionUser, redirectTo: getDefaultRoute(user.role) });
   } catch {
@@ -96,14 +179,27 @@ router.post("/login", async (req, res) => {
   }
 });
 
-router.post("/logout", (_req, res) => {
-  res.clearCookie(COOKIE_NAME);
+router.post("/logout", async (req, res) => {
+  const token = req.cookies[COOKIE_NAME];
+  if (token) {
+    try {
+      const { verifySessionToken } = await import("../lib/auth.js");
+      const session = await verifySessionToken(token);
+      await prisma.user.updateMany({
+        where: { id: session.id, sessionTokenId: session.sid },
+        data: { sessionTokenId: null, lastActivityAt: null },
+      });
+    } catch {
+      // Cookie déjà invalide
+    }
+  }
+  await clearSessionCookie(req, res);
   return res.json({ success: true });
 });
 
 router.get("/me", async (req, res) => {
   const token = req.cookies[COOKIE_NAME];
-  if (!token) return res.status(401).json({ error: "Non autorisé" });
+  if (!token) return res.status(401).json({ error: "Non autorisé", code: "NO_SESSION" });
   try {
     const { verifySessionToken } = await import("../lib/auth.js");
     const sessionUser = await verifySessionToken(token);
@@ -117,15 +213,57 @@ router.get("/me", async (req, res) => {
         lastName: true,
         role: true,
         active: true,
+        lockedAt: true,
+        sessionTokenId: true,
+        lastActivityAt: true,
       },
     });
     if (!dbUser?.active) {
-      res.clearCookie(COOKIE_NAME, SESSION_COOKIE_OPTIONS);
-      return res.status(401).json({ error: "Compte désactivé" });
+      await clearSessionCookie(req, res);
+      return res.status(401).json({ error: "Compte désactivé", code: "ACCOUNT_DISABLED" });
     }
-    return res.json(toSessionUser(dbUser));
+    if (isAccountLocked(dbUser.lockedAt)) {
+      await clearSessionCookie(req, res);
+      return res.status(401).json({
+        error: "Compte verrouillé. Contactez l'administrateur.",
+        code: "ACCOUNT_LOCKED",
+      });
+    }
+    if (!dbUser.sessionTokenId || dbUser.sessionTokenId !== sessionUser.sid) {
+      await clearSessionCookie(req, res);
+      return res.status(401).json({
+        error: "Session invalide ou remplacée.",
+        code: "SESSION_REPLACED",
+      });
+    }
+    if (isSessionIdle(dbUser.lastActivityAt)) {
+      await prisma.user.update({
+        where: { id: dbUser.id },
+        data: { sessionTokenId: null, lastActivityAt: null },
+      });
+      await clearSessionCookie(req, res);
+      return res.status(401).json({
+        error: "Session expirée pour inactivité (30 minutes).",
+        code: "SESSION_IDLE",
+      });
+    }
+
+    const now = Date.now();
+    const lastTouch = dbUser.lastActivityAt?.getTime() ?? 0;
+    if (now - lastTouch >= SESSION_ACTIVITY_TOUCH_MS) {
+      await prisma.user.update({
+        where: { id: dbUser.id },
+        data: { lastActivityAt: new Date(now) },
+      });
+    }
+
+    const session = toSessionUser(dbUser);
+    const freshToken = await createSessionToken(session, sessionUser.sid);
+    res.cookie(COOKIE_NAME, freshToken, sessionCookieOptions(req));
+    return res.json(session);
   } catch {
-    return res.status(401).json({ error: "Session invalide" });
+    await clearSessionCookie(req, res);
+    return res.status(401).json({ error: "Session invalide", code: "SESSION_INVALID" });
   }
 });
 
@@ -192,7 +330,14 @@ router.patch("/profile", requireAuth, async (req, res) => {
     });
 
     const sessionUser = toSessionUser(updated);
-    await attachSession(res, sessionUser);
+    const sid = updated.sessionTokenId ?? newSessionId();
+    if (!updated.sessionTokenId) {
+      await prisma.user.update({
+        where: { id: updated.id },
+        data: { sessionTokenId: sid, lastActivityAt: new Date() },
+      });
+    }
+    await attachSession(res, sessionUser, sid, req);
     return res.json({ user: sessionUser });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -211,6 +356,12 @@ router.patch("/password", requireAuth, async (req, res) => {
     if (!existing || !existing.active) {
       return res.status(404).json({ error: "Compte introuvable." });
     }
+    if (isAccountLocked(existing.lockedAt)) {
+      return res.status(403).json({
+        error: "Compte verrouillé. Seul un administrateur peut réinitialiser le mot de passe.",
+        code: "ACCOUNT_LOCKED",
+      });
+    }
 
     const valid = await bcrypt.compare(body.currentPassword, existing.passwordHash);
     if (!valid) {
@@ -220,7 +371,11 @@ router.patch("/password", requireAuth, async (req, res) => {
     const passwordHash = await bcrypt.hash(body.newPassword, 10);
     await prisma.user.update({
       where: { id: currentUser.id },
-      data: { passwordHash },
+      data: {
+        passwordHash,
+        failedLoginAttempts: 0,
+        lockedAt: null,
+      },
     });
 
     return res.json({ success: true, message: "Mot de passe mis à jour." });

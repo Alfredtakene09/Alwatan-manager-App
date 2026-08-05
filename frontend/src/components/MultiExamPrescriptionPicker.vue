@@ -18,6 +18,8 @@ import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import api from '@/api/client'
+import { formatFcfa } from '@/lib/format-fcfa'
+import { clinicPercentFromSplits } from '@/lib/intervention-splits'
 import {
   EXAM_KIND_LABELS,
   EXAM_KIND_ORDER,
@@ -60,6 +62,8 @@ const props = withDefaults(
     serviceId?: string | null
     /** Bouton Consultation (désactivé pour patient externe : le service suffit). */
     showConsultation?: boolean
+    /** Montant opération (FCFA) — modifiable à la sélection, appliqué aux % parties prenantes. */
+    operationAmountFcfa?: number | null
   }>(),
   {
     comments: () => emptyExamCommentsByKind(),
@@ -67,6 +71,7 @@ const props = withDefaults(
     commentKinds: () => INVOICE_EXAM_COMMENT_KINDS,
     hospitalisationDays: null,
     showConsultation: true,
+    operationAmountFcfa: null,
   },
 )
 
@@ -74,6 +79,7 @@ const emit = defineEmits<{
   'update:modelValue': [value: ExamsByKind]
   'update:comments': [value: ExamCommentsByKind]
   'update:hospitalisationDays': [value: number | null]
+  'update:operationAmountFcfa': [value: number | null]
   'active-service-change': [
     payload: {
       kind: ExamKindSlug | 'consultation' | null
@@ -491,9 +497,76 @@ const selectedOperationExam = computed<CatalogExam | null>(() => {
   )
 })
 
+/** Opération retenue dans le panier (tous onglets) — pour le prix et les parts. */
+const cartOperationExam = computed<CatalogExam | null>(() => {
+  void catalogEpoch.value
+  const label = (examsByKind.value.operation ?? [])[0]
+  if (!label) return null
+  const serviceId = activeSpecialtyClinicServiceId.value
+  return (
+    getCatalogForKind('operation', props.doctorId, props.serviceId, serviceId).find(
+      (exam) => exam.label === label,
+    ) ??
+    getCatalogForKind('operation', props.doctorId, props.serviceId).find(
+      (exam) => exam.label === label,
+    ) ??
+    null
+  )
+})
+
+const showOperationPricePanel = computed(() => !!cartOperationExam.value)
+
 const showOperationAssistantPanel = computed(
   () => props.showConsultation && !!selectedOperationExam.value,
 )
+
+const operationAmountDraft = ref('')
+const lastSyncedOperationLabel = ref<string | null>(null)
+
+function emitOperationAmount(raw: string | number | null) {
+  if (raw == null || raw === '') {
+    emit('update:operationAmountFcfa', null)
+    return
+  }
+  const n = Math.max(0, Math.round(Number(raw)))
+  if (!Number.isFinite(n)) {
+    emit('update:operationAmountFcfa', null)
+    return
+  }
+  emit('update:operationAmountFcfa', n)
+}
+
+function onOperationAmountInput(value: string | number) {
+  const raw = String(value ?? '').trim()
+  operationAmountDraft.value = raw
+  emitOperationAmount(raw === '' ? null : raw)
+}
+
+const operationSharePreview = computed(() => {
+  const exam = cartOperationExam.value
+  const total = Math.max(0, Math.round(Number(operationAmountDraft.value) || 0))
+  if (!exam || total <= 0) return null
+  const surgeonPct = Math.min(100, Math.max(0, Math.round(exam.surgeonPercent ?? 0)))
+  const assistantPct = Math.min(
+    100,
+    Math.max(0, Math.round(exam.anesthesiologistPercent ?? 0)),
+  )
+  const clinicPct = clinicPercentFromSplits(surgeonPct, assistantPct)
+  const surgeonShareFcfa = Math.round((total * surgeonPct) / 100)
+  const assistantShareFcfa =
+    assistantPct > 0 ? Math.round((total * assistantPct) / 100) : 0
+  const clinicShareFcfa = total - surgeonShareFcfa - assistantShareFcfa
+  return {
+    total,
+    surgeonPct,
+    assistantPct,
+    clinicPct,
+    surgeonShareFcfa,
+    assistantShareFcfa,
+    clinicShareFcfa,
+    hasAssistant: assistantPct > 0,
+  }
+})
 
 function doctorOptionLabel(doctor: DoctorOption) {
   return `Dr ${doctor.firstName} ${doctor.lastName}`.trim()
@@ -613,6 +686,47 @@ watch(
     syncAssistantFormFromSelection()
   },
   { immediate: true },
+)
+
+watch(
+  cartOperationExam,
+  (exam) => {
+    if (!exam) {
+      lastSyncedOperationLabel.value = null
+      operationAmountDraft.value = ''
+      emit('update:operationAmountFcfa', null)
+      return
+    }
+    const sameLabel = lastSyncedOperationLabel.value === exam.label
+    lastSyncedOperationLabel.value = exam.label
+    if (sameLabel && props.operationAmountFcfa != null && props.operationAmountFcfa >= 0) {
+      operationAmountDraft.value = String(props.operationAmountFcfa)
+      return
+    }
+    const fromParent =
+      props.operationAmountFcfa != null && Number.isFinite(props.operationAmountFcfa)
+        ? Math.max(0, Math.round(props.operationAmountFcfa))
+        : null
+    const amount = fromParent ?? Math.max(0, Math.round(exam.priceFcfa || 0))
+    operationAmountDraft.value = String(amount)
+    emit('update:operationAmountFcfa', amount)
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.operationAmountFcfa,
+  (amount) => {
+    if (!cartOperationExam.value) return
+    if (amount == null) {
+      if (operationAmountDraft.value !== '') return
+      return
+    }
+    const next = String(Math.max(0, Math.round(amount)))
+    if (operationAmountDraft.value !== next) {
+      operationAmountDraft.value = next
+    }
+  },
 )
 
 watch(
@@ -756,6 +870,55 @@ watch(
         @update:model-value="onActivePickerUpdate"
         @update:hospitalisation-days="prescribedHospitalisationDays = $event"
       />
+
+      <section
+        v-if="showOperationPricePanel && cartOperationExam"
+        class="multi-exam-picker__price"
+      >
+        <header class="multi-exam-picker__price-head">
+          <h4>{{ uiText('Montant de l’opération') }}</h4>
+          <p>
+            {{
+              translateTemplate('Prix modifiable pour « {op} » — les parts appliquent les % définis.', {
+                op: cartOperationExam.label,
+              })
+            }}
+          </p>
+        </header>
+
+        <UiInput
+          :model-value="operationAmountDraft"
+          :label="uiText('Montant (FCFA)')"
+          type="number"
+          min="0"
+          step="1"
+          @update:model-value="onOperationAmountInput"
+        />
+
+        <ul v-if="operationSharePreview" class="multi-exam-picker__shares">
+          <li>
+            <span>
+              {{ uiText('Part chirurgien') }}
+              ({{ operationSharePreview.surgeonPct }} %)
+            </span>
+            <strong dir="ltr">{{ formatFcfa(operationSharePreview.surgeonShareFcfa) }}</strong>
+          </li>
+          <li v-if="operationSharePreview.hasAssistant">
+            <span>
+              {{ uiText('Part assistant') }}
+              ({{ operationSharePreview.assistantPct }} %)
+            </span>
+            <strong dir="ltr">{{ formatFcfa(operationSharePreview.assistantShareFcfa) }}</strong>
+          </li>
+          <li>
+            <span>
+              {{ uiText('Part clinique') }}
+              ({{ operationSharePreview.clinicPct }} %)
+            </span>
+            <strong dir="ltr">{{ formatFcfa(operationSharePreview.clinicShareFcfa) }}</strong>
+          </li>
+        </ul>
+      </section>
 
       <section
         v-if="showOperationAssistantPanel && selectedOperationExam"
@@ -991,11 +1154,12 @@ watch(
   height: 1.25rem;
   padding: 0 0.3rem;
   border-radius: 999px;
-  background: var(--primary-600);
+  background: var(--brand-red-700, #b71c1c);
   color: #fff;
   font-size: 0.6875rem;
   line-height: 1.25rem;
   text-align: center;
+  font-weight: 700;
 }
 
 .multi-exam-picker__badge--muted {
@@ -1136,6 +1300,53 @@ watch(
   color: var(--accent-600);
   flex-shrink: 0;
   margin-top: 0.1rem;
+}
+
+.multi-exam-picker__price {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(14, 116, 74, 0.16);
+  background: linear-gradient(180deg, rgba(14, 116, 74, 0.05), #fff);
+}
+
+.multi-exam-picker__price-head h4 {
+  margin: 0 0 0.25rem;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.multi-exam-picker__price-head p {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.multi-exam-picker__shares {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.multi-exam-picker__shares li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.multi-exam-picker__shares strong {
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .multi-exam-picker__assistant {

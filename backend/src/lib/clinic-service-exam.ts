@@ -92,11 +92,13 @@ export function examCatalogVisibleForServiceWhere(
 }
 
 /**
- * Types d'opération visibles pour un médecin : uniquement ceux rattachés à ses services.
- * Les interventions sans service (seed global) restent hors du périmètre médecin.
+ * Types d'opération visibles pour un médecin : rattachés à ses services,
+ * et soit partagés (aucun chirurgien explicite), soit l’utilisateur est
+ * le chirurgien propriétaire ou dans la liste des chirurgiens autorisés.
  */
 export function interventionVisibleForServicesWhere(
   clinicServiceIds: string[] | null | undefined,
+  options?: { doctorUserId?: string | null },
 ): Prisma.InterventionTypeWhereInput {
   const ids = (clinicServiceIds ?? [])
     .map((id) => id?.trim())
@@ -104,8 +106,25 @@ export function interventionVisibleForServicesWhere(
   if (ids.length === 0) {
     return { id: { in: [] } };
   }
-  return {
+
+  const serviceFilter: Prisma.InterventionTypeWhereInput = {
     clinicServiceId: ids.length === 1 ? ids[0] : { in: ids },
+  };
+
+  const doctorUserId = options?.doctorUserId?.trim() || null;
+  if (!doctorUserId) return serviceFilter;
+
+  return {
+    AND: [
+      serviceFilter,
+      {
+        OR: [
+          { authorizedSurgeons: { none: {} } },
+          { surgeonId: doctorUserId },
+          { authorizedSurgeons: { some: { userId: doctorUserId } } },
+        ],
+      },
+    ],
   };
 }
 

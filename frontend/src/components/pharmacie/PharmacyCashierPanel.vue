@@ -18,8 +18,7 @@ import {
 import api from '@/api/client'
 import { CLINIC } from '@/lib/clinic'
 import { formatFcfa, fullName } from '@/lib/roles'
-import { openPrintDocument } from '@/lib/print-document'
-import { translateUi } from '@/i18n/translate'
+import { buildThermalClinicHeaderHtml, openPrintDocument, thermalAr, thermalArTemplate, thermalBi, thermalBiTemplate, thermalMetaRow } from '@/lib/print-document'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiSelect from '@/components/ui/UiSelect.vue'
@@ -350,75 +349,75 @@ function printReceipt(data: {
   coveredByName?: string | null
   isFree?: boolean
 }) {
-  const t = translateUi
   const clinic = CLINIC
   const thermalRows = data.items
-    .map(
-      (item) => `
-    <tr>
-      <td>${item.name}</td>
-      <td>${item.quantity}</td>
-      <td>${formatFcfa(item.lineTotal)}</td>
-    </tr>`,
-    )
+    .map((item) => thermalMetaRow(`${item.name} × ${item.quantity}`, formatFcfa(item.lineTotal), ''))
     .join('')
 
   const grossTotal = data.grossTotal ?? data.total
   const reductionFcfa = data.reductionFcfa ?? 0
   const reductionPercent = data.reductionPercent
-  let paymentModeLabel = t('Paiement normal')
-  if (data.isFree) paymentModeLabel = t('Prise en charge gratuite')
+  let paymentModeLabel = 'Paiement normal'
+  if (data.isFree) paymentModeLabel = 'Prise en charge gratuite'
   else if (reductionFcfa > 0) {
     paymentModeLabel = reductionPercent
-      ? translateTemplate('Réduction {n} %', { n: reductionPercent })
-      : t('Réduction accordée')
+      ? thermalBiTemplate('Réduction {n} %', { n: reductionPercent })
+      : 'Réduction accordée'
   }
   const coveredByBlock =
     data.coveredByName && (data.isFree || reductionFcfa > 0)
-      ? `<div class="thermal-receipt__row thermal-receipt__row--stack"><span>${t('Responsable')}</span><strong>${data.coveredByName}</strong></div>`
+      ? thermalMetaRow('Responsable', data.coveredByName)
       : ''
-  const reductionLabel = reductionPercent
-    ? translateTemplate('Réduction ({n} %)', { n: reductionPercent })
-    : t('Réduction')
+  const reductionLabelFr = reductionPercent
+    ? thermalBiTemplate('Réduction ({n} %)', { n: reductionPercent })
+    : 'Réduction'
+  const reductionLabelAr = reductionPercent
+    ? thermalArTemplate('Réduction ({n} %)', { n: reductionPercent })
+    : thermalAr('Réduction')
+  const titleFr = data.isExternal ? 'Vente pharmacie' : 'Ordonnance pharmacie'
+  const titleAr = thermalAr(titleFr)
 
   openPrintDocument(
-    `${t(data.isExternal ? 'Vente' : 'Ordonnance')} ${data.buyerCode}`,
+    `${data.isExternal ? 'Vente' : 'Ordonnance'} ${data.buyerCode}`,
     `
 <div class="thermal-receipt">
-  <header class="thermal-receipt__head">
-    <img src="${clinic.logo}" alt="${clinic.nameFr}" class="thermal-receipt__logo" />
-    <p class="thermal-receipt__name-ar" dir="rtl">${clinic.nameAr}</p>
-    <p class="thermal-receipt__name">${clinic.nameFr}</p>
-    <p class="thermal-receipt__contact">${clinic.fullAddress}</p>
-    <p class="thermal-receipt__contact">${clinic.phones}</p>
-  </header>
+  ${buildThermalClinicHeaderHtml({
+    name: clinic.nameFr,
+    nameAr: clinic.nameAr,
+    contact: `${clinic.city} · ${clinic.phones}`,
+    logo: clinic.logo,
+  })}
 
   <hr class="thermal-receipt__rule" />
-  <h1 class="thermal-receipt__title">${data.isExternal ? t('Vente pharmacie') : t('Ordonnance pharmacie')}</h1>
-  <p class="thermal-receipt__subtitle">${data.invoiceNumber}</p>
+  <div class="thermal-receipt__title-row">
+    <div class="thermal-receipt__title-bi">
+      <h1 class="thermal-receipt__title thermal-receipt__title--fr" dir="ltr">${titleFr}</h1>
+      ${titleAr ? `<h1 class="thermal-receipt__title thermal-receipt__title--ar" dir="rtl" lang="ar">${titleAr}</h1>` : ''}
+    </div>
+    <p class="thermal-receipt__subtitle-no" dir="ltr">${data.invoiceNumber}</p>
+  </div>
   <hr class="thermal-receipt__rule" />
 
   <div class="thermal-receipt__fields">
-    <div class="thermal-receipt__row"><span>${t('Date')}</span><strong>${data.date}</strong></div>
-    <div class="thermal-receipt__row thermal-receipt__row--stack"><span>${t('Acheteur')}</span><strong>${data.buyerLabel}</strong></div>
-    <div class="thermal-receipt__row"><span>${t('Référence')}</span><strong>${data.buyerCode}</strong></div>
-    <div class="thermal-receipt__row"><span>${t('Règlement')}</span><strong>${paymentModeLabel}</strong></div>
+    ${thermalMetaRow('Date', data.date)}
+    ${thermalMetaRow('Acheteur', data.buyerLabel)}
+    ${thermalMetaRow('Référence', data.buyerCode)}
+    ${thermalMetaRow('Règlement', paymentModeLabel)}
     ${coveredByBlock}
   </div>
 
   <hr class="thermal-receipt__rule" />
-  <table>
-    <thead><tr><th>${t('Produit')}</th><th>${t('Qté')}</th><th>${t('Total')}</th></tr></thead>
-    <tbody>${thermalRows}</tbody>
-  </table>
-  <div class="thermal-receipt__fields">
-    <div class="thermal-receipt__row"><span>${t('Sous-total')}</span><strong>${formatFcfa(grossTotal)}</strong></div>
-    ${reductionFcfa > 0 ? `<div class="thermal-receipt__row"><span>${reductionLabel}</span><strong>- ${formatFcfa(reductionFcfa)}</strong></div>` : ''}
-    <div class="thermal-receipt__row"><span>${t('Total payé')}</span><strong>${formatFcfa(data.total)}</strong></div>
+  <div class="thermal-receipt__lines">
+    ${thermalRows}
   </div>
-  ${data.notes ? `<p class="thermal-receipt__note"><strong>${t('Notes:')}</strong> ${data.notes}</p>` : ''}
+  <div class="thermal-receipt__fields">
+    ${thermalMetaRow('Sous-total', formatFcfa(grossTotal))}
+    ${reductionFcfa > 0 ? thermalMetaRow(reductionLabelFr, `- ${formatFcfa(reductionFcfa)}`, reductionLabelAr) : ''}
+    ${thermalMetaRow('Total payé', formatFcfa(data.total))}
+  </div>
+  ${data.notes ? `<p class="thermal-receipt__note"><span dir="ltr">${thermalBi('Notes:')}</span> <span dir="ltr">${data.notes}</span></p>` : ''}
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks">${t('Merci de votre confiance')}</p>
+  <p class="thermal-receipt__thanks">${thermalBi('Merci de votre confiance')}</p>
 </div>
 `,
     { pageSize: '80mm', autoPrint: true },

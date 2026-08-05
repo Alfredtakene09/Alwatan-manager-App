@@ -31,6 +31,8 @@ const surgeryInclude = {
 } as const;
 
 const DOCTOR_VISIBLE_STATUSES: SurgeryStatus[] = [
+  SurgeryStatus.NOTIFIED,
+  SurgeryStatus.QUOTED,
   ...AWAITING_PERFORMANCE_STATUSES,
   SurgeryStatus.COMPLETED,
 ];
@@ -107,6 +109,51 @@ router.get("/mine", requireAuth, requireModule("consultation"), async (req, res)
   } catch (error) {
     console.error("GET /surgeries/mine failed:", error);
     return res.status(500).json({ error: "Impossible de charger vos opérations." });
+  }
+});
+
+/** Médecin (chirurgien / assistant) : marquer son opération comme effectuée. */
+router.post("/mine/:id/complete", async (req, res) => {
+  try {
+    const surgeryId = String(req.params.id);
+    const userId = req.user!.id;
+
+    const surgery = await prisma.surgeryCase.findUnique({
+      where: { id: surgeryId },
+      include: surgeryInclude,
+    });
+
+    if (!surgery) {
+      return res.status(404).json({ error: "Opération introuvable." });
+    }
+
+    if (!resolveMyShareKind(surgery, userId)) {
+      return res.status(403).json({
+        error: "Vous n’êtes pas rattaché à cette opération.",
+      });
+    }
+
+    if (!AWAITING_PERFORMANCE_STATUSES.includes(surgery.status)) {
+      return res.status(409).json({
+        error:
+          surgery.status === SurgeryStatus.COMPLETED
+            ? "Cette opération est déjà marquée comme effectuée."
+            : "L’opération doit d’abord être payée par le patient avant d’être clôturée.",
+      });
+    }
+
+    await completeSurgeryCase(surgery.id);
+
+    const updated = await prisma.surgeryCase.findUniqueOrThrow({
+      where: { id: surgery.id },
+      include: surgeryInclude,
+    });
+
+    const myShareKind = resolveMyShareKind(updated, userId);
+    return res.json({ ...updated, myShareKind });
+  } catch (error) {
+    console.error("POST /surgeries/mine/:id/complete failed:", error);
+    return res.status(500).json({ error: "Impossible de clôturer l’opération." });
   }
 });
 

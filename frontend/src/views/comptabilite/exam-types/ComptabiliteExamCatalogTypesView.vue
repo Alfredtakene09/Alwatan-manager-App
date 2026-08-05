@@ -37,6 +37,8 @@ type CatalogItem = {
   sortOrder: number
   clinicServiceId?: string | null
   clinicService?: { id: string; name: string } | null
+  labPanelId?: string | null
+  labPanel?: { id: string; slug: string; label: string; active: boolean } | null
 }
 
 type ClinicServiceOption = { id: string; name: string; active?: boolean }
@@ -166,6 +168,8 @@ const tableRows = computed(() => {
     code: item.code,
     category: item.category || '—',
     service: item.clinicService?.name || uiText('Tous les services'),
+    formLabel: item.labPanel?.label || (props.kind === 'examen' ? uiText('À créer') : '—'),
+    formLinked: Boolean(item.labPanelId),
     price: formatFcfa(item.priceFcfa),
     priceSort: item.priceFcfa,
     statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),
@@ -180,31 +184,44 @@ function resetListFilters() {
   selectedCategory.value = ''
 }
 
-const columns = [
-  { data: 'label', title: 'Libellé', render: (v: string) => `<span class="dt-name">${v}</span>` },
-  { data: 'code', title: 'Code' },
-  { data: 'category', title: 'Catégorie' },
-  { data: 'service', title: 'Service' },
-  {
-    data: 'priceSort',
-    title: 'Tarif',
-    render: (_d: number, _t: string, row: { price: string }) => `<span class="dt-amount">${row.price}</span>`,
-  },
-  {
-    data: 'statusLabel',
-    title: 'Statut',
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: 'Actions',
-    orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog',
-    render: (_d: unknown, _t: string, row: { id: string; toggleLabel: string }) =>
-      catalogRowActionsHtml(row),
-  },
-]
+const columns = computed(() => {
+  const base: Array<Record<string, unknown>> = [
+    { data: 'label', title: 'Libellé', render: (v: string) => `<span class="dt-name">${v}</span>` },
+    { data: 'code', title: 'Code' },
+    { data: 'category', title: 'Catégorie' },
+    { data: 'service', title: 'Service' },
+  ]
+  if (props.kind === 'examen') {
+    base.push({
+      data: 'formLabel',
+      title: 'Formulaire résultats',
+      render: (v: string, _t: string, row: { formLinked: boolean }) =>
+        `<span class="${row.formLinked ? 'dt-badge dt-badge--success' : 'dt-badge dt-badge--muted'}">${v}</span>`,
+    })
+  }
+  base.push(
+    {
+      data: 'priceSort',
+      title: 'Tarif',
+      render: (_d: number, _t: string, row: { price: string }) => `<span class="dt-amount">${row.price}</span>`,
+    },
+    {
+      data: 'statusLabel',
+      title: 'Statut',
+      render: (label: string, _t: string, row: { statusVariant: string }) =>
+        statusBadge(label, row.statusVariant as 'success' | 'danger'),
+    },
+    {
+      data: null,
+      title: 'Actions',
+      orderable: false,
+      className: 'dt-actions-col dt-actions-col--catalog',
+      render: (_d: unknown, _t: string, row: { id: string; toggleLabel: string }) =>
+        catalogRowActionsHtml(row),
+    },
+  )
+  return base
+})
 
 function resetMessages() {
   message.value = ''

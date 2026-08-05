@@ -11,9 +11,10 @@ $nodeDir = Initialize-NodePath
 $networkIps = Get-AlwatanNetworkIps
 $lanIp = Get-LocalLanIpv4
 
-# Par defaut, on force le mode developpement (hot reload).
+# Mode cabinet par défaut (démarrage auto + raccourci Bureau « Serveur »).
+# Hot reload uniquement via -Dev ou le raccourci « Serveur Auto ».
 if (-not $Dev -and -not $Production) {
-    $Dev = $true
+    $Production = $true
 }
 
 Write-Host ''
@@ -59,6 +60,7 @@ if ($prodUrl -and -not $Dev -and $Production) {
     $clientDir = Publish-AlwatanClientAccess -ServerIps $networkIps -Port 4000 -Root $Root
     Write-Host "Application déjà active : $prodUrl" -ForegroundColor Green
     Show-AlwatanNetworkUrls -LanIp $lanIp
+    Show-AlwatanTrayTip -Title 'Alwatan Manager' -Message 'Serveur déjà actif — ouverture de l''application…' -Icon Info
     Open-AlwatanBrowser -Url $prodUrl
     exit 0
 }
@@ -81,23 +83,33 @@ Write-Host 'Arrêt des anciens services sur le port 4000...'
 Stop-PortListeners -Ports @(4000)
 
 Write-Host 'Démarrage du serveur cabinet (production locale)...'
-$backendCmd = @"
-`$env:Path='$nodeDir;'+`$env:Path
-`$env:HOST='0.0.0.0'
-`$env:SERVE_FRONTEND='1'
-`$env:CORS_ORIGIN='$corsOrigin'
-Set-Location '$be'
-npm.cmd run start
-"@
-Start-Process powershell -ArgumentList @('-NoExit', '-Command', $backendCmd)
+Show-AlwatanTrayTip -Title 'Alwatan Manager' -Message 'Démarrage du serveur… L''application s''ouvrira automatiquement dans quelques secondes.' -Icon Info -DurationMs 8000
 
-$url = Wait-AlwatanProductionUrl -HostName '127.0.0.1' -Port 4000
+try {
+    $started = Start-AlwatanHiddenNodeServer `
+        -NodeDir $nodeDir `
+        -BackendDir $be `
+        -CorsOrigin $corsOrigin `
+        -Title 'Serveur cabinet'
+    $serverLog = $started.LogPath
+} catch {
+    Show-AlwatanMessage -Title 'Alwatan Manager' -Message ("Impossible de démarrer le serveur.`n{0}" -f $_.Exception.Message) -Type Error
+    exit 1
+}
+
+$url = Wait-AlwatanProductionUrl -HostName '127.0.0.1' -Port 4000 -TimeoutSec 90
 if (-not $url) {
-    Show-AlwatanMessage -Title 'Alwatan Manager' -Message 'Le serveur met trop de temps à démarrer. Vérifiez la fenêtre npm run start.' -Type Warning
+    $hint = "Journal : $serverLog"
+    if (Test-Path (Join-Path (Get-AlwatanLogDir) 'server.err.log')) {
+        $hint = "$hint`nErreurs : $(Join-Path (Get-AlwatanLogDir) 'server.err.log')"
+    }
+    Show-AlwatanTrayTip -Title 'Alwatan Manager' -Message 'Le serveur met trop de temps à démarrer.' -Icon Error
+    Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Le serveur met trop de temps à démarrer.`n$hint" -Type Warning
     exit 1
 }
 
 $clientDir = Publish-AlwatanClientAccess -ServerIps $networkIps -Port 4000 -Root $Root
+Show-AlwatanTrayTip -Title 'Alwatan Manager' -Message 'Serveur prêt — ouverture de l''application…' -Icon Info -DurationMs 4000
 Open-AlwatanBrowser -Url $url
 
 Write-Host ''

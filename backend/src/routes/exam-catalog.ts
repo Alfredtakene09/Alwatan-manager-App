@@ -37,6 +37,8 @@ type CatalogItemDto = {
   priceFcfa: number;
   clinicServiceId: string | null;
   clinicServiceName: string | null;
+  labPanelId?: string | null;
+  labPanelSlug?: string | null;
   anesthesiologistPercent?: number;
   anesthesiologistId?: string | null;
   anesthesiologistName?: string | null;
@@ -128,7 +130,7 @@ router.get("/", async (req, res) => {
 
   const interventionWhere =
     filterServiceIds.length > 0
-      ? { active: true, ...interventionVisibleForServicesWhere(filterServiceIds) }
+      ? { active: true, ...interventionVisibleForServicesWhere(filterServiceIds, { doctorUserId: doctorId }) }
       : doctorId || isMedecin
         ? { active: true, id: { in: [] as string[] } }
         : { active: true };
@@ -146,6 +148,8 @@ router.get("/", async (req, res) => {
         priceFcfa: true,
         clinicServiceId: true,
         clinicService: { select: { id: true, name: true } },
+        labPanelId: true,
+        labPanel: { select: { id: true, slug: true } },
       },
     }),
     prisma.interventionType.findMany({
@@ -162,6 +166,7 @@ router.get("/", async (req, res) => {
         anesthesiologistPercent: true,
         anesthesiologistId: true,
         anesthesiologistName: true,
+        surgeonPercent: true,
         anesthesiologist: { select: { id: true, firstName: true, lastName: true } },
       },
     }),
@@ -198,6 +203,7 @@ router.get("/", async (req, res) => {
         priceFcfa: item.totalCostFcfa,
         clinicServiceId: item.clinicServiceId,
         clinicServiceName: item.clinicService?.name ?? null,
+        surgeonPercent: item.surgeonPercent,
         anesthesiologistPercent: item.anesthesiologistPercent,
         anesthesiologistId: item.anesthesiologistId,
         anesthesiologistName: assistantLabel,
@@ -216,7 +222,15 @@ router.get("/", async (req, res) => {
       priceFcfa: item.priceFcfa,
       clinicServiceId: item.clinicServiceId,
       clinicServiceName: item.clinicService?.name ?? null,
+      labPanelId: item.labPanelId,
+      labPanelSlug: item.labPanel?.slug ?? null,
     };
+
+    // Examens Laboratoire (kind EXAMEN + service labo / global) → toujours onglet Labo
+    if (item.kind === ExamCatalogKind.EXAMEN && isExamVisibleOnKindTab(item, ExamCatalogKind.EXAMEN)) {
+      grouped.examen.push(dto);
+      continue;
+    }
 
     // Examens des services spécialisés → onglet(s) dédié(s)
     if (
@@ -231,10 +245,13 @@ router.get("/", async (req, res) => {
     }
 
     const slug = KIND_TO_SLUG[item.kind];
-    if (slug === "examen" || slug === "radio" || slug === "echo" || slug === "odonto") {
-      // Ne pas mélanger les nomenclatures de spécialité dans Labo/Radio/Écho/Odonto
+    if (slug === "radio" || slug === "echo" || slug === "odonto") {
+      // Ne pas mélanger les nomenclatures de spécialité dans Radio/Écho/Odonto
       if (!isExamVisibleOnKindTab(item, item.kind)) continue;
       grouped[slug].push(dto);
+    } else if (slug === "examen") {
+      // Autres EXAMEN non-labo non-spécialité (visibles quand même dans Labo)
+      grouped.examen.push(dto);
     }
   }
 

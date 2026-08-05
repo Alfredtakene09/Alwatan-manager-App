@@ -10,8 +10,10 @@ import {
 } from "../lib/lab-notes.js";
 import {
   appendLabResultsCompletion,
+  hasFilledLabPanelResults,
   hasLabExamsPrescribed,
   isLabPanelSlug,
+  labPanelValuesHaveEntry,
   parseLabPanelReceivedAt,
   parseLabPanelResults,
   upsertLabPanelResult,
@@ -21,19 +23,36 @@ import { requireAuth, requireModule } from "../middleware/auth.js";
 const router = Router();
 router.use(requireAuth, requireModule("laboratoire"));
 
+const personWithEmployeeSelect = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  employee: { select: { firstName: true, lastName: true } },
+} as const;
+
 const visitInclude = {
-  patient: true,
-  assignedDoctor: { select: { id: true, firstName: true, lastName: true } },
+  patient: {
+    include: {
+      createdBy: { select: personWithEmployeeSelect },
+    },
+  },
+  assignedDoctor: { select: personWithEmployeeSelect },
   invoices: {
     where: { type: InvoiceType.LAB_EXAM },
-    select: { invoiceNumber: true, amountFcfa: true, type: true, createdAt: true },
+    select: {
+      invoiceNumber: true,
+      amountFcfa: true,
+      type: true,
+      createdAt: true,
+      issuedBy: { select: personWithEmployeeSelect },
+    },
     orderBy: { createdAt: "asc" as const },
   },
   vitalSigns: { orderBy: { recordedAt: "desc" as const }, take: 1 },
   consultation: {
     include: {
-      doctor: { select: { firstName: true, lastName: true } },
-      labApprovedBy: { select: { firstName: true, lastName: true } },
+      doctor: { select: personWithEmployeeSelect },
+      labApprovedBy: { select: personWithEmployeeSelect },
     },
   },
 } as const;
@@ -146,6 +165,11 @@ router.put("/visits/:visitId/panels/:panelSlug", async (req, res) => {
 
   try {
     const body = panelSchema.parse(req.body);
+    if (!labPanelValuesHaveEntry(body.values)) {
+      return res.status(400).json({
+        error: "Remplissez au moins un résultat avant d'enregistrer.",
+      });
+    }
     const visit = await findLabVisitForRead(String(req.params.visitId));
     if (!visit?.consultation) {
       return res.status(404).json({ error: "Dossier laboratoire introuvable" });
@@ -181,9 +205,10 @@ router.post("/visits/:visitId/complete", async (req, res) => {
     return res.json({ ok: true });
   }
 
-  const panelResults = parseLabPanelResults(visit.consultation.clinicalNotes);
-  if (!Object.keys(panelResults).length) {
-    return res.status(400).json({ error: "Aucun formulaire enregistré — impossible de clôturer." });
+  if (!hasFilledLabPanelResults(visit.consultation.clinicalNotes)) {
+    return res.status(400).json({
+      error: "Aucun résultat saisi — impossible de clôturer le dossier.",
+    });
   }
 
   const clinicalNotes = appendLabResultsCompletion(visit.consultation.clinicalNotes);

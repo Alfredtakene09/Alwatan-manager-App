@@ -22,6 +22,16 @@ export default {
     Activer: 'تفعيل',
     Désactiver: 'تعطيل',
     Régler: 'تسوية',
+    'Régler en espèces': 'تسوية نقداً',
+    'Sélectionnez un médecin pour afficher le bouton de règlement.':
+      'اختر طبيباً لإظهار زر التسوية.',
+    'Rien à régler pour ce médecin.': 'لا يوجد ما يُسوّى لهذا الطبيب.',
+    'Parts réglées en espèces — la carte est à jour.':
+      'تم تسوية الحصص نقداً — تم تحديث البطاقة.',
+    'Impossible de régler ces parts en espèces.':
+      'تعذر تسوية هذه الحصص نقداً.',
+    'Confirmer le règlement cash de {amount} pour {name} ? La carte repassera à zéro.':
+      'تأكيد التسوية النقدية بمبلغ {amount} لـ {name}؟ ستعود البطاقة إلى الصفر.',
     Payer: 'دفع',
     Rechercher: 'بحث',
     Enregistrer: 'حفظ',
@@ -138,7 +148,11 @@ export default {
     'Aucun paiement enregistré pour ce patient.': 'لا يوجد دفع مسجّل لهذا المريض.',
     'Total facturé': 'إجمالي الفوترة',
     Encaissé: 'المحصّل',
+    'Déjà encaissé': 'تم تحصيله',
+    'Total dû': 'المبلغ المستحق',
     'Reste à payer': 'المتبقي للدفع',
+    'Payé partiellement': 'مدفوع جزئياً',
+    Reste: 'المتبقي',
     Soldé: 'مسدد',
     'En cours': 'قيد التنفيذ',
     'Total {amount}': 'الإجمالي {amount}',
@@ -336,6 +350,10 @@ export default {
     Examens: 'الفحوصات',
     'Net payé': 'صافي المدفوع',
     'Payé le': 'تاريخ الدفع',
+    "Détail de l'encaissement": 'تفاصيل التحصيل',
+    Paiement: 'الدفع',
+    'Montant brut': 'المبلغ الإجمالي',
+    'Aucun examen': 'لا فحص',
     Montant: 'المبلغ',
     'Prescrit le': 'تاريخ الوصفة',
     'Examens payés': 'فحوصات مدفوعة',
@@ -654,7 +672,7 @@ export default {
     'Commentaire médecin': 'تعليق الطبيب',
     'Sous-total': 'المجموع الفرعي',
     Réduction: 'خصم',
-    'Email :': 'البريد:',
+    'Email :': 'البريد الإلكتروني:',
     'Vente pharmacie': 'بيع صيدلية',
     Vente: 'بيع',
     Ordonnance: 'وصفة',
@@ -1334,6 +1352,10 @@ export default {
     'Valider et transmettre les résultats au médecin ? Le dossier passera dans Examens terminés.': 'تأكيد وإرسال النتائج إلى الطبيب؟ سينتقل الملف إلى الفحوصات المنتهية.',
     'Dossier clôturé — résultats transmis au médecin.': 'أُغلق الملف — أُرسلت النتائج إلى الطبيب.',
     'Impossible de clôturer le dossier.': 'تعذر إغلاق الملف.',
+    'Aucun résultat saisi — saisissez au moins un formulaire avant de clôturer.':
+      'لا توجد نتيجة مدخلة — أدخل نموذجًا واحدًا على الأقل قبل الإغلاق.',
+    'Aucun résultat saisi — impossible de clôturer le dossier.':
+      'لا توجد نتيجة مدخلة — تعذر إغلاق الملف.',
     'Créez et modifiez les formulaires de saisie des résultats du laboratoire': 'أنشئ وعدّل نماذج إدخال نتائج المختبر',
     'Chaque formulaire regroupe les champs saisis par le laboratoire (avec unité et valeur de référence)': 'كل نموذج يجمع الحقول التي يدخلها المختبر (مع الوحدة والقيمة المرجعية)',
     'Nouveau formulaire': 'نموذج جديد',
@@ -1908,6 +1930,15 @@ export default {
       unavailable: 'الواجهة الخلفية غير متاحة. شغّل .\\scripts\\lancer-serveur.ps1 أو npm run dev في مجلد backend.',
       badRequest: 'اسم المستخدم أو كلمة المرور غير صالحين.',
       generic: 'خطأ في تسجيل الدخول. حاول مرة أخرى بعد لحظات.',
+      sessionExpired:
+        'انتهت الجلسة أو رُفض ملف تعريف الارتباط على هذا الجهاز. سجّل الدخول مجددًا (استخدم عنوان Wi‑Fi الحالي للخادم وليس عنوانًا قديمًا).',
+      sessionIdle: 'انتهت الجلسة بعد 30 دقيقة دون نشاط. يرجى تسجيل الدخول مجددًا.',
+      sessionActive:
+        'هناك جلسة نشطة بالفعل لهذا المستخدم على جهاز آخر. سجّل الخروج هناك أولًا، أو انتظر 30 دقيقة من عدم النشاط.',
+      sessionReplaced: 'تم إلغاء هذه الجلسة. يرجى تسجيل الدخول مجددًا.',
+      lastAttempt: 'كلمة المرور غير صحيحة. تنبيه: هذه آخر محاولة قبل قفل الحساب.',
+      locked:
+        'الحساب مقفل بسبب محاولات فاشلة كثيرة. اتصل بالمسؤول لإلغاء القفل.',
     },
   },
   pwa: {
@@ -1934,6 +1965,7 @@ export default {
     iosStep3: 'اختر «على الشاشة الرئيسية» ثم «إضافة».',
     updateAvailable: 'يتوفر إصدار جديد على الخادم.',
     updateReload: 'تحديث',
+    updating: 'جاري التحديث…',
     offline:
       'الشبكة أو الخادم غير متاح. بيانات المرضى غير متاحة دون اتصال — تحقق من جهاز الخادم والشبكة المحلية.',
   },
@@ -2007,6 +2039,12 @@ export default {
     'vous (compte connecté)': 'أنت (الحساب المتصل)',
     'Avec assistant chirurgie': 'مع مساعد جراحة',
     'Part clinique': 'حصة العيادة',
+    'Montant de l’opération': 'مبلغ العملية',
+    'Prix modifiable pour « {op} » — les parts appliquent les % définis.':
+      'سعر قابل للتعديل لـ « {op} » — تُطبَّق الحصص حسب النسب المحددة.',
+    'Montant (FCFA)': 'المبلغ (فرنك)',
+    'Part chirurgien': 'حصة الجراح',
+    'Part assistant': 'حصة المساعد',
     'Impossible de charger les types d’opération.': 'تعذر تحميل أنواع العمليات.',
     'Libellé et coût total sont obligatoires.': 'التسمية والتكلفة الإجمالية إلزاميان.',
     "Saisissez le nom de l'assistant chirurgie (2 caractères min.).":
@@ -2021,6 +2059,58 @@ export default {
     'Suppression impossible. Désactivez plutôt si elle a déjà été utilisée.':
       'تعذر الحذف. عطّلها بدلاً من ذلك إذا سبق استخدامها.',
     Employés: 'الموظفون',
+    'Infos clinique': 'بيانات العيادة',
+    'Coordonnées affichées sur les tickets, PDF et exports de tous les modules.':
+      'البيانات الظاهرة على التذاكر وملفات PDF وتصديرات جميع الوحدات.',
+    'Impossible de charger les infos clinique.': 'تعذر تحميل بيانات العيادة.',
+    'Valeurs d’usine': 'القيم الأصلية',
+    'Valeurs d’usine rechargées dans le formulaire — enregistrez pour appliquer.':
+      'تمت إعادة القيم الأصلية إلى النموذج — احفظ لتطبيقها.',
+    'Informations clinique enregistrées. Elles s’appliquent aux tickets et PDF.':
+      'تم حفظ بيانات العيادة. تُطبَّق على التذاكر وملفات PDF.',
+    'Le nom français doit contenir au moins 2 caractères.':
+      'يجب أن يحتوي الاسم بالفرنسية على حرفين على الأقل.',
+    'Le nom arabe est obligatoire.': 'الاسم بالعربية إلزامي.',
+    'Le téléphone est obligatoire.': 'رقم الهاتف إلزامي.',
+    'Adresse e-mail invalide.': 'عنوان البريد الإلكتروني غير صالح.',
+    'Enregistrement…': 'جاري الحفظ…',
+    'Enregistrement impossible.': 'تعذر الحفظ.',
+    Identité: 'الهوية',
+    'Nom (français)': 'الاسم (بالفرنسية)',
+    'Nom (arabe)': 'الاسم (بالعربية)',
+    'Nom court (tickets)': 'الاسم المختصر (للتذاكر)',
+    'Chemin du logo': 'مسار الشعار',
+    'Chemin public, ex. /logo-alwatan.jpeg': 'مسار عام، مثال: /logo-alwatan.jpeg',
+    Logo: 'الشعار',
+    'Téléverser un logo': 'رفع شعار',
+    'Téléversement…': 'جارٍ الرفع…',
+    'JPEG, PNG, WebP ou GIF — max. 5 Mo. Enregistré directement sur le disque du serveur.':
+      'JPEG أو PNG أو WebP أو GIF — بحد أقصى 5 ميغابايت. يُحفظ مباشرة على قرص الخادم.',
+    'Sélectionnez une image (JPEG, PNG, WebP ou GIF).':
+      'يرجى اختيار صورة (JPEG أو PNG أو WebP أو GIF).',
+    'Le logo ne doit pas dépasser 5 Mo.': 'يجب ألا يتجاوز حجم الشعار 5 ميغابايت.',
+    'Logo téléversé et enregistré sur le disque.': 'تم رفع الشعار وحفظه على القرص.',
+    'Upload du logo impossible.': 'تعذر رفع الشعار.',
+    'Adresse & contact': 'العنوان ووسائل الاتصال',
+    'Ville / pays': 'المدينة / البلد',
+    Adresse: 'العنوان',
+    'Adresse complète (impressions)': 'العنوان الكامل (للطباعة)',
+    'Laisser vide pour composer automatiquement ville + adresse.':
+      'اتركه فارغًا لتجميع المدينة والعنوان تلقائيًا.',
+    'Téléphone(s)': 'الهاتف',
+    'Libellé téléphone': 'صيغة عرض الهاتف',
+    'Ex. Tel : +235 … — laisser vide pour générer depuis les téléphones.':
+      'مثال: هاتف: +235 … — اتركه فارغًا للتوليد من أرقام الهاتف.',
+    'E-mail': 'البريد الإلكتروني',
+    'Infos fiscales': 'البيانات الضريبية',
+    NIF: 'الرقم الضريبي (NIF)',
+    RC: 'السجل التجاري (RC)',
+    'Mention / pied de page': 'ملاحظة / تذييل الصفحة',
+    'Texte optionnel sous le contact sur les impressions.':
+      'نص اختياري يظهر تحت بيانات الاتصال في الطباعة.',
+    'Aperçu en-tête': 'معاينة الترويسة',
+    'Ces informations sont utilisées par tous les modules lors des impressions et exports PDF.':
+      'تُستخدم هذه البيانات في جميع الوحدات عند الطباعة وتصدير ملفات PDF.',
     Utilisateurs: 'المستخدمون',
     Administration: 'الإدارة',
     "Pour créer, modifier ou supprimer une opération, utilisez Paramètres → Types opérations.":
@@ -2043,6 +2133,30 @@ export default {
     'Analyses en attente': 'تحاليل قيد الانتظار',
     'Examens terminés': 'فحوصات منتهية',
     'Formulaires de résultats': 'نماذج النتائج',
+    'Rechercher un formulaire…': 'البحث عن نموذج…',
+    'Rechercher un formulaire': 'البحث عن نموذج',
+    '{shown} / {total} formulaire(s)': '{shown} / {total} نموذجًا',
+    '{n} enregistré(s)': '{n} محفوظ',
+    Prescrit: 'موصوف',
+    Enregistré: 'محفوظ',
+    'Aucun formulaire ne correspond à la recherche.': 'لا يوجد نموذج يطابق البحث.',
+    'Aucun formulaire enregistré pour ce dossier.': 'لا توجد نماذج محفوظة لهذا الملف.',
+    'Aucun formulaire disponible.': 'لا توجد نماذج متاحة.',
+    'Choisissez un formulaire dans la liste (tous sont proposés), ou filtrez par nom':
+      'اختر نموذجًا من القائمة (الكل متاح)، أو صفِّ بالاسم',
+    '— Aucun formulaire disponible —': '— لا يوجد نموذج متاح —',
+    'Tous les formulaires sont listés — cherchez par nom, puis sélectionnez celui à remplir':
+      'كل النماذج معروضة — ابحث بالاسم ثم اختر النموذج المراد تعبئته',
+    'Cherchez et sélectionnez un formulaire déjà enregistré pour le corriger':
+      'ابحث واختر نموذجًا محفوظًا لتصحيحه',
+    "Cherchez et sélectionnez un formulaire enregistré pour le consulter ou l'imprimer":
+      'ابحث واختر نموذجًا محفوظًا لعرضه أو طباعته',
+    'Ce formulaire n’a pas encore de champs — complétez-le dans Formulaires laboratoire.':
+      'هذا النموذج بلا حقول بعد — أكمله من نماذج المختبر.',
+    'Ajoutez un formulaire supplémentaire — cherchez par nom puis sélectionnez-le.':
+      'أضف نموذجًا إضافيًا — ابحث بالاسم ثم اختره.',
+    'Dossier clôturé. Vous pouvez encore consulter ou imprimer les formulaires enregistrés.':
+      'أُغلق الملف. يمكنك عرض النماذج المحفوظة أو طباعتها.',
     'Formulaires labo': 'نماذج المختبر',
     'Stock laboratoire': 'مخزون المختبر',
     Trésorerie: 'الخزينة',

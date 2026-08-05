@@ -24,7 +24,15 @@ export type LabExamPendingItem = {
   invoicesByKind?: Partial<
     Record<
       ExamKindSlug,
-      { invoiceNumber: string; grossFcfa: number; reductionFcfa: number; netFcfa: number }
+      {
+        invoiceNumber: string
+        grossFcfa: number
+        reductionFcfa: number
+        netFcfa: number
+        paidFcfa?: number
+        remainingFcfa?: number
+        isFullyPaid?: boolean
+      }
     >
   >
   reductionsByKind?: ExamReductionsByKind
@@ -33,6 +41,10 @@ export type LabExamPendingItem = {
   partialPaymentsByKind?: Partial<
     Record<ExamKindSlug, { totalFcfa: number; paidFcfa: number; remainingFcfa: number }>
   >
+  /** Cumul réellement encaissé (tranches + soldes). */
+  collectedFcfa?: number
+  /** Solde restant sur les types partiellement payés. */
+  remainingFcfa?: number
   allExamsByKind?: ExamsByKindBlocks
   cashierName?: string | null
   clinicalNotes?: string | null

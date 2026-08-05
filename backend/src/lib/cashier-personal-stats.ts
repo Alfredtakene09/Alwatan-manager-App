@@ -34,6 +34,7 @@ export async function aggregateCollectedForCashier(
       type: true,
       status: true,
       amountFcfa: true,
+      paidAmountFcfa: true,
       paidAt: true,
       createdAt: true,
     },

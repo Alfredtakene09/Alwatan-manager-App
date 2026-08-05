@@ -10,14 +10,14 @@ if (-not $icon) {
     exit 1
 }
 
-$serverLauncher = Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-serveur'
+$serverLauncher = Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-serveur' -ExtraArgs '-Production'
 $serverAutoLauncher = Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-serveur-auto'
 $clientLauncher = Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-client'
 
 $serverShortcut = New-AlwatanDesktopShortcut `
     -Name 'Alwatan Manager (Serveur)' `
     -LauncherPath $serverLauncher `
-    -Description 'Démarrer Alwatan Manager sur ce poste serveur' `
+    -Description 'Démarrer Alwatan (mode cabinet, port 4000 — réseau / démarrage auto)' `
     -IconPath $icon
 
 $clientShortcut = New-AlwatanDesktopShortcut `
@@ -29,7 +29,7 @@ $clientShortcut = New-AlwatanDesktopShortcut `
 $serverAutoShortcut = New-AlwatanDesktopShortcut `
     -Name 'Alwatan Manager (Serveur Auto)' `
     -LauncherPath $serverAutoLauncher `
-    -Description 'Demarrer Alwatan Manager en auto-mise-a-jour (mode developpement)' `
+    -Description 'Mode développeur uniquement (Vite 5173) — ne pas utiliser pour les postes clients' `
     -IconPath $icon
 
 $configPath = Get-AlwatanServerConfigPath
@@ -46,9 +46,9 @@ Write-Host "  $clientShortcut"
 Write-Host "  Icône : $icon"
 Write-Host ''
 Write-Host 'Utilisation :' -ForegroundColor Cyan
-Write-Host '  • Poste serveur : double-cliquez sur « Alwatan Manager (Serveur) »'
-Write-Host '  • Développement : double-cliquez sur « Alwatan Manager (Serveur Auto) »'
-Write-Host '  • Autres postes : double-cliquez sur « Alwatan Manager (Client) »'
+Write-Host '  • Poste serveur (cabinet) : « Alwatan Manager (Serveur) » — port 4000'
+Write-Host '  • Développement seul : « Alwatan Manager (Serveur Auto) » — ne pas pour les clients'
+Write-Host '  • Autres postes : « Alwatan Manager (Client) »'
 Write-Host ''
 Write-Host "Configuration réseau (clients) : $configPath" -ForegroundColor DarkGray
 Write-Host ''
@@ -56,5 +56,5 @@ Write-Host 'Pour les postes sans le projet : exécutez creer-setup-client.cmd' -
 Write-Host ''
 
 if (-not $Quiet) {
-    Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Les raccourcis ont été recréés sur le Bureau avec le logo de la clinique.`n`nDouble-clic : ouverture directe de l'application, sans fenêtre noire.`n`n• Serveur : démarre ou ouvre l'application`n• Serveur Auto : mode développement avec auto-mise à jour`n• Client : ouvre l'application sur le réseau"
+    Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Les raccourcis ont été recréés sur le Bureau.`n`n• Serveur : mode cabinet (port 4000) — à utiliser au quotidien et après arrêt`n• Serveur Auto : développement uniquement — pas pour les postes clients`n• Client : ouvrir l'appli depuis un autre PC"
 }

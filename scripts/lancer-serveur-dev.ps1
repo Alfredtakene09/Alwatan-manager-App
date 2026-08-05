@@ -29,24 +29,16 @@ if (-not $apiRunning) {
 
 if (-not $apiRunning) {
     Write-Host '[3/4] Démarrage API...'
-    $backendCmd = @"
-`$env:Path='$nodeDir;'+`$env:Path
-`$env:HOST='0.0.0.0'
-`$env:CORS_ORIGIN='$corsOrigin'
-`$env:SERVE_FRONTEND='0'
-Set-Location '$be'
-npm.cmd run dev
-"@
-    Start-Process powershell -ArgumentList @('-NoExit', '-Command', $backendCmd)
+    $apiLog = Join-Path (Get-AlwatanLogDir) 'server-api-dev.log'
+    $apiCmd = "set `"PATH=$nodeDir;%PATH%`" && set HOST=0.0.0.0&& set `"CORS_ORIGIN=$corsOrigin`" && set SERVE_FRONTEND=0&& npm.cmd run dev"
+    Start-AlwatanHiddenPowerShell -Command $apiCmd -WorkingDirectory $be -LogPath $apiLog -Title 'API dev'
     Start-Sleep -Seconds 4
 }
 
-$frontendCmd = @"
-`$env:Path='$nodeDir;'+`$env:Path
-Set-Location '$fe'
-npm.cmd run dev
-"@
-Start-Process powershell -ArgumentList @('-NoExit', '-Command', $frontendCmd)
+Write-Host '[4/4] Démarrage interface Vite...'
+$feLog = Join-Path (Get-AlwatanLogDir) 'server-frontend-dev.log'
+$frontendCmd = "set `"PATH=$nodeDir;%PATH%`" && npm.cmd run dev"
+Start-AlwatanHiddenPowerShell -Command $frontendCmd -WorkingDirectory $fe -LogPath $feLog -Title 'Frontend Vite'
 
 $url = Wait-AlwatanFrontend -HostName '127.0.0.1'
 if (-not $url) {

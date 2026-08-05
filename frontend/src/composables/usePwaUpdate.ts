@@ -5,6 +5,7 @@ const BUILD_KEY = 'alwatan-app-build-id'
 const needRefresh = ref(false)
 let updateServiceWorker: ((reloadPage?: boolean) => Promise<void>) | null = null
 let started = false
+let applying = false
 
 async function fetchServerBuildId(): Promise<string | null> {
   try {
@@ -18,6 +19,37 @@ async function fetchServerBuildId(): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+async function requestServiceWorkerUpdate() {
+  if (!('serviceWorker' in navigator)) return
+  try {
+    const reg = await navigator.serviceWorker.getRegistration()
+    if (!reg) return
+    await reg.update()
+    if (reg.waiting) {
+      reg.waiting.postMessage({ type: 'SKIP_WAITING' })
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function clearAppCaches() {
+  if (!('caches' in window)) return
+  try {
+    const keys = await caches.keys()
+    await Promise.all(keys.map((key) => caches.delete(key)))
+  } catch {
+    /* ignore */
+  }
+}
+
+function hardReload(buildId?: string | null) {
+  const url = new URL(window.location.href)
+  url.searchParams.set('v', buildId || String(Date.now()))
+  // replace évite de garder l’ancienne entrée d’historique / bfcache
+  window.location.replace(url.toString())
 }
 
 async function checkServerBuild() {
@@ -41,7 +73,9 @@ async function checkServerBuild() {
   }
 
   if (stored !== buildId) {
+    // Afficher la bannière uniquement — pas de rechargement auto (évite les boucles PWA).
     needRefresh.value = true
+    void requestServiceWorkerUpdate()
   }
 }
 
@@ -54,6 +88,12 @@ function ensureStarted() {
     onNeedRefresh() {
       needRefresh.value = true
     },
+    onRegisteredSW(_swUrl, registration) {
+      if (!registration) return
+      setInterval(() => {
+        void registration.update()
+      }, 60_000)
+    },
   })
 
   void checkServerBuild()
@@ -63,6 +103,7 @@ function ensureStarted() {
 
   window.addEventListener('focus', () => {
     void checkServerBuild()
+    void requestServiceWorkerUpdate()
   })
 }
 
@@ -76,6 +117,9 @@ export function usePwaUpdate() {
   })
 
   async function applyUpdate() {
+    if (applying) return
+    applying = true
+
     const buildId = await fetchServerBuildId()
     if (buildId) {
       try {
@@ -85,16 +129,20 @@ export function usePwaUpdate() {
       }
     }
 
-    if (updateServiceWorker) {
-      try {
-        await updateServiceWorker(true)
-      } catch {
-        window.location.reload()
+    try {
+      if (updateServiceWorker) {
+        await Promise.race([
+          updateServiceWorker(true),
+          new Promise((resolve) => setTimeout(resolve, 1500)),
+        ])
       }
-    } else {
-      window.location.reload()
+    } catch {
+      /* continue vers hard reload */
     }
-    needRefresh.value = false
+
+    await requestServiceWorkerUpdate()
+    await clearAppCaches()
+    hardReload(buildId)
   }
 
   // Démarrer même si le composant monté en retard

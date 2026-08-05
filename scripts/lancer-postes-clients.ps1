@@ -43,15 +43,8 @@ if (-not (Test-AlwatanProductionApp -HostName '127.0.0.1' -Port 4000 -TimeoutSec
     }
     Stop-PortListeners -Ports @(4000, 5173)
     Write-Host 'Démarrage du serveur (port 4000)...'
-    $backendCmd = @"
-`$env:Path='$nodeDir;'+`$env:Path
-`$env:HOST='0.0.0.0'
-`$env:SERVE_FRONTEND='1'
-`$env:CORS_ORIGIN='$corsOrigin'
-Set-Location '$be'
-npm.cmd run start
-"@
-    Start-Process powershell -ArgumentList @('-NoExit', '-Command', $backendCmd)
+    Show-AlwatanTrayTip -Title 'Alwatan Manager' -Message 'Démarrage du serveur…' -Icon Info
+    Start-AlwatanHiddenNodeServer -NodeDir $nodeDir -BackendDir $be -CorsOrigin $corsOrigin -Title 'Serveur + postes clients' | Out-Null
     $null = Wait-AlwatanProductionUrl -HostName '127.0.0.1' -Port 4000
 } else {
     Write-Host 'Serveur déjà actif sur le port 4000.' -ForegroundColor Green

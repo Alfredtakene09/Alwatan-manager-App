@@ -17,6 +17,7 @@ import { comptabiliteInvoicePatientWhere } from "../lib/patient-billing.js";
 import {
   aggregateDayRoleTotals,
   COLLECTED_INVOICE_TYPES,
+  collectedAmountFcfa,
   INVOICE_TYPE_LABELS,
   invoiceCollectedAt,
 } from "../lib/revenue-stats.js";
@@ -107,8 +108,8 @@ async function fetchUnsettledInvoices(
   });
 }
 
-function sumAmounts(invoices: { amountFcfa: number }[]) {
-  return invoices.reduce((sum, invoice) => sum + invoice.amountFcfa, 0);
+function sumAmounts(invoices: { amountFcfa: number; paidAmountFcfa?: number | null }[]) {
+  return invoices.reduce((sum, invoice) => sum + collectedAmountFcfa(invoice), 0);
 }
 
 function groupInvoicesByCashier(invoices: InvoiceWithRelations[]): CashierBucket[] {
@@ -136,7 +137,7 @@ function groupInvoicesByCashier(invoices: InvoiceWithRelations[]): CashierBucket
     }
     const bucket = grouped.get(cashier.id)!;
     bucket._invoices.push(invoice);
-    bucket.systemTotalFcfa += invoice.amountFcfa;
+    bucket.systemTotalFcfa += collectedAmountFcfa(invoice);
     bucket.transactionCount += 1;
   }
 
@@ -663,7 +664,7 @@ router.get("/:id", async (req, res) => {
       invoiceNumber: line.invoice.invoiceNumber,
       type: line.invoice.type,
       typeLabel: INVOICE_TYPE_LABELS[line.invoice.type],
-      amountFcfa: line.invoice.amountFcfa,
+      amountFcfa: collectedAmountFcfa(line.invoice),
       patient: line.invoice.patient,
     })),
   });

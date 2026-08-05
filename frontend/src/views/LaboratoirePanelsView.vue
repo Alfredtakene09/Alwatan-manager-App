@@ -219,11 +219,6 @@ function removePreviewField(key: string) {
 
 async function savePreview() {
   if (!previewSource.value || !previewDirty.value) return
-  if (!previewFields.value.length) {
-    message.value = 'Un formulaire doit conserver au moins un champ.'
-    messageType.value = 'error'
-    return
-  }
 
   previewSaving.value = true
   resetMessages()
@@ -243,7 +238,9 @@ async function savePreview() {
         type: 'text',
       })),
     })
-    message.value = 'Champs mis à jour.'
+    message.value = previewFields.value.length
+      ? 'Champs mis à jour.'
+      : 'Formulaire vidé — ajoutez des champs plus tard.'
     messageType.value = 'success'
     previewDirty.value = false
     closePreview()
@@ -285,11 +282,6 @@ async function save() {
     messageType.value = 'error'
     return
   }
-  if (!fields.length) {
-    message.value = 'Ajoutez au moins un champ avec un libellé.'
-    messageType.value = 'error'
-    return
-  }
 
   saving.value = true
   resetMessages()
@@ -301,14 +293,18 @@ async function save() {
         active: form.value.active,
         fields,
       })
-      message.value = 'Formulaire mis à jour.'
+      message.value = fields.length
+        ? 'Formulaire mis à jour.'
+        : 'Formulaire mis à jour (aucun champ — à compléter plus tard).'
     } else {
       await api.post('/lab-panels', {
         label,
         isEntry: form.value.isEntry,
         fields,
       })
-      message.value = 'Formulaire créé.'
+      message.value = fields.length
+        ? 'Formulaire créé.'
+        : 'Formulaire créé sans champ — ajoutez les résultats ensuite.'
     }
     messageType.value = 'success'
     closeModal()
@@ -474,7 +470,7 @@ onMounted(loadPanels)
           </UiButton>
         </div>
 
-        <p v-if="!form.fields.length" class="fields-empty">{{ uiText('Aucun champ — ajoutez-en au moins un.') }}</p>
+        <p v-if="!form.fields.length" class="fields-empty">{{ uiText('Aucun champ pour l’instant — vous pouvez en ajouter maintenant ou plus tard.') }}</p>
 
         <div v-for="(field, index) in form.fields" :key="field.uid" class="field-block">
           <div class="field-row">

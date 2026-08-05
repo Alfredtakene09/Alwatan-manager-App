@@ -1,9 +1,8 @@
 import PDFDocument from "pdfkit";
 import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Invoice, Patient, User } from "@prisma/client";
-import { CLINIC } from "./clinic.js";
+import { CLINIC, clinicTaxLine, getClinicInfo } from "./clinic.js";
+import { resolveClinicLogoAbsolutePath } from "./clinic-logo.js";
 import { formatPatientAge } from "./patient-age.js";
 
 type InvoiceWithRelations = Invoice & {
@@ -26,8 +25,11 @@ const TYPE_LABELS: Record<string, string> = {
   LAB_EXAM: "Examens laboratoire",
 };
 
-const LOGO_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "../assets/logo-alwatan.jpeg");
 const ARABIC_FONT_PATH = process.env.PDF_ARABIC_FONT_PATH?.trim() || null;
+
+function clinicLogoPath() {
+  return resolveClinicLogoAbsolutePath(CLINIC.logo);
+}
 
 function drawArabicClinicName(
   doc: PDFKit.PDFDocument,
@@ -54,8 +56,8 @@ function drawClinicHeader(doc: PDFKit.PDFDocument, docTitle: string) {
   const contentWidth = doc.page.width - leftX * 2;
   let headerBottom = 50;
 
-  if (fs.existsSync(LOGO_PATH)) {
-    doc.image(LOGO_PATH, leftX, 42, { width: 62 });
+  if (fs.existsSync(clinicLogoPath() ?? "")) {
+    doc.image(clinicLogoPath()!, leftX, 42, { width: 62 });
     headerBottom = 118;
   }
 
@@ -74,6 +76,13 @@ function drawClinicHeader(doc: PDFKit.PDFDocument, docTitle: string) {
   });
   doc.text(CLINIC.phoneLabel, leftX, doc.y + 2, { width: contentWidth, align: "center" });
   doc.text(`Email : ${CLINIC.email}`, leftX, doc.y + 2, { width: contentWidth, align: "center" });
+  const taxLine = clinicTaxLine();
+  if (taxLine) {
+    doc.text(taxLine, leftX, doc.y + 2, { width: contentWidth, align: "center" });
+  }
+  if (CLINIC.printFooter) {
+    doc.text(CLINIC.printFooter, leftX, doc.y + 2, { width: contentWidth, align: "center" });
+  }
 
   doc
     .fillColor("#0f172a")
@@ -91,7 +100,8 @@ function drawClinicHeader(doc: PDFKit.PDFDocument, docTitle: string) {
   doc.moveDown(1);
 }
 
-export function generateInvoicePdf(invoice: InvoiceWithRelations): Promise<Buffer> {
+export async function generateInvoicePdf(invoice: InvoiceWithRelations): Promise<Buffer> {
+  await getClinicInfo();
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50, size: "A4" });
     const chunks: Buffer[] = [];
@@ -162,6 +172,9 @@ export function generateInvoicePdf(invoice: InvoiceWithRelations): Promise<Buffe
       .fontSize(8)
       .text(`${CLINIC.fullAddress} — ${CLINIC.phoneLabel}`, { align: "center" });
     doc.text(`Email : ${CLINIC.email}`, { align: "center" });
+    const taxLine = clinicTaxLine();
+    if (taxLine) doc.text(taxLine, { align: "center" });
+    if (CLINIC.printFooter) doc.text(CLINIC.printFooter, { align: "center" });
 
     doc.end();
   });

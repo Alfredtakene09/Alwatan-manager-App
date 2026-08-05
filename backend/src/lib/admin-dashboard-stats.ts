@@ -351,6 +351,7 @@ export async function buildAdminDashboardOverview() {
         type: true,
         status: true,
         amountFcfa: true,
+        paidAmountFcfa: true,
         paidAt: true,
         createdAt: true,
       },
