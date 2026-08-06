@@ -350,6 +350,11 @@ function Wait-AlwatanProductionUrl {
     return $null
 }
 
+function Test-AlwatanServerListening {
+    param([int]$Port = 4000)
+    return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1)
+}
+
 function Ensure-AlwatanProductionBuild {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
@@ -410,7 +415,14 @@ function Ensure-AlwatanProductionBuild {
     & "$NodeDir\npx.cmd" prisma generate 2>$null
     if ($beNeedsBuild) {
         & "$NodeDir\npm.cmd" run build
-        if ($LASTEXITCODE -ne 0) { Pop-Location; return $false }
+        if ($LASTEXITCODE -ne 0) {
+            if (Test-Path $beDist) {
+                Write-Host 'ATTENTION : compilation backend échouée — conservation du build précédent.' -ForegroundColor Yellow
+            } else {
+                Pop-Location
+                return $false
+            }
+        }
     }
     Pop-Location
 
@@ -548,8 +560,9 @@ function Show-AlwatanCabinetHelp {
 function Ensure-AlwatanAppBrowserProfile {
     <#
       Profil Edge/Chrome dédié au mode --app :
-      désactive les en-têtes/pieds d'impression (date, URL, 1/1)
-      que l'utilisateur ne peut pas régler facilement dans la fenêtre appli.
+      - désactive en-têtes/pieds d'impression
+      - force Portrait + ticket 80 mm (évite paysage / A4 sur postes clients)
+      Les réglages « sticky » du dialogue d'impression sont réécrits à chaque lancement.
     #>
     $profileRoot = Join-Path $env:LOCALAPPDATA 'CliniqueAlwatan\app-browser'
     $defaultDir = Join-Path $profileRoot 'Default'
@@ -577,7 +590,12 @@ function Ensure-AlwatanAppBrowserProfile {
     }
     $printing | Add-Member -NotePropertyName print_header_footer -NotePropertyValue $false -Force
 
-    $stickyApp = '{"version":2,"isHeaderFooterEnabled":false,"isCssBackgroundEnabled":true,"isLandscapeEnabled":false}'
+    # appState = JSON string (pas un objet) — Chromium le restaure tel quel.
+    # 80 mm × 120 mm en microns ; scalingType 0 = DEFAULT (pas « ajuster à la page »).
+    $stickyApp = (@'
+{"version":2,"isHeaderFooterEnabled":false,"isCssBackgroundEnabled":true,"isLandscapeEnabled":false,"marginsType":1,"scaling":"100","scalingType":0,"scalingTypePdf":0,"mediaSize":{"width_microns":80000,"height_microns":120000,"custom_display_name":"Alwatan Ticket 80mm","is_default":true}}
+'@).Trim()
+
     $sticky = $printing.print_preview_sticky_settings
     if (-not $sticky) {
         $sticky = [pscustomobject]@{ appState = $stickyApp }
@@ -1044,7 +1062,7 @@ function Sync-AlwatanLanConfig {
     )
 
     if (-not $LanIps -or $LanIps.Count -eq 0) {
-        $LanIps = @(Get-AlwatanNetworkIps)
+        $LanIps = @(Get-AlwatanNetworkIps -IncludeTailscale)
     }
     if (-not $LanIp) {
         $LanIp = Get-LocalLanIpv4
@@ -1074,6 +1092,7 @@ function Sync-AlwatanLanConfig {
     $out = [System.Collections.Generic.List[string]]::new()
     $seenHost = $false
     $seenCors = $false
+    $seenServe = $false
 
     foreach ($line in $lines) {
         if ($line -match '^\s*HOST\s*=') {
@@ -1086,11 +1105,17 @@ function Sync-AlwatanLanConfig {
             $seenCors = $true
             continue
         }
+        if ($line -match '^\s*SERVE_FRONTEND\s*=') {
+            [void]$out.Add('SERVE_FRONTEND=1')
+            $seenServe = $true
+            continue
+        }
         [void]$out.Add($line)
     }
 
     if (-not $seenHost) { [void]$out.Add('HOST=0.0.0.0') }
     if (-not $seenCors) { [void]$out.Add("CORS_ORIGIN=`"$corsOrigin`"") }
+    if (-not $seenServe) { [void]$out.Add('SERVE_FRONTEND=1') }
 
     Set-Content -Path $envFile -Value $out -Encoding UTF8
 }

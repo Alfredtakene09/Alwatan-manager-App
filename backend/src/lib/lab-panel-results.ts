@@ -37,10 +37,10 @@ export const LAB_PANEL_LABELS: Record<LabPanelSlug, string> = {
 };
 
 const LEGACY_LAB_PANEL_LABELS: Record<string, string> = {
-  'Liver Function': 'liver',
-  'Thyroids Hormones Test': 'thyroid',
-  'Routine Investigation 2': 'routine',
-}
+  "Liver Function": "liver",
+  "Thyroids Hormones Test": "thyroid",
+  "Routine Investigation 2": "routine",
+};
 
 /**
  * Registre dynamique alimenté depuis la base (formulaires gérés via le CRUD labo).
@@ -70,6 +70,11 @@ function knownSlugs(): string[] {
 
 function resolveLabPanelSlug(label: string): string | undefined {
   const trimmed = label.trim();
+  if (!trimmed) return undefined;
+
+  // Prefer exact slug identity (storage canonnique depuis ce correctif).
+  if (knownSlugs().includes(trimmed)) return trimmed;
+
   const dynamic = Object.entries(dynamicLabelBySlug).find(([, panelLabel]) => panelLabel === trimmed)?.[0];
   if (dynamic) return dynamic;
   const current = Object.entries(LAB_PANEL_LABELS).find(([, panelLabel]) => panelLabel === trimmed)?.[0];
@@ -79,6 +84,8 @@ function resolveLabPanelSlug(label: string): string | undefined {
 
   // Comparaison insensible à la casse (libellés historiques légèrement différents).
   const lower = trimmed.toLowerCase();
+  if (knownSlugs().includes(lower)) return lower;
+
   const dynamicCi = Object.entries(dynamicLabelBySlug).find(
     ([, panelLabel]) => panelLabel.toLowerCase() === lower,
   )?.[0];
@@ -100,8 +107,13 @@ function slugFallbackFromLabel(label: string) {
   return slug || "panel";
 }
 
+/** Identifiant stocké entre parenthèses : slug prioritaire, sinon libellé legacy. */
+function resolveStoredPanelId(id: string): string {
+  return resolveLabPanelSlug(id) ?? slugFallbackFromLabel(id);
+}
+
 // Accepte les libellés contenant des parenthèses, ex. "Panel (v2)"
-const PANEL_LINE_RE = /^Labo panel \((.+)\) : (\{.*\})$/
+const PANEL_LINE_RE = /^Labo panel \((.+)\) : (\{.*\})$/;
 
 export function hasLabExamsPrescribed(notes?: string | null) {
   return parsePrescribedExamsByKind(notes).examen.length > 0;
@@ -114,9 +126,9 @@ export function parseLabPanelResults(notes?: string | null): Record<string, Reco
   for (const line of notes.split("\n")) {
     const match = line.trim().match(PANEL_LINE_RE);
     if (!match) continue;
-    const label = match[1];
-    const slug = resolveLabPanelSlug(label) ?? slugFallbackFromLabel(label);
+    const slug = resolveStoredPanelId(match[1]);
     try {
+      // En cas de doublon label→slug legacy, la dernière ligne gagne (plus récente).
       result[slug] = JSON.parse(match[2]) as Record<string, string>;
     } catch {
       // ignore invalid JSON
@@ -128,10 +140,15 @@ export function parseLabPanelResults(notes?: string | null): Record<string, Reco
 
 function stripPanelLines(notes: string, slug: string) {
   const label = labelForSlug(slug);
-  const prefix = `Labo panel (${label}) : `;
   return notes
     .split("\n")
-    .filter((line) => !line.trim().startsWith(prefix))
+    .filter((line) => {
+      const match = line.trim().match(PANEL_LINE_RE);
+      if (!match) return true;
+      const id = match[1];
+      if (id === slug || id === label) return false;
+      return resolveStoredPanelId(id) !== slug;
+    })
     .join("\n")
     .trim();
 }
@@ -140,18 +157,21 @@ const PANEL_RECEIVED_RE = /^Labo panel reçu \((.+)\) : (.+)$/;
 
 function stripPanelReceivedLines(notes: string, slug: string) {
   const label = labelForSlug(slug);
-  const prefix = `Labo panel reçu (${label}) : `;
   return notes
     .split("\n")
-    .filter((line) => !line.trim().startsWith(prefix))
+    .filter((line) => {
+      const match = line.trim().match(PANEL_RECEIVED_RE);
+      if (!match) return true;
+      const id = match[1];
+      if (id === slug || id === label) return false;
+      return resolveStoredPanelId(id) !== slug;
+    })
     .join("\n")
     .trim();
 }
 
 function upsertPanelReceivedStamp(notes: string, slug: string) {
-  const label = labelForSlug(slug);
-  const prefix = `Labo panel reçu (${label}) : `;
-  const line = `${prefix}${new Date().toISOString()}`;
+  const line = `Labo panel reçu (${slug}) : ${new Date().toISOString()}`;
   const cleaned = stripPanelReceivedLines(notes, slug);
   return cleaned ? `${cleaned}\n${line}` : line;
 }
@@ -165,9 +185,7 @@ export function parseLabPanelReceivedAt(
   for (const line of notes.split("\n")) {
     const match = line.trim().match(PANEL_RECEIVED_RE);
     if (!match) continue;
-    const label = match[1];
-    const slug = resolveLabPanelSlug(label);
-    if (!slug) continue;
+    const slug = resolveStoredPanelId(match[1]);
     const parsed = new Date(match[2].trim());
     if (Number.isNaN(parsed.getTime())) continue;
     result[slug] = parsed;
@@ -182,7 +200,8 @@ export function upsertLabPanelResult(
   values: Record<string, string>,
 ) {
   const cleaned = stripPanelLines(notes ?? "", slug);
-  const line = `Labo panel (${labelForSlug(slug)}) : ${JSON.stringify(values)}`;
+  // Stocker par slug (stable) — évite qu'un libellé ambigu remappe vers un autre formulaire (ex. diabetic).
+  const line = `Labo panel (${slug}) : ${JSON.stringify(values)}`;
   const withPanel = cleaned ? `${cleaned}\n${line}` : line;
   return upsertPanelReceivedStamp(withPanel, slug);
 }
@@ -220,10 +239,15 @@ const PANEL_DOCTOR_COMMENT_RE = /^Labo panel avis médecin \((.+)\) : (\{.*\})$/
 
 function stripPanelDoctorCommentLines(notes: string, slug: string) {
   const label = labelForSlug(slug);
-  const prefix = `Labo panel avis médecin (${label}) : `;
   return notes
     .split("\n")
-    .filter((line) => !line.trim().startsWith(prefix))
+    .filter((line) => {
+      const match = line.trim().match(PANEL_DOCTOR_COMMENT_RE);
+      if (!match) return true;
+      const id = match[1];
+      if (id === slug || id === label) return false;
+      return resolveStoredPanelId(id) !== slug;
+    })
     .join("\n")
     .trim();
 }
@@ -237,9 +261,7 @@ export function parseLabPanelDoctorComments(
   for (const line of notes.split("\n")) {
     const match = line.trim().match(PANEL_DOCTOR_COMMENT_RE);
     if (!match) continue;
-    const label = match[1];
-    const slug = resolveLabPanelSlug(label);
-    if (!slug) continue;
+    const slug = resolveStoredPanelId(match[1]);
     try {
       const parsed = JSON.parse(match[2]) as LabPanelDoctorComment;
       if (typeof parsed.comment === "string" && parsed.comment.trim()) {
@@ -272,7 +294,7 @@ export function upsertLabPanelDoctorComment(
     doctorId,
     updatedAt: new Date().toISOString(),
   };
-  const line = `Labo panel avis médecin (${labelForSlug(slug)}) : ${JSON.stringify(payload)}`;
+  const line = `Labo panel avis médecin (${slug}) : ${JSON.stringify(payload)}`;
   return cleaned ? `${cleaned}\n${line}` : line;
 }
 

@@ -63,7 +63,7 @@ export function getTailscaleIpv4(): string | null {
 }
 
 const PRIVATE_LAN_ORIGIN =
-  /^https?:\/\/(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|100\.\d{1,3}\.\d{1,3}\.\d{1,3})(?::\d+)?$/;
+  /^https?:\/\/(?:192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|100\.\d{1,3}\.\d{1,3}\.\d{1,3}|[\w.-]+\.ts\.net)(?::\d+)?$/i;
 
 export function isPrivateLanOrigin(origin: string) {
   return PRIVATE_LAN_ORIGIN.test(origin);

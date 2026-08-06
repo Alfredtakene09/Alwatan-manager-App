@@ -24,6 +24,7 @@ import {
   medecinPendingConsultationVisitWhere,
   visitBelongsToDoctor,
 } from "../lib/medecin-queues.js";
+import { ensureVisitPatientMergedByPhone } from "../lib/merge-patients.js";
 import { canAccessModule } from "../lib/roles.js";
 import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.js";
 import { computeGrossFcfaFromExamLabels, computeLabExamsGrossFcfa, buildLabExamLines } from "../lib/lab-exam-prices.js";
@@ -317,6 +318,7 @@ router.get("/", async (req, res) => {
 router.patch("/:id/start-consultation", requireModule("consultation"), async (req, res) => {
   const visitId = String(req.params.id);
   const user = req.user!;
+  await ensureVisitPatientMergedByPhone(visitId);
   const existing = await prisma.visit.findUnique({
     where: { id: visitId },
     include: { consultation: { select: { doctorId: true } } },

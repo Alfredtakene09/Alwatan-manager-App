@@ -724,9 +724,9 @@ export const CLINIC_PRINT_STYLES = `
     border-color: #e65100;
   }
 
-  /* Ticket thermique 80 mm (Xprinter) — hauteur = contenu, pas une page A4 */
+  /* Ticket thermique 80 mm — portrait (hauteur > largeur), jamais "auto"/A4. */
   @page print-thermal {
-    size: 80mm auto;
+    size: 80mm 110mm;
     margin: 0;
   }
   body.print-thermal {
@@ -735,7 +735,7 @@ export const CLINIC_PRINT_STYLES = `
     width: 80mm;
     margin: 0 !important;
     /* Peu de marge : le papier 80 mm a déjà une zone non imprimable matérielle */
-    padding: 0.5mm 1mm 1.5mm !important;
+    padding: 0.5mm 1.5mm 2mm !important;
     min-height: 0 !important;
     height: auto !important;
     font-family: Arial, 'Segoe UI', Helvetica, sans-serif;
@@ -995,6 +995,84 @@ export const CLINIC_PRINT_STYLES = `
     direction: ltr !important;
     unicode-bidi: isolate;
   }
+
+  /* Tickets thermiques stylés — Courier, titre + n° + logo */
+  body.print-thermal .thermal-receipt--ticket {
+    font-family: 'Courier New', Courier, monospace !important;
+    font-size: 15px;
+    line-height: 1.35;
+  }
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__ticket-head {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__ticket-head-text {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+  }
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__ticket-title-line {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px;
+  }
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__title,
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__title--fr {
+    font-family: 'Courier New', Courier, monospace !important;
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__subtitle-no {
+    font-family: 'Courier New', Courier, monospace !important;
+    font-size: 13px;
+    font-weight: 700;
+    margin: 0;
+  }
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__contact {
+    font-family: 'Courier New', Courier, monospace !important;
+    font-size: 12px;
+    margin: 2px 0 0;
+  }
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__logo {
+    width: 64px;
+    height: 64px;
+    flex-shrink: 0;
+    object-fit: contain;
+  }
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__row,
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__line {
+    font-family: 'Courier New', Courier, monospace !important;
+    font-size: 14px;
+    margin: 4px 0;
+  }
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__label-ar {
+    font-family: 'Courier New', Courier, monospace !important;
+  }
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__value {
+    font-size: 14px;
+    font-weight: 700;
+  }
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__line--total,
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__row--total {
+    font-size: 16px;
+    font-weight: 700;
+  }
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__thanks {
+    font-size: 14px;
+    font-weight: 700;
+  }
+  body.print-thermal .thermal-receipt--ticket .thermal-receipt__note {
+    font-size: 12px;
+  }
 `
 
 import { EXAM_KIND_LABELS, EXAM_KIND_ORDER, type ExamKindSlug } from '@/lib/exam-catalog/types'
@@ -1040,6 +1118,29 @@ export function thermalMetaRow(labelFr: string, value: string, labelAr?: string)
 </div>`
 }
 
+/** En-tête ticket : titre + n° à gauche, logo à droite. */
+export function buildThermalTicketHeadHtml(options: {
+  title: string
+  number?: string | null
+  contact?: string
+  logo?: string
+}) {
+  const title = options.title.trim()
+  const number = (options.number ?? '').trim()
+  const contact = options.contact ?? `${CLINIC.city} · ${CLINIC.phones}`
+  const logo = options.logo ?? CLINIC.logo
+  return `<header class="thermal-receipt__ticket-head">
+  <div class="thermal-receipt__ticket-head-text">
+    <div class="thermal-receipt__ticket-title-line">
+      <h1 class="thermal-receipt__title thermal-receipt__title--fr" dir="ltr">${escapeHtml(title)}</h1>
+      ${number ? `<p class="thermal-receipt__subtitle-no" dir="ltr">${escapeHtml(number)}</p>` : ''}
+    </div>
+    <p class="thermal-receipt__contact" dir="ltr">${escapeHtml(contact)}</p>
+  </div>
+  <img src="${logo}" alt="" class="thermal-receipt__logo" />
+</header>`
+}
+
 /** En-tête compact : infos à gauche, logo à droite (moins de papier). */
 export function buildThermalClinicHeaderHtml(options?: {
   name?: string
@@ -1059,44 +1160,6 @@ export function buildThermalClinicHeaderHtml(options?: {
   </div>
   <img src="${logo}" alt="${escapeHtml(CLINIC.nameFr)}" class="thermal-receipt__logo" />
 </header>`
-}
-
-function buildThermalDocHeading(titleFr: string, subtitle: string | null | undefined, shortDate: string, timeShort: string) {
-  const ar = thermalAr(titleFr)
-  const sub = subtitle?.trim() ?? ''
-  return `<div class="thermal-receipt__title-row">
-  <div class="thermal-receipt__title-bi">
-    <h1 class="thermal-receipt__title thermal-receipt__title--fr" dir="ltr">${escapeHtml(titleFr)}</h1>
-    ${ar ? `<h1 class="thermal-receipt__title thermal-receipt__title--ar" dir="rtl" lang="ar">${escapeHtml(ar)}</h1>` : ''}
-  </div>
-  ${sub ? `<p class="thermal-receipt__subtitle-no" dir="ltr">${escapeHtml(sub)}</p>` : ''}
-  <p class="thermal-receipt__datetime" dir="ltr">${escapeHtml(`${shortDate} · ${timeShort}`)}</p>
-</div>`
-}
-
-function thermalAmountLine(labelFr: string, amountHtml: string, variant?: 'total' | 'head' | 'section', labelAr?: string) {
-  const cls = variant ? ` thermal-receipt__line--${variant}` : ''
-  const fr = thermalLabelWithColon(labelFr)
-  const arRaw = (labelAr ?? thermalAr(labelFr)).trim()
-  const ar = arRaw ? thermalLabelWithColon(arRaw) : ''
-  const arCell = ar
-    ? `<span class="thermal-receipt__label-ar" dir="rtl" lang="ar">${escapeHtml(ar)}</span>`
-    : `<span class="thermal-receipt__label-ar" aria-hidden="true"></span>`
-  return `<div class="thermal-receipt__line${cls}">
-  <span class="thermal-receipt__label-fr" dir="ltr">${escapeHtml(fr)}</span>
-  <strong class="thermal-receipt__value" dir="ltr">${amountHtml}</strong>
-  ${arCell}
-</div>`
-}
-
-function thermalDualLabelLine(labelFr: string, variant?: 'head' | 'section') {
-  const cls = variant ? ` thermal-receipt__line--${variant}` : ''
-  const ar = thermalAr(labelFr)
-  return `<div class="thermal-receipt__line${cls} thermal-receipt__line--dual">
-  <span class="thermal-receipt__label-fr" dir="ltr">${escapeHtml(labelFr)}</span>
-  <span class="thermal-receipt__value" aria-hidden="true"></span>
-  <span class="thermal-receipt__label-ar" dir="rtl" lang="ar">${escapeHtml(ar)}</span>
-</div>`
 }
 
 function buildGroupedExamInvoiceRows(examLines: LabExamInvoiceLine[]) {
@@ -1153,20 +1216,9 @@ function patientAgeLabel(age?: number | null, ageUnit?: PatientAgeUnit | null) {
   return formatPatientAge(age, normalizePatientAgeUnit(ageUnit ?? undefined))
 }
 
-/** Âge pour tickets thermiques (valeur centrale, chiffres non inversés). */
-function thermalAgeLabel(age?: number | null, ageUnit?: PatientAgeUnit | null) {
-  return formatPatientAge(age, normalizePatientAgeUnit(ageUnit ?? undefined))
-}
-
 function formatGender(gender?: string | null) {
   if (gender === 'F') return t('Féminin')
   if (gender === 'M') return t('Masculin')
-  return null
-}
-
-function thermalFormatGender(gender?: string | null) {
-  if (gender === 'F') return 'Féminin'
-  if (gender === 'M') return 'Masculin'
   return null
 }
 
@@ -1226,39 +1278,32 @@ function translateStatus(status: string) {
 
 export function buildConsultationReceiptHtml(data: ConsultationReceiptData): string {
   const { shortDate, timeShort } = parseReceiptDateTime(data.date, true)
-  const genderLabel = thermalFormatGender(data.gender)
   const consultNo = data.invoiceNumber ?? '—'
-  const ageLabel = data.age != null ? thermalAgeLabel(data.age, data.ageUnit) : null
+  const dateLabel = `${shortDate} ${timeShort}`
 
   const metaRows = [
-    thermalMetaRow('Patient', data.patientName),
-    ...(ageLabel ? [thermalMetaRow('Âge', ageLabel)] : []),
-    thermalMetaRow('Matricule', data.patientCode),
-    ...(genderLabel ? [thermalMetaRow('Sexe', genderLabel)] : []),
-    ...(data.phone ? [thermalMetaRow('Tél.', data.phone)] : []),
-    thermalMetaRow('N° consult.', consultNo),
-    thermalMetaRow('Médecin', data.doctorName),
-    thermalMetaRow('Statut', 'Payé'),
-    ...(data.processedBy ? [thermalMetaRow('Encaissé par', data.processedBy)] : []),
+    thermalMetaRow('Date', dateLabel, ''),
+    thermalMetaRow('Patient', data.patientName, ''),
+    thermalMetaRow('Médecin', data.doctorName, ''),
+    ...(data.processedBy ? [thermalMetaRow('Par', data.processedBy, '')] : []),
   ].join('')
 
   return `
-<div class="thermal-receipt">
-  ${buildThermalClinicHeaderHtml()}
-  <hr class="thermal-receipt__rule" />
-  ${buildThermalDocHeading('Reçu de consultation', consultNo, shortDate, timeShort)}
+<div class="thermal-receipt thermal-receipt--ticket">
+  ${buildThermalTicketHeadHtml({ title: 'Clinique Alwatan Consultation', number: consultNo })}
   <hr class="thermal-receipt__rule" />
 
   <div class="thermal-receipt__fields">
     ${metaRows}
   </div>
 
-  <div class="thermal-receipt__lines">
-    ${thermalAmountLine('Total payé', formatFcfaPrint(data.total), 'total')}
+  <hr class="thermal-receipt__rule" />
+  <div class="thermal-receipt__fields">
+    ${thermalMetaRow('TOTAL', formatFcfaPrint(data.total), '')}
   </div>
 
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks">${escapeHtml(thermalBi('Merci de votre confiance'))}</p>
+  <p class="thermal-receipt__thanks">Merci</p>
 </div>`
 }
 
@@ -1280,65 +1325,54 @@ export type DayClosureReceiptData = {
 
 export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string {
   const closed = parseReceiptDateTime(data.closedAt)
-  const dateLabel = new Date(`${data.businessDate}T12:00:00`).toLocaleDateString(intlLocaleFor(), {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  })
+  const dateShort = new Date(`${data.businessDate}T12:00:00`).toLocaleDateString('fr-FR')
 
   const metaRows = [
-    thermalMetaRow('Date', dateLabel),
-    thermalMetaRow(
-      'Clôturé le',
-      thermalBiTemplate('{date} à {time}', { date: closed.date, time: closed.time }),
-    ),
-    thermalMetaRow('Réceptionniste', data.receptionistName),
-    ...(data.shiftLabel
-      ? [thermalMetaRow('Créneau', data.shiftLabel)]
-      : []),
-    thermalMetaRow('Inscriptions', String(data.registeredToday)),
-    thermalMetaRow('Passages', String(data.visitsToday)),
+    thermalMetaRow('Date', dateShort, ''),
+    thermalMetaRow('Clôturé', `${closed.shortDate} ${closed.timeShort}`, ''),
+    thermalMetaRow('Par', data.receptionistName, ''),
+    ...(data.shiftLabel ? [thermalMetaRow('Créneau', data.shiftLabel, '')] : []),
+    thermalMetaRow('Inscriptions', String(data.registeredToday), ''),
+    thermalMetaRow('Passages', String(data.visitsToday), ''),
   ].join('')
 
   const detailRows = [
     data.consultationsFcfa != null && data.consultationsFcfa > 0
-      ? thermalMetaRow('Consultations', formatFcfaPrint(data.consultationsFcfa))
+      ? thermalMetaRow('Consultations', formatFcfaPrint(data.consultationsFcfa), '')
       : '',
     data.examsFcfa != null && data.examsFcfa > 0
-      ? thermalMetaRow('Examens', formatFcfaPrint(data.examsFcfa))
+      ? thermalMetaRow('Examens', formatFcfaPrint(data.examsFcfa), '')
       : '',
     data.surgeryFcfa != null && data.surgeryFcfa > 0
-      ? thermalMetaRow('Chirurgie', formatFcfaPrint(data.surgeryFcfa))
+      ? thermalMetaRow('Chirurgie', formatFcfaPrint(data.surgeryFcfa), '')
       : '',
     data.hospitalizationFcfa != null && data.hospitalizationFcfa > 0
-      ? thermalMetaRow('Hospitalisation', formatFcfaPrint(data.hospitalizationFcfa))
+      ? thermalMetaRow('Hospitalisation', formatFcfaPrint(data.hospitalizationFcfa), '')
       : '',
   ]
     .filter(Boolean)
     .join('')
 
   return `
-<div class="thermal-receipt">
-  ${buildThermalClinicHeaderHtml()}
-  <hr class="thermal-receipt__rule" />
-  ${buildThermalDocHeading('Clôture de journée', dateLabel, closed.shortDate, closed.timeShort)}
+<div class="thermal-receipt thermal-receipt--ticket">
+  ${buildThermalTicketHeadHtml({ title: 'Clinique Alwatan Clôture', number: dateShort })}
   <hr class="thermal-receipt__rule" />
 
   <div class="thermal-receipt__fields">
     ${metaRows}
   </div>
 
-  ${detailRows ? `<div class="thermal-receipt__fields">${detailRows}</div>` : ''}
+  ${detailRows ? `<hr class="thermal-receipt__rule" /><div class="thermal-receipt__fields">${detailRows}</div>` : ''}
 
+  <hr class="thermal-receipt__rule" />
   <div class="thermal-receipt__fields">
-    ${thermalMetaRow('Encaissements', formatFcfaPrint(data.collectedFcfa))}
-    ${thermalMetaRow('Dépenses', formatFcfaPrint(data.expensesFcfa))}
-    ${thermalMetaRow('Net à remettre', formatFcfaPrint(data.netFcfa))}
+    ${thermalMetaRow('Encaissements', formatFcfaPrint(data.collectedFcfa), '')}
+    ${thermalMetaRow('Dépenses', formatFcfaPrint(data.expensesFcfa), '')}
+    ${thermalMetaRow('Net', formatFcfaPrint(data.netFcfa), '')}
   </div>
 
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks">${escapeHtml(thermalBi('Remettre la caisse à la comptabilité'))}</p>
+  <p class="thermal-receipt__thanks">Remettre à la comptabilité</p>
 </div>`
 }
 
@@ -1385,48 +1419,9 @@ function resolveLabExamDocTitle(data: LabExamInvoiceData) {
   return t(raw)
 }
 
-function resolveLabExamThermalDocTitle(data: LabExamInvoiceData) {
-  return (
-    data.docTitle ??
-    resolveLabExamInvoiceDocTitle(
-      data.examLines.map((line) => ({
-        label: line.label,
-        unitPriceFcfa: line.amountFcfa,
-        kind: line.kind,
-      })),
-    )
-  )
-}
-
-function buildGroupedThermalExamRows(examLines: LabExamInvoiceLine[]) {
-  const renderRow = (line: LabExamInvoiceLine) =>
-    thermalMetaRow(line.label, formatFcfaPrint(line.amountFcfa), '')
-
-  if (examLines.length <= 1) {
-    return examLines.map(renderRow).join('')
-  }
-
-  const kinds = new Set(examLines.map((line) => line.kind ?? 'examen'))
-  if (kinds.size === 1) {
-    return examLines.map(renderRow).join('')
-  }
-
-  const grouped = emptyExamLinesByKind()
-  for (const line of examLines) {
-    grouped[line.kind ?? 'examen'].push(line)
-  }
-
-  return EXAM_KIND_ORDER.flatMap((kind) => {
-    const lines = grouped[kind]
-    if (!lines.length) return []
-    return thermalDualLabelLine(EXAM_KIND_LABELS[kind], 'section') + lines.map(renderRow).join('')
-  }).join('')
-}
-
 /** Ticket thermique 80 mm (Xprinter) — encaissements examens réception */
 export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string {
   const { shortDate, timeShort } = parseReceiptDateTime(data.date, true)
-  const genderLabel = thermalFormatGender(data.gender)
   const hasReduction = data.reductionFcfa > 0
   const invoiceNo = data.invoiceNumber ?? '—'
   const paidFcfa = Math.max(0, Number(data.paidFcfa) || 0)
@@ -1434,68 +1429,64 @@ export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string
   const hasPartialPayment =
     data.paidFcfa != null && (remainingFcfa > 0 || (paidFcfa > 0 && paidFcfa < data.totalFcfa))
   const status = data.status ?? (hasPartialPayment ? 'Payé partiellement' : 'Payé')
-  const docTitle = resolveLabExamThermalDocTitle(data)
   const totalLabel = hasPartialPayment
     ? 'Total dû'
     : status === 'Payé'
-      ? 'Total payé'
-      : 'Total à payer'
-  const ageLabel = data.age != null ? thermalAgeLabel(data.age, data.ageUnit) : null
+      ? 'TOTAL'
+      : 'À payer'
+  const dateLabel = `${shortDate} ${timeShort}`
 
   const metaRows = [
-    thermalMetaRow('Patient', data.patientName),
-    ...(ageLabel ? [thermalMetaRow('Âge', ageLabel)] : []),
-    thermalMetaRow('Matricule', data.patientCode),
-    ...(genderLabel ? [thermalMetaRow('Sexe', genderLabel)] : []),
-    ...(data.phone ? [thermalMetaRow('Tél.', data.phone)] : []),
-    thermalMetaRow('N° facture', invoiceNo),
-    thermalMetaRow('Statut', status),
-    thermalMetaRow('Prescrit par', data.prescribedBy),
-    ...(data.processedBy ? [thermalMetaRow('Encaissé par', data.processedBy)] : []),
+    thermalMetaRow('Date', dateLabel, ''),
+    thermalMetaRow('Patient', data.patientName, ''),
+    thermalMetaRow('Paiement', status, ''),
+    ...(data.processedBy ? [thermalMetaRow('Par', data.processedBy, '')] : []),
   ].join('')
 
   const kindComment = data.kindComment?.trim()
   const kindCommentBlock = kindComment
-    ? `<p class="thermal-receipt__note"><span class="thermal-receipt__label-fr" dir="ltr">${escapeHtml(thermalLabelWithColon('Commentaire:'))}</span> <span dir="ltr">${escapeHtml(kindComment)}</span></p>`
+    ? `<p class="thermal-receipt__note" dir="ltr">${escapeHtml(kindComment)}</p>`
     : ''
 
-  const totalsLines = [
+  const examRows = data.examLines
+    .map((line) => thermalMetaRow(line.label, formatFcfaPrint(line.amountFcfa), ''))
+    .join('')
+
+  const totalsRows = [
     ...(hasReduction
       ? [
-          thermalAmountLine('Sous-total', formatFcfaPrint(data.grossFcfa)),
-          thermalAmountLine('Réduction', `- ${formatFcfaPrint(data.reductionFcfa)}`),
+          thermalMetaRow('Sous-total', formatFcfaPrint(data.grossFcfa), ''),
+          thermalMetaRow('Réduction', `- ${formatFcfaPrint(data.reductionFcfa)}`, ''),
         ]
       : []),
-    thermalAmountLine(totalLabel, formatFcfaPrint(data.totalFcfa), hasPartialPayment ? undefined : 'total'),
+    thermalMetaRow(totalLabel, formatFcfaPrint(data.totalFcfa), ''),
     ...(hasPartialPayment
       ? [
-          thermalAmountLine('Encaissé', formatFcfaPrint(paidFcfa), 'total'),
-          thermalAmountLine('Reste à payer', formatFcfaPrint(remainingFcfa)),
+          thermalMetaRow('Encaissé', formatFcfaPrint(paidFcfa), ''),
+          thermalMetaRow('Reste', formatFcfaPrint(remainingFcfa), ''),
         ]
       : []),
   ].join('')
 
   return `
-<div class="thermal-receipt">
-  ${buildThermalClinicHeaderHtml()}
-  <hr class="thermal-receipt__rule" />
-  ${buildThermalDocHeading(docTitle, invoiceNo, shortDate, timeShort)}
+<div class="thermal-receipt thermal-receipt--ticket">
+  ${buildThermalTicketHeadHtml({ title: 'Clinique Alwatan Examens', number: invoiceNo })}
   <hr class="thermal-receipt__rule" />
 
   <div class="thermal-receipt__fields">
     ${metaRows}
   </div>
 
-  <div class="thermal-receipt__lines">
-    ${thermalDualLabelLine('Examen', 'head')}
-    ${buildGroupedThermalExamRows(data.examLines)}
-    ${totalsLines}
+  <hr class="thermal-receipt__rule" />
+  <div class="thermal-receipt__fields">
+    ${examRows}
+    ${totalsRows}
   </div>
 
   ${kindCommentBlock}
 
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks">${escapeHtml(thermalBi('Merci de votre confiance'))}</p>
+  <p class="thermal-receipt__thanks">Merci</p>
 </div>`
 }
 
@@ -1657,13 +1648,97 @@ export type OpenPrintOptions = {
   forceLtr?: boolean
 }
 
-function printHtmlInHiddenFrame(html: string, onBeforePrint?: (doc: Document) => void): boolean {
+/** Hauteur page thermique (mm) — toujours portrait (> 80 mm de largeur). */
+function measureThermalPageHeightMm(doc: Document): number {
+  const receipt = doc.querySelector('.thermal-receipt') as HTMLElement | null
+  let px = 0
+
+  if (receipt) {
+    const probe = receipt.cloneNode(true) as HTMLElement
+    probe.style.cssText =
+      'position:absolute;left:-10000px;top:0;width:80mm;max-width:80mm;height:auto;min-height:0;margin:0;padding:0;visibility:hidden;pointer-events:none;'
+    doc.body.appendChild(probe)
+    px = Math.ceil(Math.max(probe.scrollHeight, probe.offsetHeight, 1))
+    probe.remove()
+  } else {
+    for (const child of Array.from(doc.body.children)) {
+      const el = child as HTMLElement
+      if (!el?.offsetHeight || el.classList?.contains('thermal-receipt__cut')) continue
+      px += Math.ceil(el.offsetHeight)
+    }
+  }
+
+  // CSS px → mm (+ marge coupe)
+  let mm = Math.ceil((px * 25.4) / 96) + 8
+  // Portrait obligatoire : si hauteur ≤ largeur, Chrome part en paysage et le rouleau se vide
+  mm = Math.max(mm, 92)
+  // Plafond anti-A4 (~297 mm)
+  mm = Math.min(mm, 170)
+  return mm
+}
+
+function applyThermalPageSize(doc: Document, heightMm: number) {
+  doc.querySelectorAll('style[data-thermal-fit]').forEach((el) => el.remove())
+  const style = doc.createElement('style')
+  style.setAttribute('data-thermal-fit', '1')
+  style.textContent = `
+@page {
+  size: 80mm ${heightMm}mm;
+  margin: 0;
+}
+@page print-thermal {
+  size: 80mm ${heightMm}mm;
+  margin: 0;
+}
+@media print {
+  @page {
+    size: 80mm ${heightMm}mm;
+    margin: 0 !important;
+  }
+  html, body {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+  body.print-thermal {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 0.5mm 1.5mm 2mm !important;
+    margin: 0 !important;
+  }
+  body.print-thermal .thermal-receipt__cut {
+    display: none !important;
+    height: 0 !important;
+  }
+}`
+  doc.head.appendChild(style)
+  // Reflow pour que @page soit pris en compte avant print()
+  void doc.body.offsetHeight
+}
+
+function printHtmlInHiddenFrame(
+  html: string,
+  onBeforePrint?: (doc: Document) => void,
+  frameOpts?: { widthPx?: number; heightPx?: number; delayMs?: number; waitImages?: boolean },
+): boolean {
   // Dimensions réelles hors écran : iframe 0×0 → print() souvent ignoré sous Edge/Chrome --app
+  // Thermique : largeur 80 mm et hauteur minime — sinon documentElement.scrollHeight = viewport (~A4)
+  const widthPx = frameOpts?.widthPx ?? 800
+  const heightPx = frameOpts?.heightPx ?? 1200
+  const delayMs = frameOpts?.delayMs ?? 250
+  const waitImages = frameOpts?.waitImages === true
+
   const iframe = document.createElement('iframe')
   iframe.setAttribute('aria-hidden', 'true')
   iframe.setAttribute('title', 'print')
   iframe.style.cssText =
-    'position:fixed;left:-10000px;top:0;width:800px;height:1200px;border:0;opacity:0;pointer-events:none;'
+    `position:fixed;left:-10000px;top:0;width:${widthPx}px;height:${heightPx}px;border:0;opacity:0;pointer-events:none;`
   document.body.appendChild(iframe)
 
   const frameDoc = iframe.contentDocument
@@ -1692,25 +1767,60 @@ function printHtmlInHiddenFrame(html: string, onBeforePrint?: (doc: Document) =>
   const doPrint = () => {
     if (printed) return
     printed = true
-    try {
-      onBeforePrint?.(frameDoc)
-    } catch {
-      /* ignore */
+
+    const run = () => {
+      try {
+        onBeforePrint?.(frameDoc)
+      } catch {
+        /* ignore */
+      }
+      try {
+        frameWin.focus()
+        frameWin.addEventListener('afterprint', cleanup, { once: true })
+        frameWin.print()
+      } catch {
+        cleanup()
+        return
+      }
+      // Repli si afterprint n’arrive pas (certains modes --app)
+      setTimeout(cleanup, 60_000)
     }
-    try {
-      frameWin.focus()
-      frameWin.addEventListener('afterprint', cleanup, { once: true })
-      frameWin.print()
-    } catch {
-      cleanup()
+
+    if (!waitImages) {
+      run()
       return
     }
-    // Repli si afterprint n’arrive pas (certains modes --app)
-    setTimeout(cleanup, 60_000)
+
+    const imgs = Array.from(frameDoc.images)
+    if (!imgs.length) {
+      run()
+      return
+    }
+    let pending = imgs.length
+    let finished = false
+    const finish = () => {
+      if (finished) return
+      finished = true
+      run()
+    }
+    const done = () => {
+      pending -= 1
+      if (pending <= 0) finish()
+    }
+    for (const img of imgs) {
+      if (img.complete) {
+        done()
+        continue
+      }
+      img.addEventListener('load', done, { once: true })
+      img.addEventListener('error', done, { once: true })
+    }
+    // Sécurité si un événement image ne part jamais
+    setTimeout(finish, 1500)
   }
 
   // Laisser le moteur peindre le contenu avant print()
-  setTimeout(doPrint, 250)
+  setTimeout(doPrint, delayMs)
   return true
 }
 
@@ -1778,24 +1888,29 @@ export function openPrintDocument(
   const printTitle = '\u200b'
   const thermalOverrides = isThermal
     ? `
-  @page { size: 80mm auto; margin: 0; }
+  /* Toujours portrait (110 > 80). "auto" ou hauteur < 80 mm → paysage + trop de papier. */
+  @page { size: 80mm 110mm; margin: 0; }
   @media print {
-    @page { size: 80mm auto; margin: 0 !important; }
+    @page { size: 80mm 110mm; margin: 0 !important; }
     html {
       width: 80mm !important;
       max-width: 80mm !important;
+      height: auto !important;
+      min-height: 0 !important;
       margin: 0 !important;
       padding: 0 !important;
     }
     html, body {
       height: auto !important;
       min-height: 0 !important;
-      overflow: visible !important;
+      overflow: hidden !important;
     }
     body.print-thermal {
       width: 80mm !important;
       max-width: 80mm !important;
-      padding: 0.5mm 1mm 1.5mm !important;
+      height: auto !important;
+      min-height: 0 !important;
+      padding: 0.5mm 1.5mm 2mm !important;
       margin: 0 !important;
     }
   }`
@@ -1851,13 +1966,13 @@ ${contentHtml}
 
   const runThermalFit = (doc: Document) => {
     try {
-      const px = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight)
-      const mm = Math.max(40, Math.ceil((px * 25.4) / 96) + 3)
-      const style = doc.createElement('style')
-      style.textContent = `@page{size:80mm ${mm}mm;margin:0!important} @page print-thermal{size:80mm ${mm}mm;margin:0!important} html,body{width:80mm!important;max-width:80mm!important;height:auto!important;min-height:0!important;margin:0!important} body.print-thermal{width:80mm!important;max-width:80mm!important;padding:0.5mm 1mm 1.5mm!important;margin:0!important}`
-      doc.head.appendChild(style)
+      applyThermalPageSize(doc, measureThermalPageHeightMm(doc))
     } catch {
-      /* ignore */
+      try {
+        applyThermalPageSize(doc, 110)
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -1868,13 +1983,19 @@ ${contentHtml}
     : isA4
       ? 'width=850,height=1100'
       : isThermal
-        ? 'width=360,height=720'
+        ? 'width=320,height=520'
         : 'width=820,height=900'
 
   if (autoPrint && typeof document !== 'undefined') {
     const beforePrint = isThermal ? runThermalFit : undefined
-    // document.write dans iframe same-origin : plus fiable que blob URL sous Edge --app
-    if (!printHtmlInHiddenFrame(html, beforePrint)) {
+    const printed = printHtmlInHiddenFrame(
+      html,
+      beforePrint,
+      isThermal
+        ? { widthPx: 302, heightPx: 1200, delayMs: 450, waitImages: true }
+        : undefined,
+    )
+    if (!printed) {
       printHtmlInNewWindow(html, windowSize, beforePrint)
     }
     return

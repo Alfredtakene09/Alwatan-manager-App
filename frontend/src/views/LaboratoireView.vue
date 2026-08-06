@@ -8,11 +8,11 @@ import {
   Clock,
   CheckCircle2,
   CalendarDays,
-  Eye,
-  Pencil,
+  ClipboardEdit,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { useSilentRefresh } from '@/composables/useSilentRefresh'
+import { useLabAlertsStore } from '@/stores/lab-alerts'
 import {
   countLabPrescribedExams,
   formatLabPrescribedExamsPreview,
@@ -26,20 +26,18 @@ import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
+import LabQueueBell from '@/components/layout/LabQueueBell.vue'
 import { type LabsWaitingVisitRow } from '@/components/ui/LabsWaitingDataTable.vue'
-import LabQueueVisitPanel from '@/components/laboratoire/LabQueueVisitPanel.vue'
 import '@/assets/lab-visit-table.css'
 
 const router = useRouter()
+const labAlerts = useLabAlertsStore()
 const { uiText, dateText, timeText, numberText } = useAppI18n()
 const visits = ref<LabsWaitingVisitRow[]>([])
 const completedCount = ref(0)
-const panelVisitId = ref<string | null>(null)
 const listSearch = ref('')
 const loading = ref(false)
 const loadError = ref('')
-
-const panelVisit = computed(() => visits.value.find((v) => v.id === panelVisitId.value) ?? null)
 
 const stats = computed(() => {
   const todayStart = new Date()
@@ -102,30 +100,21 @@ async function loadQueue(opts?: { silent?: boolean }) {
     ])
     visits.value = queueRes.data
     completedCount.value = completedRes.data.length
-    if (panelVisitId.value && !queueRes.data.some((v) => v.id === panelVisitId.value)) {
-      panelVisitId.value = null
-    }
+    // Même chiffre que la carte « Examens » — source de vérité pour la cloche.
+    labAlerts.syncFromQueueVisits(queueRes.data)
   } catch {
     if (!opts?.silent) {
       loadError.value = 'Impossible de charger la file d\'attente laboratoire.'
       visits.value = []
       completedCount.value = 0
+      labAlerts.syncFromQueueVisits([])
     }
   } finally {
     if (!opts?.silent) loading.value = false
   }
 }
 
-function openPanel(id: string) {
-  panelVisitId.value = id
-}
-
-function closePanel() {
-  panelVisitId.value = null
-}
-
 function goToDossier(visitId: string) {
-  closePanel()
   router.push({ name: 'laboratoire-dossier', params: { visitId } })
 }
 
@@ -137,7 +126,6 @@ const { refresh: refreshQueue } = useSilentRefresh(
   ({ silent }) => loadQueue({ silent }),
   {
     intervalMs: 20_000,
-    enabled: () => !panelVisitId.value,
   },
 )
 
@@ -155,9 +143,12 @@ onActivated(() => {
         :icon="FlaskConical"
       >
         <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshQueue()">
-            Actualiser
-          </UiButton>
+          <div class="lab-header-actions">
+            <LabQueueBell />
+            <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshQueue()">
+              Actualiser
+            </UiButton>
+          </div>
         </template>
       </UiPageHeader>
 
@@ -221,7 +212,6 @@ onActivated(() => {
               <tr
                 v-for="(row, index) in rows"
                 :key="row.id"
-                :class="{ 'is-selected': panelVisitId === row.id }"
               >
                 <td class="lab-visit-table__num">{{ numberText(index + 1) }}</td>
                 <td>
@@ -249,19 +239,13 @@ onActivated(() => {
                   <div class="lab-visit-actions">
                     <button
                       type="button"
-                      class="lab-visit-act lab-visit-act--icon lab-visit-act--accent"
+                      class="lab-visit-act lab-visit-act--labeled lab-visit-act--accent"
                       :title="uiText('Saisir les résultats')"
+                      :aria-label="uiText('Saisir les résultats')"
                       @click="goToDossier(row.id)"
                     >
-                      <Pencil :size="15" />
-                    </button>
-                    <button
-                      type="button"
-                      class="lab-visit-act lab-visit-act--icon"
-                      :title="uiText('Voir le dossier')"
-                      @click="openPanel(row.id)"
-                    >
-                      <Eye :size="15" />
+                      <ClipboardEdit :size="15" />
+                      <span>{{ uiText('Saisir') }}</span>
                     </button>
                   </div>
                 </td>
@@ -271,8 +255,6 @@ onActivated(() => {
         </div>
       </UiCard>
     </section>
-
-    <LabQueueVisitPanel :visit="panelVisit" @close="closePanel" @saisir="goToDossier" />
   </div>
 </template>
 
@@ -280,6 +262,13 @@ onActivated(() => {
 .stats-grid--loading {
   opacity: 0.65;
   pointer-events: none;
+}
+
+.lab-header-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .lab-toolbar {

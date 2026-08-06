@@ -16,6 +16,8 @@ export type SessionUser = {
   firstName: string
   lastName: string
   role: AppUserRole
+  /** MEDECIN : afficher « Mes opérations » (bloc / chirurgie / chirurgien autorisé). */
+  showDoctorOperations?: boolean
 }
 
 export const ROLE_LABELS: Record<AppUserRole, string> = {

@@ -103,6 +103,10 @@ const router = createRouter({
           meta: { module: 'consultation' },
         },
         {
+          path: 'medecin/a-percevoir',
+          redirect: '/consultation',
+        },
+        {
           path: 'medecin/nomenclature',
           name: 'medecin-nomenclature',
           component: () => import('@/views/MedecinExamCatalogView.vue'),
@@ -136,9 +140,7 @@ const router = createRouter({
         },
         {
           path: 'comptabilite/parametres/salles',
-          name: 'comptabilite-parametres-salles',
-          component: () => import('@/views/comptabilite/ComptabiliteSallesParametresView.vue'),
-          meta: { module: 'comptabilite' },
+          redirect: '/bloc-salles',
         },
         {
           path: 'comptabilite/salles-lits',
@@ -399,37 +401,18 @@ const router = createRouter({
           component: () => import('@/views/gestionnaire/GestionnaireJournalView.vue'),
           meta: { module: 'gestionnaire' },
         },
-        {
-          path: 'gestionnaire/depenses',
-          name: 'gestionnaire-depenses',
-          component: () => import('@/views/gestionnaire/GestionnaireDepensesView.vue'),
-          meta: { module: 'gestionnaire' },
-        },
-        {
-          path: 'gestionnaire/depenses/categories',
-          redirect: { name: 'gestionnaire-depenses', query: { tab: 'categories' } },
-        },
-        {
-          path: 'gestionnaire/services',
-          name: 'gestionnaire-services',
-          component: () => import('@/views/admin/AdminServicesView.vue'),
-          meta: { module: 'gestionnaire' },
-        },
-        {
-          path: 'gestionnaire/personnel',
-          name: 'gestionnaire-personnel',
-          component: () => import('@/views/EmployesView.vue'),
-          meta: { module: 'gestionnaire', employeeRegistry: 'gestionnaire' },
-        },
+        /** Anciennes URLs gestionnaire → pages Direction (même UI que l’admin). */
+        { path: 'gestionnaire/depenses', redirect: '/admin/depenses' },
+        { path: 'gestionnaire/depenses/categories', redirect: '/admin/depenses' },
+        { path: 'gestionnaire/services', redirect: '/admin/services' },
+        { path: 'gestionnaire/personnel', redirect: '/admin/employes' },
         {
           path: 'gestionnaire/salaires',
-          name: 'gestionnaire-salaires',
-          component: () => import('@/views/gestionnaire/GestionnaireSalairesView.vue'),
-          meta: { module: 'gestionnaire' },
+          redirect: (to) => ({ path: '/admin/salaires', query: to.query }),
         },
         {
           path: 'gestionnaire/salaires/historique',
-          redirect: { name: 'gestionnaire-salaires', query: { tab: 'historique' } },
+          redirect: { path: '/admin/salaires', query: { tab: 'historique' } },
         },
         {
           path: 'gestionnaire/finances',
@@ -437,12 +420,7 @@ const router = createRouter({
           component: () => import('@/views/gestionnaire/GestionnaireFinancesView.vue'),
           meta: { module: 'gestionnaire', dashboard: true },
         },
-        {
-          path: 'gestionnaire/supervision',
-          name: 'gestionnaire-supervision',
-          component: () => import('@/views/gestionnaire/GestionnaireSupervisionView.vue'),
-          meta: { module: 'gestionnaire' },
-        },
+        { path: 'gestionnaire/supervision', redirect: '/dashboard' },
         { path: 'laboratoire', name: 'laboratoire', component: () => import('@/views/LaboratoireView.vue'), meta: { module: 'laboratoire' } },
         {
           path: 'laboratoire/termines',

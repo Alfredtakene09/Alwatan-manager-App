@@ -135,7 +135,7 @@ router.get("/", async (req, res) => {
         ? { active: true, id: { in: [] as string[] } }
         : { active: true };
 
-  const [items, interventions, rooms] = await Promise.all([
+  const [items, interventions, rooms, labPanels] = await Promise.all([
     prisma.examCatalogItem.findMany({
       where: examWhere,
       orderBy: [{ kind: "asc" }, { sortOrder: "asc" }, { label: "asc" }],
@@ -178,6 +178,32 @@ router.get("/", async (req, res) => {
         name: true,
         type: true,
         dailyRateFcfa: true,
+      },
+    }),
+    // Formulaires labo prêts à la saisie : actifs, mode saisie, avec au moins un champ.
+    prisma.labPanel.findMany({
+      where: {
+        active: true,
+        isEntry: true,
+        fields: { some: {} },
+      },
+      orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+      select: {
+        id: true,
+        slug: true,
+        label: true,
+        sortOrder: true,
+        examCatalogItems: {
+          where: { kind: ExamCatalogKind.EXAMEN, active: true },
+          select: {
+            id: true,
+            code: true,
+            label: true,
+            category: true,
+            priceFcfa: true,
+          },
+          take: 1,
+        },
       },
     }),
   ]);
@@ -226,10 +252,19 @@ router.get("/", async (req, res) => {
       labPanelSlug: item.labPanel?.slug ?? null,
     };
 
-    // Examens Laboratoire (kind EXAMEN + service labo / global) → toujours onglet Labo
-    if (item.kind === ExamCatalogKind.EXAMEN && isExamVisibleOnKindTab(item, ExamCatalogKind.EXAMEN)) {
-      grouped.examen.push(dto);
-      continue;
+    // Examens Laboratoire → toujours onglet Labo (service labo, formulaire lié, catégorie, ou sans service)
+    if (item.kind === ExamCatalogKind.EXAMEN) {
+      const category = (item.category ?? "").trim().toLowerCase();
+      const isLabExam =
+        Boolean(item.labPanelId) ||
+        !item.clinicServiceId ||
+        category === "laboratoire" ||
+        category === "labo" ||
+        isExamVisibleOnKindTab(item, ExamCatalogKind.EXAMEN);
+      if (isLabExam) {
+        grouped.examen.push(dto);
+        continue;
+      }
     }
 
     // Examens des services spécialisés → onglet(s) dédié(s)
@@ -254,6 +289,25 @@ router.get("/", async (req, res) => {
       grouped.examen.push(dto);
     }
   }
+
+  // Source de vérité Laboratoire : uniquement les examens avec formulaire de saisie actif.
+  // Les examens sans formulaire ne sont pas proposés au médecin.
+  const fromPanels: CatalogItemDto[] = labPanels.map((panel) => {
+    const linked = panel.examCatalogItems[0] ?? null;
+    return {
+      id: linked?.id ?? `lab-panel:${panel.id}`,
+      code: linked?.code || panel.slug,
+      label: (linked?.label || panel.label).trim(),
+      category: linked?.category?.trim() || "Laboratoire",
+      priceFcfa: linked?.priceFcfa ?? 0,
+      clinicServiceId: null,
+      clinicServiceName: "Laboratoire",
+      labPanelId: panel.id,
+      labPanelSlug: panel.slug,
+    };
+  });
+
+  grouped.examen = fromPanels;
 
   grouped.specialty.sort((a, b) => a.label.localeCompare(b.label, "fr"));
 

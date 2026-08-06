@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   ArrowRightLeft,
   Coffee,
+  CircleDollarSign,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
@@ -20,12 +21,16 @@ import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import MedecinStatsGrid from '@/components/MedecinStatsGrid.vue'
+import MedecinReceivableModal from '@/components/medecin/MedecinReceivableModal.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import MultiExamPrescriptionPicker from '@/components/MultiExamPrescriptionPicker.vue'
 import DoctorPharmacyOrdonnancePicker from '@/components/DoctorPharmacyOrdonnancePicker.vue'
+import PatientMedicalHistory, {
+  type MedicalHistoryEntry,
+} from '@/components/dossier/PatientMedicalHistory.vue'
 import { emptyExamsByKind, emptyExamCommentsByKind, countExamsByKind, filterInvoiceExamComments, type ExamsByKind, type ExamCommentsByKind } from '@/lib/exam-catalog'
 import {
   hasClinicalConsultationSelected,
@@ -55,16 +60,63 @@ const pharmacyOrdonnance = ref<PharmacyOrdonnanceLine[]>([])
 const acceptingPatients = ref(true)
 const availabilityKnown = ref(false)
 const availabilitySaving = ref(false)
+const recentHistory = ref<MedicalHistoryEntry[]>([])
+const loadingHistory = ref(false)
+
+const route = useRoute()
+const auth = useAuthStore()
+const { uiText, dateTimeText } = useAppI18n()
+
+const modalVisit = computed(() => visits.value.find((v) => v.id === modalVisitId.value) ?? null)
+const transferVisit = computed(() => visits.value.find((v) => v.id === transferVisitId.value) ?? null)
+const latestVitals = computed(() => modalVisit.value?.vitalSigns?.[0] ?? null)
 
 const showConsultationPanel = computed(() =>
   hasClinicalConsultationSelected(selectedExamsByKind.value),
 )
 
-const modalVisit = computed(() => visits.value.find((v) => v.id === modalVisitId.value) ?? null)
-const transferVisit = computed(() => visits.value.find((v) => v.id === transferVisitId.value) ?? null)
-const route = useRoute()
-const auth = useAuthStore()
-const { uiText, dateTimeText } = useAppI18n()
+const hasOperationSelected = computed(
+  () => (selectedExamsByKind.value.operation?.length ?? 0) > 0,
+)
+
+const recentResults = computed(() =>
+  recentHistory.value.filter((entry) => entry.labPanels.length > 0 || entry.operations?.length),
+)
+
+const patientMetaLine = computed(() => {
+  if (!modalVisit.value) return ''
+  const parts = [modalVisit.value.patient.code]
+  if (modalVisit.value.patient.phone) parts.push(modalVisit.value.patient.phone)
+  parts.push(dateTimeText(modalVisit.value.createdAt))
+  return parts.join(' · ')
+})
+
+const vitalsLine = computed(() => {
+  const v = latestVitals.value
+  if (!v) return ''
+  const parts: string[] = []
+  if (v.weightKg) parts.push(`${v.weightKg} kg`)
+  if (v.bloodPressure) parts.push(v.bloodPressure)
+  if (v.temperatureC) parts.push(`${v.temperatureC} °C`)
+  if (v.pulseBpm) parts.push(`${v.pulseBpm} bpm`)
+  return parts.join(' · ')
+})
+
+const finalCommentLabel = computed(() => {
+  if (hasOperationSelected.value) return uiText('Commentaire final (opération)')
+  return uiText('Commentaire final')
+})
+
+const finalCommentHint = computed(() => {
+  if (showConsultationPanel.value) {
+    return uiText('Notes cliniques et conduite — enregistrées dans le dossier.')
+  }
+  if (hasOperationSelected.value) {
+    return uiText('Note opératoire / indications — visibles dans le dossier patient.')
+  }
+  return uiText('Note pour le dossier patient (et résultats labo).')
+})
+
 const isAdminSupervision = computed(
   () =>
     auth.user?.role === 'ADMIN' ||
@@ -75,8 +127,8 @@ const transferDoctorOptions = computed(() => {
   const assignedId = transferVisit.value?.assignedDoctor?.id
   return doctors.value.filter((doctor) => doctor.id !== assignedId)
 })
-const latestVitals = computed(() => modalVisit.value?.vitalSigns?.[0] ?? null)
 const statsRefreshKey = ref(0)
+const showReceivableModal = ref(false)
 const selectedExamsCount = computed(() => countExamsByKind(selectedExamsByKind.value))
 const hospitalisationPrescribed = computed(
   () => (selectedExamsByKind.value.hospitalisation?.length ?? 0) > 0,
@@ -91,8 +143,9 @@ const canSubmitConsultation = computed(() => {
 const submitConsultationLabel = computed(() => {
   if (submitting.value) return uiText('Enregistrement…')
   if (showConsultationPanel.value && selectedExamsCount.value > 0) {
-    return uiText('Enregistrer la consultation')
+    return uiText('Enregistrer le dossier')
   }
+  if (hasOperationSelected.value) return uiText('Enregistrer le dossier')
   if (selectedExamsCount.value > 0) return uiText('Prescrire et enregistrer')
   return uiText('Enregistrer le commentaire')
 })
@@ -197,17 +250,37 @@ function resetExamForm() {
   operationAmountFcfa.value = null
 }
 
+async function loadRecentHistory(patientId: string | undefined) {
+  recentHistory.value = []
+  if (!patientId) return
+  loadingHistory.value = true
+  try {
+    const { data } = await api.get<{ medicalHistory: MedicalHistoryEntry[] }>(
+      `/patient-dossiers/${patientId}`,
+    )
+    recentHistory.value = Array.isArray(data.medicalHistory) ? data.medicalHistory.slice(0, 4) : []
+  } catch {
+    recentHistory.value = []
+  } finally {
+    loadingHistory.value = false
+  }
+}
+
 async function openConsultModal(id: string) {
   modalVisitId.value = id
   resetExamForm()
   message.value = ''
+  recentHistory.value = []
 
   const visit = visits.value.find((v) => v.id === id)
+  void loadRecentHistory(visit?.patient?.id)
+
   if (visit?.status === 'WAITING_CONSULTATION') {
     try {
       const { data } = await api.patch(`/visits/${id}/start-consultation`)
       const index = visits.value.findIndex((v) => v.id === id)
       if (index >= 0) visits.value[index] = data
+      void loadRecentHistory(data?.patient?.id ?? visit?.patient?.id)
     } catch {
       message.value = uiText('Impossible de démarrer la consultation.')
       messageType.value = 'error'
@@ -219,6 +292,7 @@ async function openConsultModal(id: string) {
 function closeModal() {
   modalVisitId.value = null
   resetExamForm()
+  recentHistory.value = []
 }
 
 function openTransferModal(id: string) {
@@ -366,17 +440,28 @@ onMounted(async () => {
         "
         :icon="Stethoscope"
       >
-        <template v-if="availabilityKnown" #actions>
-          <UiButton
-            :variant="acceptingPatients ? 'success' : 'outline'"
-            size="sm"
-            :icon="acceptingPatients ? CheckCircle2 : Coffee"
-            :loading="availabilitySaving"
-            :disabled="availabilitySaving"
-            @click="toggleAvailability"
-          >
-            {{ uiText(acceptingPatients ? 'Disponible' : 'En pause') }}
-          </UiButton>
+        <template v-if="!isAdminSupervision" #actions>
+          <div class="consultation-header-actions">
+            <UiButton
+              variant="secondary"
+              size="sm"
+              :icon="CircleDollarSign"
+              @click="showReceivableModal = true"
+            >
+              {{ uiText('À percevoir') }}
+            </UiButton>
+            <UiButton
+              v-if="availabilityKnown"
+              :variant="acceptingPatients ? 'success' : 'outline'"
+              size="sm"
+              :icon="acceptingPatients ? CheckCircle2 : Coffee"
+              :loading="availabilitySaving"
+              :disabled="availabilitySaving"
+              @click="toggleAvailability"
+            >
+              {{ uiText(acceptingPatients ? 'Disponible' : 'En pause') }}
+            </UiButton>
+          </div>
         </template>
       </UiPageHeader>
 
@@ -398,8 +483,8 @@ onMounted(async () => {
         :title="isAdminSupervision ? 'Patients en file d\'attente' : 'Patients à consulter'"
         :description="
           isAdminSupervision
-            ? 'Supervision clinique — aucune action médicale depuis ce compte Direction'
-            : 'Cliquez sur Consulter pour voir le dossier et prescrire les examens'
+            ? uiText('Supervision — lecture seule')
+            : uiText('Consulter : dossier, prescription, commentaire final')
         "
         class="ui-card--table-panel consultation-queue-panel"
         :icon="ClipboardList"
@@ -433,6 +518,11 @@ onMounted(async () => {
       </UiCard>
     </section>
 
+    <MedecinReceivableModal
+      :open="showReceivableModal"
+      @close="showReceivableModal = false"
+    />
+
     <Teleport to="body">
       <div v-if="modalVisit" class="modal-overlay" @click.self="closeModal">
         <div class="modal modal--consult" role="dialog" aria-modal="true" aria-labelledby="consult-modal-title">
@@ -441,65 +531,38 @@ onMounted(async () => {
               <h2 id="consult-modal-title">
                 {{ fullName(modalVisit.patient.firstName, modalVisit.patient.lastName) }}
               </h2>
-              <p>{{ modalVisit.patient.code }} — Consultation & prescription d'examens</p>
+              <p>{{ patientMetaLine }} — {{ uiText('Consultation') }}</p>
+              <p v-if="vitalsLine" class="modal__vitals">
+                <HeartPulse :size="13" />
+                {{ vitalsLine }}
+              </p>
             </div>
-            <button type="button" class="modal__close" aria-label="Fermer" @click="closeModal">
+            <button type="button" class="modal__close" :aria-label="uiText('Fermer')" @click="closeModal">
               <X :size="18" />
             </button>
           </header>
 
           <div class="modal__body">
-            <section class="info-section">
-              <h3>Informations patient</h3>
-              <dl class="info-grid">
-                <div>
-                  <dt>Matricule</dt>
-                  <dd>{{ modalVisit.patient.code }}</dd>
-                </div>
-                <div v-if="modalVisit.patient.phone">
-                  <dt>Téléphone</dt>
-                  <dd>{{ modalVisit.patient.phone }}</dd>
-                </div>
-                <div v-if="modalVisit.assignedDoctor">
-                  <dt>Médecin assigné</dt>
-                  <dd>Dr {{ fullName(modalVisit.assignedDoctor.firstName, modalVisit.assignedDoctor.lastName) }}</dd>
-                </div>
-                <div>
-                  <dt>Arrivée</dt>
-                  <dd>{{ dateTimeText(modalVisit.createdAt) }}</dd>
-                </div>
-              </dl>
-            </section>
-
-            <section v-if="latestVitals" class="info-section info-section--vitals">
+            <section v-if="loadingHistory || recentResults.length" class="info-section info-section--history">
               <h3>
-                <HeartPulse :size="16" />
-                Constantes (réception)
+                <FlaskConical :size="15" />
+                {{ uiText('Résultats antérieurs') }}
               </h3>
-              <dl class="info-grid">
-                <div v-if="latestVitals.weightKg">
-                  <dt>Poids</dt>
-                  <dd>{{ latestVitals.weightKg }} kg</dd>
-                </div>
-                <div v-if="latestVitals.bloodPressure">
-                  <dt>Tension</dt>
-                  <dd>{{ latestVitals.bloodPressure }}</dd>
-                </div>
-                <div v-if="latestVitals.temperatureC">
-                  <dt>Température</dt>
-                  <dd>{{ latestVitals.temperatureC }} °C</dd>
-                </div>
-                <div v-if="latestVitals.pulseBpm">
-                  <dt>Pouls</dt>
-                  <dd>{{ latestVitals.pulseBpm }} bpm</dd>
-                </div>
-              </dl>
+              <p v-if="loadingHistory" class="comment-hint">{{ uiText('Chargement…') }}</p>
+              <PatientMedicalHistory
+                v-else
+                :entries="recentResults"
+                :patient="modalVisit.patient"
+                :expand-first="true"
+                :show-open-lab-link="true"
+                :empty-message="uiText('Aucun résultat labo ou opération enregistré.')"
+              />
             </section>
 
             <section class="info-section">
               <h3>
-                <FlaskConical :size="16" />
-                Prescrire des examens
+                <FlaskConical :size="15" />
+                {{ uiText('Prescrire') }}
               </h3>
               <MultiExamPrescriptionPicker
                 v-model="selectedExamsByKind"
@@ -511,22 +574,16 @@ onMounted(async () => {
             </section>
 
             <section class="info-section info-section--comment">
-              <h3>{{ showConsultationPanel ? 'Consultation clinique' : 'Commentaire médecin' }}</h3>
-              <p class="comment-hint">
-                {{
-                  showConsultationPanel
-                    ? 'Paiement déjà effectué à la réception — aucun envoi au laboratoire ni second encaissement examens. Saisissez les informations cliniques et composez l’ordonnance pharmacie.'
-                    : 'Observations, conduite à tenir… Visible dans les résultats de labos (bouton Voir).'
-                }}
-              </p>
+              <h3>{{ finalCommentLabel }}</h3>
+              <p class="comment-hint">{{ finalCommentHint }}</p>
               <textarea
                 v-model="doctorComment"
                 class="doctor-comment"
-                rows="5"
+                rows="4"
                 :placeholder="
-                  showConsultationPanel
-                    ? 'Motif, examen clinique, diagnostic, conduite à tenir…'
-                    : 'Ex. Patient stable, repos recommandé, contrôle dans 15 jours…'
+                  hasOperationSelected
+                    ? uiText('Suite opératoire, indications, surveillance…')
+                    : uiText('Motif, examen clinique, diagnostic…')
                 "
               />
               <DoctorPharmacyOrdonnancePicker
@@ -545,7 +602,7 @@ onMounted(async () => {
           </div>
 
           <footer class="modal__footer">
-            <UiButton variant="ghost" @click="closeModal">Annuler</UiButton>
+            <UiButton variant="ghost" @click="closeModal">{{ uiText('Annuler') }}</UiButton>
             <UiButton
               variant="primary"
               :icon="CheckCircle2"
@@ -612,6 +669,13 @@ onMounted(async () => {
   font-size: 0.875rem;
 }
 
+.consultation-header-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .availability-hint {
   margin: -0.35rem 0 0.65rem;
   font-size: 0.8125rem;
@@ -671,11 +735,39 @@ onMounted(async () => {
 }
 
 .modal--consult {
-  max-width: 42rem;
+  max-width: min(52rem, 100%);
+  max-height: min(92dvh, 860px);
 }
 
 .modal--transfer {
   max-width: 28rem;
+}
+
+.modal__vitals {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.35rem !important;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: var(--text) !important;
+  font-weight: 600;
+}
+
+.info-section--history {
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #f8fafc;
+}
+
+.info-section--history :deep(.timeline) {
+  gap: 0.55rem;
+}
+
+.info-section--history :deep(.timeline-item__marker) {
+  margin-top: 0.75rem;
 }
 
 .transfer-hint {

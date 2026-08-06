@@ -71,7 +71,7 @@ export async function resolveEmployeeClinicServiceLink(input: {
   return { clinicServiceId: null, service: freeText, clinicServiceIds: [] };
 }
 
-/** Filtre catalogue : service(s) du médecin + Laboratoire + Hospitalisation (+ non liés). */
+/** Filtre catalogue : service(s) du médecin + Labo/Hospit (tous libellés) + formulaires labo liés. */
 export function examCatalogVisibleForServiceWhere(
   clinicServiceId: string | string[] | null | undefined,
 ): Prisma.ExamCatalogItemWhereInput {
@@ -85,8 +85,26 @@ export function examCatalogVisibleForServiceWhere(
         : ids.length > 1
           ? [{ clinicServiceId: { in: ids } }]
           : []),
+      // Hospitalisation / Laboratoire (libellé exact historique)
       { clinicService: { name: { in: [...GLOBAL_EXAM_SERVICE_NAMES] } } },
+      // Tout service « labo » (Labo, Laboratoire d'analyses, …)
+      {
+        clinicService: {
+          name: { contains: "laboratoire", mode: "insensitive" as const },
+        },
+      },
+      {
+        clinicService: {
+          name: { contains: "labo", mode: "insensitive" as const },
+        },
+      },
+      // Non rattaché à un service
       { clinicServiceId: null },
+      // Formulaire de résultats labo lié → toujours proposable à tous les médecins
+      {
+        kind: ExamCatalogKind.EXAMEN,
+        labPanelId: { not: null },
+      },
     ],
   };
 }
@@ -354,4 +372,33 @@ export function examCatalogKindToSlug(kind: ExamCatalogKind): string {
     default:
       return "examen";
   }
+}
+
+/**
+ * Menu « Mes opérations » : service Bloc/Chirurgie, ou lié comme chirurgien /
+ * assistant anesthésie / chirurgien autorisé sur un type d’opération.
+ */
+export async function doctorCanAccessOperationsMenu(doctorUserId: string | null | undefined) {
+  const id = doctorUserId?.trim();
+  if (!id) return false;
+
+  const services = await resolveDoctorClinicServices(id);
+  if (services?.all.some((service) => isRedundantWithGlobalOperationTab(service.name))) {
+    return true;
+  }
+
+  const [asAuthorized, asLinkedOnType] = await Promise.all([
+    prisma.interventionTypeSurgeon.findFirst({
+      where: { userId: id },
+      select: { interventionTypeId: true },
+    }),
+    prisma.interventionType.findFirst({
+      where: {
+        OR: [{ surgeonId: id }, { anesthesiologistId: id }],
+      },
+      select: { id: true },
+    }),
+  ]);
+
+  return Boolean(asAuthorized || asLinkedOnType);
 }

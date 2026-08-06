@@ -28,7 +28,6 @@ import {
   Building2,
   Warehouse,
   TrendingUp,
-  ListChecks,
   Hospital,
 } from '@lucide/vue'
 import type { AppUserRole } from './roles'
@@ -67,6 +66,8 @@ export type NavItem = {
   /** Catégories / fournisseurs pharmacie — admin & gestionnaire uniquement */
   pharmacyCatalog?: boolean
   labStock?: boolean
+  /** MEDECIN : visible seulement si lié au bloc / chirurgie / types d’opération. */
+  doctorOperations?: boolean
   children?: NavChildItem[]
 }
 
@@ -338,13 +339,7 @@ const medecinNav: NavSection[] = [
         icon: Scissors,
         module: 'consultation',
         description: 'Suivi et règlement de votre part',
-      },
-      {
-        to: '/medecin/nomenclature',
-        label: 'Ma nomenclature',
-        icon: ListChecks,
-        module: 'consultation',
-        description: 'Examens et tarifs de votre service',
+        doctorOperations: true,
       },
       {
         to: '/dossier-patient',
@@ -359,7 +354,7 @@ const medecinNav: NavSection[] = [
 
 /**
  * Menu Direction d’origine (avant fusion admin) — conservé à l’identique.
- * Employés, utilisateurs, salles, types d’examen, etc.
+ * Employés, utilisateurs, types d’examen, etc.
  */
 const directionOperationalNav: NavSection[] = [
   {
@@ -398,13 +393,6 @@ const directionOperationalNav: NavSection[] = [
         ],
       },
       {
-        to: '/admin/depenses',
-        label: 'Gestion des dépenses',
-        icon: Receipt,
-        module: 'admin',
-        badgeKey: 'depenses',
-      },
-      {
         label: 'Examens & paiements',
         icon: Wallet,
         module: 'reception',
@@ -428,6 +416,13 @@ const directionOperationalNav: NavSection[] = [
             icon: Wallet,
             module: 'reception',
             description: 'Consultations, examens, chirurgie et hospitalisation',
+          },
+          {
+            to: '/admin/depenses',
+            label: 'Gestion des dépenses',
+            icon: Receipt,
+            module: 'admin',
+            badgeKey: 'depenses',
           },
           {
             to: '/admin/salaires',
@@ -486,30 +481,7 @@ const directionOperationalNav: NavSection[] = [
   },
 ]
 
-/** Sous-menus Paramètres partagés (clinique). */
-const clinicParametresChildren = [
-  {
-    to: '/comptabilite/types-examen/operation',
-    label: 'Types opérations',
-    icon: Scissors,
-    module: 'comptabilite',
-    description: 'Types d’opération, tarifs et parts médecins',
-  },
-  {
-    to: '/comptabilite/types-examen/examen',
-    label: "Types d'examen",
-    icon: FlaskConical,
-    module: 'comptabilite',
-  },
-  {
-    to: '/comptabilite/parametres/salles',
-    label: 'Salles',
-    icon: BedDouble,
-    module: 'comptabilite',
-  },
-] as const
-
-/** Paramètres Clinique — identiques pour Direction et Gestionnaire. */
+/** Paramètres Clinique — réglages restants (infos, employés, comptes). */
 const parametresChildren = [
   {
     to: '/admin/parametres/clinique',
@@ -519,17 +491,10 @@ const parametresChildren = [
     roles: ['ADMIN', 'GESTIONNAIRE'] as AppUserRole[],
     description: 'Nom, adresse, contact et infos fiscales pour les impressions',
   },
-  ...clinicParametresChildren,
   {
     to: '/admin/employes',
     label: 'Employés',
     icon: UserRound,
-    module: 'utilisateurs',
-  },
-  {
-    to: '/admin/services',
-    label: 'Services',
-    icon: Building2,
     module: 'utilisateurs',
   },
   {
@@ -594,6 +559,25 @@ const directionAdminNav: NavSection[] = [
         icon: FlaskConical,
         module: 'laboratoire',
         children: laboratoireNavChildren,
+      },
+      {
+        to: '/comptabilite/types-examen/operation',
+        label: 'Types opérations',
+        icon: Scissors,
+        module: 'comptabilite',
+        description: 'Types d’opération, tarifs et parts médecins',
+      },
+      {
+        to: '/comptabilite/types-examen/examen',
+        label: "Types d'examen",
+        icon: FlaskConical,
+        module: 'comptabilite',
+      },
+      {
+        to: '/admin/services',
+        label: 'Services',
+        icon: Building2,
+        module: 'utilisateurs',
       },
       {
         label: 'Paramètres',
@@ -707,11 +691,15 @@ const SIDEBAR_TITLES: Record<AppUserRole, string> = {
   LOGISTIQUE: 'Logistique',
 }
 
-function filterNavChild(child: NavChildItem, role: AppUserRole): NavChildItem | null {
+function filterNavChild(
+  child: NavChildItem,
+  role: AppUserRole,
+  options?: { showDoctorOperations?: boolean },
+): NavChildItem | null {
   if (child.roles && !child.roles.includes(role)) return null
   if (hasNavChildChildren(child)) {
     const children = child.children
-      .map((nested) => filterNavChild(nested, role))
+      .map((nested) => filterNavChild(nested, role, options))
       .filter((nested): nested is NavChildItem => nested !== null)
     if (!children.length) return null
     if (child.labStock) {
@@ -731,10 +719,15 @@ function filterNavChild(child: NavChildItem, role: AppUserRole): NavChildItem | 
   return child
 }
 
-function filterNavItem(item: NavItem, role: AppUserRole): NavItem | null {
+function filterNavItem(
+  item: NavItem,
+  role: AppUserRole,
+  options?: { showDoctorOperations?: boolean },
+): NavItem | null {
+  if (item.doctorOperations && !options?.showDoctorOperations) return null
   if (hasNavChildren(item)) {
     const children = item.children
-      .map((child) => filterNavChild(child, role))
+      .map((child) => filterNavChild(child, role, options))
       .filter((child): child is NavChildItem => child !== null)
     if (!children.length) return null
     if (item.labStock) {
@@ -754,19 +747,26 @@ function filterNavItem(item: NavItem, role: AppUserRole): NavItem | null {
   return item
 }
 
-function filterSections(sections: NavSection[], role: AppUserRole): NavSection[] {
+function filterSections(
+  sections: NavSection[],
+  role: AppUserRole,
+  options?: { showDoctorOperations?: boolean },
+): NavSection[] {
   return sections
     .map((section) => ({
       ...section,
       items: section.items
-        .map((item) => filterNavItem(item, role))
+        .map((item) => filterNavItem(item, role, options))
         .filter((item): item is NavItem => item !== null),
     }))
     .filter((section) => section.items.length > 0)
 }
 
-export function getNavigation(role: AppUserRole): NavConfig {
-  const sections = filterSections(NAV_BY_ROLE[role] ?? [], role)
+export function getNavigation(
+  role: AppUserRole,
+  options?: { showDoctorOperations?: boolean },
+): NavConfig {
+  const sections = filterSections(NAV_BY_ROLE[role] ?? [], role, options)
   return {
     sidebarTitle: SIDEBAR_TITLES[role],
     sections,

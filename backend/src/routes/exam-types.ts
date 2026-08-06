@@ -33,7 +33,7 @@ const catalogItemSchema = z.object({
   code: z.string().max(64).optional().nullable(),
   label: z.string().min(2).max(160),
   category: z.string().max(80).optional(),
-  priceFcfa: z.number().int().positive(),
+  priceFcfa: z.number().int().min(0),
   clinicServiceId: z.string().optional().nullable(),
   sortOrder: z.number().int().min(0).optional(),
   active: z.boolean().optional(),
@@ -74,7 +74,15 @@ const examCatalogSelect = {
   createdAt: true,
   updatedAt: true,
   clinicService: { select: { id: true, name: true } },
-  labPanel: { select: { id: true, slug: true, label: true, active: true } },
+  labPanel: {
+    select: {
+      id: true,
+      slug: true,
+      label: true,
+      active: true,
+      _count: { select: { fields: true } },
+    },
+  },
 } as const;
 
 const serviceTabSchema = z.object({

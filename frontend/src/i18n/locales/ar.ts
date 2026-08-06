@@ -32,6 +32,15 @@ export default {
       'تعذر تسوية هذه الحصص نقداً.',
     'Confirmer le règlement cash de {amount} pour {name} ? La carte repassera à zéro.':
       'تأكيد التسوية النقدية بمبلغ {amount} لـ {name}؟ ستعود البطاقة إلى الصفر.',
+    'Parts médecins à percevoir': 'حصص الأطباء المستحقة',
+    'Parts médecins non réglées': 'حصص أطباء غير مسوّاة',
+    'Impossible de charger les parts médecins.': 'تعذر تحميل حصص الأطباء.',
+    'Somme globale': 'المجموع الإجمالي',
+    'Tous (somme globale)': 'الكل (المجموع الإجمالي)',
+    'À percevoir (parts %)': 'مستحق (حصص %)',
+    'Consult. {amount}': 'استشارة {amount}',
+    'Opér. {amount}': 'عملية {amount}',
+    'Paie {amount}': 'راتب {amount}',
     Payer: 'دفع',
     Rechercher: 'بحث',
     Enregistrer: 'حفظ',
@@ -136,7 +145,7 @@ export default {
     'Aucune consultation, ordonnance, examen ou commentaire enregistré pour ce patient.':
       'لا توجد استشارة أو وصفة أو فحص أو ملاحظة مسجّلة لهذا المريض.',
     '{n} produit(s)': '{n} منتج',
-    '{n} examen(s)': '{n} فحص',
+    '{n} examen(s)': '{n} فحص/فحوصات',
     '{n} résultat(s)': '{n} نتيجة',
     '{n} valeur(s)': '{n} قيمة',
     '(hors pharmacie)': '(خارج الصيدلية)',
@@ -466,6 +475,24 @@ export default {
     'Répartition des dépenses': 'توزيع المصاريف',
     'Mois en cours': 'الشهر الجاري',
     Période: 'الفترة',
+    'À percevoir': 'المستحقات',
+    'Parts consultations et opérations — ajoutez-les au salaire':
+      'حصص الاستشارات والعمليات — أضفها إلى الراتب',
+    'Choisissez la période puis consultez vos parts':
+      'اختر الفترة ثم اطّلع على حصصك',
+    'Impossible de charger les parts à percevoir.': 'تعذر تحميل الحصص المستحقة.',
+    'Parts ajoutées au salaire du mois — le solde repasse à zéro.':
+      'تمت إضافة الحصص إلى راتب الشهر — عاد الرصيد إلى صفر.',
+    'Aucune part à percevoir pour cette période.': 'لا حصص مستحقة لهذه الفترة.',
+    'Opération (chirurgien)': 'عملية (جرّاح)',
+    'Opération (assistant)': 'عملية (مساعد)',
+    'Consult.': 'استشارة',
+    'Opér.': 'عملية',
+    'En paie': 'في الراتب',
+    'Rien à percevoir': 'لا شيء للاستلام',
+    'Ajouter au salaire': 'إضافة إلى الراتب',
+    'Ouvrir le détail': 'فتح التفاصيل',
+    'Détail des parts': 'تفصيل الحصص',
     'Impossible de charger le tableau de bord.': 'تعذر تحميل لوحة التحكم.',
     'Solde comptable en attente': 'رصيد محاسبي قيد الانتظار',
     'Récupérer la tirelire': 'استرداد صندوق النقود',
@@ -576,12 +603,64 @@ export default {
     et: 'و',
     laboratoire: 'المختبر',
     'Panier global': 'السلة العامة',
+    'Commentaire final': 'تعليق نهائي',
+    'Commentaire final (opération)': 'تعليق نهائي (عملية)',
+    'Notes cliniques et conduite — enregistrées dans le dossier.':
+      'ملاحظات سريرية — تُحفظ في ملف المريض.',
+    'Note opératoire / indications — visibles dans le dossier patient.':
+      'ملاحظة عملية / إرشادات — تظهر في ملف المريض.',
+    'Note pour le dossier patient (et résultats labo).':
+      'ملاحظة لملف المريض (ونتائج المختبر).',
+    'Résultats antérieurs': 'نتائج سابقة',
+    Prescrire: 'وصف',
+    'Enregistrer le dossier': 'حفظ الملف',
+    'Consulter : dossier, prescription, commentaire final':
+      'عرض: الملف، الوصفة، التعليق النهائي',
+    'Parcours, résultats, opérations et fichiers': 'المسار، النتائج، العمليات والملفات',
+    'Patients déjà consultés': 'مرضى سبق فحصهم',
+    'Note finale': 'ملاحظة نهائية',
+    'Résultats labo': 'نتائج المختبر',
+    'Aucune valeur détaillée.': 'لا توجد قيم مفصّلة.',
+    'Aucun résultat labo ou opération enregistré.': 'لا نتيجة مختبر أو عملية مسجّلة.',
+    'Suite opératoire, indications, surveillance…': 'متابعة بعد العملية، إرشادات، مراقبة…',
+    'Interventions, clôture et parts à percevoir': 'العمليات، الإغلاق والأنصبة المستحقة',
+    'Résultats / note finale à la clôture — parts dans À percevoir':
+      'ملاحظة نهائية عند الإغلاق — الأنصبة في المستحقات',
+    'Clôturer l’opération': 'إغلاق العملية',
+    'Note opératoire enregistrée dans le dossier patient.':
+      'تم حفظ ملاحظة العملية في ملف المريض.',
+    'Déroulement, suite, surveillance…': 'مجرى العملية، المتابعة، المراقبة…',
+    'Enregistrer et clôturer': 'حفظ وإغلاق',
+    'Opération enregistrée — note ajoutée au dossier patient.':
+      'تم تسجيل العملية — أُضيفت الملاحظة لملف المريض.',
+    'Payée — à clôturer': 'مدفوعة — بانتظار الإغلاق',
+    'En attente paiement': 'بانتظار الدفع',
+    'Supervision — lecture seule': 'إشراف — قراءة فقط',
     "Types d'examens": 'أنواع الفحوصات',
     'Commentaire saisi': 'تعليق مُدخل',
     'Chargement des catalogues…': 'جاري تحميل الكتالوجات…',
     'Chargement du catalogue…': 'جاري تحميل الكتالوج…',
     'Aucun examen sélectionné — choisissez par type : laboratoire, radio, écho, odonto, opération ou hospitalisation.':
       'لم يُحدد أي فحص — اختر حسب النوع: مختبر، أشعة، إيكو، أسنان، عملية أو استشفاء.',
+    'Sélectionnez Consultation ou un type d’examen.': 'اختر الاستشارة أو نوع فحص.',
+    'Notes cliniques et ordonnance — sans envoi labo.': 'ملاحظات سريرية ووصفة — دون إرسال للمختبر.',
+    'Notes cliniques et ordonnance pharmacie (sans nouvel envoi labo).':
+      'ملاحظات سريرية ووصفة صيدلية (دون إرسال جديد للمختبر).',
+    'Déjà prescrits': 'مفحوصة مسبقاً',
+    'Nouveaux examens': 'فحوصات جديدة',
+    'Choisir les examens': 'اختر الفحوصات',
+    'Envoyer au labo': 'إرسال إلى المختبر',
+    'Enregistrer et envoyer': 'حفظ وإرسال',
+    'Cliquez pour sélectionner ou désélectionner.': 'انقر للتحديد أو إلغاء التحديد.',
+    'Filtrer les examens…': 'تصفية الفحوصات…',
+    'Filtrer {count} examens…': 'تصفية {count} فحصاً…',
+    'Aucun examen sélectionné': 'لم يُحدد أي فحص',
+    '1 examen sélectionné': 'فحص واحد محدد',
+    '{n} examens sélectionnés': '{n} فحوصات محددة',
+    'Aucun examen laboratoire disponible.': 'لا يتوفر أي فحص مختبر.',
+    'Motif, examen clinique, diagnostic…': 'السبب، الفحص السريري، التشخيص…',
+    'Les examens sélectionnés sont déjà prescrits sur ce dossier. Choisissez d\'autres examens.':
+      'الفحوصات المحددة موصوفة مسبقاً على هذا الملف. اختر غيرها.',
     'Commentaire — {kind}': 'تعليق — {kind}',
     'Indications ou remarques pour les examens {kind}…':
       'إشارات أو ملاحظات لفحوصات {kind}…',
@@ -1199,6 +1278,18 @@ export default {
     'Aucun dossier ne correspond à votre recherche.': 'لا يوجد ملف يطابق بحثك.',
     'Transféré le': 'نُقل في',
     'Saisir les résultats': 'إدخال النتائج',
+    Saisir: 'إدخال',
+    Resaisir: 'إعادة الإدخال',
+    'Resaisir les résultats': 'إعادة إدخال النتائج',
+    'Examens en attente reçus': 'الفحوصات المستلمة قيد الانتظار',
+    'Aucun examen en attente reçu': 'لا فحوصات مستلمة قيد الانتظار',
+    '{n} examen(s) en attente reçu(s)': '{n} فحص/فحوصات مستلمة قيد الانتظار',
+    'Aucun examen en attente': 'لا فحوصات قيد الانتظار',
+    '{n} examen(s) reçu(s) en attente': '{n} فحص/فحوصات مستلمة قيد الانتظار',
+    'dont {n} récent(s)': 'منها {n} حديثة',
+    Récent: 'حديث',
+    'Aucun examen en attente de saisie.': 'لا فحوصات بانتظار الإدخال.',
+    'Ouvrir la file laboratoire': 'فتح طابور المختبر',
     'Voir le dossier': 'عرض الملف',
     'Patients dont les analyses de laboratoire ont été clôturées':
       'المرضى الذين أُغلقت تحاليلهم المخبرية',
@@ -1316,6 +1407,21 @@ export default {
     'Dossier laboratoire': 'ملف المختبر',
     'Clôture…': 'جاري الإغلاق…',
     'Clôturer le dossier': 'إغلاق الملف',
+    'Enregistrer, imprimer et clôturer': 'حفظ وطباعة وإغلاق',
+    'Enregistrer tous les résultats, imprimer un fichier (une page par examen) et transmettre au médecin ?':
+      'حفظ كل النتائج وطباعة ملف واحد (صفحة لكل فحص) وإرسالها للطبيب؟',
+    'Certains examens prescrits sont encore vides. Enregistrer, imprimer les résultats saisis (une page par examen) et clôturer le dossier ?':
+      'بعض الفحوصات الموصوفة ما تزال فارغة. هل تحفظ وتطبع النتائج المدخلة (صفحة لكل فحص) وتغلق الملف؟',
+    'Dossier enregistré, imprimé et clôturé — résultats transmis au médecin.':
+      'تم الحفظ والطباعة والإغلاق — النتائج مرسلة للطبيب.',
+    "Erreur lors de l'enregistrement, de l'impression ou de la clôture.":
+      'خطأ أثناء الحفظ أو الطباعة أو الإغلاق.',
+    'Formulaire de l’examen prescrit — saisissez puis enregistrez, imprimez et clôturez':
+      'استمارة الفحص الموصوف — أدخل ثم احفظ واطبع وأغلق',
+    '{n} examens prescrits — saisissez chaque onglet puis enregistrez, imprimez et clôturez en une fois':
+      '{n} فحوصات موصوفة — املأ كل تبويب ثم احفظ واطبع وأغلق دفعة واحدة',
+    'Formulaires modifiés et envoyés à l’impression (une page par examen).':
+      'تم تعديل الاستمارات وإرسالها للطباعة (صفحة لكل فحص).',
     'Impression…': 'جاري الطباعة…',
     'Imprimer tout le dossier': 'طباعة الملف بالكامل',
     'Mode modification — sélectionnez un formulaire enregistré, corrigez les valeurs puis enregistrez.': 'وضع التعديل — اختر نموذجاً محفوظاً، صحّح القيم ثم احفظ.',
@@ -1912,7 +2018,8 @@ export default {
   },
   login: {
     title: 'تسجيل الدخول',
-    username: 'اسم المستخدم أو البريد',
+    username: 'اسم المستخدم',
+    usernamePlaceholder: 'أدخل اسم المستخدم (وليس البريد الإلكتروني)',
     password: 'كلمة المرور',
     submit: 'دخول',
     demoLabel: 'حسابات تجريبية — كلمة المرور:',
@@ -1952,11 +2059,11 @@ export default {
     installHttpHint:
       'أول زيارة: ضع اختصار سطح المكتب (أيقونة Alwatan). يفتح عبر Wi‑Fi ثم Tailscale عند الحاجة.',
     installAndroidHint:
-      'على أندرويد (Chrome): أضف الوطن إلى الشاشة الرئيسية لفتحه كتطبيق. نفس شبكة Wi‑Fi للخادم.',
+      'على أندرويد (Chrome): أضف الوطن إلى الشاشة الرئيسية (وليس ملف APK). نفس شبكة Wi‑Fi للخادم؛ خارج العيادة استخدم Tailscale.',
     installIosHint:
       'على iPad/iPhone (Safari): أضف الوطن إلى الشاشة الرئيسية للوصول السريع.',
     installDesktopShortcut: 'وضع الاختصار على سطح المكتب',
-    installAndroidShortcut: 'تحميل الاختصار',
+    installAndroidShortcut: 'تحميل دليل HTML',
     androidStep1: 'افتح هذه الصفحة في Chrome (وليس متصفحاً آخر).',
     androidStep2: 'اضغط على القائمة ⋮ في أعلى اليمين.',
     androidStep3: 'اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».',
@@ -2020,6 +2127,8 @@ export default {
     'En attente de labos': 'فحوصات مخبرية قيد الانتظار',
     'Résultats de labos': 'نتائج المختبر',
     'Mes opérations': 'عملياتي',
+    'À percevoir': 'المستحقات',
+    'Parts consultations et opérations': 'حصص الاستشارات والعمليات',
     'Ma nomenclature': 'تسمية فحوصاتي',
     'Dossiers patients': 'ملفات المرضى',
     'Encaissements clinique': 'مقبوضات العيادة',

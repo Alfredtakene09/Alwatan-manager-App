@@ -26,6 +26,7 @@ import GestionnaireRowAction from '@/components/gestionnaire/GestionnaireRowActi
 import GestionnaireRowActionGroup from '@/components/gestionnaire/GestionnaireRowActionGroup.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
@@ -281,31 +282,24 @@ onMounted(refreshAll)
 </script>
 
 <template>
-  <div class="caisse-page">
-    <header class="caisse-hero">
-      <div class="caisse-hero__main">
-        <div class="caisse-hero__icon">
-          <Wallet :size="26" />
-        </div>
-        <div>
-          <p class="caisse-hero__eyebrow">{{ uiText('Trésorerie gestionnaire') }}</p>
-          <h1 class="caisse-hero__title">{{ uiText('Caisse') }}</h1>
-          <p class="caisse-hero__subtitle">
-            {{ uiText('Validez une clôture de journée : le décaissement est créé automatiquement dans l’historique') }}
-          </p>
-        </div>
-      </div>
-      <UiButton
-        size="sm"
-        variant="ghost"
-        class="caisse-hero__refresh"
-        :icon="RefreshCw"
-        :disabled="historyLoading || dayClosureLoading"
-        @click="refreshAll"
-      >
-        Actualiser
-      </UiButton>
-    </header>
+  <div class="admin-page caisse-page">
+    <UiPageHeader
+      title="Caisse & décaissement"
+      subtitle="Validez une clôture de journée : le décaissement est créé automatiquement dans l’historique"
+      :icon="Wallet"
+    >
+      <template #actions>
+        <UiButton
+          size="sm"
+          variant="ghost"
+          :icon="RefreshCw"
+          :disabled="historyLoading || dayClosureLoading"
+          @click="refreshAll"
+        >
+          Actualiser
+        </UiButton>
+      </template>
+    </UiPageHeader>
 
     <section class="workflow-strip" :aria-label="uiText('Circuit de caisse')">
       <article
@@ -603,70 +597,6 @@ onMounted(refreshAll)
   gap: 1.15rem;
   max-width: none;
   width: 100%;
-}
-
-.caisse-hero {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1.15rem 1.35rem;
-  border-radius: 16px;
-  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 48%, #fde68a 100%);
-  border: 1px solid rgba(180, 83, 9, 0.18);
-  box-shadow: 0 8px 24px rgba(180, 83, 9, 0.08);
-}
-
-.caisse-hero__main {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-}
-
-.caisse-hero__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 3.1rem;
-  height: 3.1rem;
-  border-radius: 13px;
-  background: linear-gradient(145deg, #b45309, #92400e);
-  color: #fff;
-  box-shadow: 0 6px 16px rgba(146, 64, 14, 0.28);
-  flex-shrink: 0;
-}
-
-.caisse-hero__eyebrow {
-  margin: 0 0 0.1rem;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #92400e;
-}
-
-.caisse-hero__title {
-  margin: 0;
-  font-size: 1.4rem;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  color: #78350f;
-  line-height: 1.15;
-}
-
-.caisse-hero__subtitle {
-  margin: 0.3rem 0 0;
-  font-size: 0.875rem;
-  color: #a16207;
-}
-
-.caisse-hero__subtitle strong {
-  color: #92400e;
-}
-
-.caisse-hero__refresh {
-  flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.55) !important;
 }
 
 .workflow-strip {
@@ -1051,10 +981,6 @@ onMounted(refreshAll)
 }
 
 @media (max-width: 600px) {
-  .caisse-hero {
-    flex-direction: column;
-  }
-
   .caisse-summary {
     grid-template-columns: 1fr;
   }

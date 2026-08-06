@@ -61,6 +61,7 @@ import {
   resolveDoctorClinicServices,
 } from "../lib/clinic-service-exam.js";
 import { computeInterventionCostShares } from "../lib/surgery-cost-shares.js";
+import { ensureVisitPatientMergedByPhone } from "../lib/merge-patients.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -493,6 +494,7 @@ router.post("/prescribe-exams", async (req, res) => {
   try {
     const body = prescribeExamsSchema.parse(req.body);
     const user = req.user!;
+    await ensureVisitPatientMergedByPhone(body.visitId);
 
     const result = await prisma.$transaction(async (tx) => {
       const visit = await tx.visit.findUnique({
@@ -733,6 +735,7 @@ router.post("/", async (req, res) => {
   try {
     const body = consultationSchema.parse(req.body);
     const user = req.user!;
+    await ensureVisitPatientMergedByPhone(body.visitId);
 
     const result = await prisma.$transaction(async (tx) => {
       const visit = await tx.visit.findUnique({ where: { id: body.visitId } });

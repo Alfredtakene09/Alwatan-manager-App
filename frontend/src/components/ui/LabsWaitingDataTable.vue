@@ -12,6 +12,7 @@ import {
 import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
 import { DT_ICONS, labCompletedRowActionsHtml } from '@/lib/datatable-defaults'
 import { formatAppDate, formatAppTime } from '@/i18n/locale-format'
+import { translateUi } from '@/i18n/translate'
 import UiDataTable from '@/components/ui/UiDataTable.vue'
 import type { PrescribedByPerson } from '@/lib/lab-panel-print'
 
@@ -207,16 +208,17 @@ const columns = computed(() => {
         orderable: false,
         className: 'dt-actions-col dt-actions-col--lab all',
         responsivePriority: 1,
-        render: (_d: unknown, _t: string, row: { id: string }) => `
+        render: (_d: unknown, _t: string, row: { id: string }) => {
+          const saisir = translateUi('Saisir')
+          const saisirTitle = translateUi('Saisir les résultats')
+          return `
       <div class="dt-row-actions dt-lab-actions" data-id="${row.id}">
-        <button type="button" class="dt-btn dt-btn--icon dt-btn--accent" data-action="saisir" title="Saisir les résultats" aria-label="Saisir les résultats">
-          ${DT_ICONS.edit}
-        </button>
-        <button type="button" class="dt-btn dt-btn--icon dt-btn--icon-soft" data-action="view" title="Voir le dossier" aria-label="Voir le dossier">
-          ${DT_ICONS.view}
+        <button type="button" class="dt-btn dt-btn--text dt-btn--accent" data-action="saisir" title="${saisirTitle}" aria-label="${saisirTitle}">
+          ${DT_ICONS.edit} ${saisir}
         </button>
       </div>
-    `,
+    `
+        },
       },
     ]
   }

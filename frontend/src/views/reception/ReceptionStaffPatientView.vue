@@ -80,10 +80,12 @@ const filteredDoctors = computed(() => {
 
 const canRegister = computed(() => {
   const { firstName, lastName } = parsedName.value
+  const phoneDigits = form.value.phone.replace(/\D/g, '')
   return (
     firstName.length >= 2 &&
     lastName.length >= 2 &&
     parsedAge.value !== null &&
+    phoneDigits.length >= 6 &&
     !!form.value.service &&
     form.value.recommendedByName.trim().length >= 2 &&
     !!form.value.doctorId
@@ -186,7 +188,7 @@ async function registerStaffPatient() {
         lastName,
         age: parsedAge.value ?? undefined,
         ageUnit: form.value.ageUnit,
-        phone: form.value.phone.trim() || undefined,
+        phone: form.value.phone.trim(),
         service: form.value.service || undefined,
         gender: form.value.gender,
         category: 'PERSONNEL',
@@ -197,17 +199,9 @@ async function registerStaffPatient() {
         reductionFcfa: 0,
       },
     )
-    message.value = data.linkedExistingDossier
-      ? translateTemplate(
-          'Dossier existant réutilisé (gratuit) — {name} envoyé chez {doctor} (historique conservé).',
-          {
-            name: fullName(data.patient.firstName, data.patient.lastName),
-            doctor: getDoctorName(form.value.doctorId),
-          },
-        )
-      : translateTemplate('Patient personnel enregistré (gratuit) — envoyé chez {doctor}.', {
-          doctor: getDoctorName(form.value.doctorId),
-        })
+    message.value = translateTemplate('Patient personnel enregistré (gratuit) — envoyé chez {doctor}.', {
+      doctor: getDoctorName(form.value.doctorId),
+    })
     messageType.value = 'success'
     printFiche({
       ...data.patient,

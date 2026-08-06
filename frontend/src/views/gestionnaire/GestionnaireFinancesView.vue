@@ -164,7 +164,7 @@ onMounted(loadFinances)
 </script>
 
 <template>
-  <div class="gestionnaire-page">
+  <div class="admin-page gestionnaire-page finances-page">
     <div class="finances-head">
       <UiPageHeader
         title="Finances"

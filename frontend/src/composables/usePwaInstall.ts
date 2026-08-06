@@ -117,59 +117,10 @@ export function usePwaInstall() {
   }
 
   function downloadAndroidShortcut() {
-    markShortcutDownloaded()
-    const origin = window.location.origin.replace(/\/$/, '')
-    const appUrl = `${origin}/`
-    const iconUrl = `${origin}/pwa/icon-192.png`
-    const html = `<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#1b4f9c" />
-  <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-title" content="Alwatan Manager" />
-  <link rel="icon" href="${iconUrl}" />
-  <link rel="apple-touch-icon" href="${iconUrl}" />
-  <title>Alwatan Manager — Tablette</title>
-  <style>
-    body{margin:0;min-height:100vh;font-family:system-ui,sans-serif;background:linear-gradient(160deg,#e8f0fb,#fff 45%,#f5f7fb);color:#12233f;display:grid;place-items:center;padding:1.25rem}
-    .card{width:min(440px,100%);background:#fff;border-radius:18px;box-shadow:0 12px 40px rgba(18,35,63,.12);padding:1.4rem 1.25rem 1.5rem;text-align:center}
-    img{width:84px;height:84px;border-radius:18px;object-fit:cover;margin-bottom:.85rem}
-    h1{margin:0 0 .35rem;font-size:1.25rem}
-    p{margin:0 0 .85rem;color:#4b5563;line-height:1.45;font-size:.95rem}
-    ol{text-align:start;margin:0 0 1.1rem;padding-inline-start:1.2rem;line-height:1.55}
-    a.btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:.75rem 1.1rem;border-radius:12px;text-decoration:none;background:#1b4f9c;color:#fff;font-weight:650;width:100%}
-    .hint{margin-top:.9rem;font-size:.82rem;color:#6b7280}
-    .ar{direction:rtl}
-  </style>
-</head>
-<body>
-  <main class="card">
-    <img src="${iconUrl}" alt="Alwatan" />
-    <h1>Clinique Alwatan — Manager</h1>
-    <p>Raccourci tablette. Ouvrez l’app puis ajoutez-la à l’écran d’accueil.</p>
-    <ol>
-      <li>Appuyez sur <strong>Ouvrir l’application</strong>.</li>
-      <li>Chrome : menu <strong>⋮</strong> → <strong>Ajouter à l’écran d’accueil</strong>.</li>
-      <li>Safari (iPad) : Partager → <strong>Sur l’écran d’accueil</strong>.</li>
-    </ol>
-    <a class="btn" href="${appUrl}">Ouvrir l’application</a>
-    <p class="hint ar">افتح التطبيق ثم أضفه إلى الشاشة الرئيسية.</p>
-    <p class="hint">${appUrl}</p>
-  </main>
-</body>
-</html>`
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
-    const objectUrl = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = objectUrl
-    a.download = 'Alwatan-Manager-Tablette.html'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(objectUrl)
+    // Téléchargement serveur (Content-Disposition) — plus fiable qu’un blob sur Android.
+    // Ne pas masquer le bandeau tant que l’utilisateur n’a pas confirmé (« Plus tard »).
+    const url = `/api/client-setup/android-shortcut.html?_=${Date.now()}`
+    window.location.assign(url)
   }
 
   function openAndroidHelp() {

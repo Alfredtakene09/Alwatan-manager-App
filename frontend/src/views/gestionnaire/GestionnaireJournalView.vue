@@ -16,6 +16,7 @@ import { CLINIC } from '@/lib/clinic'
 import { exportBasename, exportTableExcel, type ExportColumn } from '@/lib/table-export'
 import { formatFcfa } from '@/lib/roles'
 import UiButton from '@/components/ui/UiButton.vue'
+import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import ClinicLetterhead from '@/components/ClinicLetterhead.vue'
 import '@/assets/gestionnaire-page.css'
 
@@ -371,68 +372,53 @@ onMounted(loadJournal)
     </section>
 
     <section class="page-with-table__head journal-page__head no-print">
-      <header class="journal-hero">
-        <div class="journal-hero__main">
-          <div class="journal-hero__icon">
-            <BookOpen :size="26" />
-          </div>
-          <div class="journal-hero__text">
-            <p class="journal-hero__eyebrow">Trésorerie clinique</p>
-            <h1 class="journal-hero__title">Livre journal</h1>
-            <p class="journal-hero__subtitle">
-              Entrées et sorties — synthèse journalière
-              <span v-if="periodLabel" class="journal-hero__period">· {{ periodLabel }}</span>
-            </p>
-          </div>
-        </div>
-
-        <div class="journal-hero__controls">
-          <div class="period-pills" role="tablist" aria-label="Période">
-            <button
-              v-for="p in (['today', 'week', 'month', 'year', 'custom'] as const)"
-              :key="p"
-              type="button"
-              role="tab"
-              class="period-pill"
-              :class="{ 'period-pill--active': preset === p }"
-              :aria-selected="preset === p"
-              @click="selectPreset(p)"
-            >
-              {{ PRESET_LABELS[p] }}
-            </button>
-          </div>
-
-          <div v-if="preset === 'custom'" class="period-inline">
-            <input
-              v-model="customFrom"
-              type="date"
-              class="period-inline__input"
-              aria-label="Date de début"
-              :max="customTo || todayKey"
-            />
-            <span class="period-inline__sep" aria-hidden="true">→</span>
-            <input
-              v-model="customTo"
-              type="date"
-              class="period-inline__input"
-              aria-label="Date de fin"
-              :min="customFrom || undefined"
-              :max="todayKey"
-            />
-          </div>
-
-          <UiButton
-            size="sm"
-            variant="ghost"
-            class="journal-hero__refresh"
-            :icon="RefreshCw"
-            :disabled="loading"
-            @click="loadJournal"
-          >
+      <UiPageHeader
+        title="Livre journal"
+        subtitle="Entrées et sorties — synthèse journalière"
+        :icon="BookOpen"
+      >
+        <template #actions>
+          <UiButton size="sm" variant="ghost" :icon="RefreshCw" :disabled="loading" @click="loadJournal">
             Actualiser
           </UiButton>
+        </template>
+      </UiPageHeader>
+
+      <div class="journal-period-bar">
+        <div class="period-pills" role="tablist" aria-label="Période">
+          <button
+            v-for="p in (['today', 'week', 'month', 'year', 'custom'] as const)"
+            :key="p"
+            type="button"
+            role="tab"
+            class="period-pill"
+            :class="{ 'period-pill--active': preset === p }"
+            :aria-selected="preset === p"
+            @click="selectPreset(p)"
+          >
+            {{ PRESET_LABELS[p] }}
+          </button>
         </div>
-      </header>
+
+        <div v-if="preset === 'custom'" class="period-inline">
+          <input
+            v-model="customFrom"
+            type="date"
+            class="period-inline__input"
+            aria-label="Date de début"
+            :max="customTo || todayKey"
+          />
+          <span class="period-inline__sep" aria-hidden="true">→</span>
+          <input
+            v-model="customTo"
+            type="date"
+            class="period-inline__input"
+            aria-label="Date de fin"
+            :min="customFrom || undefined"
+            :max="todayKey"
+          />
+        </div>
+      </div>
 
       <div v-if="journal" class="journal-summary" aria-label="Totaux période">
         <article class="summary-card summary-card--in">
@@ -718,79 +704,12 @@ onMounted(loadJournal)
   overflow-y: auto;
 }
 
-.journal-hero {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.95rem 1.2rem;
-  border-radius: 16px;
-  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 48%, #fde68a 100%);
-  border: 1px solid rgba(180, 83, 9, 0.18);
-  box-shadow: 0 8px 24px rgba(180, 83, 9, 0.07);
-}
-
-.journal-hero__main {
-  display: flex;
-  align-items: center;
-  gap: 0.85rem;
-  min-width: 0;
-}
-
-.journal-hero__controls {
+.journal-period-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  flex-shrink: 0;
-}
-
-.journal-hero__refresh {
-  background: rgba(255, 255, 255, 0.55) !important;
-}
-
-.journal-hero__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 3rem;
-  height: 3rem;
-  border-radius: 12px;
-  background: linear-gradient(145deg, #b45309, #92400e);
-  color: #fff;
-  box-shadow: 0 6px 14px rgba(146, 64, 14, 0.25);
-  flex-shrink: 0;
-}
-
-.journal-hero__eyebrow {
-  margin: 0 0 0.1rem;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #92400e;
-}
-
-.journal-hero__title {
-  margin: 0;
-  font-size: 1.375rem;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  color: #78350f;
-  line-height: 1.15;
-}
-
-.journal-hero__subtitle {
-  margin: 0.25rem 0 0;
-  font-size: 0.875rem;
-  color: #a16207;
-}
-
-.journal-hero__period {
-  color: #92400e;
-  font-weight: 600;
-  text-transform: capitalize;
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
 }
 
 .journal-summary {
@@ -1082,15 +1001,6 @@ onMounted(loadJournal)
   .journal-page.page-with-table {
     height: calc(100dvh - 7rem);
     min-height: 26rem;
-  }
-
-  .journal-hero {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .journal-hero__controls {
-    justify-content: flex-start;
   }
 
   .period-inline {

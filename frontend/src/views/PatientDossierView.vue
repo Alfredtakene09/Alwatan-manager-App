@@ -454,15 +454,15 @@ onMounted(async () => {
   <div class="dossier-page">
     <UiPageHeader
       title="Dossier patient"
-      subtitle="Parcours médical, diagnostics, prescriptions, paiements et fichiers"
+      :subtitle="uiText('Parcours, résultats, opérations et fichiers')"
       :icon="FolderOpen"
     />
 
     <div class="dossier-layout" :class="{ 'dossier-layout--with-sidebar': showPatientSidebar }">
       <aside v-if="isMedecin" class="dossier-sidebar">
         <UiCard
-          title="Mes patients"
-          description="Patients déjà consultés ou suivis par votre compte"
+          :title="uiText('Mes patients')"
+          :description="uiText('Patients déjà consultés')"
           :icon="UserRound"
           icon-variant="teal"
         >

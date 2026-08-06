@@ -70,7 +70,11 @@ watch(() => auth.user?.id, () => {
 })
 
 const navConfig = computed(() =>
-  auth.user ? getNavigation(auth.user.role) : { sidebarTitle: 'Navigation', sections: [] },
+  auth.user
+    ? getNavigation(auth.user.role, {
+        showDoctorOperations: Boolean(auth.user.showDoctorOperations),
+      })
+    : { sidebarTitle: 'Navigation', sections: [] },
 )
 
 const mainNavSections = computed(() => navConfig.value.sections.filter((section) => !section.pinnedBottom))

@@ -11,5 +11,6 @@ export {
   getSpecialtyServices,
   getExamPriceFcfa,
   invalidateExamCatalogCache,
+  examCatalogInvalidateEventName,
   type SpecialtyServiceInfo,
 } from './store'

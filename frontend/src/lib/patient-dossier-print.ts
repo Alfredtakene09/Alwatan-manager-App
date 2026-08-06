@@ -56,7 +56,7 @@ function visitBlockHtml(entry: MedicalHistoryEntry, t: typeof translateUi) {
     }
     ${
       entry.doctorComment
-        ? `<div class="dossier-print__block"><h3>${escapeHtml(t('Informations cliniques'))}</h3><p>${escapeHtml(entry.doctorComment)}</p></div>`
+        ? `<div class="dossier-print__block"><h3>${escapeHtml(t('Commentaire final'))}</h3><p>${escapeHtml(entry.doctorComment)}</p></div>`
         : ''
     }
     ${

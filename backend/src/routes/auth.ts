@@ -12,6 +12,7 @@ import {
 } from "../lib/auth.js";
 import { getDefaultRoute } from "../lib/roles.js";
 import { requireAuth } from "../middleware/auth.js";
+import { doctorCanAccessOperationsMenu } from "../lib/clinic-service-exam.js";
 import {
   hasActiveConcurrentSession,
   isAccountLocked,
@@ -44,6 +45,11 @@ const passwordSchema = z.object({
   newPassword: z.string().min(6, "Le nouveau mot de passe doit contenir au moins 6 caractères."),
 });
 
+export type AuthUserPayload = SessionUser & {
+  /** MEDECIN : afficher « Mes opérations » (bloc / chirurgie / chirurgien autorisé). */
+  showDoctorOperations?: boolean;
+};
+
 function toSessionUser(user: {
   id: string;
   username: string;
@@ -59,6 +65,14 @@ function toSessionUser(user: {
     firstName: user.firstName,
     lastName: user.lastName,
     role: user.role,
+  };
+}
+
+async function toAuthUserPayload(user: SessionUser): Promise<AuthUserPayload> {
+  if (user.role !== "MEDECIN") return user;
+  return {
+    ...user,
+    showDoctorOperations: await doctorCanAccessOperationsMenu(user.id),
   };
 }
 
@@ -173,7 +187,11 @@ router.post("/login", async (req, res) => {
     const sessionUser = toSessionUser(user);
     await attachSession(res, sessionUser, sessionId, req);
 
-    return res.json({ success: true, user: sessionUser, redirectTo: getDefaultRoute(user.role) });
+    return res.json({
+      success: true,
+      user: await toAuthUserPayload(sessionUser),
+      redirectTo: getDefaultRoute(user.role),
+    });
   } catch {
     return res.status(400).json({ error: "Données invalides" });
   }
@@ -260,7 +278,7 @@ router.get("/me", async (req, res) => {
     const session = toSessionUser(dbUser);
     const freshToken = await createSessionToken(session, sessionUser.sid);
     res.cookie(COOKIE_NAME, freshToken, sessionCookieOptions(req));
-    return res.json(session);
+    return res.json(await toAuthUserPayload(session));
   } catch {
     await clearSessionCookie(req, res);
     return res.status(401).json({ error: "Session invalide", code: "SESSION_INVALID" });
@@ -338,7 +356,7 @@ router.patch("/profile", requireAuth, async (req, res) => {
       });
     }
     await attachSession(res, sessionUser, sid, req);
-    return res.json({ user: sessionUser });
+    return res.json({ user: await toAuthUserPayload(sessionUser) });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.issues[0]?.message ?? "Données invalides." });

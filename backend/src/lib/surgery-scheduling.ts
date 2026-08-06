@@ -63,7 +63,11 @@ export async function promoteDueSurgeries(now = new Date()) {
   return due.length;
 }
 
-export async function completeSurgeryCase(surgeryId: string, completedAt = new Date()) {
+export async function completeSurgeryCase(
+  surgeryId: string,
+  completedAt = new Date(),
+  completionNote?: string | null,
+) {
   const surgery = await prisma.surgeryCase.findUniqueOrThrow({
     where: { id: surgeryId },
     select: { id: true, visitId: true, status: true },
@@ -72,6 +76,8 @@ export async function completeSurgeryCase(surgeryId: string, completedAt = new D
   if (!AWAITING_PERFORMANCE_STATUSES.includes(surgery.status)) {
     throw new Error("SURGERY_NOT_COMPLETABLE");
   }
+
+  const note = completionNote?.trim() || "";
 
   return prisma.$transaction(async (tx) => {
     const updated = await tx.surgeryCase.update({
@@ -85,6 +91,24 @@ export async function completeSurgeryCase(surgeryId: string, completedAt = new D
       where: { id: surgery.visitId },
       data: { status: VisitStatus.COMPLETED },
     });
+
+    if (note) {
+      const consultation = await tx.consultation.findUnique({
+        where: { visitId: surgery.visitId },
+        select: { id: true, doctorComment: true },
+      });
+      if (consultation) {
+        const existing = consultation.doctorComment?.trim() || "";
+        const next = existing
+          ? `${existing}\n\n[Opération] ${note}`
+          : `[Opération] ${note}`;
+        await tx.consultation.update({
+          where: { id: consultation.id },
+          data: { doctorComment: next },
+        });
+      }
+    }
+
     return updated;
   });
 }

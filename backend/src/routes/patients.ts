@@ -30,15 +30,11 @@ import {
 } from "../lib/patient-payment-guard.js";
 import {
   findDuplicatePatient,
-  findPatientForDossierFusion,
   serializePatientForDuplicate,
 } from "../lib/duplicate-detection.js";
+import { isUsablePatientPhone } from "../lib/merge-patients.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
-import {
-  archiveVisitsForReconsultation,
-  planReconsultation,
-} from "../lib/reconsultation.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 /** Réceptionniste : uniquement ses dossiers. Direction / gestionnaire / admin : tout. */
@@ -105,7 +101,7 @@ async function assertSelectableTreatingDoctor(treatingDoctorId: string | null | 
   return normalized;
 }
 
-const receptionUpdateSchema = patientSchema.extend({
+const receptionUpdateSchema = patientSchema.safeExtend({
   doctorId: z.string().optional(),
   consultationAmountFcfa: z.number().int().positive().optional(),
   reductionFcfa: z.number().int().min(0).optional(),
@@ -412,11 +408,22 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   });
 });
 
-const registerConsultationSchema = patientSchema.extend({
-  doctorId: z.string(),
-  consultationAmountFcfa: z.number().int().min(0).optional(),
-  reductionFcfa: z.number().int().min(0).optional(),
-});
+const registerConsultationSchema = patientSchema
+  .safeExtend({
+    doctorId: z.string(),
+    consultationAmountFcfa: z.number().int().min(0).optional(),
+    reductionFcfa: z.number().int().min(0).optional(),
+    phone: z.string().trim().min(1, "Téléphone obligatoire"),
+  })
+  .superRefine((data, ctx) => {
+    if (!isUsablePatientPhone(data.phone)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["phone"],
+        message: "Numéro de téléphone invalide (au moins 6 chiffres).",
+      });
+    }
+  });
 
 router.post("/register-consultation", requireModule("reception"), async (req, res) => {
   try {
@@ -448,168 +455,8 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
       return res.status(400).json({ error: "La réduction ne peut pas dépasser le montant." });
     }
 
-    const fusionPatient = await findPatientForDossierFusion({
-      firstName: body.firstName,
-      lastName: body.lastName,
-      phone: body.phone,
-      gender: body.gender,
-    });
-
-    // Patient déjà connu (nom + prénom + téléphone + genre) → réutiliser le dossier existant
-    if (fusionPatient) {
-      const plan = await planReconsultation(fusionPatient.id);
-
-      let consultationAmountFcfa = billing.consultationAmountFcfa;
-      try {
-        const renewal = await resolveConsultationFeeForPatientDoctor({
-          patientId: fusionPatient.id,
-          doctorId: body.doctorId,
-          requestedAmount: body.consultationAmountFcfa,
-        });
-        consultationAmountFcfa = renewal.amountFcfa;
-      } catch {
-        /* conserver le montant demandé */
-      }
-
-      const linkedCategory = resolvePatientCategory(fusionPatient.category);
-      const linkedBilling = resolveConsultationBilling(
-        linkedCategory,
-        consultationAmountFcfa,
-        body.reductionFcfa,
-      );
-
-      const result = await prisma.$transaction(async (tx) => {
-        const patient = await tx.patient.update({
-          where: { id: fusionPatient.id },
-          data: {
-            ...(body.age != null ? { age: body.age, ageUnit: body.ageUnit } : {}),
-            ...(body.phone && !fusionPatient.phone ? { phone: body.phone } : {}),
-            ...(body.gender && !fusionPatient.gender ? { gender: body.gender } : {}),
-            ...(body.address ? { address: body.address } : {}),
-            ...(body.service !== undefined
-              ? { service: body.service.trim() || null }
-              : {}),
-            ...(treatingDoctorId !== undefined
-              ? { treatingDoctorId: treatingDoctorId ?? null }
-              : {}),
-            recommendedByName:
-              normalizeRecommendedByName(body.recommendedByName) ??
-              fusionPatient.recommendedByName,
-          },
-          include: { treatingDoctor: { select: treatingDoctorSelect } },
-        });
-
-        if (plan.action === "create" && plan.archiveVisitIds.length) {
-          await archiveVisitsForReconsultation(tx, plan.archiveVisitIds);
-        }
-
-        if (plan.action === "update") {
-          const visit = await tx.visit.update({
-            where: { id: plan.visitId },
-            data: {
-              status: VisitStatus.WAITING_CONSULTATION,
-              assignedDoctorId: body.doctorId,
-              consultationFeeFcfa: linkedBilling.consultationAmountFcfa || undefined,
-              reductionFcfa: linkedBilling.reductionFcfa,
-            },
-          });
-
-          let invoiceNumber: string | null = null;
-          if (linkedBilling.billableAmountFcfa > 0) {
-            const existingInvoice = await tx.invoice.findFirst({
-              where: { visitId: visit.id, type: InvoiceType.CONSULTATION },
-            });
-            if (existingInvoice?.status === InvoiceStatus.PAID) {
-              invoiceNumber = existingInvoice.invoiceNumber;
-            } else if (existingInvoice) {
-              const invoice = await tx.invoice.update({
-                where: { id: existingInvoice.id },
-                data: consultationInvoiceUpdateData(
-                  linkedCategory,
-                  linkedBilling.billableAmountFcfa,
-                ),
-              });
-              invoiceNumber = invoice.invoiceNumber;
-            } else {
-              const invoice = await tx.invoice.create({
-                data: consultationInvoiceCreateData(linkedCategory, {
-                  invoiceNumber: await generateInvoiceNumber(),
-                  patientId: patient.id,
-                  visitId: visit.id,
-                  amountFcfa: linkedBilling.billableAmountFcfa,
-                  issuedById: req.user!.id,
-                }),
-              });
-              invoiceNumber = invoice.invoiceNumber;
-            }
-          }
-
-          return {
-            patient,
-            visit,
-            invoiceNumber,
-            totalFcfa: linkedBilling.billableAmountFcfa,
-            billingDeferred: !shouldCreateImmediateInvoice(linkedCategory),
-            linkedExistingDossier: true as const,
-          };
-        }
-
-        const visit = await tx.visit.create({
-          data: {
-            patientId: patient.id,
-            status: VisitStatus.WAITING_CONSULTATION,
-            assignedDoctorId: body.doctorId,
-            consultationFeeFcfa: linkedBilling.consultationAmountFcfa || undefined,
-            reductionFcfa: linkedBilling.reductionFcfa,
-          },
-        });
-
-        let invoiceNumber: string | null = null;
-        if (linkedBilling.billableAmountFcfa > 0) {
-          const invoice = await tx.invoice.create({
-            data: consultationInvoiceCreateData(linkedCategory, {
-              invoiceNumber: await generateInvoiceNumber(),
-              patientId: patient.id,
-              visitId: visit.id,
-              amountFcfa: linkedBilling.billableAmountFcfa,
-              issuedById: req.user!.id,
-            }),
-          });
-          invoiceNumber = invoice.invoiceNumber;
-        }
-
-        return {
-          patient,
-          visit,
-          invoiceNumber,
-          totalFcfa: linkedBilling.billableAmountFcfa,
-          billingDeferred: !shouldCreateImmediateInvoice(linkedCategory),
-          linkedExistingDossier: true as const,
-        };
-      });
-
-      return res.status(201).json(result);
-    }
-
-    const duplicatePatient = await findDuplicatePatient({
-      firstName: body.firstName,
-      lastName: body.lastName,
-      phone: body.phone,
-      gender: body.gender,
-      age: body.age,
-      ageUnit: body.ageUnit,
-      dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : null,
-    });
-    if (duplicatePatient) {
-      return res.status(409).json(
-        duplicateErrorResponse(
-          "patient",
-          "Un patient avec ces informations est déjà enregistré.",
-          serializePatientForDuplicate(duplicatePatient),
-        ),
-      );
-    }
-
+    // Option A : toujours créer un nouveau dossier (doublons acceptés).
+    // Fusion ultérieure médecin/facture si même nom + même numéro.
     const result = await prisma.$transaction(async (tx) => {
       const patient = await tx.patient.create({
         data: {
@@ -618,7 +465,7 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
           lastName: body.lastName,
           age: body.age,
           ageUnit: body.ageUnit,
-          phone: body.phone,
+          phone: body.phone.trim(),
           service: body.service?.trim() || null,
           gender: body.gender,
           address: body.address,
@@ -632,7 +479,6 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
         include: { treatingDoctor: { select: treatingDoctorSelect } },
       });
 
-      // doctorId de visite reste celui du formulaire (requis) — pas d'auto-override depuis treatingDoctorId
       const visit = await tx.visit.create({
         data: {
           patientId: patient.id,
@@ -668,7 +514,13 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
     });
 
     return res.status(201).json(result);
-  } catch {
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const phoneIssue = error.issues.find((issue) => issue.path.includes("phone"));
+      if (phoneIssue) {
+        return res.status(400).json({ error: phoneIssue.message });
+      }
+    }
     return res.status(400).json({ error: "Données invalides" });
   }
 });

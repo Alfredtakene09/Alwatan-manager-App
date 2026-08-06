@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   FlaskConical,
   ScanLine,
@@ -30,6 +30,7 @@ import {
   getSpecialtyServiceName,
   getSpecialtyServices,
   invalidateExamCatalogCache,
+  examCatalogInvalidateEventName,
   isRedundantWithGlobalOperationTab,
   loadExamCatalog,
   type CatalogExam,
@@ -192,9 +193,11 @@ async function refreshCatalogState() {
 
   if (activePanel.value === 'consultation') {
     if (!props.showConsultation) {
-      activePanel.value = specialtyTabs.value[0]
-        ? `specialty:${specialtyTabs.value[0].id}`
-        : (visibleKinds.value[0] ?? 'examen')
+      activePanel.value = visibleKinds.value.includes('examen')
+        ? 'examen'
+        : specialtyTabs.value[0]
+          ? `specialty:${specialtyTabs.value[0].id}`
+          : (visibleKinds.value[0] ?? 'examen')
     } else {
       return
     }
@@ -203,21 +206,14 @@ async function refreshCatalogState() {
     const id = activePanel.value.slice('specialty:'.length)
     if (specialtyTabs.value.some((svc) => svc.id === id)) return
   }
-  if (specialtyTabs.value.length > 0 && (activePanel.value === 'examen' || !props.showConsultation)) {
-    if (activePanel.value === 'examen' || !visibleKinds.value.includes(activePanel.value as ExamKindSlug)) {
-      activePanel.value = `specialty:${specialtyTabs.value[0].id}`
-      return
-    }
-  }
-  if (visibleKinds.value.includes('specialty') && activePanel.value === 'examen') {
-    activePanel.value = 'specialty'
-    return
-  }
+  // Ne plus basculer auto vers la spécialité : les examens labo restent visibles d’abord.
   if (
     !String(activePanel.value).startsWith('specialty:') &&
     !visibleKinds.value.includes(activePanel.value as ExamKindSlug)
   ) {
-    if (visibleKinds.value[0]) {
+    if (visibleKinds.value.includes('examen')) {
+      activePanel.value = 'examen'
+    } else if (visibleKinds.value[0]) {
       activePanel.value = visibleKinds.value[0]
     } else if (specialtyTabs.value[0]) {
       activePanel.value = `specialty:${specialtyTabs.value[0].id}`
@@ -229,9 +225,7 @@ async function refreshCatalogState() {
 
 const emptyCartHint = computed(() => {
   void localeCode.value
-  return uiText(
-    'Aucun examen sélectionné — choisissez Consultation, ou un type : laboratoire, radio, écho…',
-  )
+  return uiText('Sélectionnez Consultation ou un type d’examen.')
 })
 
 const activeKind = computed<ExamKindSlug>(() => {
@@ -670,8 +664,17 @@ async function saveOperationAssistant() {
 }
 
 onMounted(async () => {
+  window.addEventListener(examCatalogInvalidateEventName(), onCatalogInvalidate)
   await Promise.all([refreshCatalogState(), loadAssistantDoctors()])
 })
+
+onUnmounted(() => {
+  window.removeEventListener(examCatalogInvalidateEventName(), onCatalogInvalidate)
+})
+
+function onCatalogInvalidate() {
+  void refreshCatalogState()
+}
 
 watch(
   () => [props.doctorId, props.serviceId] as const,
@@ -829,11 +832,7 @@ watch(
       <div v-else-if="activePanel === 'consultation'" class="multi-exam-picker__consultation">
         <p class="multi-exam-picker__consultation-title">{{ uiText('Consultation clinique') }}</p>
         <p class="multi-exam-picker__consultation-hint">
-          {{
-            uiText(
-              'Paiement déjà effectué à la réception — aucun labo. Complétez les informations cliniques et l’ordonnance pharmacie ci-dessous.',
-            )
-          }}
+          {{ uiText('Notes cliniques et ordonnance — sans envoi labo.') }}
         </p>
         <button
           v-if="consultationSelected && !consultationAlreadyPrescribed"

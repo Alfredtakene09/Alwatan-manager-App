@@ -193,17 +193,22 @@ export function buildLabPanelPrintHtml(
   context: PrintContext,
 ) {
   const panel = getLabFormPanel(slug)
-  if (!panel) return ''
+  const filledSections = panel ? getFilledSections(panel, values) : []
+  const formTitle = formatFormTitle(panel?.label ?? slug)
 
-  const filledSections = getFilledSections(panel, values)
-  if (!filledSections.length) return ''
+  // Repli : valeurs présentes mais non mappées au formulaire chargé (slug/champ désalignés).
+  const sectionsToPrint =
+    filledSections.length > 0
+      ? filledSections
+      : buildFallbackSectionsFromValues(values)
+
+  if (!sectionsToPrint.length) return ''
 
   const date = context.date ?? formatAppDate(new Date())
-  const rowCount = countFilledTableRows(filledSections)
+  const rowCount = countFilledTableRows(sectionsToPrint)
   const densityClass = tableDensityClass(rowCount)
   const scale = initialPrintScale(rowCount)
-  const formTitle = formatFormTitle(panel.label)
-  const showNrColumn = sectionsHaveReference(filledSections)
+  const showNrColumn = sectionsHaveReference(sectionsToPrint)
   const validator = context.validatedBy?.trim() || '—'
 
   return `
@@ -216,7 +221,7 @@ export function buildLabPanelPrintHtml(
         ${renderPatientBand(context, date)}
         <h2 class="lab-result-print__form-name">${escapeHtml(formTitle)}</h2>
         <div class="lab-result-print__body">
-          ${renderPanelTables(filledSections, values, densityClass, showNrColumn)}
+          ${renderPanelTables(sectionsToPrint, values, densityClass, showNrColumn)}
         </div>
         <footer class="lab-result-print__footer">
           <span class="lab-result-print__footer-label">${escapeHtml(translateUi('Validé par'))}</span>
@@ -225,6 +230,55 @@ export function buildLabPanelPrintHtml(
       </div>
     </article>
   `
+}
+
+function buildFallbackSectionsFromValues(values: Record<string, string>): LabPanelSection[] {
+  const fields: LabPanelField[] = Object.entries(values)
+    .filter(([key, value]) => !key.endsWith('__comment') && String(value ?? '').trim())
+    .map(([key]) => ({
+      key,
+      label: humanizeFieldKey(key),
+      type: 'text' as const,
+    }))
+
+  if (!fields.length) return []
+  return [{ title: undefined, fields }]
+}
+
+function humanizeFieldKey(key: string) {
+  if (key === 'bloodGrouping') return translateUi('Blood Grouping')
+  const spaced = key
+    .replace(/_/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .trim()
+  return spaced || key
+}
+
+function panelResultsHaveValues(values?: Record<string, string> | null) {
+  if (!values) return false
+  return Object.values(values).some((value) => String(value ?? '').trim().length > 0)
+}
+
+/** Ordre d'impression : slugs préférés, puis catalogue, puis le reste des résultats. */
+function resolvePrintSlugs(
+  panelResults: Partial<Record<LabPanelSlug, Record<string, string>>>,
+  preferSlugs?: LabPanelSlug[],
+) {
+  const filled = Object.keys(panelResults).filter((slug) =>
+    panelResultsHaveValues(panelResults[slug]),
+  )
+  if (!filled.length) return [] as LabPanelSlug[]
+
+  const ordered: LabPanelSlug[] = []
+  const push = (slug: LabPanelSlug) => {
+    if (!ordered.includes(slug) && filled.includes(slug)) ordered.push(slug)
+  }
+
+  for (const slug of preferSlugs ?? []) push(slug)
+  for (const panel of getAllLabFormPanels()) push(panel.slug)
+  for (const slug of filled) push(slug)
+
+  return ordered
 }
 
 const LAB_PANEL_PRINT_STYLES = `
@@ -536,8 +590,9 @@ window.onload = function () {
 export function printLabVisitPanelResults(
   panelResults: Partial<Record<LabPanelSlug, Record<string, string>>>,
   context: PrintContext,
+  options?: { preferSlugs?: LabPanelSlug[] },
 ) {
-  const slugs = getAllLabFormPanels().map((panel) => panel.slug).filter((slug) => panelResults[slug])
+  const slugs = resolvePrintSlugs(panelResults, options?.preferSlugs)
   if (!slugs.length) return false
 
   const body = slugs

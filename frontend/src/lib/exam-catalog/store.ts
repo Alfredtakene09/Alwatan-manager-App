@@ -1,7 +1,5 @@
 import api from '@/api/client'
 
-import { LAB_EXAM_CATALOG } from './lab'
-
 import { RADIO_EXAM_CATALOG } from './radio'
 
 import { ECHO_EXAM_CATALOG } from './echo'
@@ -16,7 +14,7 @@ const FALLBACK_CATALOG: GroupedExamCatalog = {
 
   specialty: [],
 
-  examen: LAB_EXAM_CATALOG,
+  examen: [],
 
   radio: RADIO_EXAM_CATALOG,
 
@@ -78,6 +76,23 @@ type CatalogApiResponse = Record<
     name: string
     hasExams?: boolean
     hasOperations?: boolean
+  }>
+}
+
+type LabPanelApiRow = {
+  id: string
+  slug: string
+  label: string
+  isEntry: boolean
+  active: boolean
+  sortOrder?: number
+  fields?: Array<{ id?: string; key?: string }>
+  examCatalogItems?: Array<{
+    id: string
+    code: string
+    label: string
+    priceFcfa: number
+    active: boolean
   }>
 }
 
@@ -201,6 +216,61 @@ function buildSpecialtyServicesList(
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr'))
 }
 
+/**
+ * Construit la liste Labo à partir des formulaires actifs (source de vérité).
+ * Remplace le seed / catalogue partiel dès qu’au moins un formulaire existe.
+ */
+async function buildExamenFromLabPanels(): Promise<CatalogExam[] | null> {
+  try {
+    const { data } = await api.get<LabPanelApiRow[]>('/lab-panels')
+    const panels = Array.isArray(data) ? data : []
+    const active = panels
+      .filter(
+        (panel) =>
+          panel?.id &&
+          panel.active !== false &&
+          panel.isEntry !== false &&
+          Array.isArray(panel.fields) &&
+          panel.fields.length > 0,
+      )
+      .sort((a, b) => {
+        const orderA = Number(a.sortOrder ?? 0)
+        const orderB = Number(b.sortOrder ?? 0)
+        if (orderA !== orderB) return orderA - orderB
+        return String(a.label || '').localeCompare(String(b.label || ''), 'fr')
+      })
+
+    if (!active.length) return null
+
+    return active.map((panel) => {
+      const linked = panel.examCatalogItems?.[0]
+      const label = (linked?.label || panel.label || '').trim()
+      return {
+        id: linked?.id ?? `lab-panel:${panel.id}`,
+        code: linked?.code || panel.slug || panel.id,
+        label,
+        category: 'Laboratoire',
+        priceFcfa: linked?.priceFcfa ?? 0,
+        clinicServiceId: null,
+        clinicServiceName: 'Laboratoire',
+        labPanelId: panel.id,
+        labPanelSlug: panel.slug,
+      }
+    })
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Onglet Labo = uniquement les formulaires de saisie actifs.
+ * Les examens catalogue sans formulaire ne sont pas proposés.
+ */
+async function mergeActiveLabPanelsIntoExamen(_examen: CatalogExam[]): Promise<CatalogExam[]> {
+  const fromPanels = await buildExamenFromLabPanels()
+  return fromPanels ?? []
+}
+
 
 
 export type LoadExamCatalogOptions = {
@@ -227,9 +297,13 @@ export async function loadExamCatalog(
 
   if (!options.force && catalogCache.has(key)) return catalogCache.get(key)!
 
-  const pending = loadPromises.get(key)
-
-  if (pending) return pending
+  // Un force ne doit pas réutiliser une requête en cours (souvent un 1er chargement tombé en fallback).
+  if (options.force) {
+    loadPromises.delete(key)
+  } else {
+    const pending = loadPromises.get(key)
+    if (pending) return pending
+  }
 
 
 
@@ -241,72 +315,60 @@ export async function loadExamCatalog(
 
 
 
-  const promise = api
+  const promise = (async () => {
+    let catalog: GroupedExamCatalog = {
+      specialty: [],
+      examen: [],
+      radio: [],
+      echo: [],
+      odonto: [],
+      operation: [],
+      hospitalisation: [],
+    }
+    let specialtyServiceName: string | null = null
+    let specialtyServicesFromApi: CatalogApiResponse['specialtyServices']
 
-    .get<CatalogApiResponse>('/exam-catalog', { params })
-
-    .then(({ data }) => {
-
-      const catalog: GroupedExamCatalog = {
-
+    try {
+      const { data } = await api.get<CatalogApiResponse>('/exam-catalog', { params })
+      catalog = {
         specialty: (data.specialty ?? []).map(mapApiItem),
-
         examen: (data.examen ?? []).map(mapApiItem),
-
         radio: (data.radio ?? []).map(mapApiItem),
-
         echo: (data.echo ?? []).map(mapApiItem),
-
         odonto: (data.odonto ?? []).map(mapApiItem),
-
         operation: (data.operation ?? []).map(mapApiItem),
-
         hospitalisation: (data.hospitalisation ?? []).map(mapApiItem),
-
       }
-
-      const hasData = Object.values(catalog).some((items) => items.length > 0)
-
-      const resolved = hasData ? catalog : { ...FALLBACK_CATALOG }
-
-      catalogCache.set(key, resolved)
-
-      specialtyNameCache.set(
-        key,
+      specialtyServiceName =
         typeof data.specialtyServiceName === 'string' && data.specialtyServiceName.trim()
           ? data.specialtyServiceName.trim()
-          : null,
-      )
+          : null
+      specialtyServicesFromApi = data.specialtyServices
+    } catch (error) {
+      console.warn('[exam-catalog] API indisponible, repli partiel + formulaires labo', error)
+      // Ne pas figer le seed labo : on complète via /lab-panels juste après.
+      catalog = {
+        specialty: [],
+        examen: [],
+        radio: RADIO_EXAM_CATALOG,
+        echo: ECHO_EXAM_CATALOG,
+        odonto: ODONTO_EXAM_CATALOG,
+        operation: [],
+        hospitalisation: FALLBACK_CATALOG.hospitalisation,
+      }
+    }
 
-      specialtyServicesCache.set(key, buildSpecialtyServicesList(resolved, data.specialtyServices))
+    catalog.examen = await mergeActiveLabPanelsIntoExamen(catalog.examen)
+    // Pas de repli seed : sans formulaire labo, rien n’est proposé.
 
-      rebuildPriceCache(resolved)
-
-      return resolved
-
-    })
-
-    .catch(() => {
-
-      const fallback = { ...FALLBACK_CATALOG }
-
-      catalogCache.set(key, fallback)
-
-      specialtyNameCache.set(key, null)
-
-      specialtyServicesCache.set(key, buildSpecialtyServicesList(fallback, []))
-
-      rebuildPriceCache(fallback)
-
-      return fallback
-
-    })
-
-    .finally(() => {
-
-      loadPromises.delete(key)
-
-    })
+    catalogCache.set(key, catalog)
+    specialtyNameCache.set(key, specialtyServiceName)
+    specialtyServicesCache.set(key, buildSpecialtyServicesList(catalog, specialtyServicesFromApi))
+    rebuildPriceCache(catalog)
+    return catalog
+  })().finally(() => {
+    loadPromises.delete(key)
+  })
 
 
 
@@ -357,6 +419,10 @@ export function getCatalogForKind(
 
 
 
+
+
+
+
 export function getExamPriceFcfa(label: string): number {
 
   return priceCache.get(label) ?? 3000
@@ -371,6 +437,11 @@ export function invalidateExamCatalogCache() {
   specialtyServicesCache = new Map()
   priceCache = new Map()
   loadPromises = new Map()
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('exam-catalog-invalidate'))
+  }
 }
 
-
+export function examCatalogInvalidateEventName() {
+  return 'exam-catalog-invalidate'
+}

@@ -13,7 +13,13 @@ export type ConsultationVisitRow = {
   status: string
   createdAt: string
   notes?: string | null
-  patient: { firstName: string; lastName: string; code: string; phone?: string | null }
+  patient: {
+    id?: string
+    firstName: string
+    lastName: string
+    code: string
+    phone?: string | null
+  }
   assignedDoctor?: { id: string; firstName: string; lastName: string } | null
   vitalSigns?: Array<{
     weightKg?: number | null

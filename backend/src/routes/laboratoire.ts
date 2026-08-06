@@ -1,13 +1,15 @@
 import { Router } from "express";
 import { z } from "zod";
-import { InvoiceType } from "@prisma/client";
+import { ExamCatalogKind, InvoiceType } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import {
   hasLabResults,
   hasPaidLabWorkPending,
   labsWaitingWhere,
   labsCompletedWhere,
+  parsePrescribedExamsByKind,
 } from "../lib/lab-notes.js";
+import { normalizeExamFormLabelKey } from "../lib/exam-lab-panel.js";
 import {
   appendLabResultsCompletion,
   hasFilledLabPanelResults,
@@ -60,6 +62,38 @@ const visitInclude = {
 const panelSchema = z.object({
   values: z.record(z.string(), z.string()),
 });
+
+/** Formulaires labo correspondant aux examens laboratoire prescrits. */
+async function resolvePrescribedPanels(clinicalNotes?: string | null) {
+  const labels = parsePrescribedExamsByKind(clinicalNotes).examen;
+  if (!labels.length) return [] as Array<{ slug: string; label: string; examLabel: string }>;
+
+  const keys = new Set(labels.map(normalizeExamFormLabelKey).filter(Boolean));
+  const panels = await prisma.labPanel.findMany({
+    where: { active: true },
+    orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+    select: {
+      slug: true,
+      label: true,
+      examCatalogItems: {
+        where: { kind: ExamCatalogKind.EXAMEN, active: true },
+        select: { label: true },
+        take: 5,
+      },
+    },
+  });
+
+  return panels
+    .filter((panel) => {
+      const candidates = [panel.label, ...panel.examCatalogItems.map((item) => item.label)];
+      return candidates.some((label) => keys.has(normalizeExamFormLabelKey(label)));
+    })
+    .map((panel) => ({
+      slug: panel.slug,
+      label: panel.label,
+      examLabel: panel.examCatalogItems[0]?.label?.trim() || panel.label,
+    }));
+}
 
 async function findLabVisit(visitId: string) {
   const visit = await prisma.visit.findFirst({
@@ -125,6 +159,70 @@ router.get("/queue", async (_req, res) => {
   );
 });
 
+/** Compteurs cloche labo : examens en attente / récents (transférés < 24 h). */
+router.get("/alerts", async (_req, res) => {
+  const visits = await prisma.visit.findMany({
+    where: {
+      consultation: { is: labsWaitingWhere() },
+    },
+    select: {
+      id: true,
+      updatedAt: true,
+      patient: { select: { code: true, firstName: true, lastName: true } },
+      consultation: { select: { clinicalNotes: true, labSentToLabAt: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 100,
+  });
+
+  const recentCutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const items: Array<{
+    visitId: string;
+    patientCode: string;
+    patientName: string;
+    examCount: number;
+    exams: string[];
+    labSentToLabAt: string | null;
+    recent: boolean;
+  }> = [];
+
+  let waitingExamCount = 0;
+  let recentExamCount = 0;
+
+  for (const visit of visits) {
+    if (
+      !hasPaidLabWorkPending(
+        visit.consultation?.clinicalNotes,
+        visit.consultation?.labSentToLabAt,
+      )
+    ) {
+      continue;
+    }
+    const exams = parsePrescribedExamsByKind(visit.consultation?.clinicalNotes).examen;
+    const examCount = exams.length;
+    const sentAt = visit.consultation?.labSentToLabAt ?? null;
+    const recent = Boolean(sentAt && sentAt.getTime() >= recentCutoff);
+    waitingExamCount += examCount;
+    if (recent) recentExamCount += examCount;
+    items.push({
+      visitId: visit.id,
+      patientCode: visit.patient.code,
+      patientName: `${visit.patient.firstName} ${visit.patient.lastName}`.trim(),
+      examCount,
+      exams: exams.slice(0, 6),
+      labSentToLabAt: sentAt ? sentAt.toISOString() : null,
+      recent,
+    });
+  }
+
+  return res.json({
+    waitingExamCount,
+    recentExamCount,
+    waitingVisitCount: items.length,
+    items,
+  });
+});
+
 router.get("/completed", async (_req, res) => {
   const visits = await prisma.visit.findMany({
     where: {
@@ -149,11 +247,14 @@ router.get("/visits/:visitId", async (req, res) => {
   const visit = await findLabVisitForRead(String(req.params.visitId));
   if (!visit) return res.status(404).json({ error: "Dossier laboratoire introuvable" });
 
+  const prescribedPanels = await resolvePrescribedPanels(visit.consultation?.clinicalNotes);
+
   return res.json({
     visit,
     panelResults: parseLabPanelResults(visit.consultation?.clinicalNotes),
     panelReceivedAt: parseLabPanelReceivedAt(visit.consultation?.clinicalNotes),
     completed: hasLabResults(visit.consultation?.clinicalNotes),
+    prescribedPanels,
   });
 });
 

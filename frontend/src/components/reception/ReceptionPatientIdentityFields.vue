@@ -55,6 +55,7 @@ const labels = computed(() => {
         :label="labels.phone"
         :placeholder="uiText('06 XX XX XX XX')"
         :icon="Phone"
+        required
       />
     </div>
 

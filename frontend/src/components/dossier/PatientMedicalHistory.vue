@@ -12,6 +12,7 @@ import {
   PillBottle,
   Printer,
   ClipboardList,
+  Scissors,
 } from '@lucide/vue'
 import { fullName } from '@/lib/roles'
 import { getLabFormPanel, getFilledLabPanelSections, labFieldCommentKey, type LabPanelSlug } from '@/lib/lab-form-panels'
@@ -36,6 +37,8 @@ export type MedicalHistoryEntry = {
   doctor: { firstName: string; lastName: string } | null
   diagnosis?: string | null
   prescribedExams: string[]
+  labExams?: string[]
+  operations?: string[]
   labPanels: MedicalHistoryLabPanel[]
   doctorComment: string | null
   pharmacyOrdonnance?: PharmacyOrdonnanceLine[]
@@ -92,6 +95,21 @@ function formatTime(iso: string) {
 
 function pharmacyLines(entry: MedicalHistoryEntry) {
   return entry.pharmacyOrdonnance ?? []
+}
+
+function labExamsOf(entry: MedicalHistoryEntry) {
+  if (entry.labExams?.length) return entry.labExams
+  return []
+}
+
+function operationsOf(entry: MedicalHistoryEntry) {
+  if (entry.operations?.length) return entry.operations
+  return []
+}
+
+function otherPrescribedOf(entry: MedicalHistoryEntry) {
+  const known = new Set([...labExamsOf(entry), ...operationsOf(entry)])
+  return entry.prescribedExams.filter((exam) => !known.has(exam))
 }
 
 function formatPharmacyLine(line: PharmacyOrdonnanceLine) {
@@ -204,15 +222,19 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
             </span>
             <span v-if="entry.doctorComment" class="badge badge--comment">
               <MessageSquare :size="12" />
-              {{ uiText('Consultation') }}
+              {{ uiText('Note finale') }}
             </span>
             <span v-if="pharmacyLines(entry).length" class="badge badge--pharmacy">
               <PillBottle :size="12" />
-              {{ translateTemplate('{n} produit(s)', { n: pharmacyLines(entry).length }) }}
+              {{ pharmacyLines(entry).length }}
             </span>
-            <span v-if="entry.prescribedExams.length" class="badge badge--exam">
+            <span v-if="labExamsOf(entry).length || otherPrescribedOf(entry).length" class="badge badge--exam">
               <FlaskConical :size="12" />
-              {{ translateTemplate('{n} examen(s)', { n: entry.prescribedExams.length }) }}
+              {{ labExamsOf(entry).length + otherPrescribedOf(entry).length }}
+            </span>
+            <span v-if="operationsOf(entry).length" class="badge badge--operation">
+              <Scissors :size="12" />
+              {{ operationsOf(entry).length }}
             </span>
             <span v-if="entry.labPanels.length" class="badge badge--result">
               {{ translateTemplate('{n} résultat(s)', { n: entry.labPanels.length }) }}
@@ -226,6 +248,12 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
             class="timeline-card__preview"
           >
             {{ entry.doctorComment }}
+          </p>
+          <p
+            v-else-if="entry.labPanels.length && expandedVisitId !== entry.visitId"
+            class="timeline-card__preview"
+          >
+            {{ entry.labPanels.map((panel) => uiText(panel.label)).join(' · ') }}
           </p>
         </button>
 
@@ -246,7 +274,7 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
               :icon="Printer"
               @click="printOrdonnance(entry)"
             >
-              {{ uiText('Imprimer ordonnance') }}
+              {{ uiText('Ordonnance') }}
             </UiButton>
           </div>
 
@@ -255,30 +283,9 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
             <p class="timeline-block__text">{{ entry.diagnosis }}</p>
           </div>
 
-          <div v-if="entry.doctorComment" class="timeline-block timeline-block--comment">
-            <h4>{{ uiText('Informations cliniques / prescription') }}</h4>
-            <p class="timeline-block__text">{{ entry.doctorComment }}</p>
-          </div>
-
-          <div v-if="pharmacyLines(entry).length" class="timeline-block timeline-block--pharmacy">
-            <h4>{{ uiText('Ordonnance pharmacie') }}</h4>
-            <ul class="pharmacy-list">
-              <li v-for="line in pharmacyLines(entry)" :key="`${line.productId}-${line.name}`">
-                {{ formatPharmacyLine(line) }}
-              </li>
-            </ul>
-          </div>
-
-          <div v-if="entry.prescribedExams.length" class="timeline-block">
-            <h4>{{ uiText('Examens prescrits') }}</h4>
-            <p class="exam-list">
-              {{ entry.prescribedExams.map((exam) => uiText(exam)).join(' · ') }}
-            </p>
-          </div>
-
           <div v-if="entry.labPanels.length" class="timeline-block">
             <div class="timeline-block__head">
-              <h4>{{ uiText('Résultats laboratoire') }}</h4>
+              <h4>{{ uiText('Résultats labo') }}</h4>
               <UiButton
                 v-if="showOpenLabLink && entry.hasLabResults"
                 variant="ghost"
@@ -286,7 +293,7 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
                 :icon="Eye"
                 @click="openLabDossier(entry.visitId)"
               >
-                {{ uiText('Ouvrir en détail') }}
+                {{ uiText('Détail') }}
               </UiButton>
             </div>
 
@@ -295,9 +302,7 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
                 <div class="panel-card__head panel-card__head--static">
                   <FileText :size="14" />
                   <span>{{ uiText(panel.label) }}</span>
-                  <span class="panel-card__count">
-                    {{ translateTemplate('{n} valeur(s)', { n: panel.filledCount }) }}
-                  </span>
+                  <span class="panel-card__count">{{ panel.filledCount }}</span>
                 </div>
 
                 <div class="panel-card__body">
@@ -321,11 +326,52 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
                     </dl>
                   </div>
                   <p v-if="!panelSections(entry, panel.slug).length" class="result-empty">
-                    {{ uiText('Aucune valeur détaillée disponible pour ce formulaire.') }}
+                    {{ uiText('Aucune valeur détaillée.') }}
                   </p>
                 </div>
               </div>
             </div>
+          </div>
+
+          <div v-if="labExamsOf(entry).length || otherPrescribedOf(entry).length" class="timeline-block">
+            <h4>{{ uiText('Examens prescrits') }}</h4>
+            <div class="chip-row">
+              <span
+                v-for="exam in [...labExamsOf(entry), ...otherPrescribedOf(entry)]"
+                :key="`exam-${exam}`"
+                class="mini-chip"
+              >
+                {{ uiText(exam) }}
+              </span>
+            </div>
+          </div>
+
+          <div v-if="operationsOf(entry).length" class="timeline-block timeline-block--operation">
+            <h4>{{ uiText('Opérations') }}</h4>
+            <div class="chip-row">
+              <span
+                v-for="op in operationsOf(entry)"
+                :key="`op-${op}`"
+                class="mini-chip mini-chip--op"
+              >
+                <Scissors :size="12" />
+                {{ uiText(op) }}
+              </span>
+            </div>
+          </div>
+
+          <div v-if="pharmacyLines(entry).length" class="timeline-block timeline-block--pharmacy">
+            <h4>{{ uiText('Ordonnance') }}</h4>
+            <ul class="pharmacy-list">
+              <li v-for="line in pharmacyLines(entry)" :key="`${line.productId}-${line.name}`">
+                {{ formatPharmacyLine(line) }}
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="entry.doctorComment" class="timeline-block timeline-block--comment">
+            <h4>{{ uiText('Commentaire final') }}</h4>
+            <p class="timeline-block__text">{{ entry.doctorComment }}</p>
           </div>
         </div>
       </article>
@@ -466,6 +512,11 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
   color: #0f766e;
 }
 
+.badge--operation {
+  background: rgba(180, 83, 9, 0.12);
+  color: #b45309;
+}
+
 .timeline-card__body {
   padding: 0 1rem 1rem;
   display: flex;
@@ -511,6 +562,35 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
 .timeline-block--pharmacy {
   background: rgba(5, 150, 105, 0.06);
   border: 1px solid rgba(5, 150, 105, 0.12);
+}
+
+.timeline-block--operation {
+  background: rgba(180, 83, 9, 0.06);
+  border: 1px solid rgba(180, 83, 9, 0.14);
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.mini-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid rgba(15, 40, 80, 0.12);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mini-chip--op {
+  border-color: rgba(180, 83, 9, 0.25);
+  color: #9a3412;
 }
 
 .timeline-block h4 {

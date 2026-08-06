@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onActivated, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { CheckCircle2, Eye, Pencil, Plus, Printer, RefreshCw, Search } from '@lucide/vue'
+import { CheckCircle2, ClipboardEdit, Printer, RefreshCw, Search } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { fetchAndPrintLabVisitResults } from '@/lib/lab-visit-print'
@@ -21,6 +21,7 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import { useSilentRefresh } from '@/composables/useSilentRefresh'
 import { type LabsWaitingVisitRow } from '@/components/ui/LabsWaitingDataTable.vue'
 import '@/assets/lab-visit-table.css'
+import LabQueueBell from '@/components/layout/LabQueueBell.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -80,23 +81,11 @@ async function loadCompleted(opts?: { silent?: boolean }) {
   }
 }
 
-function goToResults(visitId: string) {
-  router.push({ name: 'laboratoire-dossier', params: { visitId }, query: { from: 'termines' } })
-}
-
-function goToEditResults(visitId: string) {
+function goToResaisirResults(visitId: string) {
   router.push({
     name: 'laboratoire-dossier',
     params: { visitId },
     query: { from: 'termines', edit: '1' },
-  })
-}
-
-function goToAddForm(visitId: string) {
-  router.push({
-    name: 'laboratoire-dossier',
-    params: { visitId },
-    query: { from: 'termines', add: '1' },
   })
 }
 
@@ -139,9 +128,12 @@ onActivated(() => {
         :icon="CheckCircle2"
       >
         <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshCompleted()">
-            Actualiser
-          </UiButton>
+          <div class="lab-header-actions">
+            <LabQueueBell />
+            <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshCompleted()">
+              Actualiser
+            </UiButton>
+          </div>
         </template>
       </UiPageHeader>
 
@@ -225,36 +217,24 @@ onActivated(() => {
                   <div class="lab-visit-actions">
                     <button
                       type="button"
-                      class="lab-visit-act lab-visit-act--icon lab-visit-act--accent"
+                      class="lab-visit-act lab-visit-act--labeled lab-visit-act--accent"
+                      :title="uiText('Resaisir les résultats')"
+                      :aria-label="uiText('Resaisir les résultats')"
+                      @click="goToResaisirResults(row.id)"
+                    >
+                      <ClipboardEdit :size="15" />
+                      <span>{{ uiText('Resaisir') }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="lab-visit-act lab-visit-act--labeled"
                       :title="uiText('Imprimer')"
+                      :aria-label="uiText('Imprimer')"
                       :disabled="printingVisitId === row.id"
                       @click="printResults(row.id)"
                     >
                       <Printer :size="15" />
-                    </button>
-                    <button
-                      type="button"
-                      class="lab-visit-act lab-visit-act--icon"
-                      :title="uiText('Consulter')"
-                      @click="goToResults(row.id)"
-                    >
-                      <Eye :size="15" />
-                    </button>
-                    <button
-                      type="button"
-                      class="lab-visit-act lab-visit-act--icon lab-visit-act--edit"
-                      :title="uiText('Modifier')"
-                      @click="goToEditResults(row.id)"
-                    >
-                      <Pencil :size="15" />
-                    </button>
-                    <button
-                      type="button"
-                      class="lab-visit-act lab-visit-act--icon lab-visit-act--add"
-                      :title="uiText('Ajouter un formulaire')"
-                      @click="goToAddForm(row.id)"
-                    >
-                      <Plus :size="15" />
+                      <span>{{ uiText('Imprimer') }}</span>
                     </button>
                   </div>
                 </td>
@@ -268,6 +248,12 @@ onActivated(() => {
 </template>
 
 <style scoped>
+.lab-header-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
 .empty {
   margin: 0;
   text-align: center;

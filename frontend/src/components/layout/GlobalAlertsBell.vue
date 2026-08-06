@@ -31,10 +31,6 @@ const canSeeAlerts = computed(() => {
   )
 })
 
-const showGestionnaireSection = computed(() =>
-  auth.user ? canAccessModule(auth.user.role, 'gestionnaire') : false,
-)
-
 const comptableCashAlert = computed(
   () =>
     gestionnaireOverview.value?.alerts.cashRegisters.find((row) => row.id === 'comptabilite') ??
@@ -113,7 +109,7 @@ const dashboardAlerts = computed(() => {
           ? translateTemplate('{n} salaires encore à valider ce mois.', { n: unpaidPayroll })
           : translateTemplate('{n} salaire encore à valider ce mois.', { n: unpaidPayroll }),
       actionLabel: translateDashboardLabel('Ouvrir la paie'),
-      actionTo: showGestionnaireSection.value ? '/gestionnaire/salaires' : '/admin/salaires',
+      actionTo: '/admin/salaires',
     })
   }
 
@@ -132,9 +128,7 @@ const dashboardAlerts = computed(() => {
               n: pendingDoctorOvertime,
             }),
       actionLabel: translateDashboardLabel('Valider les heures'),
-      actionTo: showGestionnaireSection.value
-        ? '/gestionnaire/salaires?tab=heures-supp'
-        : '/admin/salaires?tab=heures-supp',
+      actionTo: '/admin/salaires?tab=heures-supp',
     })
   }
 
@@ -152,7 +146,7 @@ const dashboardAlerts = computed(() => {
           ? translateTemplate('{n} dépenses en attente de validation.', { n: pendingExpenses })
           : translateTemplate('{n} dépense en attente de validation.', { n: pendingExpenses }),
       actionLabel: translateDashboardLabel('Voir les dépenses'),
-      actionTo: showGestionnaireSection.value ? '/gestionnaire/depenses' : '/admin/depenses',
+      actionTo: '/admin/depenses',
     })
   }
 

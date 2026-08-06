@@ -3,6 +3,7 @@ import { InvoiceType } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { generateInvoicePdf } from "../lib/pdf-invoice.js";
 import { canAccessModule, type AppUserRole } from "../lib/roles.js";
+import { ensureInvoicePatientMergedByPhone } from "../lib/merge-patients.js";
 import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
@@ -43,8 +44,11 @@ router.get("/:id/pdf", async (req, res) => {
     return res.status(403).json({ error: "Accès refusé" });
   }
 
+  const invoiceId = req.params.id as string;
+  await ensureInvoicePatientMergedByPhone(invoiceId);
+
   const invoice = await prisma.invoice.findUnique({
-    where: { id: req.params.id as string },
+    where: { id: invoiceId },
     include: {
       patient: true,
       externalClient: true,

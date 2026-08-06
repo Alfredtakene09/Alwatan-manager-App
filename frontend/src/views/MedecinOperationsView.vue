@@ -9,6 +9,7 @@ import {
   CalendarDays,
   Calendar,
   CalendarRange,
+  X,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
@@ -29,13 +30,14 @@ import {
   type DateFilterMode,
 } from '@/lib/date-filters'
 import { isAwaitingPayment, isAwaitingPerformance, isDoctorAwaiting } from '@/lib/surgery-status'
-import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
+import { showApiErrorModal } from '@/lib/api-modal-helper'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiBadge from '@/components/ui/UiBadge.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 type DoctorReceivableItem = {
   kind: 'CONSULTATION' | 'OPERATION_SURGEON' | 'OPERATION_ASSISTANT'
@@ -71,6 +73,9 @@ const filterDay = ref(todayDateKey())
 const filterMonth = ref(currentMonthKey())
 const filterFrom = ref('')
 const filterTo = ref('')
+const completeTarget = ref<SurgeryCaseRow | null>(null)
+const completeNote = ref('')
+const { uiText } = useAppI18n()
 
 const isAwaiting = (surgery: SurgeryCaseRow) => isDoctorAwaiting(surgery.status)
 const isUnpaidCase = (surgery: SurgeryCaseRow) => isAwaitingPayment(surgery.status)
@@ -181,22 +186,32 @@ function canMarkCompleted(surgery: SurgeryCaseRow) {
   return isAwaitingPerformance(surgery.status)
 }
 
-async function markCompleted(surgery: SurgeryCaseRow) {
-  const patient = fullName(surgery.visit.patient.firstName, surgery.visit.patient.lastName)
-  const ok = await confirmAppModal({
-    title: 'Marquer comme effectuée',
-    message: `Confirmer que « ${surgery.interventionType.label} » pour ${patient} a bien été réalisée ?`,
-    confirmLabel: 'Oui, effectuée',
-    type: 'CONFIRM',
-  })
-  if (!ok) return
+function openCompleteModal(surgery: SurgeryCaseRow) {
+  completeTarget.value = surgery
+  completeNote.value = ''
+  message.value = ''
+}
+
+function closeCompleteModal() {
+  if (actionId.value) return
+  completeTarget.value = null
+  completeNote.value = ''
+}
+
+async function confirmComplete() {
+  const surgery = completeTarget.value
+  if (!surgery) return
 
   actionId.value = surgery.id
   message.value = ''
   try {
-    await api.post(`/surgeries/mine/${surgery.id}/complete`)
-    message.value = 'Opération marquée comme effectuée — visible dans l’onglet Effectuées / À percevoir.'
+    await api.post(`/surgeries/mine/${surgery.id}/complete`, {
+      notes: completeNote.value.trim() || undefined,
+    })
+    message.value = uiText('Opération enregistrée — note ajoutée au dossier patient.')
     messageType.value = 'success'
+    completeTarget.value = null
+    completeNote.value = ''
     await load()
     filterTab.value = 'completed'
   } catch (error: unknown) {
@@ -204,7 +219,7 @@ async function markCompleted(surgery: SurgeryCaseRow) {
     if (!shown) {
       const err = error as { response?: { data?: { error?: string } } }
       message.value =
-        err.response?.data?.error || 'Impossible de marquer l’opération comme effectuée.'
+        err.response?.data?.error || uiText('Impossible de marquer l’opération comme effectuée.')
       messageType.value = 'error'
     }
   } finally {
@@ -259,8 +274,8 @@ onMounted(load)
   <div class="page-with-table page-with-table--medecin">
     <section class="page-with-table__head">
       <UiPageHeader
-        title="Mes opérations"
-        subtitle="Suivi de vos interventions et du règlement de votre part"
+        :title="uiText('Mes opérations')"
+        :subtitle="uiText('Interventions, clôture et parts à percevoir')"
         :icon="Scissors"
       />
 
@@ -331,8 +346,8 @@ onMounted(load)
 
     <section class="page-with-table__body">
       <UiCard
-        title="Suivi opératoire"
-        description="Les parts % sur le montant déjà encaissé apparaissent dans À percevoir ; marquez effectuée pour finaliser après le solde"
+        :title="uiText('Suivi opératoire')"
+        :description="uiText('Résultats / note finale à la clôture — parts dans À percevoir')"
         class="ui-card--table-panel"
         :icon="Scissors"
         icon-variant="green"
@@ -388,6 +403,12 @@ onMounted(load)
                   <strong>
                     {{ fullName(surgery.visit.patient.firstName, surgery.visit.patient.lastName) }}
                   </strong>
+                  <p
+                    v-if="surgery.visit.consultation?.doctorComment"
+                    class="ops-table__note"
+                  >
+                    {{ surgery.visit.consultation.doctorComment }}
+                  </p>
                 </td>
                 <td>{{ surgery.interventionType.label }}</td>
                 <td>{{ roleLabel(surgery) }}</td>
@@ -403,7 +424,7 @@ onMounted(load)
                     {{ paymentLabel(surgery) }}
                   </UiBadge>
                   <UiBadge v-else-if="canMarkCompleted(surgery)" variant="info">
-                    Payée — à clôturer
+                    {{ uiText('Payée — à clôturer') }}
                   </UiBadge>
                   <UiBadge v-else-if="mySharePaid(surgery)" variant="success">
                     {{ paymentLabel(surgery) }}
@@ -418,12 +439,12 @@ onMounted(load)
                     :icon="CheckCircle2"
                     :loading="actionId === surgery.id"
                     :disabled="!!actionId"
-                    @click="markCompleted(surgery)"
+                    @click="openCompleteModal(surgery)"
                   >
-                    Effectuée
+                    {{ uiText('Effectuée') }}
                   </UiButton>
                   <span v-else-if="isUnpaidCase(surgery)" class="ops-table__hint">
-                    En attente de paiement patient
+                    {{ uiText('En attente paiement') }}
                   </span>
                   <span v-else class="ops-table__hint">—</span>
                 </td>
@@ -433,6 +454,61 @@ onMounted(load)
         </div>
       </UiCard>
     </section>
+
+    <Teleport to="body">
+      <div v-if="completeTarget" class="ops-modal-overlay" @click.self="closeCompleteModal">
+        <div class="ops-modal" role="dialog" aria-modal="true" aria-labelledby="ops-complete-title">
+          <header class="ops-modal__header">
+            <div>
+              <h2 id="ops-complete-title">{{ uiText('Clôturer l’opération') }}</h2>
+              <p>
+                {{
+                  fullName(
+                    completeTarget.visit.patient.firstName,
+                    completeTarget.visit.patient.lastName,
+                  )
+                }}
+                — {{ completeTarget.interventionType.label }}
+              </p>
+            </div>
+            <button
+              type="button"
+              class="ops-modal__close"
+              :aria-label="uiText('Fermer')"
+              :disabled="!!actionId"
+              @click="closeCompleteModal"
+            >
+              <X :size="18" />
+            </button>
+          </header>
+          <div class="ops-modal__body">
+            <label class="ops-modal__label">{{ uiText('Commentaire final') }}</label>
+            <p class="ops-modal__hint">
+              {{ uiText('Note opératoire enregistrée dans le dossier patient.') }}
+            </p>
+            <textarea
+              v-model="completeNote"
+              class="ops-modal__textarea"
+              rows="4"
+              :placeholder="uiText('Déroulement, suite, surveillance…')"
+            />
+          </div>
+          <footer class="ops-modal__footer">
+            <UiButton variant="ghost" :disabled="!!actionId" @click="closeCompleteModal">
+              {{ uiText('Annuler') }}
+            </UiButton>
+            <UiButton
+              variant="primary"
+              :icon="CheckCircle2"
+              :loading="!!actionId"
+              @click="confirmComplete"
+            >
+              {{ uiText('Enregistrer et clôturer') }}
+            </UiButton>
+          </footer>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -606,5 +682,116 @@ onMounted(load)
   color: var(--text-light);
   padding: 2rem 1rem;
   font-size: 0.875rem;
+}
+
+.ops-table__note {
+  margin: 0.35rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 16rem;
+}
+
+.ops-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(4px);
+}
+
+.ops-modal {
+  width: 100%;
+  max-width: 28rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+}
+
+.ops-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem 1.15rem 0;
+}
+
+.ops-modal__header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.ops-modal__header p {
+  margin: 0.3rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.ops-modal__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ops-modal__body {
+  padding: 0.85rem 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.ops-modal__label {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--primary-800);
+}
+
+.ops-modal__hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.ops-modal__textarea {
+  width: 100%;
+  min-height: 6rem;
+  resize: vertical;
+  padding: 0.65rem 0.75rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 0.875rem;
+}
+
+.ops-modal__textarea:focus {
+  outline: none;
+  border-color: var(--primary-400);
+  box-shadow: 0 0 0 3px var(--focus-ring-sm);
+}
+
+.ops-modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  padding: 0.85rem 1.15rem 1.1rem;
+  border-top: 1px solid var(--border);
 }
 </style>

@@ -17,10 +17,11 @@ import {
   Percent,
   Lock,
   CheckCircle2,
+  CircleDollarSign,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { showDuplicateModalFromError, confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
-import { fullName, formatFcfa, formatFcfaCompact } from '@/lib/roles'
+import { fullName, formatFcfa, formatFcfaCompact, isDirectionOrGestionnaire } from '@/lib/roles'
 import {
   joinPatientFullName,
   parsePatientAge,
@@ -62,6 +63,7 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import PatientsDataTable from '@/components/ui/PatientsDataTable.vue'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
+import DoctorSharesReceivablePanel from '@/components/reception/DoctorSharesReceivablePanel.vue'
 
 type ReceptionStats = {
   registeredToday: number
@@ -159,6 +161,32 @@ type DayClosureStatus = {
 
 const { uiText, dateText } = useAppI18n()
 const auth = useAuthStore()
+
+type ReceptionPageTab = 'enregistrement' | 'doctor-shares'
+const canSeeDoctorSharesTab = computed(() =>
+  Boolean(auth.user && isDirectionOrGestionnaire(auth.user.role)),
+)
+const activeReceptionTab = ref<ReceptionPageTab>('enregistrement')
+
+const receptionTabs = computed(() => {
+  const tabs: Array<{ id: ReceptionPageTab; label: string; icon: typeof UserPlus }> = [
+    { id: 'enregistrement', label: 'Enregistrement', icon: UserPlus },
+  ]
+  if (canSeeDoctorSharesTab.value) {
+    tabs.push({
+      id: 'doctor-shares',
+      label: 'Parts médecins à percevoir',
+      icon: CircleDollarSign,
+    })
+  }
+  return tabs
+})
+
+watch(canSeeDoctorSharesTab, (canSee) => {
+  if (!canSee && activeReceptionTab.value === 'doctor-shares') {
+    activeReceptionTab.value = 'enregistrement'
+  }
+})
 
 function currentReceptionistName() {
   return auth.user ? fullName(auth.user.firstName, auth.user.lastName) : undefined
@@ -324,10 +352,12 @@ const showEditConsultationBilling = computed(
 
 const canSubmit = computed(() => {
   const { firstName, lastName } = formParsedName.value
+  const phoneDigits = form.value.phone.replace(/\D/g, '')
   const base =
     firstName.length >= 2 &&
     lastName.length >= 2 &&
     formAge.value !== null &&
+    phoneDigits.length >= 6 &&
     !!form.value.service &&
     !!form.value.doctorId
   if (!base) return false
@@ -810,7 +840,7 @@ async function createPatientAndVisit() {
       lastName,
       age: formAge.value ?? undefined,
       ageUnit: form.value.ageUnit,
-      phone: form.value.phone.trim() || undefined,
+      phone: form.value.phone.trim(),
       service: form.value.service || undefined,
       gender: form.value.gender,
       category: 'STANDARD',
@@ -842,34 +872,20 @@ async function createPatientAndVisit() {
       processedBy: currentReceptionistName(),
     })
     showAlert(
-      data.linkedExistingDossier
-        ? translateTemplate(
-            'Dossier existant {code} réutilisé — {name} est en attente de consultation (historique conservé).',
-            {
-              code: patient.code,
-              name: fullName(patient.firstName, patient.lastName),
-            },
-          )
-        : translateTemplate(
-            'Dossier {code} enregistré — {name} est en attente de consultation.',
-            {
-              code: patient.code,
-              name: fullName(patient.firstName, patient.lastName),
-            },
-          ),
+      translateTemplate(
+        'Dossier {code} enregistré — {name} est en attente de consultation.',
+        {
+          code: patient.code,
+          name: fullName(patient.firstName, patient.lastName),
+        },
+      ),
     )
     closeModal()
     listFrom.value = todayInputValue()
     listTo.value = todayInputValue()
     await refreshAll()
   } catch (error) {
-    const shown = await showDuplicateModalFromError(error, {
-      confirmLabel: 'Compris',
-      cancelLabel: 'Fermer',
-    })
-    if (!shown) {
-      showAlert('Erreur lors de la création du dossier.', 'error')
-    }
+    await showApiErrorModal(error, 'Erreur lors de la création du dossier.')
   } finally {
     submitting.value = false
   }
@@ -1165,6 +1181,32 @@ onUnmounted(clearAlert)
         </template>
       </UiPageHeader>
 
+      <div
+        v-if="canSeeDoctorSharesTab"
+        class="reception-page-tabs"
+        role="tablist"
+        :aria-label="uiText('Sections réception')"
+      >
+        <button
+          v-for="tab in receptionTabs"
+          :key="tab.id"
+          type="button"
+          role="tab"
+          class="reception-page-tabs__btn"
+          :class="{ 'reception-page-tabs__btn--active': activeReceptionTab === tab.id }"
+          :aria-selected="activeReceptionTab === tab.id"
+          @click="activeReceptionTab = tab.id"
+        >
+          <component :is="tab.icon" :size="16" />
+          {{ uiText(tab.label) }}
+        </button>
+      </div>
+
+      <DoctorSharesReceivablePanel
+        v-if="canSeeDoctorSharesTab && activeReceptionTab === 'doctor-shares'"
+      />
+
+      <template v-if="!canSeeDoctorSharesTab || activeReceptionTab === 'enregistrement'">
       <UiAlert v-if="message" :type="messageType" :message="message" class="page-alert" />
 
       <div class="stats-grid" :class="{ 'stats-grid--loading': loadingStats }">
@@ -1256,9 +1298,13 @@ onUnmounted(clearAlert)
           </UiButton>
         </div>
       </div>
+      </template>
     </section>
 
-    <section class="dashboard-body">
+    <section
+      v-if="!canSeeDoctorSharesTab || activeReceptionTab === 'enregistrement'"
+      class="dashboard-body"
+    >
       <div class="patients-table-card">
         <div class="table-wrap">
           <PatientsDataTable
@@ -1275,7 +1321,7 @@ onUnmounted(clearAlert)
     </section>
 
     <UiFormModal
-      v-if="showModal"
+      v-if="showModal && (!canSeeDoctorSharesTab || activeReceptionTab === 'enregistrement')"
       title-id="modal-title"
       title="Nouveau patient"
       subtitle="Enregistrement et consultation"
@@ -1639,6 +1685,40 @@ onUnmounted(clearAlert)
 
 .dashboard-sticky :deep(.page-header) {
   margin-bottom: 0.625rem;
+}
+
+.reception-page-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0 0 0.85rem;
+  padding: 0.25rem;
+  background: #f1f5f9;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: fit-content;
+}
+
+.reception-page-tabs__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.85rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.reception-page-tabs__btn--active {
+  background: #fff;
+  color: var(--primary-700, #1d4ed8);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
 .dashboard-sticky :deep(.page-header__main) {

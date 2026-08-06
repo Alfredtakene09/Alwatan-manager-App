@@ -28,6 +28,7 @@ import {
   assertPatientDataDeletable,
   patientHasPaidBilling,
 } from "../lib/patient-payment-guard.js";
+import { ensurePatientMergedByPhone } from "../lib/merge-patients.js";
 import { buildPatientPaymentHistory } from "../lib/patient-invoice-payments.js";
 import { medecinMatchWhere } from "../lib/medecin-queues.js";
 import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
@@ -118,7 +119,9 @@ router.get("/:patientId/payment-history", requireAnyModule(...PAYMENT_HISTORY_MO
 });
 
 router.get("/:patientId", requireAnyModule(...DOSSIER_MODULES), async (req, res) => {
-  const patientId = String(req.params.patientId);
+  const rawPatientId = String(req.params.patientId);
+  const merge = await ensurePatientMergedByPhone(rawPatientId);
+  const patientId = merge.patientId;
   const kind = req.query.kind as PatientDocumentKind | undefined;
 
   const patient = await prisma.patient.findUnique({

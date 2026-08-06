@@ -461,6 +461,26 @@ export default {
     'Répartition des dépenses': 'Répartition des dépenses',
     'Mois en cours': 'Mois en cours',
     Période: 'Période',
+    'À percevoir': 'À percevoir',
+    'Parts consultations et opérations — ajoutez-les au salaire':
+      'Parts consultations et opérations — ajoutez-les au salaire',
+    'Choisissez la période puis consultez vos parts':
+      'Choisissez la période puis consultez vos parts',
+    'Impossible de charger les parts à percevoir.':
+      'Impossible de charger les parts à percevoir.',
+    'Parts ajoutées au salaire du mois — le solde repasse à zéro.':
+      'Parts ajoutées au salaire du mois — le solde repasse à zéro.',
+    'Aucune part à percevoir pour cette période.':
+      'Aucune part à percevoir pour cette période.',
+    'Opération (chirurgien)': 'Opération (chirurgien)',
+    'Opération (assistant)': 'Opération (assistant)',
+    'Consult.': 'Consult.',
+    'Opér.': 'Opér.',
+    'En paie': 'En paie',
+    'Rien à percevoir': 'Rien à percevoir',
+    'Ajouter au salaire': 'Ajouter au salaire',
+    'Ouvrir le détail': 'Ouvrir le détail',
+    'Détail des parts': 'Détail des parts',
     'Impossible de charger le tableau de bord.': 'Impossible de charger le tableau de bord.',
     'Solde comptable en attente': 'Solde comptable en attente',
     'Récupérer la tirelire': 'Récupérer la tirelire',
@@ -571,12 +591,64 @@ export default {
     et: 'et',
     laboratoire: 'laboratoire',
     'Panier global': 'Panier global',
+    'Commentaire final': 'Commentaire final',
+    'Commentaire final (opération)': 'Commentaire final (opération)',
+    'Notes cliniques et conduite — enregistrées dans le dossier.':
+      'Notes cliniques et conduite — enregistrées dans le dossier.',
+    'Note opératoire / indications — visibles dans le dossier patient.':
+      'Note opératoire / indications — visibles dans le dossier patient.',
+    'Note pour le dossier patient (et résultats labo).':
+      'Note pour le dossier patient (et résultats labo).',
+    'Résultats antérieurs': 'Résultats antérieurs',
+    Prescrire: 'Prescrire',
+    'Enregistrer le dossier': 'Enregistrer le dossier',
+    'Consulter : dossier, prescription, commentaire final':
+      'Consulter : dossier, prescription, commentaire final',
+    'Parcours, résultats, opérations et fichiers': 'Parcours, résultats, opérations et fichiers',
+    'Patients déjà consultés': 'Patients déjà consultés',
+    'Note finale': 'Note finale',
+    'Résultats labo': 'Résultats labo',
+    'Aucune valeur détaillée.': 'Aucune valeur détaillée.',
+    'Aucun résultat labo ou opération enregistré.': 'Aucun résultat labo ou opération enregistré.',
+    'Suite opératoire, indications, surveillance…': 'Suite opératoire, indications, surveillance…',
+    'Interventions, clôture et parts à percevoir': 'Interventions, clôture et parts à percevoir',
+    'Résultats / note finale à la clôture — parts dans À percevoir':
+      'Résultats / note finale à la clôture — parts dans À percevoir',
+    'Clôturer l’opération': 'Clôturer l’opération',
+    'Note opératoire enregistrée dans le dossier patient.':
+      'Note opératoire enregistrée dans le dossier patient.',
+    'Déroulement, suite, surveillance…': 'Déroulement, suite, surveillance…',
+    'Enregistrer et clôturer': 'Enregistrer et clôturer',
+    'Opération enregistrée — note ajoutée au dossier patient.':
+      'Opération enregistrée — note ajoutée au dossier patient.',
+    'Payée — à clôturer': 'Payée — à clôturer',
+    'En attente paiement': 'En attente paiement',
+    'Supervision — lecture seule': 'Supervision — lecture seule',
     "Types d'examens": "Types d'examens",
     'Commentaire saisi': 'Commentaire saisi',
     'Chargement des catalogues…': 'Chargement des catalogues…',
     'Chargement du catalogue…': 'Chargement du catalogue…',
     'Aucun examen sélectionné — choisissez par type : laboratoire, radio, écho, odonto, opération ou hospitalisation.':
       'Aucun examen sélectionné — choisissez par type : laboratoire, radio, écho, odonto, opération ou hospitalisation.',
+    'Sélectionnez Consultation ou un type d’examen.': 'Sélectionnez Consultation ou un type d’examen.',
+    'Notes cliniques et ordonnance — sans envoi labo.': 'Notes cliniques et ordonnance — sans envoi labo.',
+    'Notes cliniques et ordonnance pharmacie (sans nouvel envoi labo).':
+      'Notes cliniques et ordonnance pharmacie (sans nouvel envoi labo).',
+    'Déjà prescrits': 'Déjà prescrits',
+    'Nouveaux examens': 'Nouveaux examens',
+    'Choisir les examens': 'Choisir les examens',
+    'Envoyer au labo': 'Envoyer au labo',
+    'Enregistrer et envoyer': 'Enregistrer et envoyer',
+    'Cliquez pour sélectionner ou désélectionner.': 'Cliquez pour sélectionner ou désélectionner.',
+    'Filtrer les examens…': 'Filtrer les examens…',
+    'Filtrer {count} examens…': 'Filtrer {count} examens…',
+    'Aucun examen sélectionné': 'Aucun examen sélectionné',
+    '1 examen sélectionné': '1 examen sélectionné',
+    '{n} examens sélectionnés': '{n} examens sélectionnés',
+    'Aucun examen laboratoire disponible.': 'Aucun examen laboratoire disponible.',
+    'Motif, examen clinique, diagnostic…': 'Motif, examen clinique, diagnostic…',
+    'Les examens sélectionnés sont déjà prescrits sur ce dossier. Choisissez d\'autres examens.':
+      'Les examens sélectionnés sont déjà prescrits sur ce dossier. Choisissez d\'autres examens.',
     'Commentaire — {kind}': 'Commentaire — {kind}',
     'Indications ou remarques pour les examens {kind}…':
       'Indications ou remarques pour les examens {kind}…',
@@ -1165,6 +1237,18 @@ export default {
     'Transféré le': 'Transféré le',
     'Terminé le': 'Terminé le',
     'Saisir les résultats': 'Saisir les résultats',
+    Saisir: 'Saisir',
+    Resaisir: 'Resaisir',
+    'Resaisir les résultats': 'Resaisir les résultats',
+    'Examens en attente reçus': 'Examens en attente reçus',
+    'Aucun examen en attente reçu': 'Aucun examen en attente reçu',
+    '{n} examen(s) en attente reçu(s)': '{n} examen(s) en attente reçu(s)',
+    'Aucun examen en attente': 'Aucun examen en attente',
+    '{n} examen(s) reçu(s) en attente': '{n} examen(s) reçu(s) en attente',
+    'dont {n} récent(s)': 'dont {n} récent(s)',
+    Récent: 'Récent',
+    'Aucun examen en attente de saisie.': 'Aucun examen en attente de saisie.',
+    'Ouvrir la file laboratoire': 'Ouvrir la file laboratoire',
     'Voir le dossier': 'Voir le dossier',
     'Patients dont les analyses de laboratoire ont été clôturées': 'Patients dont les analyses de laboratoire ont été clôturées',
     'Impossible de charger les examens terminés.': 'Impossible de charger les examens terminés.',
@@ -1179,6 +1263,21 @@ export default {
     'Dossier laboratoire': 'Dossier laboratoire',
     'Clôture…': 'Clôture…',
     'Clôturer le dossier': 'Clôturer le dossier',
+    'Enregistrer, imprimer et clôturer': 'Enregistrer, imprimer et clôturer',
+    'Enregistrer tous les résultats, imprimer un fichier (une page par examen) et transmettre au médecin ?':
+      'Enregistrer tous les résultats, imprimer un fichier (une page par examen) et transmettre au médecin ?',
+    'Certains examens prescrits sont encore vides. Enregistrer, imprimer les résultats saisis (une page par examen) et clôturer le dossier ?':
+      'Certains examens prescrits sont encore vides. Enregistrer, imprimer les résultats saisis (une page par examen) et clôturer le dossier ?',
+    'Dossier enregistré, imprimé et clôturé — résultats transmis au médecin.':
+      'Dossier enregistré, imprimé et clôturé — résultats transmis au médecin.',
+    "Erreur lors de l'enregistrement, de l'impression ou de la clôture.":
+      "Erreur lors de l'enregistrement, de l'impression ou de la clôture.",
+    'Formulaire de l’examen prescrit — saisissez puis enregistrez, imprimez et clôturez':
+      'Formulaire de l’examen prescrit — saisissez puis enregistrez, imprimez et clôturez',
+    '{n} examens prescrits — saisissez chaque onglet puis enregistrez, imprimez et clôturez en une fois':
+      '{n} examens prescrits — saisissez chaque onglet puis enregistrez, imprimez et clôturez en une fois',
+    'Formulaires modifiés et envoyés à l’impression (une page par examen).':
+      'Formulaires modifiés et envoyés à l’impression (une page par examen).',
     'Impression…': 'Impression…',
     'Imprimer tout le dossier': 'Imprimer tout le dossier',
     'Mode modification — sélectionnez un formulaire enregistré, corrigez les valeurs puis enregistrez.': 'Mode modification — sélectionnez un formulaire enregistré, corrigez les valeurs puis enregistrez.',
@@ -1882,7 +1981,8 @@ export default {
   },
   login: {
     title: 'Connexion',
-    username: "Nom d'utilisateur ou e-mail",
+    username: "Nom d'utilisateur",
+    usernamePlaceholder: "Saisissez votre nom d'utilisateur (pas l'e-mail)",
     password: 'Mot de passe',
     submit: 'Se connecter',
     demoLabel: 'Comptes démo — mot de passe :',
@@ -1924,11 +2024,11 @@ export default {
     installHttpHint:
       'Première connexion : placez le raccourci Bureau (icône Alwatan). Wi-Fi puis Tailscale automatiquement.',
     installAndroidHint:
-      'Sur Android (Chrome) : ajoutez Alwatan à l’écran d’accueil pour l’ouvrir comme une application. Même Wi‑Fi que le serveur.',
+      'Sur Android (Chrome) : ajoutez Alwatan à l’écran d’accueil (pas un APK). Même Wi‑Fi que le serveur ; hors clinique, utilisez Tailscale.',
     installIosHint:
       'Sur iPad/iPhone (Safari) : ajoutez Alwatan à l’écran d’accueil pour un accès rapide.',
     installDesktopShortcut: 'Mettre le raccourci sur le Bureau',
-    installAndroidShortcut: 'Télécharger le raccourci',
+    installAndroidShortcut: 'Télécharger le guide HTML',
     androidStep1: 'Ouvrez cette page dans Chrome (pas un autre navigateur).',
     androidStep2: 'Appuyez sur le menu ⋮ en haut à droite.',
     androidStep3: 'Choisissez « Installer l’application » ou « Ajouter à l’écran d’accueil ».',
@@ -1992,6 +2092,8 @@ export default {
     'En attente de labos': 'En attente de labos',
     'Résultats de labos': 'Résultats de labos',
     'Mes opérations': 'Mes opérations',
+    'À percevoir': 'À percevoir',
+    'Parts consultations et opérations': 'Parts consultations et opérations',
     'Ma nomenclature': 'Ma nomenclature',
     'Dossiers patients': 'Dossiers patients',
     'Encaissements clinique': 'Encaissements clinique',

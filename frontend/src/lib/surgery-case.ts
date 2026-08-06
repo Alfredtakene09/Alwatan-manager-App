@@ -43,6 +43,10 @@ export type SurgeryCaseRow = {
       lastName: string
       phone?: string | null
     }
+    consultation?: {
+      doctorComment?: string | null
+      diagnosis?: string | null
+    } | null
   }
 }
 

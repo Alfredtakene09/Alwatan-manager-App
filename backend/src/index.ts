@@ -32,7 +32,7 @@ import laboratoireRoutes from "./routes/laboratoire.js";
 import labPanelsRoutes from "./routes/lab-panels.js";
 import { seedLabPanelsIfEmpty } from "./lib/lab-panels-seed.js";
 import { refreshLabPanelRegistry } from "./lib/lab-panels-registry.js";
-import { syncAllExamLabPanelLinks } from "./lib/exam-lab-panel.js";
+import { syncAllExamLabPanelLinks, syncAllLabPanelExamLinks } from "./lib/exam-lab-panel.js";
 import surgeriesRoutes from "./routes/surgeries.js";
 import cashSettlementsRoutes from "./routes/cash-settlements.js";
 import cashDeskRoutes from "./routes/cash-desk.js";
@@ -175,6 +175,14 @@ seedLabPanelsIfEmpty()
     if (sync.created > 0 || sync.linked > 0) {
       console.log(
         `Examens ↔ formulaires labo : ${sync.scanned} examen(s), ${sync.linked} lié(s), ${sync.created} formulaire(s) créé(s).`,
+      );
+    }
+    return syncAllLabPanelExamLinks();
+  })
+  .then((sync) => {
+    if (sync.created > 0 || sync.linked > 0) {
+      console.log(
+        `Formulaires labo ↔ examens : ${sync.scanned} formulaire(s), ${sync.linked} lié(s), ${sync.created} examen(s) créé(s).`,
       );
     }
   })

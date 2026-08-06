@@ -103,7 +103,7 @@ onMounted(async () => {
           v-model="username"
           :label="t('login.username')"
           type="text"
-          :placeholder="t('login.username')"
+          :placeholder="t('login.usernamePlaceholder')"
           :icon="User"
           autocomplete="username"
           required

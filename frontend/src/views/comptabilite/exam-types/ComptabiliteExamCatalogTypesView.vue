@@ -38,7 +38,13 @@ type CatalogItem = {
   clinicServiceId?: string | null
   clinicService?: { id: string; name: string } | null
   labPanelId?: string | null
-  labPanel?: { id: string; slug: string; label: string; active: boolean } | null
+  labPanel?: {
+    id: string
+    slug: string
+    label: string
+    active: boolean
+    _count?: { fields: number }
+  } | null
 }
 
 type ClinicServiceOption = { id: string; name: string; active?: boolean }
@@ -168,8 +174,18 @@ const tableRows = computed(() => {
     code: item.code,
     category: item.category || '—',
     service: item.clinicService?.name || uiText('Tous les services'),
-    formLabel: item.labPanel?.label || (props.kind === 'examen' ? uiText('À créer') : '—'),
+    formLabel: (() => {
+      if (props.kind !== 'examen') return '—'
+      if (!item.labPanelId) return uiText('À créer')
+      const fieldCount = item.labPanel?._count?.fields ?? 0
+      if (fieldCount <= 0) return uiText('Formulaire à compléter au labo')
+      return item.labPanel?.label || uiText('Lié')
+    })(),
     formLinked: Boolean(item.labPanelId),
+    formNeedsLabFields:
+      props.kind === 'examen' &&
+      Boolean(item.labPanelId) &&
+      (item.labPanel?._count?.fields ?? 0) <= 0,
     price: formatFcfa(item.priceFcfa),
     priceSort: item.priceFcfa,
     statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),
@@ -195,8 +211,18 @@ const columns = computed(() => {
     base.push({
       data: 'formLabel',
       title: 'Formulaire résultats',
-      render: (v: string, _t: string, row: { formLinked: boolean }) =>
-        `<span class="${row.formLinked ? 'dt-badge dt-badge--success' : 'dt-badge dt-badge--muted'}">${v}</span>`,
+      render: (
+        v: string,
+        _t: string,
+        row: { formLinked: boolean; formNeedsLabFields?: boolean },
+      ) => {
+        const badgeClass = row.formNeedsLabFields
+          ? 'dt-badge dt-badge--warning'
+          : row.formLinked
+            ? 'dt-badge dt-badge--success'
+            : 'dt-badge dt-badge--muted'
+        return `<span class="${badgeClass}">${v}</span>`
+      },
     })
   }
   base.push(
@@ -286,8 +312,8 @@ function closeAddModal() {
 }
 
 async function addItem() {
-  if (!newItem.value.label.trim() || !newItem.value.priceFcfa) {
-    message.value = 'Libellé et tarif sont obligatoires.'
+  if (!newItem.value.label.trim() || newItem.value.priceFcfa === '') {
+    message.value = 'Libellé et tarif sont obligatoires (0 = à tarifer plus tard).'
     messageType.value = 'error'
     return
   }
@@ -350,8 +376,8 @@ function closeEditModal() {
 
 async function saveEdit() {
   if (!editingId.value) return
-  if (!editForm.value.label.trim() || !editForm.value.priceFcfa) {
-    message.value = 'Libellé et tarif sont obligatoires.'
+  if (!editForm.value.label.trim() || editForm.value.priceFcfa === '') {
+    message.value = 'Libellé et tarif sont obligatoires (0 = à tarifer plus tard).'
     messageType.value = 'error'
     return
   }
@@ -694,7 +720,7 @@ onMounted(async () => {
           <UiInput v-model="newItem.code" label="Code (optionnel)" :placeholder="formPlaceholders.code" />
           <UiInput v-model="newItem.label" label="Libellé" :placeholder="formPlaceholders.label" />
           <UiInput v-model="newItem.category" label="Catégorie (optionnel)" :placeholder="formPlaceholders.category" />
-          <UiInput v-model="newItem.priceFcfa" label="Tarif (FCFA)" type="number" min="1" />
+          <UiInput v-model="newItem.priceFcfa" label="Tarif (FCFA)" type="number" min="0" />
           <UiSelect
             v-if="isServiceContext"
             :key="`new-item-service-${activeServiceTabId}`"
@@ -737,7 +763,7 @@ onMounted(async () => {
           <UiInput v-model="editForm.code" label="Code (optionnel)" />
           <UiInput v-model="editForm.label" label="Libellé" />
           <UiInput v-model="editForm.category" label="Catégorie (optionnel)" />
-          <UiInput v-model="editForm.priceFcfa" label="Tarif (FCFA)" type="number" min="1" />
+          <UiInput v-model="editForm.priceFcfa" label="Tarif (FCFA)" type="number" min="0" />
           <UiSelect
             v-if="isServiceContext"
             v-model="editForm.clinicServiceId"

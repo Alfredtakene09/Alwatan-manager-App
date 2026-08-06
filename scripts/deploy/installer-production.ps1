@@ -34,7 +34,7 @@ Write-Host '  Clinique Alwatan — Installation production' -ForegroundColor Cya
 Write-Host "  Racine : $Root"
 Write-Host ''
 
-# --- CORS large pour le LAN ---
+# --- CORS : LAN d'abord, Tailscale en secours ---
 $corsOrigins = @(
     "http://localhost:$Port",
     "http://127.0.0.1:$Port",
@@ -44,6 +44,11 @@ $corsOrigins = @(
 if ($lanIp) {
     $corsOrigins += "http://${lanIp}:$Port"
     $corsOrigins += "http://${lanIp}:5173"
+}
+$tsIp = Get-TailscaleIpv4
+if ($tsIp -and $tsIp -ne $lanIp) {
+    $corsOrigins += "http://${tsIp}:$Port"
+    $corsOrigins += "http://${tsIp}:5173"
 }
 $corsValue = ($corsOrigins | Select-Object -Unique) -join ','
 

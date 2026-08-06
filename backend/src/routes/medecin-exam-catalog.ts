@@ -20,7 +20,7 @@ const catalogItemSchema = z.object({
   code: z.string().max(64).optional().nullable(),
   label: z.string().min(2).max(160),
   category: z.string().max(80).optional(),
-  priceFcfa: z.number().int().positive(),
+  priceFcfa: z.number().int().min(0),
   sortOrder: z.number().int().min(0).optional(),
   active: z.boolean().optional(),
 });

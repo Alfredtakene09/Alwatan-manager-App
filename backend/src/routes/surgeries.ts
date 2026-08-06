@@ -21,7 +21,12 @@ import { requireAuth, requireAnyModule, requireModule } from "../middleware/auth
 const router = Router();
 
 const surgeryInclude = {
-  visit: { include: { patient: true } },
+  visit: {
+    include: {
+      patient: true,
+      consultation: { select: { doctorComment: true, diagnosis: true } },
+    },
+  },
   interventionType: {
     include: {
       anesthesiologist: { select: { id: true, firstName: true, lastName: true } },
@@ -117,6 +122,12 @@ router.post("/mine/:id/complete", async (req, res) => {
   try {
     const surgeryId = String(req.params.id);
     const userId = req.user!.id;
+    const note =
+      typeof req.body?.notes === "string"
+        ? req.body.notes.trim()
+        : typeof req.body?.comment === "string"
+          ? req.body.comment.trim()
+          : "";
 
     const surgery = await prisma.surgeryCase.findUnique({
       where: { id: surgeryId },
@@ -142,7 +153,7 @@ router.post("/mine/:id/complete", async (req, res) => {
       });
     }
 
-    await completeSurgeryCase(surgery.id);
+    await completeSurgeryCase(surgery.id, new Date(), note || null);
 
     const updated = await prisma.surgeryCase.findUniqueOrThrow({
       where: { id: surgery.id },

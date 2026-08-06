@@ -8,7 +8,8 @@ param(
 
 $Root = Get-AlwatanRoot
 $nodeDir = Initialize-NodePath
-$networkIps = Get-AlwatanNetworkIps
+# LAN d'abord, Tailscale en dernier (CORS + URLs clients)
+$networkIps = Get-AlwatanNetworkIps -IncludeTailscale
 $lanIp = Get-LocalLanIpv4
 
 # Mode cabinet par défaut (démarrage auto + raccourci Bureau « Serveur »).
@@ -57,12 +58,37 @@ if (-not $Dev -and (Test-AlwatanProductionApp -HostName '127.0.0.1' -Port 4000 -
     $prodUrl = 'http://127.0.0.1:4000/'
 }
 if ($prodUrl -and -not $Dev -and $Production) {
-    $clientDir = Publish-AlwatanClientAccess -ServerIps $networkIps -Port 4000 -Root $Root
-    Write-Host "Application déjà active : $prodUrl" -ForegroundColor Green
-    Show-AlwatanNetworkUrls -LanIp $lanIp
-    Show-AlwatanTrayTip -Title 'Alwatan Manager' -Message 'Serveur déjà actif — ouverture de l''application…' -Icon Info
-    Open-AlwatanBrowser -Url $prodUrl
-    exit 0
+    # Toujours recompiler si le code source a changé, puis redémarrer le serveur.
+    if (-not (Ensure-AlwatanProductionBuild -Root $Root -NodeDir $nodeDir)) {
+        Show-AlwatanMessage -Title 'Alwatan Manager' -Message 'La compilation a échoué. Vérifiez Node.js et relancez, ou utilisez lancer-serveur.ps1 -Dev' -Type Error
+        exit 1
+    }
+    $beDist = Join-Path $Root 'backend\dist\index.js'
+    $feDist = Join-Path $Root 'frontend\dist\index.html'
+    $serverNeedsRestart = $false
+    if (Test-Path $beDist) {
+        $nodeProc = Get-NetTCPConnection -LocalPort 4000 -State Listen -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty OwningProcess
+        if ($nodeProc) {
+            try {
+                $procStart = (Get-Process -Id $nodeProc -ErrorAction Stop).StartTime.ToUniversalTime()
+                $beTime = (Get-Item $beDist).LastWriteTimeUtc
+                $feTime = if (Test-Path $feDist) { (Get-Item $feDist).LastWriteTimeUtc } else { [datetime]::MinValue }
+                if ($beTime -gt $procStart -or $feTime -gt $procStart) { $serverNeedsRestart = $true }
+            } catch {
+                $serverNeedsRestart = $true
+            }
+        }
+    }
+    if (-not $serverNeedsRestart) {
+        $clientDir = Publish-AlwatanClientAccess -ServerIps $networkIps -Port 4000 -Root $Root
+        Write-Host "Application déjà active : $prodUrl" -ForegroundColor Green
+        Show-AlwatanNetworkUrls -LanIp $lanIp
+        Show-AlwatanTrayTip -Title 'Alwatan Manager' -Message 'Serveur déjà actif — ouverture de l''application…' -Icon Info
+        Open-AlwatanBrowser -Url $prodUrl
+        exit 0
+    }
+    Write-Host 'Nouveau build détecté — redémarrage du serveur…' -ForegroundColor Yellow
 }
 
 if ($Dev -and -not $Production) {
@@ -99,12 +125,36 @@ try {
 
 $url = Wait-AlwatanProductionUrl -HostName '127.0.0.1' -Port 4000 -TimeoutSec 90
 if (-not $url) {
-    $hint = "Journal : $serverLog"
-    if (Test-Path (Join-Path (Get-AlwatanLogDir) 'server.err.log')) {
-        $hint = "$hint`nErreurs : $(Join-Path (Get-AlwatanLogDir) 'server.err.log')"
+    # Délai supplémentaire : builds / PC lents — sans boîte de dialogue bloquante
+    Show-AlwatanTrayTip -Title 'Alwatan Manager' -Message 'Démarrage encore en cours… ouverture dès que prêt.' -Icon Info -DurationMs 8000
+    $url = Wait-AlwatanProductionUrl -HostName '127.0.0.1' -Port 4000 -TimeoutSec 60
+}
+if (-not $url) {
+    # Si l’API répond déjà, ouvrir quand même (évite le message OK inutile)
+    if (Test-AlwatanServerListening -Port 4000) {
+        try {
+            $health = Invoke-WebRequest -Uri 'http://127.0.0.1:4000/api/health' -UseBasicParsing -TimeoutSec 3
+            if ($health.StatusCode -ge 200 -and $health.StatusCode -lt 400) {
+                $url = 'http://127.0.0.1:4000/'
+                Write-AlwatanClientLaunchLog 'Ouverture après attente longue — /api/health OK'
+            }
+        } catch { }
     }
-    Show-AlwatanTrayTip -Title 'Alwatan Manager' -Message 'Le serveur met trop de temps à démarrer.' -Icon Error
-    Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Le serveur met trop de temps à démarrer.`n$hint" -Type Warning
+}
+if (-not $url) {
+    $hint = "Journal : $serverLog"
+    $errLog = Join-Path (Get-AlwatanLogDir) 'server.err.log'
+    if (Test-Path $errLog) {
+        $hint = "$hint`nErreurs : $errLog"
+    }
+    Show-AlwatanTrayTip -Title 'Alwatan Manager' -Message 'Le serveur ne répond pas encore. Vérifiez le journal.' -Icon Error
+    Show-AlwatanMessage -Title 'Alwatan Manager' -Message @"
+Le serveur met trop de temps à démarrer.
+
+1) Vérifiez PostgreSQL
+2) Relancez « Alwatan Manager (Serveur) »
+3) $hint
+"@ -Type Warning
     exit 1
 }
 

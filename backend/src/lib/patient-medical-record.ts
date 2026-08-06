@@ -28,6 +28,10 @@ export type MedicalHistoryEntry = {
   doctor: { firstName: string; lastName: string } | null;
   diagnosis: string | null;
   prescribedExams: string[];
+  /** Examens laboratoire prescrits (hors consultation clinique). */
+  labExams: string[];
+  /** Interventions / opérations prescrites. */
+  operations: string[];
   labPanels: MedicalHistoryLabPanel[];
   doctorComment: string | null;
   pharmacyOrdonnance: PharmacyOrdonnanceLine[];
@@ -93,12 +97,15 @@ export function buildMedicalHistoryEntry(
       !!consultation.doctorId &&
       consultation.doctorId === options.viewerDoctorId);
 
-  const allPrescribedExams = flattenPrescribedExams(
-    parsePrescribedExamsByKind(consultation.clinicalNotes),
-  );
+  const byKind = parsePrescribedExamsByKind(consultation.clinicalNotes);
+  const allPrescribedExams = flattenPrescribedExams(byKind);
   const prescribedExams = canSeeClinical
     ? allPrescribedExams
     : allPrescribedExams.filter((label) => !isClinicalConsultationExamLabel(label));
+  const labExams = canSeeClinical
+    ? [...(byKind.examen ?? [])]
+    : [];
+  const operations = canSeeClinical ? [...(byKind.operation ?? [])] : [];
 
   // Toujours exposer les panneaux saisis — le marqueur « validé » sert seulement de statut.
   const labPanels = buildLabPanels(consultation.clinicalNotes);
@@ -135,6 +142,8 @@ export function buildMedicalHistoryEntry(
     doctor: consultation.doctor,
     diagnosis,
     prescribedExams,
+    labExams,
+    operations,
     labPanels,
     doctorComment,
     pharmacyOrdonnance,

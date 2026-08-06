@@ -1,54 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Stethoscope,
   FlaskConical,
   ClipboardList,
   CheckCircle2,
-  CircleDollarSign,
   FolderOpen,
-  Wallet,
 } from '@lucide/vue'
 import api from '@/api/client'
-import { formatFcfa } from '@/lib/roles'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
-import UiButton from '@/components/ui/UiButton.vue'
-import UiSelect from '@/components/ui/UiSelect.vue'
-import { currentMonthKey, todayDateKey } from '@/lib/date-filters'
-
-const { uiText } = useAppI18n()
-
-type ReceivableItem = {
-  key: string
-  kind: 'CONSULTATION' | 'OPERATION_SURGEON' | 'OPERATION_ASSISTANT'
-  amountFcfa: number
-  businessDate: string
-  surgeryCaseId?: string
-  invoiceId?: string
-  label: string
-}
-
-type ReceivablePayload = {
-  period: 'day' | 'month'
-  totals: {
-    consultationShareFcfa: number
-    surgeryShareFcfa: number
-    totalShareFcfa: number
-    pendingPayrollFcfa: number
-  }
-  me?: {
-    canAddToSalary: boolean
-    hasConsultationQuota: boolean
-    items: ReceivableItem[]
-  }
-  doctors?: Array<{
-    id: string
-    canAddToSalary?: boolean
-    items?: ReceivableItem[]
-  }>
-}
 
 type MedecinStats = {
   consultationToday: number
@@ -67,6 +29,7 @@ type MedecinStats = {
 }
 
 const router = useRouter()
+const { uiText } = useAppI18n()
 
 const props = defineProps<{
   refreshKey?: number | string
@@ -88,58 +51,15 @@ const stats = ref<MedecinStats>({
   dossierPatientsCount: 0,
 })
 
-const receivable = ref<ReceivablePayload | null>(null)
-const periodMode = ref<'day' | 'month'>('month')
 const loading = ref(false)
-const addingToSalary = ref(false)
 const loadError = ref('')
-const actionMessage = ref('')
-const actionType = ref<'success' | 'error'>('success')
-
-const payableValue = computed(() => {
-  const total = receivable.value?.totals.totalShareFcfa ?? 0
-  return formatFcfa(total)
-})
-
-const payableTrend = computed(() => {
-  const t = receivable.value?.totals
-  if (!t) return ''
-  const parts: string[] = []
-  if (t.consultationShareFcfa > 0) {
-    parts.push(`${uiText('Consult.')} ${formatFcfa(t.consultationShareFcfa)}`)
-  }
-  if (t.surgeryShareFcfa > 0) {
-    parts.push(`${uiText('Opér.')} ${formatFcfa(t.surgeryShareFcfa)}`)
-  }
-  if (t.pendingPayrollFcfa > 0) {
-    parts.push(`${uiText('En paie')} ${formatFcfa(t.pendingPayrollFcfa)}`)
-  }
-  return parts.join(' · ') || uiText('Rien à percevoir')
-})
-
-const canAddToSalary = computed(() => {
-  const me = receivable.value?.me ?? receivable.value?.doctors?.[0]
-  return Boolean(me?.canAddToSalary && (receivable.value?.totals.totalShareFcfa ?? 0) > 0)
-})
-
-const myItems = computed(() => {
-  return receivable.value?.me?.items ?? receivable.value?.doctors?.[0]?.items ?? []
-})
 
 async function loadStats() {
   loading.value = true
   loadError.value = ''
   try {
-    const params =
-      periodMode.value === 'day'
-        ? { period: 'day', day: todayDateKey() }
-        : { period: 'month', month: currentMonthKey() }
-    const [statsRes, recvRes] = await Promise.all([
-      api.get<MedecinStats>('/consultations/medecin-stats'),
-      api.get<ReceivablePayload>('/doctor-shares/receivable', { params }),
-    ])
-    stats.value = statsRes.data
-    receivable.value = recvRes.data
+    const { data } = await api.get<MedecinStats>('/consultations/medecin-stats')
+    stats.value = data
   } catch {
     loadError.value = uiText(
       'Impossible de charger les statistiques. Réessayez ou redémarrez le serveur API.',
@@ -149,36 +69,8 @@ async function loadStats() {
   }
 }
 
-async function addAllToSalary() {
-  if (!canAddToSalary.value || !myItems.value.length) return
-  addingToSalary.value = true
-  actionMessage.value = ''
-  try {
-    await api.post('/doctor-shares/request-payroll', {
-      items: myItems.value.map((item) => ({
-        kind: item.kind,
-        amountFcfa: item.amountFcfa,
-        businessDate: item.businessDate,
-        surgeryCaseId: item.surgeryCaseId,
-        invoiceId: item.invoiceId,
-      })),
-    })
-    actionType.value = 'success'
-    actionMessage.value = uiText('Parts ajoutées au salaire du mois — la carte repasse à zéro.')
-    await loadStats()
-  } catch (error: unknown) {
-    const err = error as { response?: { data?: { error?: string } } }
-    actionType.value = 'error'
-    actionMessage.value =
-      err.response?.data?.error || uiText('Impossible d’ajouter ces parts au salaire.')
-  } finally {
-    addingToSalary.value = false
-  }
-}
-
 onMounted(loadStats)
 watch(() => props.refreshKey, loadStats)
-watch(periodMode, loadStats)
 
 function openDossierPatient() {
   router.push({ name: 'dossier-patient' })
@@ -225,41 +117,6 @@ function openDossierPatient() {
         variant="rose"
       />
     </button>
-
-    <div class="medecin-stats__receivable">
-      <div class="medecin-stats__receivable-tools">
-        <UiSelect v-model="periodMode" :label="uiText('Période')">
-          <option value="day">{{ uiText('Aujourd’hui') }}</option>
-          <option value="month">{{ uiText('Mois') }}</option>
-        </UiSelect>
-        <UiButton
-          v-if="canAddToSalary"
-          type="button"
-          size="sm"
-          variant="secondary"
-          :loading="addingToSalary"
-          :icon="Wallet"
-          @click="addAllToSalary"
-        >
-          {{ uiText('Ajouter au salaire') }}
-        </UiButton>
-      </div>
-      <UiStatCard
-        mini
-        label="À percevoir"
-        :value="payableValue"
-        :icon="CircleDollarSign"
-        variant="amber"
-      />
-      <p class="medecin-stats__receivable-detail">{{ payableTrend }}</p>
-      <p
-        v-if="actionMessage"
-        class="medecin-stats__action"
-        :class="`medecin-stats__action--${actionType}`"
-      >
-        {{ actionMessage }}
-      </p>
-    </div>
   </div>
 </template>
 
@@ -301,43 +158,5 @@ function openDossierPatient() {
 .medecin-stats__link:hover :deep(.stat-card) {
   border-color: var(--accent-300);
   box-shadow: 0 2px 10px rgba(15, 118, 110, 0.1);
-}
-
-.medecin-stats__receivable {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: 0.45rem;
-  padding: 0.65rem 0.75rem;
-  border-radius: 12px;
-  border: 1px solid rgba(217, 119, 6, 0.2);
-  background: linear-gradient(180deg, rgba(251, 191, 36, 0.08), #fff);
-}
-
-.medecin-stats__receivable-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.65rem;
-  align-items: flex-end;
-  justify-content: space-between;
-}
-
-.medecin-stats__receivable-detail {
-  margin: 0;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
-
-.medecin-stats__action {
-  margin: 0;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.medecin-stats__action--success {
-  color: var(--success, #15803d);
-}
-
-.medecin-stats__action--error {
-  color: var(--danger);
 }
 </style>

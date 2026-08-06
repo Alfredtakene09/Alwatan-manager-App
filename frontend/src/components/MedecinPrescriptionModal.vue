@@ -140,11 +140,40 @@ const duplicateSelectionHint = computed(() => {
 })
 
 const modalTitle = computed(() =>
-  props.mode === 'append' ? 'Ajouter des examens' : 'Modifier la prescription',
+  props.mode === 'append' ? uiText('Ajouter des examens') : uiText('Prescription'),
 )
 
 const submitLabel = computed(() =>
-  props.mode === 'append' ? 'Ajouter les examens' : 'Enregistrer les modifications',
+  props.mode === 'append' ? uiText('Envoyer au labo') : uiText('Enregistrer et envoyer'),
+)
+
+const patientMetaLine = computed(() => {
+  if (!sessionVisit.value) return ''
+  const parts = [sessionVisit.value.patient.code]
+  if (sessionVisit.value.patient.phone) parts.push(sessionVisit.value.patient.phone)
+  parts.push(formatAppDateTime(sessionVisit.value.createdAt))
+  return parts.join(' · ')
+})
+
+const vitalsLine = computed(() => {
+  const v = latestVitals.value
+  if (!v) return ''
+  const parts: string[] = []
+  if (v.weightKg) parts.push(`${v.weightKg} kg`)
+  if (v.bloodPressure) parts.push(v.bloodPressure)
+  if (v.temperatureC) parts.push(`${v.temperatureC} °C`)
+  if (v.pulseBpm) parts.push(`${v.pulseBpm} bpm`)
+  return parts.join(' · ')
+})
+
+const existingExamsFlat = computed(() =>
+  existingExamSections.value.flatMap((section) =>
+    section.exams.map((exam) => ({
+      key: `${section.kind}-${exam}`,
+      label: exam,
+      kindLabel: section.label,
+    })),
+  ),
 )
 
 function resetForm() {
@@ -259,88 +288,47 @@ async function submit() {
             <h2 id="prescription-modal-title">
               {{ fullName(sessionVisit.patient.firstName, sessionVisit.patient.lastName) }}
             </h2>
-            <p>{{ sessionVisit.patient.code }} — {{ modalTitle }}</p>
+            <p>{{ patientMetaLine }} — {{ modalTitle }}</p>
+            <p v-if="vitalsLine" class="modal__vitals">
+              <HeartPulse :size="13" />
+              {{ vitalsLine }}
+            </p>
           </div>
-          <button type="button" class="modal__close" aria-label="Fermer" @click="emit('close')">
+          <button type="button" class="modal__close" :aria-label="uiText('Fermer')" @click="emit('close')">
             <X :size="18" />
           </button>
         </header>
 
         <div class="modal__body">
           <p v-if="errorMessage" class="modal-error">{{ errorMessage }}</p>
-          <p v-else-if="duplicateSelectionHint" class="modal-hint">{{ duplicateSelectionHint }}</p>
+          <p v-else-if="duplicateSelectionHint" class="modal-hint">{{ uiText(duplicateSelectionHint) }}</p>
 
-          <section class="info-section">
-            <h3>Informations patient</h3>
-            <dl class="info-grid">
-              <div>
-                <dt>Matricule</dt>
-                <dd>{{ sessionVisit.patient.code }}</dd>
-              </div>
-              <div v-if="sessionVisit.patient.phone">
-                <dt>Téléphone</dt>
-                <dd>{{ sessionVisit.patient.phone }}</dd>
-              </div>
-              <div v-if="sessionVisit.assignedDoctor">
-                <dt>Médecin assigné</dt>
-                <dd>Dr {{ fullName(sessionVisit.assignedDoctor.firstName, sessionVisit.assignedDoctor.lastName) }}</dd>
-              </div>
-              <div>
-                <dt>Arrivée</dt>
-                <dd>{{ formatAppDateTime(sessionVisit.createdAt) }}</dd>
-              </div>
-            </dl>
-          </section>
-
-          <section v-if="latestVitals" class="info-section info-section--vitals">
+          <section
+            v-if="mode === 'append' && existingExamsFlat.length"
+            class="info-section info-section--existing"
+          >
             <h3>
-              <HeartPulse :size="16" />
-              Constantes (réception)
+              <FlaskConical :size="15" />
+              {{ uiText('Déjà prescrits') }}
+              <span class="info-section__count">{{ existingExamsFlat.length }}</span>
             </h3>
-            <dl class="info-grid">
-              <div v-if="latestVitals.weightKg">
-                <dt>Poids</dt>
-                <dd>{{ latestVitals.weightKg }} kg</dd>
-              </div>
-              <div v-if="latestVitals.bloodPressure">
-                <dt>Tension</dt>
-                <dd>{{ latestVitals.bloodPressure }}</dd>
-              </div>
-              <div v-if="latestVitals.temperatureC">
-                <dt>Température</dt>
-                <dd>{{ latestVitals.temperatureC }} °C</dd>
-              </div>
-              <div v-if="latestVitals.pulseBpm">
-                <dt>Pouls</dt>
-                <dd>{{ latestVitals.pulseBpm }} bpm</dd>
-              </div>
-            </dl>
-          </section>
-
-          <section v-if="mode === 'append' && existingExamSections.length" class="info-section">
-            <h3>
-              <FlaskConical :size="16" />
-              Examens déjà prescrits
-            </h3>
-            <div class="exam-sections">
-              <div v-for="section in existingExamSections" :key="section.kind" class="exam-section">
-                <h4>{{ uiText(section.label) }}</h4>
-                <ul v-if="section.exams.length" class="exam-list">
-                  <li v-for="exam in section.exams" :key="`${section.kind}-${exam}`">{{ uiText(exam) }}</li>
-                </ul>
-                <p v-if="section.comment" class="exam-comment">{{ section.comment }}</p>
-              </div>
+            <div class="existing-chips">
+              <span
+                v-for="exam in existingExamsFlat"
+                :key="exam.key"
+                class="existing-chip"
+                :title="uiText(exam.kindLabel)"
+              >
+                {{ uiText(exam.label) }}
+              </span>
             </div>
           </section>
 
-          <section class="info-section">
+          <section class="info-section info-section--picker">
             <h3>
-              <FlaskConical :size="16" />
-              {{ mode === 'append' ? 'Nouveaux examens à prescrire' : 'Examens prescrits' }}
+              <FlaskConical :size="15" />
+              {{ mode === 'append' ? uiText('Nouveaux examens') : uiText('Choisir les examens') }}
             </h3>
-            <p v-if="mode === 'append'" class="section-hint">
-              Seuls les examens pas encore prescrits sont proposés dans la liste.
-            </p>
             <MultiExamPrescriptionPicker
               v-model="selectedExamsByKind"
               v-model:comments="examCommentsByKind"
@@ -352,16 +340,15 @@ async function submit() {
           </section>
 
           <section v-if="showConsultationPanel" class="info-section info-section--consultation">
-            <h3>Consultation clinique</h3>
+            <h3>{{ uiText('Consultation clinique') }}</h3>
             <p class="section-hint">
-              Paiement déjà effectué à la réception — aucun envoi au laboratoire ni second encaissement examens.
-              Saisissez les informations cliniques et composez l’ordonnance pharmacie.
+              {{ uiText('Notes cliniques et ordonnance pharmacie (sans nouvel envoi labo).') }}
             </p>
             <UiTextarea
               v-model="doctorComment"
-              label="Informations cliniques"
-              :rows="5"
-              placeholder="Motif, examen clinique, diagnostic, conduite à tenir…"
+              :label="uiText('Informations cliniques')"
+              :rows="4"
+              :placeholder="uiText('Motif, examen clinique, diagnostic…')"
             />
             <DoctorPharmacyOrdonnancePicker
               v-model="pharmacyOrdonnance"
@@ -378,14 +365,14 @@ async function submit() {
         </div>
 
         <footer class="modal__footer">
-          <UiButton variant="ghost" @click="emit('close')">Annuler</UiButton>
+          <UiButton variant="ghost" @click="emit('close')">{{ uiText('Annuler') }}</UiButton>
           <UiButton
             variant="primary"
             :icon="mode === 'append' ? Plus : Save"
             :disabled="submitting || !canSubmit"
             @click="submit"
           >
-            {{ submitting ? 'Enregistrement…' : submitLabel }}
+            {{ submitting ? uiText('Enregistrement…') : submitLabel }}
             <span v-if="mode === 'append' && newExamsCount > 0" class="submit-badge">
               +{{ newExamsCount }}
             </span>
@@ -422,13 +409,14 @@ async function submit() {
 }
 
 .modal--consult {
-  max-width: 42rem;
+  max-width: min(52rem, 100%);
+  max-height: min(92dvh, 860px);
 }
 
 .info-section--consultation {
   border: 1px solid var(--primary-200);
   border-radius: var(--radius-sm);
-  padding: 0.85rem 1rem;
+  padding: 0.75rem 0.9rem;
   background: linear-gradient(180deg, var(--primary-50), #fff);
 }
 
@@ -437,19 +425,31 @@ async function submit() {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  padding: 1.35rem 1.5rem 0;
+  padding: 1rem 1.25rem 0;
   flex-shrink: 0;
 }
 
 .modal__header h2 {
   margin: 0;
-  font-size: 1.2rem;
+  font-size: 1.1rem;
 }
 
 .modal__header p {
-  margin: 0.35rem 0 0;
-  font-size: 0.8125rem;
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+.modal__vitals {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.35rem !important;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: var(--text) !important;
+  font-weight: 600;
 }
 
 .modal__close {
@@ -474,15 +474,15 @@ async function submit() {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 1rem 1.5rem;
+  padding: 0.85rem 1.25rem;
   display: flex;
   flex-direction: column;
-  gap: 1.1rem;
+  gap: 0.85rem;
 }
 
 .modal-error {
   margin: 0;
-  padding: 0.65rem 0.85rem;
+  padding: 0.55rem 0.75rem;
   border-radius: var(--radius-sm);
   background: var(--danger-bg);
   color: var(--danger);
@@ -491,7 +491,7 @@ async function submit() {
 
 .modal-hint {
   margin: 0;
-  padding: 0.65rem 0.85rem;
+  padding: 0.55rem 0.75rem;
   border-radius: var(--radius-sm);
   background: #fffbeb;
   border: 1px solid #fde68a;
@@ -500,7 +500,7 @@ async function submit() {
 }
 
 .section-hint {
-  margin: -0.35rem 0 0.65rem;
+  margin: -0.25rem 0 0.55rem;
   font-size: 0.75rem;
   color: var(--text-muted);
 }
@@ -508,78 +508,51 @@ async function submit() {
 .info-section h3 {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  margin: 0 0 0.65rem;
+  gap: 0.35rem;
+  margin: 0 0 0.55rem;
   font-size: 0.8125rem;
   font-weight: 700;
   color: var(--primary-800);
 }
 
-.info-section--vitals {
-  padding: 0.85rem 1rem;
-  background: #f8fafc;
+.info-section__count {
+  margin-left: 0.15rem;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--surface-muted, #f1f5f9);
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.info-section--existing {
+  padding: 0.65rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  background: #f8fafc;
 }
 
-.info-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 0.65rem 1rem;
-  margin: 0;
-}
-
-.info-grid dt {
-  font-size: 0.6875rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-light);
-  margin-bottom: 0.1rem;
-}
-
-.info-grid dd {
-  margin: 0;
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-
-.exam-sections {
+.existing-chips {
   display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
+  flex-wrap: wrap;
+  gap: 0.35rem;
 }
 
-.exam-section h4 {
-  margin: 0 0 0.4rem;
+.existing-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid var(--border);
   font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--primary-700);
-}
-
-.exam-list {
-  margin: 0;
-  padding-left: 1.15rem;
-}
-
-.exam-list li {
-  font-size: 0.875rem;
-  font-weight: 500;
-  padding: 0.15rem 0;
-  color: var(--text);
-}
-
-.exam-comment {
-  margin: 0.35rem 0 0;
-  padding: 0.5rem 0.65rem;
-  border-radius: 6px;
-  background: var(--accent-50);
-  border: 1px solid var(--accent-100);
-  font-size: 0.8125rem;
-  color: var(--text);
-  line-height: 1.45;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 .modal__footer {
@@ -588,7 +561,7 @@ async function submit() {
   justify-content: flex-end;
   align-items: center;
   gap: 0.65rem;
-  padding: 1rem 1.5rem 1.35rem;
+  padding: 0.85rem 1.25rem 1.1rem;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -603,12 +576,12 @@ async function submit() {
 }
 
 @media (max-width: 900px) {
-  .info-grid {
-    grid-template-columns: 1fr;
+  .modal-overlay {
+    padding: 0.5rem;
   }
 
-  .modal-overlay {
-    padding: 0.75rem;
+  .modal--consult {
+    max-height: 96dvh;
   }
 }
 </style>

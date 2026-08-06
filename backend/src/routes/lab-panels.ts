@@ -1,11 +1,27 @@
 import { Router } from "express";
+import { ExamCatalogKind } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/db.js";
+import {
+  deactivateExamLinkedToLabPanel,
+  ensureExamLinkedToLabPanel,
+} from "../lib/exam-lab-panel.js";
 import { refreshLabPanelRegistry } from "../lib/lab-panels-registry.js";
 import { requireAuth, requireAnyModule, requireModule } from "../middleware/auth.js";
 
 const panelInclude = {
   fields: { orderBy: { sortOrder: "asc" as const } },
+  examCatalogItems: {
+    where: { kind: ExamCatalogKind.EXAMEN },
+    select: {
+      id: true,
+      code: true,
+      label: true,
+      priceFcfa: true,
+      active: true,
+    },
+    take: 1,
+  },
 } as const;
 
 const router = Router();
@@ -125,7 +141,12 @@ router.post("/", async (req, res) => {
       include: panelInclude,
     });
     await refreshLabPanelRegistry();
-    return res.status(201).json(panel);
+    await ensureExamLinkedToLabPanel(panel.id);
+    const linked = await prisma.labPanel.findUnique({
+      where: { id: panel.id },
+      include: panelInclude,
+    });
+    return res.status(201).json(linked ?? panel);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.issues[0]?.message ?? "Données invalides" });
@@ -162,7 +183,12 @@ router.put("/:id", async (req, res) => {
     });
 
     await refreshLabPanelRegistry();
-    return res.json(panel);
+    await ensureExamLinkedToLabPanel(existing.id);
+    const linked = await prisma.labPanel.findUnique({
+      where: { id: existing.id },
+      include: panelInclude,
+    });
+    return res.json(linked ?? panel);
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.issues[0]?.message ?? "Mise à jour impossible" });
@@ -176,6 +202,7 @@ router.delete("/:id", async (req, res) => {
     const existing = await prisma.labPanel.findUnique({ where: { id: String(req.params.id) } });
     if (!existing) return res.status(404).json({ error: "Formulaire introuvable" });
 
+    await deactivateExamLinkedToLabPanel(existing.id);
     await prisma.labPanel.delete({ where: { id: existing.id } });
     await refreshLabPanelRegistry();
     return res.json({ ok: true });

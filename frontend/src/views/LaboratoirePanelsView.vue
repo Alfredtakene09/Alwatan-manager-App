@@ -4,6 +4,8 @@ import { Eye, FlaskConical, Plus, RefreshCw, Save, Trash2 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
+import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
+import { formatFcfa } from '@/lib/roles'
 import { labFieldCommentKey, type LabFormPanel } from '@/lib/lab-form-panels'
 import {
   useLabPanelsStore,
@@ -19,6 +21,7 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
+import LabQueueBell from '@/components/layout/LabQueueBell.vue'
 
 type FieldForm = {
   /** Identifiant local stable pour le v-for (évite de perdre la saisie section/libellé). */
@@ -75,17 +78,28 @@ const isEntryModel = computed({
 })
 
 const tableRows = computed(() =>
-  panels.value.map((panel) => ({
-    id: panel.id,
-    label: uiText(panel.label),
-    slug: panel.slug,
-    fieldCount: panel.fields.length,
-    statusLabel: uiText(panel.active ? 'Actif' : 'Inactif'),
-    statusVariant: panel.active ? 'success' : 'danger',
-    toggleLabel: panel.active ? 'Désactiver' : 'Activer',
-    isActive: panel.active,
-    showView: true,
-  })),
+  panels.value.map((panel) => {
+    const exam = panel.examCatalogItems?.[0]
+    const priceFcfa = exam?.priceFcfa
+    return {
+      id: panel.id,
+      label: uiText(panel.label),
+      slug: panel.slug,
+      fieldCount: panel.fields.length,
+      tariffLabel:
+        priceFcfa == null
+          ? '—'
+          : priceFcfa <= 0
+            ? uiText('À tarifer')
+            : formatFcfa(priceFcfa),
+      tariffPending: priceFcfa != null && priceFcfa <= 0,
+      statusLabel: uiText(panel.active ? 'Actif' : 'Inactif'),
+      statusVariant: panel.active ? 'success' : 'danger',
+      toggleLabel: panel.active ? 'Désactiver' : 'Activer',
+      isActive: panel.active,
+      showView: true,
+    }
+  }),
 )
 
 function onTableClick(event: MouseEvent) {
@@ -294,8 +308,8 @@ async function save() {
         fields,
       })
       message.value = fields.length
-        ? 'Formulaire mis à jour.'
-        : 'Formulaire mis à jour (aucun champ — à compléter plus tard).'
+        ? 'Formulaire mis à jour — proposé automatiquement au médecin.'
+        : 'Formulaire mis à jour (aucun champ — non proposé au médecin).'
     } else {
       await api.post('/lab-panels', {
         label,
@@ -303,10 +317,11 @@ async function save() {
         fields,
       })
       message.value = fields.length
-        ? 'Formulaire créé.'
-        : 'Formulaire créé sans champ — ajoutez les résultats ensuite.'
+        ? 'Formulaire créé — proposé automatiquement au médecin.'
+        : 'Formulaire créé sans champ — non proposé au médecin tant que les résultats ne sont pas ajoutés.'
     }
     messageType.value = 'success'
+    invalidateExamCatalogCache()
     closeModal()
     await loadPanels()
     await labPanels.fetchPanels(true)
@@ -326,6 +341,7 @@ async function toggle(id: string) {
     await api.put(`/lab-panels/${id}`, { active: !panel.active })
     message.value = panel.active ? 'Formulaire désactivé.' : 'Formulaire réactivé.'
     messageType.value = 'success'
+    invalidateExamCatalogCache()
     await loadPanels()
     await labPanels.fetchPanels(true)
   } catch {
@@ -350,6 +366,7 @@ async function remove(id: string) {
     await api.delete(`/lab-panels/${id}`)
     message.value = 'Formulaire supprimé.'
     messageType.value = 'success'
+    invalidateExamCatalogCache()
     await loadPanels()
     await labPanels.fetchPanels(true)
   } catch {
@@ -380,7 +397,7 @@ onMounted(loadPanels)
 
     <UiCard
       title="Formulaires de résultats"
-      description="Chaque formulaire regroupe les champs saisis par le laboratoire (avec unité et valeur de référence)"
+      description="Chaque formulaire devient un examen prescrit par le médecin. Complétez les champs ici ; l’admin fixe le tarif dans Types d’examen."
       :icon="FlaskConical"
       icon-variant="teal"
       class="section"
@@ -389,6 +406,7 @@ onMounted(loadPanels)
         <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreate">
           Nouveau formulaire
         </UiButton>
+        <LabQueueBell />
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadPanels">
           Actualiser
         </UiButton>
@@ -413,13 +431,14 @@ onMounted(loadPanels)
                     <th>{{ uiText('Formulaire') }}</th>
                     <th>{{ uiText('Identifiant') }}</th>
                     <th>{{ uiText('Champs') }}</th>
+                    <th>{{ uiText('Tarif') }}</th>
                     <th>{{ uiText('Statut') }}</th>
                     <th class="dt-actions-col dt-actions-col--catalog">{{ uiText('Actions') }}</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-if="!loading && !tableRows.length">
-                    <td colspan="6" class="panels-table-empty">{{ uiText('Aucun formulaire enregistré.') }}</td>
+                    <td colspan="7" class="panels-table-empty">{{ uiText('Aucun formulaire enregistré.') }}</td>
                   </tr>
                   <tr
                     v-for="(row, index) in tableRows"
@@ -431,6 +450,12 @@ onMounted(loadPanels)
                     <td><span class="dt-name">{{ row.label }}</span></td>
                     <td><code class="panels-table-slug">{{ row.slug }}</code></td>
                     <td><span class="dt-amount">{{ numberText(row.fieldCount) }}</span></td>
+                    <td>
+                      <span
+                        class="dt-amount"
+                        :class="{ 'panels-table-tariff--pending': row.tariffPending }"
+                      >{{ row.tariffLabel }}</span>
+                    </td>
                     <td v-html="statusBadge(row.statusLabel, row.statusVariant as 'success' | 'danger')" />
                     <td
                       class="dt-actions-col dt-actions-col--catalog"
@@ -634,6 +659,11 @@ onMounted(loadPanels)
   background: var(--surface-2, #f4f6f8);
   padding: 0.15rem 0.4rem;
   border-radius: var(--radius-xs, 4px);
+}
+
+.panels-table-tariff--pending {
+  color: #b45309;
+  font-weight: 700;
 }
 
 .form-grid-2 {

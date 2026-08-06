@@ -30,6 +30,13 @@ export type LabPanelDto = {
   active: boolean
   sortOrder: number
   fields: LabPanelFieldDto[]
+  examCatalogItems?: Array<{
+    id: string
+    code: string
+    label: string
+    priceFcfa: number
+    active: boolean
+  }>
 }
 
 /** Regroupe les champs aplatis (avec titre de section) en sections ordonnées. */
@@ -64,6 +71,8 @@ export const useLabPanelsStore = defineStore('lab-panels', {
     panels: getAllLabFormPanels() as LabFormPanel[],
     /** Formulaires actifs proposés à la saisie labo (tous les actifs, pas seulement isEntry). */
     entrySlugs: getEntryPanelSlugs() as LabPanelSlug[],
+    /** Libellés d’examens liés (pour filtrer selon la prescription). */
+    panelMatchLabels: {} as Record<string, string[]>,
     loaded: false,
     loading: false,
   }),
@@ -75,6 +84,10 @@ export const useLabPanelsStore = defineStore('lab-panels', {
         .filter((panel) => state.entrySlugs.includes(panel.slug))
         .slice()
         .sort((a, b) => a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' })),
+    matchLabelsFor:
+      (state) =>
+      (slug: string): string[] =>
+        state.panelMatchLabels[slug] ?? [],
   },
   actions: {
     async fetchPanels(force = false) {
@@ -86,14 +99,21 @@ export const useLabPanelsStore = defineStore('lab-panels', {
           a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' }),
         )
         this.panels = ordered.map(panelDtoToFormPanel)
-        // Tous les formulaires actifs sont proposés à la saisie des résultats
         this.entrySlugs = ordered.filter((panel) => panel.active).map((panel) => panel.slug)
+        this.panelMatchLabels = Object.fromEntries(
+          ordered.map((panel) => {
+            const examLabels = (panel.examCatalogItems ?? []).map((item) => item.label)
+            return [panel.slug, [...new Set([panel.label, ...examLabels].filter(Boolean))]]
+          }),
+        )
         setRuntimeLabPanels(this.panels, this.entrySlugs)
         this.loaded = true
       } catch {
-        // Fallback hors-ligne / accès lecture refusé : garder les définitions par défaut
         this.panels = getAllLabFormPanels()
         this.entrySlugs = getEntryPanelSlugs()
+        this.panelMatchLabels = Object.fromEntries(
+          this.panels.map((panel) => [panel.slug, [panel.label]]),
+        )
         this.loaded = true
       } finally {
         this.loading = false

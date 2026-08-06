@@ -125,18 +125,19 @@ export function patientRowActionsHtml(
   `
 }
 
-/** Actions dossier laboratoire terminé — 2 boutons en haut, 2 en bas. */
+/** Actions dossier laboratoire terminé — resaisir + imprimer. */
 export function labCompletedRowActionsHtml(row: { id: string }) {
+  const resaisir = translateUi('Resaisir')
+  const resaisirTitle = translateUi('Resaisir les résultats')
+  const imprimer = translateUi('Imprimer')
   return `
-    <div class="dt-row-actions dt-lab-completed-actions" data-id="${row.id}">
-      <div class="dt-lab-completed-actions__row">
-        <button type="button" class="dt-btn dt-btn--icon dt-btn--accent" data-action="print" title="Imprimer" aria-label="Imprimer">${DT_ICONS.print}</button>
-        <button type="button" class="dt-btn dt-btn--icon dt-btn--icon-soft" data-action="saisir" title="Consulter" aria-label="Consulter">${DT_ICONS.view}</button>
-      </div>
-      <div class="dt-lab-completed-actions__row">
-        <button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-edit" data-action="modify" title="Modifier" aria-label="Modifier">${DT_ICONS.edit}</button>
-        <button type="button" class="dt-btn dt-btn--icon dt-btn--pay" data-action="add" title="Ajouter" aria-label="Ajouter un formulaire">${DT_ICONS.plus}</button>
-      </div>
+    <div class="dt-row-actions dt-lab-actions" data-id="${row.id}">
+      <button type="button" class="dt-btn dt-btn--text dt-btn--accent" data-action="modify" title="${resaisirTitle}" aria-label="${resaisirTitle}">
+        ${DT_ICONS.edit} ${resaisir}
+      </button>
+      <button type="button" class="dt-btn dt-btn--text" data-action="print" title="${imprimer}" aria-label="${imprimer}">
+        ${DT_ICONS.print} ${imprimer}
+      </button>
     </div>
   `
 }

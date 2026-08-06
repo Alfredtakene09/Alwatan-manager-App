@@ -122,9 +122,16 @@ function escapePsSingleQuoted(value: string): string {
   return value.replace(/'/g, "''");
 }
 
-function buildAndroidShortcutHtml(appUrl: string, iconUrl: string): string {
-  const url = escapeHtml(appUrl.replace(/\/?$/, "/"));
-  const icon = escapeHtml(iconUrl);
+function buildAndroidShortcutHtml(opts: {
+  wifiUrl: string;
+  tailscaleUrl: string;
+  iconUrl: string;
+}): string {
+  const wifi = escapeHtml(opts.wifiUrl.replace(/\/?$/, "/"));
+  const ts = escapeHtml((opts.tailscaleUrl || "").replace(/\/?$/, "/"));
+  const icon = escapeHtml(opts.iconUrl);
+  const wifiJs = JSON.stringify(opts.wifiUrl.replace(/\/?$/, "/"));
+  const tsJs = JSON.stringify((opts.tailscaleUrl || "").replace(/\/?$/, "/"));
   return `<!DOCTYPE html>
 <html lang="fr" dir="ltr">
 <head>
@@ -153,32 +160,102 @@ function buildAndroidShortcutHtml(appUrl: string, iconUrl: string): string {
     h1 { margin: 0 0 0.35rem; font-size: 1.25rem; }
     p { margin: 0 0 0.85rem; color: #4b5563; line-height: 1.45; font-size: 0.95rem; }
     ol { text-align: start; margin: 0 0 1.1rem; padding-inline-start: 1.2rem; color: #1f2937; line-height: 1.55; }
-    a.btn {
+    a.btn, button.btn {
       display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
       min-height: 48px; padding: 0.75rem 1.1rem; border-radius: 12px; text-decoration: none;
       background: #1b4f9c; color: #fff; font-weight: 650; font-size: 1rem; width: 100%;
+      border: none; cursor: pointer; font-family: inherit;
     }
+    button.btn:disabled { opacity: 0.7; cursor: wait; }
     .hint { margin-top: 0.9rem; font-size: 0.82rem; color: #6b7280; }
+    .status { min-height: 1.2em; margin: 0.35rem 0 0.9rem; font-size: 0.88rem; color: #1b4f9c; }
     .ar { direction: rtl; font-family: "Noto Naskh Arabic", "Segoe UI", Tahoma, sans-serif; }
+    .urls { margin-top: 0.75rem; font-size: 0.78rem; color: #6b7280; word-break: break-all; }
   </style>
 </head>
 <body>
   <main class="card">
     <img src="${icon}" alt="Alwatan" />
     <h1>Clinique Alwatan — Manager</h1>
-    <p>Raccourci tablette Android / iPad. Ouvrez l’app puis ajoutez-la à l’écran d’accueil.</p>
+    <p>Raccourci tablette. Ouvre d'abord le Wi‑Fi clinique, puis Tailscale si le réseau local est indisponible.</p>
     <ol>
-      <li>Appuyez sur <strong>Ouvrir l’application</strong>.</li>
-      <li>Dans Chrome : menu <strong>⋮</strong> → <strong>Ajouter à l’écran d’accueil</strong>.</li>
-      <li>Sur Safari (iPad) : Partager → <strong>Sur l’écran d’accueil</strong>.</li>
+      <li>Appuyez sur <strong>Ouvrir l'application</strong>.</li>
+      <li>Chrome : menu <strong>⋮</strong> → <strong>Ajouter à l'écran d'accueil</strong>.</li>
+      <li>Safari (iPad) : Partager → <strong>Sur l'écran d'accueil</strong>.</li>
     </ol>
-    <a class="btn" href="${url}">Ouvrir l’application</a>
-    <p class="hint ar">افتح التطبيق ثم أضفه إلى الشاشة الرئيسية من قائمة المتصفح.</p>
-    <p class="hint">${url}</p>
+    <button type="button" class="btn" id="openApp">Ouvrir l'application</button>
+    <p class="status" id="status" aria-live="polite"></p>
+    <p class="hint ar">يفتح التطبيق عبر الشبكة المحلية أولاً، ثم Tailscale إذا لزم الأمر.</p>
+    <p class="urls">Wi‑Fi : ${wifi || "—"}</p>
+    <p class="urls">Tailscale : ${ts || "—"}</p>
   </main>
   <script>
-    // Si ouvert depuis Téléchargements, l’utilisateur clique le bouton.
-    // Option : ouverture auto après 1,2 s (désactivée pour laisser lire le guide).
+    (function () {
+      var wifi = ${wifiJs};
+      var ts = ${tsJs};
+      var btn = document.getElementById('openApp');
+      var statusEl = document.getElementById('status');
+
+      function setStatus(text) {
+        if (statusEl) statusEl.textContent = text || '';
+      }
+
+      function healthUrl(base) {
+        return String(base || '').replace(/\\/?$/, '') + '/api/health';
+      }
+
+      function probe(base) {
+        if (!base) return Promise.resolve(false);
+        var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        var timer = setTimeout(function () {
+          if (ctrl) ctrl.abort();
+        }, 2500);
+        return fetch(healthUrl(base), {
+          method: 'GET',
+          cache: 'no-store',
+          signal: ctrl ? ctrl.signal : undefined
+        }).then(function (r) {
+          clearTimeout(timer);
+          return r.ok;
+        }).catch(function () {
+          clearTimeout(timer);
+          return false;
+        });
+      }
+
+      function openApp() {
+        btn.disabled = true;
+        setStatus('Recherche du serveur (Wi‑Fi puis Tailscale)…');
+        var candidates = [];
+        if (wifi) candidates.push(wifi);
+        if (ts && ts !== wifi) candidates.push(ts);
+
+        function tryNext(i) {
+          if (i >= candidates.length) {
+            var fallback = wifi || ts;
+            setStatus(fallback
+              ? 'Serveur inaccessible — ouverture de l\\'URL de secours…'
+              : 'Aucune adresse configurée.');
+            btn.disabled = false;
+            if (fallback) location.href = fallback;
+            return;
+          }
+          var url = candidates[i];
+          setStatus(i === 0 ? 'Test du réseau local…' : 'Test Tailscale…');
+          probe(url).then(function (ok) {
+            if (ok) {
+              setStatus('Connexion…');
+              location.href = url;
+              return;
+            }
+            tryNext(i + 1);
+          });
+        }
+        tryNext(0);
+      }
+
+      if (btn) btn.addEventListener('click', openApp);
+    })();
   </script>
 </body>
 </html>`;
@@ -217,14 +294,14 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "  if (-not (Test-Path -LiteralPath $defaultDir)) { New-Item -ItemType Directory -Path $defaultDir -Force | Out-Null }",
     "  $prefsPath = Join-Path $defaultDir 'Preferences'",
     "  try {",
-    "    $prefs = @{ printing = @{ print_header_footer = $false; print_preview_sticky_settings = @{ appState = '{\"version\":2,\"isHeaderFooterEnabled\":false,\"isCssBackgroundEnabled\":true}' } } }",
+    "    $ticketSticky = '{\"version\":2,\"isHeaderFooterEnabled\":false,\"isCssBackgroundEnabled\":true,\"isLandscapeEnabled\":false,\"marginsType\":1,\"scaling\":\"100\",\"scalingType\":0,\"scalingTypePdf\":0,\"mediaSize\":{\"width_microns\":80000,\"height_microns\":120000,\"custom_display_name\":\"Alwatan Ticket 80mm\",\"is_default\":true}}'",
+    "    $prefs = @{ printing = @{ print_header_footer = $false; print_preview_sticky_settings = @{ appState = $ticketSticky } } }",
     "    if (Test-Path -LiteralPath $prefsPath) {",
     "      $existing = Get-Content -LiteralPath $prefsPath -Raw -Encoding UTF8 | ConvertFrom-Json",
     "      if ($existing) {",
     "        if (-not $existing.printing) { $existing | Add-Member printing ([pscustomobject]@{}) -Force }",
     "        $existing.printing | Add-Member print_header_footer $false -Force",
-    "        $sticky = '{\"version\":2,\"isHeaderFooterEnabled\":false,\"isCssBackgroundEnabled\":true}'",
-    "        $existing.printing | Add-Member print_preview_sticky_settings ([pscustomobject]@{ appState = $sticky }) -Force",
+    "        $existing.printing | Add-Member print_preview_sticky_settings ([pscustomobject]@{ appState = $ticketSticky }) -Force",
     "        $prefsJson = $existing | ConvertTo-Json -Depth 40",
     "      } else { $prefsJson = ($prefs | ConvertTo-Json -Depth 10) }",
     "    } else { $prefsJson = ($prefs | ConvertTo-Json -Depth 10) }",
@@ -462,9 +539,18 @@ router.get("/install-desktop-shortcut.cmd", (req, res) => {
 
 router.get("/android-shortcut.html", (req, res) => {
   const bases = resolveAccessBases(req);
-  const appUrl = `${(bases.wifi ?? bases.primary).replace(/\/?$/, "/")}`;
-  const iconUrl = `${appUrl.replace(/\/?$/, "")}/pwa/icon-192.png`;
-  const html = buildAndroidShortcutHtml(appUrl, iconUrl);
+  const wifiUrl = `${(bases.wifi ?? bases.primary).replace(/\/?$/, "/")}`;
+  const tailscaleUrl = bases.tailscale
+    ? `${bases.tailscale.replace(/\/?$/, "/")}`
+    : "";
+  // URL absolue : le fichier HTML s’ouvre aussi depuis Téléchargements (file://)
+  const iconBase = (bases.wifi ?? bases.tailscale ?? bases.primary).replace(/\/?$/, "");
+  const iconUrl = `${iconBase}/pwa/icon-192.png`;
+  const html = buildAndroidShortcutHtml({
+    wifiUrl,
+    tailscaleUrl,
+    iconUrl,
+  });
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader(
@@ -507,7 +593,7 @@ router.get("/launcher.cmd", (req, res) => {
     "    if(-not $u){return}; $open=$u;",
     "    try{$base=$u.TrimEnd('/');$ver=Invoke-RestMethod -Uri ($base+'/api/app-version?_='+[guid]::NewGuid().ToString('N')) -TimeoutSec 3; if($ver.buildId){$open=$base+'/?v='+[uri]::EscapeDataString([string]$ver.buildId)}}catch{};",
     "    $p=Join-Path $env:LOCALAPPDATA 'CliniqueAlwatan\\app-browser'; $d=Join-Path $p 'Default'; New-Item -ItemType Directory -Force -Path $d|Out-Null;",
-    "    $prefs=Join-Path $d 'Preferences'; $sticky='{\\\"version\\\":2,\\\"isHeaderFooterEnabled\\\":false}';",
+    "    $prefs=Join-Path $d 'Preferences'; $sticky='{\\\"version\\\":2,\\\"isHeaderFooterEnabled\\\":false,\\\"isCssBackgroundEnabled\\\":true,\\\"isLandscapeEnabled\\\":false,\\\"marginsType\\\":1,\\\"scaling\\\":\\\"100\\\",\\\"scalingType\\\":0,\\\"scalingTypePdf\\\":0,\\\"mediaSize\\\":{\\\"width_microns\\\":80000,\\\"height_microns\\\":120000,\\\"custom_display_name\\\":\\\"Alwatan Ticket 80mm\\\",\\\"is_default\\\":true}}';",
     "    $obj=[pscustomobject]@{printing=[pscustomobject]@{print_header_footer=$false;print_preview_sticky_settings=[pscustomobject]@{appState=$sticky}}};",
     "    if(Test-Path $prefs){try{$ex=Get-Content $prefs -Raw -Encoding UTF8|ConvertFrom-Json; if($ex){if(-not $ex.printing){$ex|Add-Member printing ([pscustomobject]@{}) -Force}; $ex.printing|Add-Member print_header_footer $false -Force; $ex.printing|Add-Member print_preview_sticky_settings ([pscustomobject]@{appState=$sticky}) -Force; $obj=$ex}}catch{}};",
     "    [IO.File]::WriteAllText($prefs,($obj|ConvertTo-Json -Depth 40),(New-Object Text.UTF8Encoding $false));",

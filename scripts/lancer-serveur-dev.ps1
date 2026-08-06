@@ -4,7 +4,7 @@
 $Root = Get-AlwatanRoot
 $nodeDir = Initialize-NodePath
 $lanIp = Get-LocalLanIpv4
-$networkIps = Get-AlwatanNetworkIps
+$networkIps = Get-AlwatanNetworkIps -IncludeTailscale
 
 $apiRunning = Test-AlwatanApi -HostName '127.0.0.1'
 $be = Join-Path $Root 'backend'
