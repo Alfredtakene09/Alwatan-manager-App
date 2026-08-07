@@ -44,15 +44,23 @@ const NORMALIZED_NAV: Record<AppLocale, Record<string, string>> = {
   ar: {},
 }
 
-for (const locale of Object.keys(CATALOGS) as AppLocale[]) {
-  const bundle = CATALOGS[locale]
-  for (const [raw, value] of Object.entries(bundle.ui ?? {})) {
-    NORMALIZED_UI[locale][normalizeKey(raw)] = value
-  }
-  for (const [raw, value] of Object.entries(bundle.nav ?? {})) {
-    NORMALIZED_NAV[locale][normalizeKey(raw)] = value
+function rebuildNormalizedIndexes() {
+  for (const locale of Object.keys(CATALOGS) as AppLocale[]) {
+    const bundle = CATALOGS[locale]
+    const uiIndex: Record<string, string> = {}
+    const navIndex: Record<string, string> = {}
+    for (const [raw, value] of Object.entries(bundle.ui ?? {})) {
+      uiIndex[normalizeKey(raw)] = value
+    }
+    for (const [raw, value] of Object.entries(bundle.nav ?? {})) {
+      navIndex[normalizeKey(raw)] = value
+    }
+    NORMALIZED_UI[locale] = uiIndex
+    NORMALIZED_NAV[locale] = navIndex
   }
 }
+
+rebuildNormalizedIndexes()
 
 function activeLocale(): AppLocale {
   return (i18n.global.locale.value || 'fr') as AppLocale
@@ -79,16 +87,17 @@ export function translateUiLocale(
   const key = normalizeKey(text)
   if (!key) return text
 
+  const bundle = CATALOGS[locale] ?? CATALOGS.fr
+  // Priorité au catalogue vivant (HMR / fichiers locale mis à jour).
+  const liveUi = bundle.ui?.[text] ?? bundle.ui?.[key]
+  if (liveUi != null) return liveUi
+  const liveNav = bundle.nav?.[text] ?? bundle.nav?.[key]
+  if (liveNav != null) return liveNav
+
   const fromUi = NORMALIZED_UI[locale]?.[key]
   if (fromUi != null) return fromUi
   const fromNav = NORMALIZED_NAV[locale]?.[key]
   if (fromNav != null) return fromNav
-
-  const bundle = CATALOGS[locale] ?? CATALOGS.fr
-  const liveUi = bundle.ui?.[key] ?? bundle.ui?.[text]
-  if (liveUi != null) return liveUi
-  const liveNav = bundle.nav?.[key] ?? bundle.nav?.[text]
-  if (liveNav != null) return liveNav
 
   for (const [code, frLabel] of Object.entries(COMMON_FR)) {
     if (normalizeKey(frLabel) === key && bundle.common?.[code]) return bundle.common[code]

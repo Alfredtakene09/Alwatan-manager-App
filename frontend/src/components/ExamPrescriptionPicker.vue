@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Search, ChevronDown, ShoppingBag, X, Plus, Check } from '@lucide/vue'
+import { Search, ChevronDown, ShoppingBag, X, Plus, Check, ChevronRight } from '@lucide/vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import {
   EXAM_KIND_LABELS,
@@ -10,10 +10,24 @@ import {
   getSpecialtyServiceName,
   groupExamsByCategory,
   loadExamCatalog,
+  type CatalogExam,
   type ExamKindSlug,
 } from '@/lib/exam-catalog'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
+import { useLabPanelsStore } from '@/stores/lab-panels'
+import {
+  buildCartEntriesForSelectedFields,
+  extractSelectedFieldsFromCart,
+  getPrescriptionCheckGroups,
+  getPrescriptionCheckItems,
+  isPanelLabelExcluded,
+  isPanelLabelInCart,
+  normalizeLabLabelKey,
+  type LabPrescriptionCheckGroup,
+  type LabPrescriptionCheckItem,
+} from '@/lib/lab-prescribed-panels'
+import type { LabFormPanel } from '@/lib/lab-form-panels'
 
 const props = defineProps<{
   kind: ExamKindSlug
@@ -34,12 +48,15 @@ const emit = defineEmits<{
 }>()
 
 const { uiText, localeCode } = useAppI18n()
+const labPanels = useLabPanelsStore()
 
 const search = ref('')
 const dropdownOpen = ref(false)
 const rootRef = ref<HTMLElement | null>(null)
 const catalogReady = ref(false)
 const catalogEpoch = ref(0)
+/** Panel labo dont la checklist (sections / lignes) est dépliée. */
+const expandedPanelLabel = ref<string | null>(null)
 const catalogItems = ref(
   getCatalogForKind(props.kind, props.doctorId, props.serviceId, props.clinicServiceId),
 )
@@ -76,8 +93,8 @@ const searchPlaceholder = computed(() => {
   if (useChipGrid.value) {
     const count = selectableExams.value.length
     return count > 0
-      ? translateTemplate('Filtrer {count} examens…', { count: String(count) })
-      : uiText('Filtrer les examens…')
+      ? translateTemplate('Filtrer {count} examens ou formulaires…', { count: String(count) })
+      : uiText('Filtrer examens ou formulaires…')
   }
   const count = availableExams.value.length
   if (props.kind === 'examen' && count > 0) {
@@ -96,26 +113,37 @@ const catalog = computed(() => {
 })
 
 const selectableExams = computed(() =>
-  catalog.value.filter((exam) => !props.excludeLabels?.includes(exam.label)),
+  catalog.value.filter((exam) => !isPanelLabelExcluded(props.excludeLabels, exam.label)),
 )
 
 const availableExams = computed(() =>
-  selectableExams.value.filter((exam) => !cart.value.includes(exam.label)),
+  selectableExams.value.filter((exam) => !isPanelLabelInCart(cart.value, exam.label)),
 )
 
 async function refreshCatalog(force = true) {
   catalogReady.value = false
-  await loadExamCatalog({
-    doctorId: props.doctorId,
-    serviceId: props.serviceId,
-    force,
-  })
-  catalogItems.value = getCatalogForKind(
+  await Promise.all([
+    loadExamCatalog({
+      doctorId: props.doctorId,
+      serviceId: props.serviceId,
+      force,
+    }),
+    props.kind === 'examen' ? labPanels.fetchPanels(true) : Promise.resolve(),
+  ])
+  const items = getCatalogForKind(
     props.kind,
     props.doctorId,
     props.serviceId,
     props.clinicServiceId,
   )
+  catalogItems.value =
+    props.kind === 'examen'
+      ? items.map((exam) => {
+          if (exam.labPanelSlug) return exam
+          const panel = resolvePanelForExam(exam)
+          return panel ? { ...exam, labPanelSlug: panel.slug } : exam
+        })
+      : items
   catalogEpoch.value += 1
   catalogReady.value = true
 }
@@ -127,22 +155,46 @@ watch(
   },
 )
 
-function examMatchesQuery(exam: { label: string; category: string }, q: string) {
+function textMatchesQuery(text: string, q: string) {
   if (!q) return true
-  const labelFr = exam.label.toLowerCase()
-  const labelLocal = uiText(exam.label).toLowerCase()
-  const categoryFr = exam.category.toLowerCase()
-  const categoryLocal = uiText(exam.category).toLowerCase()
-  return (
-    labelFr.includes(q) ||
-    labelLocal.includes(q) ||
-    categoryFr.includes(q) ||
-    categoryLocal.includes(q)
+  const fr = text.toLowerCase()
+  const local = uiText(text).toLowerCase()
+  return fr.includes(q) || local.includes(q)
+}
+
+function examMatchesQuery(exam: CatalogExam, q: string) {
+  if (!q) return true
+  if (textMatchesQuery(exam.label, q) || textMatchesQuery(exam.category, q)) {
+    return true
+  }
+  const groups = checkGroupsForExam(exam)
+  return groups.some(
+    (group) =>
+      textMatchesQuery(group.title, q) ||
+      group.fields.some((field) => textMatchesQuery(field.label, q)),
   )
+}
+
+/** Conserve les sections ; filtre seulement les champs (sauf si le titre de section matche). */
+function filterCheckGroupsByQuery(
+  groups: LabPrescriptionCheckGroup[],
+  q: string,
+  examMatchedByName: boolean,
+): LabPrescriptionCheckGroup[] {
+  if (!q || examMatchedByName) return groups
+  return groups
+    .map((group) => {
+      if (textMatchesQuery(group.title, q)) return group
+      const fields = group.fields.filter((field) => textMatchesQuery(field.label, q))
+      if (!fields.length) return null
+      return { ...group, fields }
+    })
+    .filter((group): group is LabPrescriptionCheckGroup => Boolean(group))
 }
 
 const filteredExams = computed(() => {
   void localeCode.value
+  void labPanels.panels
   const q = search.value.trim().toLowerCase()
   return availableExams.value.filter((exam) => examMatchesQuery(exam, q))
 })
@@ -150,6 +202,7 @@ const filteredExams = computed(() => {
 /** Grille labo : tous les examens avec formulaire (y compris déjà cochés). */
 const filteredSelectableExams = computed(() => {
   void localeCode.value
+  void labPanels.panels
   const q = search.value.trim().toLowerCase()
   return selectableExams.value.filter((exam) => examMatchesQuery(exam, q))
 })
@@ -177,22 +230,98 @@ const numberedGroupedFiltered = computed(() => {
   return rows
 })
 
+function resolvePanelForExam(exam: CatalogExam): LabFormPanel | undefined {
+  // Dépendances réactives Pinia (recalcul quand les formulaires arrivent).
+  void labPanels.panels
+  void labPanels.panelMatchLabels
+  void catalogEpoch.value
+
+  const slug = exam.labPanelSlug?.trim()
+  if (slug) {
+    const bySlug = labPanels.getPanel(slug)
+    if (bySlug) return bySlug
+  }
+
+  const labelKey = normalizeLabLabelKey(exam.label)
+  if (!labelKey) return undefined
+
+  return labPanels.panels.find((panel) => {
+    const candidates = [panel.label, ...(labPanels.matchLabelsFor(panel.slug) ?? [])]
+    return candidates.some((label) => normalizeLabLabelKey(label) === labelKey)
+  })
+}
+
+function checkGroupsForExam(exam: CatalogExam): LabPrescriptionCheckGroup[] {
+  const panel = resolvePanelForExam(exam)
+  if (!panel) return []
+  return getPrescriptionCheckGroups(panel)
+}
+
+function checkItemsForExam(exam: CatalogExam): LabPrescriptionCheckItem[] {
+  const panel = resolvePanelForExam(exam)
+  if (!panel) return []
+  return getPrescriptionCheckItems(panel)
+}
+
+function flattenGroupFields(groups: LabPrescriptionCheckGroup[]): LabPrescriptionCheckItem[] {
+  return groups.flatMap((group) => group.fields)
+}
+
 const chipGroups = computed(() => {
+  void localeCode.value
+  void labPanels.panels
+  const q = search.value.trim().toLowerCase()
   let index = 0
   const rows: Array<{
     category: string
-    exams: Array<{ id: string; label: string; number: number; selected: boolean }>
+    exams: Array<{
+      id: string
+      label: string
+      number: number
+      selected: boolean
+      expandable: boolean
+      expanded: boolean
+      displaySuffix: string
+      checkGroups: LabPrescriptionCheckGroup[]
+      checkItems: LabPrescriptionCheckItem[]
+      allCheckItems: LabPrescriptionCheckItem[]
+      selectedForms: string[]
+    }>
   }> = []
   for (const [category, exams] of groupedSelectable.value) {
     rows.push({
       category,
       exams: exams.map((exam) => {
         index += 1
+        const allGroups = checkGroupsForExam(exam)
+        const allCheckItems = flattenGroupFields(allGroups)
+        const matchedByName =
+          !q || textMatchesQuery(exam.label, q) || textMatchesQuery(exam.category, q)
+        const checkGroups = filterCheckGroupsByQuery(allGroups, q, matchedByName)
+        const checkItems = flattenGroupFields(checkGroups)
+        const parsedFields = extractSelectedFieldsFromCart(cart.value, exam.label)
+        const selectedForms = !parsedFields
+          ? isPanelLabelInCart(cart.value, exam.label)
+            ? allCheckItems.map((item) => item.label)
+            : []
+          : parsedFields
+        const selected = isPanelLabelInCart(cart.value, exam.label)
+        const displaySuffix =
+          selectedForms.length > 0 ? ` (${selectedForms.join(', ')})` : ''
+        const forceExpand = Boolean(q) && !matchedByName && checkItems.length > 0
+        const expanded = expandedPanelLabel.value === exam.label || forceExpand
         return {
           id: exam.id,
           label: exam.label,
           number: index,
-          selected: cart.value.includes(exam.label),
+          selected,
+          expandable: allCheckItems.length > 0,
+          expanded,
+          displaySuffix,
+          checkGroups,
+          checkItems,
+          allCheckItems,
+          selectedForms,
         }
       }),
     })
@@ -213,17 +342,139 @@ const selectedCountLabel = computed(() => {
 })
 
 function addExam(label: string) {
-  if (cart.value.includes(label)) return
+  if (isPanelLabelInCart(cart.value, label)) return
   cart.value = [...cart.value, label]
   if (!useChipGrid.value) search.value = ''
 }
 
 function toggleExam(label: string) {
-  if (cart.value.includes(label)) {
+  if (isPanelLabelInCart(cart.value, label)) {
     removeExam(label)
   } else {
     addExam(label)
   }
+}
+
+async function onChipClick(exam: { label: string; expandable: boolean; expanded: boolean }) {
+  if (exam.expandable) {
+    expandedPanelLabel.value = exam.expanded ? null : exam.label
+    return
+  }
+
+  // Formulaires pas encore résolus : recharger les panels puis réessayer.
+  if (props.kind === 'examen') {
+    await ensureLabPanelsReady()
+    const catalogExam =
+      catalogItems.value.find((item) => item.label === exam.label) ??
+      ({ id: exam.label, code: '', label: exam.label, category: 'Laboratoire', priceFcfa: 0 } as CatalogExam)
+    if (checkItemsForExam(catalogExam).length > 0) {
+      expandedPanelLabel.value = exam.label
+      return
+    }
+  }
+
+  toggleExam(exam.label)
+}
+
+async function ensureLabPanelsReady() {
+  if (props.kind !== 'examen') return
+  await labPanels.fetchPanels(true)
+  catalogItems.value = catalogItems.value.map((exam) => {
+    if (exam.labPanelSlug) return exam
+    const panel = resolvePanelForExam(exam)
+    return panel ? { ...exam, labPanelSlug: panel.slug } : exam
+  })
+  catalogEpoch.value += 1
+}
+
+function setPanelForms(panelLabel: string, formLabels: string[]) {
+  const catalogExam =
+    catalogItems.value.find((item) => item.label === panelLabel) ??
+    ({
+      id: panelLabel,
+      code: '',
+      label: panelLabel,
+      category: 'Laboratoire',
+      priceFcfa: 0,
+    } as CatalogExam)
+  const groups = checkGroupsForExam(catalogExam)
+  const nextEntries = buildCartEntriesForSelectedFields(panelLabel, groups, formLabels)
+  const without = cart.value.filter((item) => !isPanelLabelInCart([item], panelLabel))
+  cart.value = [...without, ...nextEntries]
+}
+
+function currentSelectedFields(panelLabel: string, allItems: LabPrescriptionCheckItem[]): string[] {
+  const parsed = extractSelectedFieldsFromCart(cart.value, panelLabel)
+  if (parsed === null) {
+    return isPanelLabelInCart(cart.value, panelLabel)
+      ? allItems.map((item) => item.label)
+      : []
+  }
+  return parsed
+}
+
+function toggleFormItem(panelLabel: string, formLabel: string) {
+  const catalogExam =
+    catalogItems.value.find((item) => item.label === panelLabel) ??
+    ({
+      id: panelLabel,
+      code: '',
+      label: panelLabel,
+      category: 'Laboratoire',
+      priceFcfa: 0,
+    } as CatalogExam)
+  const allItems = checkItemsForExam(catalogExam)
+  const current = currentSelectedFields(panelLabel, allItems)
+  const next = current.includes(formLabel)
+    ? current.filter((label) => label !== formLabel)
+    : [...current, formLabel]
+  setPanelForms(panelLabel, next)
+}
+
+function selectAllForms(
+  panelLabel: string,
+  visibleItems: LabPrescriptionCheckItem[],
+) {
+  const catalogExam =
+    catalogItems.value.find((item) => item.label === panelLabel) ??
+    ({
+      id: panelLabel,
+      code: '',
+      label: panelLabel,
+      category: 'Laboratoire',
+      priceFcfa: 0,
+    } as CatalogExam)
+  const allItems = checkItemsForExam(catalogExam)
+  const current = currentSelectedFields(panelLabel, allItems)
+  const visibleSet = new Set(visibleItems.map((item) => item.label))
+  const kept = current.filter((label) => !visibleSet.has(label))
+  setPanelForms(panelLabel, [...kept, ...visibleItems.map((item) => item.label)])
+}
+
+function clearAllForms(
+  panelLabel: string,
+  visibleItems?: LabPrescriptionCheckItem[],
+) {
+  if (!visibleItems?.length) {
+    setPanelForms(panelLabel, [])
+    return
+  }
+  const catalogExam =
+    catalogItems.value.find((item) => item.label === panelLabel) ??
+    ({
+      id: panelLabel,
+      code: '',
+      label: panelLabel,
+      category: 'Laboratoire',
+      priceFcfa: 0,
+    } as CatalogExam)
+  const allItems = checkItemsForExam(catalogExam)
+  const current = currentSelectedFields(panelLabel, allItems)
+  const visibleSet = new Set(visibleItems.map((item) => item.label))
+  setPanelForms(
+    panelLabel,
+    current.filter((label) => !visibleSet.has(label)),
+  )
 }
 
 const isHospitalisationKind = computed(() => props.kind === 'hospitalisation')
@@ -235,7 +486,8 @@ const hospitalisationPrescribed = computed(() =>
 const hospitalisationDays = computed(() => props.hospitalisationDays)
 
 function removeExam(label: string) {
-  cart.value = cart.value.filter((item) => item !== label)
+  cart.value = cart.value.filter((item) => !isPanelLabelInCart([item], label))
+  if (expandedPanelLabel.value === label) expandedPanelLabel.value = null
 }
 
 function toggleHospitalisation() {
@@ -259,7 +511,6 @@ async function toggleDropdown() {
   dropdownOpen.value = !dropdownOpen.value
   if (dropdownOpen.value) {
     search.value = ''
-    // Rouvrir = catalogue à jour (formulaires labo récemment créés inclus).
     if (props.kind === 'examen') await refreshCatalog(true)
   }
 }
@@ -324,7 +575,9 @@ function onCatalogInvalidate() {
         <ul class="exam-picker__cart-list">
           <li class="exam-picker__cart-item">
             <span class="exam-picker__cart-num">1</span>
-            <span class="exam-picker__cart-label">{{ uiText(HOSPITALISATION_PRESCRIPTION_LABEL) }}</span>
+            <span class="exam-picker__cart-label">{{
+              uiText(HOSPITALISATION_PRESCRIPTION_LABEL)
+            }}</span>
             <button
               type="button"
               class="exam-picker__cart-remove"
@@ -351,12 +604,19 @@ function onCatalogInvalidate() {
     <template v-else-if="useChipGrid">
       <div class="exam-picker__chip-toolbar">
         <label class="exam-picker__label">{{ uiText('Examens laboratoire') }}</label>
-        <span class="exam-picker__chip-count" :class="{ 'exam-picker__chip-count--active': cart.length }">
+        <span
+          class="exam-picker__chip-count"
+          :class="{ 'exam-picker__chip-count--active': cart.length }"
+        >
           {{ selectedCountLabel }}
         </span>
       </div>
       <p class="exam-picker__chip-hint">
-        {{ uiText('Cliquez pour sélectionner ou désélectionner.') }}
+        {{
+          uiText(
+            'Cliquez un examen pour ouvrir ses formulaires, puis cochez ce qu’il faut envoyer au labo.',
+          )
+        }}
       </p>
 
       <div class="exam-picker__search-wrap exam-picker__search-wrap--static">
@@ -372,29 +632,97 @@ function onCatalogInvalidate() {
       </div>
 
       <p v-if="!catalogReady" class="exam-picker__empty">{{ uiText('Chargement du catalogue…') }}</p>
-      <div v-else-if="hasChipResults" class="exam-picker__chip-board" role="listbox" aria-multiselectable="true">
+      <div
+        v-else-if="hasChipResults"
+        class="exam-picker__chip-board"
+        role="listbox"
+        aria-multiselectable="true"
+      >
         <section
           v-for="group in chipGroups"
           :key="group.category"
           class="exam-picker__chip-group"
         >
           <h4 class="exam-picker__chip-group-label">{{ uiText(group.category) }}</h4>
-          <div class="exam-picker__chip-grid">
-            <button
+          <div class="exam-picker__chip-stack">
+            <div
               v-for="exam in group.exams"
               :key="exam.id"
-              type="button"
-              role="option"
-              class="exam-picker__chip"
-              :class="{ 'exam-picker__chip--selected': exam.selected }"
-              :aria-selected="exam.selected"
-              @click="toggleExam(exam.label)"
+              class="exam-picker__chip-block"
+              :class="{ 'exam-picker__chip-block--expanded': exam.expanded }"
             >
-              <span class="exam-picker__chip-check" aria-hidden="true">
-                <Check v-if="exam.selected" :size="14" />
-              </span>
-              <span class="exam-picker__chip-label">{{ uiText(exam.label) }}</span>
-            </button>
+              <button
+                type="button"
+                role="option"
+                class="exam-picker__chip"
+                :class="{
+                  'exam-picker__chip--selected': exam.selected,
+                  'exam-picker__chip--expanded': exam.expanded,
+                }"
+                :aria-selected="exam.selected"
+                :aria-expanded="exam.expandable ? exam.expanded : undefined"
+                @click="onChipClick(exam)"
+              >
+                <span class="exam-picker__chip-check" aria-hidden="true">
+                  <Check v-if="exam.selected" :size="14" />
+                </span>
+                <span class="exam-picker__chip-label"
+                  >{{ uiText(exam.label)
+                  }}<template v-if="exam.displaySuffix">{{ exam.displaySuffix }}</template></span
+                >
+                <ChevronRight
+                  v-if="exam.expandable"
+                  :size="14"
+                  class="exam-picker__chip-chevron"
+                  :class="{ 'exam-picker__chip-chevron--open': exam.expanded }"
+                />
+              </button>
+
+              <div v-if="exam.expanded" class="exam-picker__forms" @click.stop>
+                <div class="exam-picker__forms-toolbar">
+                  <span class="exam-picker__forms-title">{{
+                    uiText('Champs à cocher')
+                  }}</span>
+                  <div class="exam-picker__forms-actions">
+                    <button
+                      type="button"
+                      class="exam-picker__forms-link"
+                      @click="selectAllForms(exam.label, exam.checkItems)"
+                    >
+                      {{ uiText('Tout sélectionner') }}
+                    </button>
+                    <button
+                      type="button"
+                      class="exam-picker__forms-link"
+                      @click="clearAllForms(exam.label, exam.checkItems)"
+                    >
+                      {{ uiText('Tout retirer') }}
+                    </button>
+                  </div>
+                </div>
+                <div class="exam-picker__forms-groups">
+                  <div
+                    v-for="group in exam.checkGroups"
+                    :key="group.key"
+                    class="exam-picker__forms-group"
+                  >
+                    <div class="exam-picker__forms-section">{{ uiText(group.title) }}</div>
+                    <ul class="exam-picker__forms-list">
+                      <li v-for="item in group.fields" :key="item.key">
+                        <label class="exam-picker__form-row">
+                          <input
+                            type="checkbox"
+                            :checked="exam.selectedForms.includes(item.label)"
+                            @change="toggleFormItem(exam.label, item.label)"
+                          />
+                          <span>{{ uiText(item.label) }}</span>
+                        </label>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
       </div>
@@ -408,86 +736,92 @@ function onCatalogInvalidate() {
     </template>
 
     <template v-else>
-    <label class="exam-picker__label">{{ addKindLabel }}</label>
+      <label class="exam-picker__label">{{ addKindLabel }}</label>
 
-    <div class="exam-picker__search-wrap">
-      <button
-        type="button"
-        class="exam-picker__trigger"
-        :class="{ 'exam-picker__trigger--open': dropdownOpen }"
-        aria-haspopup="listbox"
-        :aria-expanded="dropdownOpen"
-        @click.stop="toggleDropdown"
-      >
-        <Search :size="16" class="exam-picker__search-icon" />
-        <input
-          v-model="search"
-          type="search"
-          class="exam-picker__search-input"
-          :placeholder="searchPlaceholder"
-          @focus="onSearchFocus"
-          @click.stop
-          @keydown.escape="dropdownOpen = false"
-        />
-        <ChevronDown :size="16" class="exam-picker__chevron" :class="{ 'exam-picker__chevron--open': dropdownOpen }" />
-      </button>
+      <div class="exam-picker__search-wrap">
+        <button
+          type="button"
+          class="exam-picker__trigger"
+          :class="{ 'exam-picker__trigger--open': dropdownOpen }"
+          aria-haspopup="listbox"
+          :aria-expanded="dropdownOpen"
+          @click.stop="toggleDropdown"
+        >
+          <Search :size="16" class="exam-picker__search-icon" />
+          <input
+            v-model="search"
+            type="search"
+            class="exam-picker__search-input"
+            :placeholder="searchPlaceholder"
+            @focus="onSearchFocus"
+            @click.stop
+            @keydown.escape="dropdownOpen = false"
+          />
+          <ChevronDown
+            :size="16"
+            class="exam-picker__chevron"
+            :class="{ 'exam-picker__chevron--open': dropdownOpen }"
+          />
+        </button>
 
-      <div v-if="dropdownOpen" class="exam-picker__dropdown" role="listbox">
-        <p v-if="!catalogReady" class="exam-picker__empty">{{ uiText('Chargement du catalogue…') }}</p>
-        <template v-else-if="hasResults">
-          <div
-            v-for="group in numberedGroupedFiltered"
-            :key="group.category"
-            class="exam-picker__group"
-          >
-            <div class="exam-picker__group-label">{{ uiText(group.category) }}</div>
-            <button
-              v-for="exam in group.exams"
-              :key="exam.id"
-              type="button"
-              class="exam-picker__option"
-              role="option"
-              @click="addExam(exam.label)"
+        <div v-if="dropdownOpen" class="exam-picker__dropdown" role="listbox">
+          <p v-if="!catalogReady" class="exam-picker__empty">
+            {{ uiText('Chargement du catalogue…') }}
+          </p>
+          <template v-else-if="hasResults">
+            <div
+              v-for="group in numberedGroupedFiltered"
+              :key="group.category"
+              class="exam-picker__group"
             >
-              <span class="exam-picker__option-main">
-                <span class="exam-picker__option-num">{{ exam.number }}</span>
-                <span class="exam-picker__option-label">{{ uiText(exam.label) }}</span>
-              </span>
-              <Plus :size="15" />
-            </button>
-          </div>
-        </template>
-        <p v-else class="exam-picker__empty">
-          {{
-            availableExams.length === 0
-              ? uiText('Tous les examens sont déjà sélectionnés.')
-              : uiText('Aucun examen trouvé.')
-          }}
-        </p>
+              <div class="exam-picker__group-label">{{ uiText(group.category) }}</div>
+              <button
+                v-for="exam in group.exams"
+                :key="exam.id"
+                type="button"
+                class="exam-picker__option"
+                role="option"
+                @click="addExam(exam.label)"
+              >
+                <span class="exam-picker__option-main">
+                  <span class="exam-picker__option-num">{{ exam.number }}</span>
+                  <span class="exam-picker__option-label">{{ uiText(exam.label) }}</span>
+                </span>
+                <Plus :size="15" />
+              </button>
+            </div>
+          </template>
+          <p v-else class="exam-picker__empty">
+            {{
+              availableExams.length === 0
+                ? uiText('Tous les examens sont déjà sélectionnés.')
+                : uiText('Aucun examen trouvé.')
+            }}
+          </p>
+        </div>
       </div>
-    </div>
 
-    <div v-if="cart.length" class="exam-picker__cart exam-picker__cart--inline">
-      <div class="exam-picker__cart-head">
-        <ShoppingBag :size="16" />
-        <span>{{ kindLabel }}</span>
-        <strong>{{ cart.length }}</strong>
+      <div v-if="cart.length" class="exam-picker__cart exam-picker__cart--inline">
+        <div class="exam-picker__cart-head">
+          <ShoppingBag :size="16" />
+          <span>{{ kindLabel }}</span>
+          <strong>{{ cart.length }}</strong>
+        </div>
+        <ul class="exam-picker__cart-list">
+          <li v-for="(exam, index) in cart" :key="exam" class="exam-picker__cart-item">
+            <span class="exam-picker__cart-num">{{ index + 1 }}</span>
+            <span class="exam-picker__cart-label">{{ uiText(exam) }}</span>
+            <button
+              type="button"
+              class="exam-picker__cart-remove"
+              :aria-label="uiText('Retirer')"
+              @click="removeExam(exam)"
+            >
+              <X :size="14" />
+            </button>
+          </li>
+        </ul>
       </div>
-      <ul class="exam-picker__cart-list">
-        <li v-for="(exam, index) in cart" :key="exam" class="exam-picker__cart-item">
-          <span class="exam-picker__cart-num">{{ index + 1 }}</span>
-          <span class="exam-picker__cart-label">{{ uiText(exam) }}</span>
-          <button
-            type="button"
-            class="exam-picker__cart-remove"
-            :aria-label="uiText('Retirer')"
-            @click="removeExam(exam)"
-          >
-            <X :size="14" />
-          </button>
-        </li>
-      </ul>
-    </div>
     </template>
   </div>
 </template>
@@ -814,7 +1148,7 @@ function onCatalogInvalidate() {
 }
 
 .exam-picker__chip-board {
-  max-height: min(22rem, 46vh);
+  max-height: min(28rem, 52vh);
   overflow-y: auto;
   padding: 0.15rem;
   display: flex;
@@ -831,20 +1165,27 @@ function onCatalogInvalidate() {
   color: var(--text-light);
 }
 
-.exam-picker__chip-grid {
+.exam-picker__chip-stack {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.exam-picker__chip-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
 }
 
 .exam-picker__chip {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
+  width: 100%;
   max-width: 100%;
-  padding: 0.45rem 0.65rem 0.45rem 0.45rem;
+  padding: 0.5rem 0.7rem 0.5rem 0.5rem;
   border: 1.5px solid var(--border);
-  border-radius: 999px;
+  border-radius: 12px;
   background: #fff;
   color: var(--text);
   font-family: inherit;
@@ -867,6 +1208,11 @@ function onCatalogInvalidate() {
   box-shadow: 0 0 0 1px rgba(198, 40, 40, 0.12);
 }
 
+.exam-picker__chip--expanded {
+  border-color: var(--primary-400);
+  box-shadow: 0 0 0 2px var(--focus-ring-sm);
+}
+
 .exam-picker__chip-check {
   display: inline-flex;
   align-items: center;
@@ -886,8 +1232,119 @@ function onCatalogInvalidate() {
 }
 
 .exam-picker__chip-label {
+  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
   line-height: 1.25;
+}
+
+.exam-picker__chip-chevron {
+  flex-shrink: 0;
+  color: var(--text-light);
+  transition: transform 0.15s;
+}
+
+.exam-picker__chip-chevron--open {
+  transform: rotate(90deg);
+  color: var(--primary-600);
+}
+
+.exam-picker__forms {
+  margin-inline-start: 0.35rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--primary-100);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #f8fbff, #fff);
+}
+
+.exam-picker__forms-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+}
+
+.exam-picker__forms-title {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.exam-picker__forms-actions {
+  display: flex;
+  gap: 0.65rem;
+}
+
+.exam-picker__forms-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--primary-700);
+  cursor: pointer;
+}
+
+.exam-picker__forms-link:hover {
+  text-decoration: underline;
+}
+
+.exam-picker__forms-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.exam-picker__forms-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.exam-picker__forms-section {
+  padding: 0.2rem 0.3rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--primary-700, #1d4ed8);
+}
+
+.exam-picker__forms-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.exam-picker__form-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.35rem 0.3rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.exam-picker__form-row:hover {
+  background: rgba(27, 79, 156, 0.06);
+}
+
+.exam-picker__form-row input {
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+  accent-color: var(--primary-600);
 }
 </style>

@@ -1,3 +1,5 @@
+import { splitPrescribedExamList } from '@/lib/lab-prescribed-panels'
+
 export const EXAMS_PRESCRIBED_PREFIX = 'Examens prescrits'
 export const EXAMS_PAID_PREFIX = 'Examens payés'
 export const EXAM_COMMENT_PREFIX = 'Commentaire'
@@ -201,11 +203,7 @@ function parseExamLine(line: string): { kind: ExamKindSlug; exams: string[] } | 
     if (trimmed.startsWith(prefix)) {
       return {
         kind,
-        exams: trimmed
-          .slice(prefix.length)
-          .split(',')
-          .map((item) => item.trim())
-          .filter(Boolean),
+        exams: splitPrescribedExamList(trimmed.slice(prefix.length)),
       }
     }
   }
@@ -214,11 +212,7 @@ function parseExamLine(line: string): { kind: ExamKindSlug; exams: string[] } | 
   if (trimmed.startsWith(legacyPrefix)) {
     return {
       kind: 'examen',
-      exams: trimmed
-        .slice(legacyPrefix.length)
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean),
+      exams: splitPrescribedExamList(trimmed.slice(legacyPrefix.length)),
     }
   }
 

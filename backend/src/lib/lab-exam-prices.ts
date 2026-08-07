@@ -69,6 +69,14 @@ export async function refreshExamPriceCache() {
 export function getLabExamPriceFcfa(label: string): number {
   const cached = catalogPriceCache.get(label);
   if (cached != null) return cached;
+  // Prescriptions « Panel (section: champs) » : tarif du panel parent.
+  const baseMatch = label.trim().match(/^(.*?)\s*\((.*)\)\s*$/);
+  const base = baseMatch?.[1]?.trim();
+  if (base) {
+    const baseCached = catalogPriceCache.get(base);
+    if (baseCached != null) return baseCached;
+    if (LAB_EXAM_PRICES_FCFA[base] != null) return LAB_EXAM_PRICES_FCFA[base];
+  }
   return LAB_EXAM_PRICES_FCFA[label] ?? DEFAULT_EXAM_PRICE_FCFA;
 }
 

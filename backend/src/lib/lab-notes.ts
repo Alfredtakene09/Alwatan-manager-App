@@ -6,6 +6,35 @@ export const EXAM_COMMENT_PREFIX = "Commentaire";
 export const LAB_RESULTS_PREFIX = "Résultats laboratoire";
 export const LAB_RESULTS_COMPLETION_MARKER = `${LAB_RESULTS_PREFIX} — validé le `;
 
+/** Découpe une liste d'examens sans couper à l'intérieur de parenthèses. */
+export function splitPrescribedExamList(raw: string): string[] {
+  const items: string[] = [];
+  let current = "";
+  let depth = 0;
+  for (const char of raw) {
+    if (char === "(") depth += 1;
+    if (char === ")") depth = Math.max(0, depth - 1);
+    if (char === "," && depth === 0) {
+      const trimmed = current.trim();
+      if (trimmed) items.push(trimmed);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  const last = current.trim();
+  if (last) items.push(last);
+  return items;
+}
+
+/** Libellé panel sans le suffixe « (formes cochées) ». */
+export function extractBasePanelLabel(prescribed: string): string {
+  const trimmed = prescribed.trim();
+  const match = trimmed.match(/^(.*?)\s*\((.*)\)\s*$/);
+  if (!match) return trimmed;
+  return match[1].trim() || trimmed;
+}
+
 export const EXAM_KIND_SECTION_LABELS = {
   specialty: "Spécialité",
   examen: "Laboratoire",
@@ -459,23 +488,16 @@ function parseExamLine(line: string): { kind: ExamKindSlug; exams: string[] } | 
   for (const kind of EXAM_KIND_ORDER) {
     const prefix = `${EXAMS_PRESCRIBED_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]}) : `;
     if (trimmed.startsWith(prefix)) {
-      const exams = trimmed
-        .slice(prefix.length)
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
-      return { kind, exams };
+      return { kind, exams: splitPrescribedExamList(trimmed.slice(prefix.length)) };
     }
   }
 
   const legacyPrefix = `${EXAMS_PRESCRIBED_PREFIX} : `;
   if (trimmed.startsWith(legacyPrefix)) {
-    const exams = trimmed
-      .slice(legacyPrefix.length)
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-    return { kind: "examen", exams };
+    return {
+      kind: "examen",
+      exams: splitPrescribedExamList(trimmed.slice(legacyPrefix.length)),
+    };
   }
 
   return null;

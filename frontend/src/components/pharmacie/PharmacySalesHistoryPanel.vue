@@ -42,6 +42,15 @@ type SaleRecord = {
   lines: SaleLine[]
 }
 
+function escapeReceiptText(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\n/g, '<br />')
+}
+
 function saleBuyerLabel(item: SaleRecord) {
   if (item.externalClient) {
     const name =
@@ -184,7 +193,11 @@ function printSale(sale: SaleRecord) {
   <div class="thermal-receipt__fields">
     ${thermalMetaRow('TOTAL', formatFcfa(sale.totalFcfa), '')}
   </div>
-  ${sale.notes ? `<p class="thermal-receipt__note" dir="ltr">${sale.notes}</p>` : ''}
+  ${
+    sale.notes
+      ? `<p class="thermal-receipt__note" dir="ltr">${escapeReceiptText(sale.notes)}</p>`
+      : ''
+  }
   <hr class="thermal-receipt__rule" />
   <p class="thermal-receipt__thanks">Merci</p>
 </div>

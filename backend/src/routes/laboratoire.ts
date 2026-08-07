@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ExamCatalogKind, InvoiceType } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import {
+  extractBasePanelLabel,
   hasLabResults,
   hasPaidLabWorkPending,
   labsWaitingWhere,
@@ -68,7 +69,9 @@ async function resolvePrescribedPanels(clinicalNotes?: string | null) {
   const labels = parsePrescribedExamsByKind(clinicalNotes).examen;
   if (!labels.length) return [] as Array<{ slug: string; label: string; examLabel: string }>;
 
-  const keys = new Set(labels.map(normalizeExamFormLabelKey).filter(Boolean));
+  const keys = new Set(
+    labels.map((label) => normalizeExamFormLabelKey(extractBasePanelLabel(label))).filter(Boolean),
+  );
   const panels = await prisma.labPanel.findMany({
     where: { active: true },
     orderBy: [{ sortOrder: "asc" }, { label: "asc" }],

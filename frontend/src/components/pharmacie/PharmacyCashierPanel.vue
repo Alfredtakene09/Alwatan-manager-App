@@ -395,7 +395,11 @@ function printReceipt(data: {
     ${reductionFcfa > 0 ? thermalMetaRow(reductionLabel, `- ${formatFcfa(reductionFcfa)}`, '') : ''}
     ${thermalMetaRow('TOTAL', formatFcfa(data.total), '')}
   </div>
-  ${data.notes ? `<p class="thermal-receipt__note" dir="ltr">${data.notes}</p>` : ''}
+  ${
+    data.notes
+      ? `<p class="thermal-receipt__note" dir="ltr">${escapeReceiptText(data.notes)}</p>`
+      : ''
+  }
   <hr class="thermal-receipt__rule" />
   <p class="thermal-receipt__thanks">Merci</p>
 </div>
@@ -418,6 +422,29 @@ function resetBuyerFields() {
 
 function normalizeConfirmName(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+/** Résumé compact posologie médecin → notes vente + ticket thermique. */
+function summarizeOrdonnancePosology(lines: PendingOrdonnanceLine[]): string {
+  const parts: string[] = []
+  for (const line of lines) {
+    const instructions = (line.instructions ?? '').trim()
+    if (!instructions) continue
+    const dosage = (line.dosage ?? '').trim()
+    const label = dosage ? `${line.productName} ${dosage}` : line.productName
+    parts.push(`${label}: ${instructions}`)
+  }
+  if (!parts.length) return ''
+  return `${uiText('Posologie')} — ${parts.join(' · ')}`
+}
+
+function escapeReceiptText(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\n/g, '<br />')
 }
 
 async function loadPendingOrdonnances(search = ordonnancesSearch.value) {
@@ -516,9 +543,15 @@ function applyOrdonnanceToCart() {
   const freeNote = freeTextLines.length
     ? ` — ${uiText('Hors stock')}: ${freeTextLines.map((l) => l.productName).join(', ')}`
     : ''
-  notes.value = translateTemplate('Ordonnance médecin — visite {code}', {
-    code: row.patient.code,
-  }) + freeNote
+  const posologyNote = summarizeOrdonnancePosology(row.lines)
+  notes.value = [
+    translateTemplate('Ordonnance médecin — visite {code}', {
+      code: row.patient.code,
+    }) + freeNote,
+    posologyNote,
+  ]
+    .filter(Boolean)
+    .join('\n')
   selectedCartIndex.value = cart.value.length ? 0 : null
   message.value = freeTextLines.length
     ? translateTemplate(
@@ -1051,6 +1084,9 @@ watch(
               <span v-if="line.dosage"> — {{ line.dosage }}</span>
               <span v-if="line.isFreeText" class="ord-confirm__stock-warn">{{ uiText(' (hors pharmacie)') }}</span>
               <span v-else-if="!line.available" class="ord-confirm__stock-warn">{{ uiText(' (stock insuffisant)') }}</span>
+              <div v-if="line.instructions?.trim()" class="ord-confirm__posology">
+                {{ uiText('Posologie') }} : {{ line.instructions.trim() }}
+              </div>
             </li>
           </ul>
           <UiInput
@@ -1339,6 +1375,13 @@ watch(
 .ord-confirm__stock-warn {
   color: #b45309;
   font-weight: 700;
+}
+
+.ord-confirm__posology {
+  margin-top: 0.2rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 .buyer-type {

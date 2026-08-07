@@ -423,10 +423,17 @@ export function getCatalogForKind(
 
 
 
+import { extractBasePanelLabel } from '@/lib/lab-prescribed-panels'
+
 export function getExamPriceFcfa(label: string): number {
-
-  return priceCache.get(label) ?? 3000
-
+  const direct = priceCache.get(label)
+  if (direct != null) return direct
+  const base = extractBasePanelLabel(label)
+  if (base !== label) {
+    const byBase = priceCache.get(base)
+    if (byBase != null) return byBase
+  }
+  return 3000
 }
 
 

@@ -43,6 +43,7 @@ import {
   CLINICAL_CONSULTATION_EXAM_LABEL,
   hasClinicalConsultationSelected,
 } from '@/lib/lab-notes'
+import { useLabPanelsStore } from '@/stores/lab-panels'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 
@@ -91,6 +92,7 @@ const emit = defineEmits<{
 }>()
 
 const { uiText, localeCode } = useAppI18n()
+const labPanelsStore = useLabPanelsStore()
 
 const activePanel = ref<ActivePanel>('examen')
 const catalogReady = ref(false)
@@ -177,11 +179,14 @@ function kindLabel(kind: ExamKindSlug) {
 
 async function refreshCatalogState() {
   catalogReady.value = false
-  await loadExamCatalog({
-    doctorId: props.doctorId,
-    serviceId: props.serviceId,
-    force: true,
-  })
+  await Promise.all([
+    loadExamCatalog({
+      doctorId: props.doctorId,
+      serviceId: props.serviceId,
+      force: true,
+    }),
+    labPanelsStore.fetchPanels(true),
+  ])
   specialtyExamCount.value = getCatalogForKind('specialty', props.doctorId, props.serviceId).filter(
     (exam) => exam.label !== CLINICAL_CONSULTATION_EXAM_LABEL,
   ).length

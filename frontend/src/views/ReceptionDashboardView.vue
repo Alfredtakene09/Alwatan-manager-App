@@ -159,7 +159,7 @@ type DayClosureStatus = {
   } | null
 }
 
-const { uiText, dateText } = useAppI18n()
+const { uiText, dateText, localeCode } = useAppI18n()
 const auth = useAuthStore()
 
 type ReceptionPageTab = 'enregistrement' | 'doctor-shares'
@@ -169,13 +169,14 @@ const canSeeDoctorSharesTab = computed(() =>
 const activeReceptionTab = ref<ReceptionPageTab>('enregistrement')
 
 const receptionTabs = computed(() => {
+  void localeCode.value
   const tabs: Array<{ id: ReceptionPageTab; label: string; icon: typeof UserPlus }> = [
-    { id: 'enregistrement', label: 'Enregistrement', icon: UserPlus },
+    { id: 'enregistrement', label: uiText('Enregistrement'), icon: UserPlus },
   ]
   if (canSeeDoctorSharesTab.value) {
     tabs.push({
       id: 'doctor-shares',
-      label: 'Parts médecins à percevoir',
+      label: uiText('Parts médecins à percevoir'),
       icon: CircleDollarSign,
     })
   }
@@ -1198,7 +1199,7 @@ onUnmounted(clearAlert)
           @click="activeReceptionTab = tab.id"
         >
           <component :is="tab.icon" :size="16" />
-          {{ uiText(tab.label) }}
+          {{ tab.label }}
         </button>
       </div>
 
