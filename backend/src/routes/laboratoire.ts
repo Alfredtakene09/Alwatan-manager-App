@@ -22,9 +22,15 @@ import {
   upsertLabPanelResult,
 } from "../lib/lab-panel-results.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
+import type { AppUserRole } from "../lib/roles.js";
 
 const router = Router();
 router.use(requireAuth, requireModule("laboratoire"));
+
+/** Les laborantins ne voient que leurs propres dossiers dans « Examens terminés ». */
+function isLaborantinScoped(role: string | undefined): boolean {
+  return role === ("LABORANTIN" satisfies AppUserRole);
+}
 
 const personWithEmployeeSelect = {
   id: true,
@@ -56,6 +62,7 @@ const visitInclude = {
     include: {
       doctor: { select: personWithEmployeeSelect },
       labApprovedBy: { select: personWithEmployeeSelect },
+      labRecordedBy: { select: personWithEmployeeSelect },
     },
   },
 } as const;
@@ -226,10 +233,15 @@ router.get("/alerts", async (_req, res) => {
   });
 });
 
-router.get("/completed", async (_req, res) => {
+router.get("/completed", async (req, res) => {
+  const scopedToUser =
+    isLaborantinScoped(req.user?.role) && req.user?.id
+      ? { labRecordedById: req.user.id }
+      : {};
+
   const visits = await prisma.visit.findMany({
     where: {
-      consultation: { is: labsCompletedWhere() },
+      consultation: { is: { ...labsCompletedWhere(), ...scopedToUser } },
     },
     include: visitInclude,
     orderBy: { updatedAt: "desc" },
@@ -285,9 +297,15 @@ router.put("/visits/:visitId/panels/:panelSlug", async (req, res) => {
       body.values,
     );
 
+    const recordedById = req.user?.id;
     const consultation = await prisma.consultation.update({
       where: { id: visit.consultation.id },
-      data: { clinicalNotes: withPanel },
+      data: {
+        clinicalNotes: withPanel,
+        ...(recordedById && !visit.consultation.labRecordedById
+          ? { labRecordedById: recordedById, labRecordedAt: new Date() }
+          : {}),
+      },
     });
 
     return res.json({
@@ -305,7 +323,15 @@ router.post("/visits/:visitId/complete", async (req, res) => {
     return res.status(404).json({ error: "Dossier laboratoire introuvable" });
   }
 
+  const recordedById = req.user?.id;
+
   if (hasLabResults(visit.consultation.clinicalNotes)) {
+    if (recordedById && !visit.consultation.labRecordedById) {
+      await prisma.consultation.update({
+        where: { id: visit.consultation.id },
+        data: { labRecordedById: recordedById, labRecordedAt: new Date() },
+      });
+    }
     return res.json({ ok: true });
   }
 
@@ -319,7 +345,12 @@ router.post("/visits/:visitId/complete", async (req, res) => {
 
   await prisma.consultation.update({
     where: { id: visit.consultation.id },
-    data: { clinicalNotes },
+    data: {
+      clinicalNotes,
+      ...(recordedById && !visit.consultation.labRecordedById
+        ? { labRecordedById: recordedById, labRecordedAt: new Date() }
+        : {}),
+    },
   });
 
   return res.json({ ok: true });

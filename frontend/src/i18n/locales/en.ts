@@ -667,6 +667,9 @@ export default {
     '1 examen sélectionné': '1 exam selected',
     '{n} examens sélectionnés': '{n} exams selected',
     'Aucun examen laboratoire disponible.': 'No laboratory exam available.',
+    'Aucun examen {kind} disponible.': 'No {kind} exam available.',
+    'Cliquez un examen pour le sélectionner ou le retirer.':
+      'Click an exam to select or remove it.',
     'Motif, examen clinique, diagnostic…': 'Reason, clinical exam, diagnosis…',
     'Les examens sélectionnés sont déjà prescrits sur ce dossier. Choisissez d\'autres examens.':
       'Selected exams are already prescribed on this record. Choose others.',
@@ -686,6 +689,27 @@ export default {
     'Sous-total {amount}': 'Subtotal {amount}',
     'Validation…': 'Validating…',
     'Nom et prénom': 'Full name',
+    'Champs incomplets': 'Incomplete fields',
+    'Veuillez corriger les points suivants :': 'Please correct the following:',
+    'Indiquez le nom et le prénom du patient.': "Enter the patient's first and last name.",
+    'Le prénom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).':
+      'First name must have at least 2 letters (separate first and last name with a space).',
+    'Le nom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).':
+      'Last name must have at least 2 letters (separate first and last name with a space).',
+    'Le téléphone est obligatoire (au moins 6 chiffres).':
+      'Phone number is required (at least 6 digits).',
+    'Le téléphone doit contenir au moins 6 chiffres.':
+      'Phone number must contain at least 6 digits.',
+    'Au moins 6 chiffres requis pour valider.': 'At least 6 digits are required to validate.',
+    'Indiquez un âge valide.': 'Enter a valid age.',
+    'Sélectionnez un service.': 'Select a department.',
+    'Sélectionnez un médecin.': 'Select a doctor.',
+    'Indiquez un montant de consultation supérieur à 0.':
+      'Enter a consultation amount greater than 0.',
+    'La réduction ne peut pas dépasser le montant de la consultation.':
+      'The discount cannot exceed the consultation amount.',
+    'Le total à payer doit être supérieur à 0.': 'The total due must be greater than 0.',
+    'Indiquez un montant de consultation valide.': 'Enter a valid consultation amount.',
     "Unité d'âge": 'Age unit',
     Ans: 'Years',
     Mois: 'Months',

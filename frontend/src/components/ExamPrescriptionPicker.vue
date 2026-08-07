@@ -85,8 +85,31 @@ const addKindLabel = computed(() => {
   return translateTemplate('Ajouter — {kind}', { kind: kindLabel.value })
 })
 
-/** Laboratoire : grille visible (sélection / désélection au clic). */
-const useChipGrid = computed(() => props.kind === 'examen')
+/** Grille visible pour tous les types (labo, radio, écho…) — hors hospitalisation. */
+const useChipGrid = computed(() => props.kind !== 'hospitalisation')
+
+const gridTitle = computed(() => {
+  void localeCode.value
+  return kindLabel.value
+})
+
+const gridHint = computed(() => {
+  void localeCode.value
+  if (props.kind === 'examen') {
+    return uiText(
+      'Cliquez un examen pour ouvrir ses formulaires, puis cochez ce qu’il faut envoyer au labo.',
+    )
+  }
+  return uiText('Cliquez un examen pour le sélectionner ou le retirer.')
+})
+
+const emptyCatalogLabel = computed(() => {
+  void localeCode.value
+  if (props.kind === 'examen') return uiText('Aucun examen laboratoire disponible.')
+  return translateTemplate('Aucun examen {kind} disponible.', {
+    kind: kindLabel.value.toLowerCase(),
+  })
+})
 
 const searchPlaceholder = computed(() => {
   void localeCode.value
@@ -603,7 +626,7 @@ function onCatalogInvalidate() {
 
     <template v-else-if="useChipGrid">
       <div class="exam-picker__chip-toolbar">
-        <label class="exam-picker__label">{{ uiText('Examens laboratoire') }}</label>
+        <label class="exam-picker__label">{{ gridTitle }}</label>
         <span
           class="exam-picker__chip-count"
           :class="{ 'exam-picker__chip-count--active': cart.length }"
@@ -611,13 +634,7 @@ function onCatalogInvalidate() {
           {{ selectedCountLabel }}
         </span>
       </div>
-      <p class="exam-picker__chip-hint">
-        {{
-          uiText(
-            'Cliquez un examen pour ouvrir ses formulaires, puis cochez ce qu’il faut envoyer au labo.',
-          )
-        }}
-      </p>
+      <p class="exam-picker__chip-hint">{{ gridHint }}</p>
 
       <div class="exam-picker__search-wrap exam-picker__search-wrap--static">
         <div class="exam-picker__trigger">
@@ -729,7 +746,7 @@ function onCatalogInvalidate() {
       <p v-else class="exam-picker__empty">
         {{
           selectableExams.length === 0
-            ? uiText('Aucun examen laboratoire disponible.')
+            ? emptyCatalogLabel
             : uiText('Aucun examen trouvé.')
         }}
       </p>
@@ -1166,15 +1183,21 @@ function onCatalogInvalidate() {
 }
 
 .exam-picker__chip-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
+  gap: 0.5rem;
+  align-items: start;
 }
 
 .exam-picker__chip-block {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  min-width: 0;
+}
+
+.exam-picker__chip-block--expanded {
+  grid-column: 1 / -1;
 }
 
 .exam-picker__chip {
@@ -1183,7 +1206,8 @@ function onCatalogInvalidate() {
   gap: 0.4rem;
   width: 100%;
   max-width: 100%;
-  padding: 0.5rem 0.7rem 0.5rem 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.7rem 0.55rem 0.5rem;
   border: 1.5px solid var(--border);
   border-radius: 12px;
   background: #fff;
@@ -1250,8 +1274,8 @@ function onCatalogInvalidate() {
 }
 
 .exam-picker__forms {
-  margin-inline-start: 0.35rem;
-  padding: 0.55rem 0.65rem;
+  margin-inline-start: 0;
+  padding: 0.65rem 0.75rem;
   border: 1px solid var(--primary-100);
   border-radius: 10px;
   background: linear-gradient(180deg, #f8fbff, #fff);
@@ -1263,7 +1287,7 @@ function onCatalogInvalidate() {
   align-items: center;
   justify-content: space-between;
   gap: 0.4rem;
-  margin-bottom: 0.45rem;
+  margin-bottom: 0.55rem;
 }
 
 .exam-picker__forms-title {
@@ -1297,15 +1321,15 @@ function onCatalogInvalidate() {
 .exam-picker__forms-groups {
   display: flex;
   flex-direction: column;
-  gap: 0.55rem;
-  max-height: 14rem;
+  gap: 0.65rem;
+  max-height: min(18rem, 40vh);
   overflow-y: auto;
 }
 
 .exam-picker__forms-group {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: 0.3rem;
 }
 
 .exam-picker__forms-section {
@@ -1321,17 +1345,20 @@ function onCatalogInvalidate() {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+  gap: 0.3rem 0.45rem;
 }
 
 .exam-picker__form-row {
   display: flex;
   align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.35rem 0.3rem;
-  border-radius: 6px;
+  gap: 0.45rem;
+  min-height: 2.25rem;
+  padding: 0.4rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
   font-size: 0.8125rem;
   font-weight: 500;
   color: var(--text);
@@ -1340,11 +1367,28 @@ function onCatalogInvalidate() {
 
 .exam-picker__form-row:hover {
   background: rgba(27, 79, 156, 0.06);
+  border-color: var(--primary-200);
 }
 
 .exam-picker__form-row input {
   margin-top: 0.15rem;
   flex-shrink: 0;
   accent-color: var(--primary-600);
+}
+
+.exam-picker__form-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+
+@media (max-width: 520px) {
+  .exam-picker__chip-stack {
+    grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  }
+
+  .exam-picker__forms-list {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

@@ -269,6 +269,7 @@ model User {
   auditLogs             AuditLog[]
   assignedVisits        Visit[]             @relation("VisitAssignedDoctor")
   labApprovals          Consultation[]      @relation("LabApprovedBy")
+  labRecordings         Consultation[]      @relation("LabRecordedBy")
   uploadedDocuments     PatientDocument[]
   receptionCashSettlementsAsReceptionist ReceptionCashSettlement[] @relation("SettlementReceptionist")
   receptionCashSettlementsAsAccountant   ReceptionCashSettlement[] @relation("SettlementAccountant")
@@ -430,6 +431,9 @@ model Consultation {
   completedAt          DateTime?
   labSentToLabAt       DateTime?
   labApprovedById      String?
+  /// Laborantin ayant saisi / clôturé les résultats labo
+  labRecordedById      String?
+  labRecordedAt        DateTime?
   labExamReductionFcfa Int       @default(0)
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
@@ -437,7 +441,10 @@ model Consultation {
   visit         Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
   doctor        User? @relation(fields: [doctorId], references: [id])
   labApprovedBy User? @relation("LabApprovedBy", fields: [labApprovedById], references: [id])
+  labRecordedBy User? @relation("LabRecordedBy", fields: [labRecordedById], references: [id])
   examReclamations ExamReclamation[]
+
+  @@index([labRecordedById])
 }
 
 model InterventionType {

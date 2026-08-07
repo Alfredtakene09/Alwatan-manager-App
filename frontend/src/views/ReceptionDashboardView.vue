@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import axios from 'axios'
 import {
   LayoutDashboard,
   Search,
@@ -20,7 +19,7 @@ import {
   CircleDollarSign,
 } from '@lucide/vue'
 import api from '@/api/client'
-import { showDuplicateModalFromError, confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
+import { confirmAppModal, showApiErrorModal, showSuccessModal, showValidationErrorModal } from '@/lib/api-modal-helper'
 import { fullName, formatFcfa, formatFcfaCompact, isDirectionOrGestionnaire } from '@/lib/roles'
 import {
   joinPatientFullName,
@@ -351,52 +350,121 @@ const showEditConsultationBilling = computed(
     showDoctorConsultationBilling(editDoctor.value),
 )
 
-const canSubmit = computed(() => {
+function collectNewPatientValidationErrors(): string[] {
+  const issues: string[] = []
   const { firstName, lastName } = formParsedName.value
   const phoneDigits = form.value.phone.replace(/\D/g, '')
-  const base =
-    firstName.length >= 2 &&
-    lastName.length >= 2 &&
-    formAge.value !== null &&
-    phoneDigits.length >= 6 &&
-    !!form.value.service &&
-    !!form.value.doctorId
-  if (!base) return false
-  if (formBillingExempt.value || !showDoctorConsultationBilling(formDoctor.value)) return true
-  return (
-    formEffectiveAmount.value > 0 &&
-    formReduction.value <= formEffectiveAmount.value &&
-    formTotal.value > 0
-  )
-})
+  const phoneRaw = form.value.phone.trim()
 
-const canSaveEdit = computed(() => {
+  if (!form.value.fullName.trim()) {
+    issues.push('Indiquez le nom et le prénom du patient.')
+  } else {
+    if (firstName.length < 2) {
+      issues.push('Le prénom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).')
+    }
+    if (lastName.length < 2) {
+      issues.push('Le nom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).')
+    }
+  }
+
+  if (!phoneRaw) {
+    issues.push('Le téléphone est obligatoire (au moins 6 chiffres).')
+  } else if (phoneDigits.length < 6) {
+    issues.push('Le téléphone doit contenir au moins 6 chiffres.')
+  }
+
+  if (formAge.value === null) {
+    issues.push('Indiquez un âge valide.')
+  }
+
+  if (!form.value.service) {
+    issues.push('Sélectionnez un service.')
+  }
+
+  if (!form.value.doctorId) {
+    issues.push('Sélectionnez un médecin.')
+  }
+
+  if (
+    !formBillingExempt.value &&
+    showDoctorConsultationBilling(formDoctor.value)
+  ) {
+    if (formEffectiveAmount.value <= 0) {
+      issues.push('Indiquez un montant de consultation supérieur à 0.')
+    } else if (formReduction.value > formEffectiveAmount.value) {
+      issues.push('La réduction ne peut pas dépasser le montant de la consultation.')
+    } else if (formTotal.value <= 0) {
+      issues.push('Le total à payer doit être supérieur à 0.')
+    }
+  }
+
+  return issues
+}
+
+function collectEditPatientValidationErrors(): string[] {
+  const issues: string[] = []
   const { firstName, lastName } = editParsedName.value
-  const base =
-    firstName.length >= 2 &&
-    lastName.length >= 2 &&
-    editAge.value !== null &&
-    !!editForm.value.service &&
-    !!editForm.value.doctorId
-  if (!base) return false
-  if (editBillingExempt.value || !showDoctorConsultationBilling(editDoctor.value)) return true
-  return (
-    editEffectiveAmount.value > 0 &&
-    editReduction.value <= editEffectiveAmount.value &&
-    editTotal.value > 0
-  )
-})
 
-const canSubmitReconsult = computed(() => {
-  if (!reconsultForm.value.doctorId) return false
+  if (!editForm.value.fullName.trim()) {
+    issues.push('Indiquez le nom et le prénom du patient.')
+  } else {
+    if (firstName.length < 2) {
+      issues.push('Le prénom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).')
+    }
+    if (lastName.length < 2) {
+      issues.push('Le nom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).')
+    }
+  }
+
+  if (editAge.value === null) {
+    issues.push('Indiquez un âge valide.')
+  }
+
+  if (!editForm.value.service) {
+    issues.push('Sélectionnez un service.')
+  }
+
+  if (!editForm.value.doctorId) {
+    issues.push('Sélectionnez un médecin.')
+  }
+
+  if (
+    !editBillingExempt.value &&
+    showDoctorConsultationBilling(editDoctor.value)
+  ) {
+    if (editEffectiveAmount.value <= 0) {
+      issues.push('Indiquez un montant de consultation supérieur à 0.')
+    } else if (editReduction.value > editEffectiveAmount.value) {
+      issues.push('La réduction ne peut pas dépasser le montant de la consultation.')
+    } else if (editTotal.value <= 0) {
+      issues.push('Le total à payer doit être supérieur à 0.')
+    }
+  }
+
+  return issues
+}
+
+function collectReconsultValidationErrors(): string[] {
+  const issues: string[] = []
+  if (!reconsultForm.value.doctorId) {
+    issues.push('Sélectionnez un médecin.')
+  }
   const patient = selectedPatient.value
-  if (patient?.category && isExemptCategory(patient.category)) return true
-  if (renewalPreview.value?.withinValidity) return true
-    const amount =
-      renewalPreview.value?.amountFcfa ?? (Number(reconsultForm.value.consultationAmount) || 0)
-  if (doctorShowsFixedConsultationPrice(reconsultDoctor.value)) return amount >= 0
-  return doctorConsultationBillingValid(reconsultDoctor.value, amount) || amount === 0
-})
+  if (patient?.category && isExemptCategory(patient.category)) return issues
+  if (renewalPreview.value?.withinValidity) return issues
+
+  const amount =
+    renewalPreview.value?.amountFcfa ?? (Number(reconsultForm.value.consultationAmount) || 0)
+
+  if (
+    !doctorShowsFixedConsultationPrice(reconsultDoctor.value) &&
+    !(doctorConsultationBillingValid(reconsultDoctor.value, amount) || amount === 0)
+  ) {
+    issues.push('Indiquez un montant de consultation valide.')
+  }
+
+  return issues
+}
 
 const searchLabel = computed(() =>
   search.value.trim()
@@ -821,7 +889,11 @@ function printDetailReceipt(detail: PatientDetail) {
 }
 
 async function createPatientAndVisit() {
-  if (!canSubmit.value) return
+  const validationIssues = collectNewPatientValidationErrors()
+  if (validationIssues.length) {
+    await showValidationErrorModal(validationIssues)
+    return
+  }
   clearAlert()
   submitting.value = true
   try {
@@ -1027,7 +1099,12 @@ function closeReconsultModal() {
 }
 
 async function submitReconsultation() {
-  if (!selectedPatient.value || !canSubmitReconsult.value) return
+  if (!selectedPatient.value) return
+  const validationIssues = collectReconsultValidationErrors()
+  if (validationIssues.length) {
+    await showValidationErrorModal(validationIssues)
+    return
+  }
   clearAlert()
   submittingReconsult.value = true
   try {
@@ -1057,27 +1134,20 @@ async function submitReconsultation() {
     )
     closeReconsultModal()
     await refreshAll()
-  } catch (e: unknown) {
-    if (axios.isAxiosError(e)) {
-      const apiMessage =
-        typeof e.response?.data?.error === 'string' ? e.response.data.error : null
-      if (apiMessage) {
-        showAlert(apiMessage, 'error')
-      } else if (e.response?.status === 409) {
-        showAlert('Ce patient a déjà une visite en cours à la réception.', 'error')
-      } else {
-        showAlert('Impossible de créer la reconsultation.', 'error')
-      }
-    } else {
-      showAlert('Impossible de créer la reconsultation.', 'error')
-    }
+  } catch (error) {
+    await showApiErrorModal(error, 'Impossible de créer la reconsultation.')
   } finally {
     submittingReconsult.value = false
   }
 }
 
 async function saveEdit() {
-  if (!selectedPatient.value || !canSaveEdit.value) return
+  if (!selectedPatient.value) return
+  const validationIssues = collectEditPatientValidationErrors()
+  if (validationIssues.length) {
+    await showValidationErrorModal(validationIssues)
+    return
+  }
   clearAlert()
   savingEdit.value = true
   try {
@@ -1102,10 +1172,7 @@ async function saveEdit() {
     closeEditModal()
     await refreshAll()
   } catch (error: unknown) {
-    const shown = await showDuplicateModalFromError(error)
-    if (!shown) {
-      await showApiErrorModal(error, 'Erreur lors de la modification du dossier.')
-    }
+    await showApiErrorModal(error, 'Erreur lors de la modification du dossier.')
   } finally {
     savingEdit.value = false
   }
@@ -1428,7 +1495,6 @@ onUnmounted(clearAlert)
           variant="primary"
           :icon="Printer"
           :loading="submitting"
-          :disabled="!canSubmit"
         >
           Valider
         </UiButton>
@@ -1567,7 +1633,7 @@ onUnmounted(clearAlert)
           variant="primary"
           :icon="Pencil"
           :loading="savingEdit"
-          :disabled="loadingEdit || !canSaveEdit"
+          :disabled="loadingEdit"
         >
           Enregistrer
         </UiButton>
@@ -1654,7 +1720,6 @@ onUnmounted(clearAlert)
           form="reception-reconsult-form"
           variant="primary"
           :loading="submittingReconsult"
-          :disabled="!canSubmitReconsult"
         >
           {{ submittingReconsult ? 'Envoi…' : 'Valider' }}
         </UiButton>

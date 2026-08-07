@@ -666,6 +666,9 @@ export default {
     '1 examen sélectionné': 'فحص واحد محدد',
     '{n} examens sélectionnés': '{n} فحوصات محددة',
     'Aucun examen laboratoire disponible.': 'لا يتوفر أي فحص مختبر.',
+    'Aucun examen {kind} disponible.': 'لا يتوفر أي فحص {kind}.',
+    'Cliquez un examen pour le sélectionner ou le retirer.':
+      'انقر على فحص لتحديده أو إزالته.',
     'Motif, examen clinique, diagnostic…': 'السبب، الفحص السريري، التشخيص…',
     'Les examens sélectionnés sont déjà prescrits sur ce dossier. Choisissez d\'autres examens.':
       'الفحوصات المحددة موصوفة مسبقاً على هذا الملف. اختر غيرها.',
@@ -685,6 +688,27 @@ export default {
     'Sous-total {amount}': 'المجموع الفرعي {amount}',
     'Validation…': 'جاري التأكيد…',
     'Nom et prénom': 'الاسم واللقب',
+    'Champs incomplets': 'حقول غير مكتملة',
+    'Veuillez corriger les points suivants :': 'يرجى تصحيح النقاط التالية:',
+    'Indiquez le nom et le prénom du patient.': 'أدخل اسم المريض واسم العائلة.',
+    'Le prénom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).':
+      'يجب أن يحتوي الاسم الأول على حرفين على الأقل (افصل الاسم واللقب بمسافة).',
+    'Le nom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).':
+      'يجب أن يحتوي اسم العائلة على حرفين على الأقل (افصل الاسم واللقب بمسافة).',
+    'Le téléphone est obligatoire (au moins 6 chiffres).':
+      'رقم الهاتف إلزامي (6 أرقام على الأقل).',
+    'Le téléphone doit contenir au moins 6 chiffres.':
+      'يجب أن يحتوي رقم الهاتف على 6 أرقام على الأقل.',
+    'Au moins 6 chiffres requis pour valider.': 'يلزم 6 أرقام على الأقل للتأكيد.',
+    'Indiquez un âge valide.': 'أدخل عمرًا صالحًا.',
+    'Sélectionnez un service.': 'اختر قسماً.',
+    'Sélectionnez un médecin.': 'اختر طبيباً.',
+    'Indiquez un montant de consultation supérieur à 0.':
+      'أدخل مبلغ استشارة أكبر من 0.',
+    'La réduction ne peut pas dépasser le montant de la consultation.':
+      'لا يمكن أن يتجاوز التخفيض مبلغ الاستشارة.',
+    'Le total à payer doit être supérieur à 0.': 'يجب أن يكون المبلغ المستحق أكبر من 0.',
+    'Indiquez un montant de consultation valide.': 'أدخل مبلغ استشارة صالحًا.',
     "Unité d'âge": 'وحدة العمر',
     Ans: 'سنوات',
     Mois: 'أشهر',

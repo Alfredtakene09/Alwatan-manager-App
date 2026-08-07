@@ -63,3 +63,27 @@ export async function showApiErrorModal(
   await showModal({ type: 'ERROR', title: translateUi('Erreur'), message: translateUi(message) })
   return true
 }
+
+/** Modal d’erreur de validation formulaire (liste claire des champs à corriger). */
+export async function showValidationErrorModal(
+  issues: string[],
+  options?: { title?: string; intro?: string },
+): Promise<void> {
+  const cleaned = issues.map((issue) => issue.trim()).filter(Boolean)
+  if (!cleaned.length) return
+
+  const title = options?.title ?? 'Champs incomplets'
+  const intro = options?.intro ?? 'Veuillez corriger les points suivants :'
+  const message = [
+    translateUi(intro),
+    '',
+    ...cleaned.map((issue) => `• ${translateUi(issue)}`),
+  ].join('\n')
+
+  const { showModal } = useAppModal()
+  await showModal({
+    type: 'ERROR',
+    title: translateUi(title),
+    message,
+  })
+}

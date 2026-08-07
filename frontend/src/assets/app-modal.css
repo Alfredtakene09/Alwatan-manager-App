@@ -71,6 +71,7 @@
   font-size: 0.9rem;
   line-height: 1.55;
   color: var(--text-muted);
+  white-space: pre-line;
 }
 
 .app-modal__existing {

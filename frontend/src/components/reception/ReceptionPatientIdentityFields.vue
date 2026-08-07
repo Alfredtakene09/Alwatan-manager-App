@@ -39,6 +39,16 @@ const labels = computed(() => {
     male: uiText('Masculin'),
   }
 })
+
+const phoneHint = computed(() => {
+  void localeCode.value
+  const digits = phone.value.replace(/\D/g, '')
+  if (!phone.value.trim()) return ''
+  if (digits.length < 6) {
+    return uiText('Au moins 6 chiffres requis pour valider.')
+  }
+  return ''
+})
 </script>
 
 <template>
@@ -50,13 +60,16 @@ const labels = computed(() => {
         :placeholder="uiText('Ex. Fatimé Abakar')"
         required
       />
-      <UiInput
-        v-model="phone"
-        :label="labels.phone"
-        :placeholder="uiText('06 XX XX XX XX')"
-        :icon="Phone"
-        required
-      />
+      <div class="phone-field">
+        <UiInput
+          v-model="phone"
+          :label="labels.phone"
+          :placeholder="uiText('06 XX XX XX XX')"
+          :icon="Phone"
+          required
+        />
+        <p v-if="phoneHint" class="phone-field__hint">{{ phoneHint }}</p>
+      </div>
     </div>
 
     <div class="patient-identity__row patient-identity__row--age-gender">
@@ -127,6 +140,20 @@ const labels = computed(() => {
 
 .patient-identity__row--name-phone {
   grid-template-columns: 1fr 1fr;
+}
+
+.phone-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.phone-field__hint {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--danger-600, #dc2626);
 }
 
 .patient-identity__row--age-gender {

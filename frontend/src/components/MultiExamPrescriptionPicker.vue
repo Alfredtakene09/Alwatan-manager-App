@@ -64,6 +64,11 @@ const props = withDefaults(
     serviceId?: string | null
     /** Bouton Consultation (désactivé pour patient externe : le service suffit). */
     showConsultation?: boolean
+    /**
+     * Masque l’onglet Consultation (acte déjà engagé côté parent,
+     * ex. clic « Consulter » sur la file médecin).
+     */
+    hideConsultationTab?: boolean
     /** Montant opération (FCFA) — modifiable à la sélection, appliqué aux % parties prenantes. */
     operationAmountFcfa?: number | null
   }>(),
@@ -73,6 +78,7 @@ const props = withDefaults(
     commentKinds: () => INVOICE_EXAM_COMMENT_KINDS,
     hospitalisationDays: null,
     showConsultation: true,
+    hideConsultationTab: false,
     operationAmountFcfa: null,
   },
 )
@@ -197,7 +203,7 @@ async function refreshCatalogState() {
   catalogReady.value = true
 
   if (activePanel.value === 'consultation') {
-    if (!props.showConsultation) {
+    if (!props.showConsultation || props.hideConsultationTab) {
       activePanel.value = visibleKinds.value.includes('examen')
         ? 'examen'
         : specialtyTabs.value[0]
@@ -740,7 +746,9 @@ watch(
 watch(
   consultationSelected,
   (selected) => {
-    if (selected && props.showConsultation) activePanel.value = 'consultation'
+    if (selected && props.showConsultation && !props.hideConsultationTab) {
+      activePanel.value = 'consultation'
+    }
   },
   { immediate: true },
 )
@@ -750,7 +758,7 @@ watch(
   <div class="multi-exam-picker">
     <div class="multi-exam-picker__tabs" role="tablist" :aria-label="uiText('Types d\'examens')">
       <button
-        v-if="showConsultation"
+        v-if="showConsultation && !hideConsultationTab"
         type="button"
         class="multi-exam-picker__tab multi-exam-picker__tab--consultation"
         :class="{ 'multi-exam-picker__tab--active': activePanel === 'consultation' }"

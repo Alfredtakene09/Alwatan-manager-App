@@ -654,6 +654,9 @@ export default {
     '1 examen sélectionné': '1 examen sélectionné',
     '{n} examens sélectionnés': '{n} examens sélectionnés',
     'Aucun examen laboratoire disponible.': 'Aucun examen laboratoire disponible.',
+    'Aucun examen {kind} disponible.': 'Aucun examen {kind} disponible.',
+    'Cliquez un examen pour le sélectionner ou le retirer.':
+      'Cliquez un examen pour le sélectionner ou le retirer.',
     'Motif, examen clinique, diagnostic…': 'Motif, examen clinique, diagnostic…',
     'Les examens sélectionnés sont déjà prescrits sur ce dossier. Choisissez d\'autres examens.':
       'Les examens sélectionnés sont déjà prescrits sur ce dossier. Choisissez d\'autres examens.',
@@ -673,6 +676,27 @@ export default {
     'Sous-total {amount}': 'Sous-total {amount}',
     'Validation…': 'Validation…',
     'Nom et prénom': 'Nom et prénom',
+    'Champs incomplets': 'Champs incomplets',
+    'Veuillez corriger les points suivants :': 'Veuillez corriger les points suivants :',
+    'Indiquez le nom et le prénom du patient.': 'Indiquez le nom et le prénom du patient.',
+    'Le prénom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).':
+      'Le prénom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).',
+    'Le nom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).':
+      'Le nom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).',
+    'Le téléphone est obligatoire (au moins 6 chiffres).':
+      'Le téléphone est obligatoire (au moins 6 chiffres).',
+    'Le téléphone doit contenir au moins 6 chiffres.':
+      'Le téléphone doit contenir au moins 6 chiffres.',
+    'Au moins 6 chiffres requis pour valider.': 'Au moins 6 chiffres requis pour valider.',
+    'Indiquez un âge valide.': 'Indiquez un âge valide.',
+    'Sélectionnez un service.': 'Sélectionnez un service.',
+    'Sélectionnez un médecin.': 'Sélectionnez un médecin.',
+    'Indiquez un montant de consultation supérieur à 0.':
+      'Indiquez un montant de consultation supérieur à 0.',
+    'La réduction ne peut pas dépasser le montant de la consultation.':
+      'La réduction ne peut pas dépasser le montant de la consultation.',
+    'Le total à payer doit être supérieur à 0.': 'Le total à payer doit être supérieur à 0.',
+    'Indiquez un montant de consultation valide.': 'Indiquez un montant de consultation valide.',
     "Unité d'âge": "Unité d'âge",
     Ans: 'Ans',
     Mois: 'Mois',

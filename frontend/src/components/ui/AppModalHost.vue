@@ -25,6 +25,8 @@ const titleText = computed(() => {
 })
 const messageText = computed(() => {
   void localeCode.value
+  // Messages multi-lignes déjà construits (validation…) : ne pas écraser les retours à la ligne
+  if (state.message.includes('\n')) return state.message
   return uiText(state.message)
 })
 const confirmText = computed(() => {

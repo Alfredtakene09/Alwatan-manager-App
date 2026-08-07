@@ -33,6 +33,7 @@ import PatientMedicalHistory, {
 } from '@/components/dossier/PatientMedicalHistory.vue'
 import { emptyExamsByKind, emptyExamCommentsByKind, countExamsByKind, filterInvoiceExamComments, type ExamsByKind, type ExamCommentsByKind } from '@/lib/exam-catalog'
 import {
+  CLINICAL_CONSULTATION_EXAM_LABEL,
   hasClinicalConsultationSelected,
   isDirectClinicalConsultationPrescription,
   type PharmacyOrdonnanceLine,
@@ -250,6 +251,14 @@ function resetExamForm() {
   operationAmountFcfa.value = null
 }
 
+/** Clic « Consulter » = consultation déjà engagée (diagnostic, pharmacie, enregistrement). */
+function preselectClinicalConsultation() {
+  selectedExamsByKind.value = {
+    ...emptyExamsByKind(),
+    specialty: [CLINICAL_CONSULTATION_EXAM_LABEL],
+  }
+}
+
 async function loadRecentHistory(patientId: string | undefined) {
   recentHistory.value = []
   if (!patientId) return
@@ -269,6 +278,7 @@ async function loadRecentHistory(patientId: string | undefined) {
 async function openConsultModal(id: string) {
   modalVisitId.value = id
   resetExamForm()
+  preselectClinicalConsultation()
   message.value = ''
   recentHistory.value = []
 
@@ -570,6 +580,7 @@ onMounted(async () => {
                 v-model:hospitalisation-days="hospitalisationDays"
                 v-model:operation-amount-fcfa="operationAmountFcfa"
                 :doctor-id="auth.user?.id"
+                :hide-consultation-tab="true"
               />
             </section>
 
