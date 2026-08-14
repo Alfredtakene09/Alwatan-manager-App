@@ -10,7 +10,7 @@ const router = Router();
 router.use(requireAuth);
 
 function canReadFactures(role: AppUserRole) {
-  return canAccessModule(role, "factures") || canAccessModule(role, "reception");
+  return canAccessModule(role, "factures");
 }
 
 router.get("/", async (req, res) => {

@@ -11,7 +11,6 @@ import {
   unitsToPackaging,
 } from '@/lib/logistics-packaging'
 import { resolvePackagingMode } from '@/lib/logistics-units'
-import { statusBadge } from '@/lib/datatable-defaults'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { LogisticsItemRecord } from '@/components/logistique/LogisticsItemsPanel.vue'
 import type { LogisticsSupplierRecord } from '@/components/logistique/LogisticsSuppliersPanel.vue'
@@ -23,7 +22,7 @@ import UiTextarea from '@/components/ui/UiTextarea.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import '@/assets/simple-table.css'
 
 type MovementType = 'ENTRY' | 'EXIT' | 'ADJUSTMENT'
 
@@ -192,36 +191,6 @@ const tableRows = computed(() =>
     }
   }),
 )
-
-const columns = [
-  {
-    data: 'dateSort',
-    title: 'Date',
-    responsivePriority: 1,
-    render: (_d: number, _t: string, row: { date: string }) => `<span>${row.date}</span>`,
-  },
-  {
-    data: 'itemName',
-    title: 'Article',
-    responsivePriority: 1,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  {
-    data: 'typeLabel',
-    title: 'Type',
-    responsivePriority: 2,
-    render: (label: string, _t: string, row: { typeVariant: string }) =>
-      statusBadge(label, row.typeVariant as 'success' | 'danger' | 'warning'),
-  },
-  {
-    data: 'quantitySort',
-    title: 'Qté',
-    responsivePriority: 2,
-    render: (_d: number, _t: string, row: { quantity: string }) => row.quantity,
-  },
-  { data: 'stockAfter', title: 'Stock', responsivePriority: 3 },
-  { data: 'supplierName', title: 'Fourn.', responsivePriority: 4 },
-]
 
 function apiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error) && typeof error.response?.data?.error === 'string') {
@@ -445,17 +414,43 @@ defineExpose({ reload })
 
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
 
-    <p v-if="!loading && !movements.length" class="empty">Aucun mouvement enregistré</p>
-    <UiDataTable
-      v-else
-      fill
-      table-key="logistics-stock-movements"
-      compact
-      :data="tableRows"
-      :columns="columns"
-      :loading="loading"
-      loading-label="Chargement des mouvements…"
-    />
+    <div class="simple-table-shell simple-table-shell--fill">
+      <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+        <span class="simple-table-spinner" aria-hidden="true" />
+        Chargement des mouvements…
+      </div>
+      <div class="simple-table-scroll">
+        <p v-if="!loading && !tableRows.length" class="simple-table__empty">Aucun mouvement enregistré</p>
+        <div v-else class="simple-table-wrap">
+          <table class="simple-table">
+            <thead>
+              <tr>
+                <th class="simple-table__num">#</th>
+                <th>Date</th>
+                <th>Article</th>
+                <th>Type</th>
+                <th>Qté</th>
+                <th>Stock</th>
+                <th>Fourn.</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in tableRows" :key="row.id">
+                <td class="simple-table__num">{{ index + 1 }}</td>
+                <td><span class="st-date">{{ row.date }}</span></td>
+                <td><span class="st-name">{{ row.itemName }}</span></td>
+                <td>
+                  <span class="st-badge" :class="`st-badge--${row.typeVariant}`">{{ row.typeLabel }}</span>
+                </td>
+                <td><span class="st-muted">{{ row.quantity }}</span></td>
+                <td><span class="st-muted">{{ row.stockAfter }}</span></td>
+                <td><span class="st-muted">{{ row.supplierName }}</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </PageTableSection>
 
   <UiFormModal
@@ -616,13 +611,6 @@ defineExpose({ reload })
 <style scoped>
 .panel-alert {
   margin-bottom: 1rem;
-}
-
-.empty {
-  text-align: center;
-  color: var(--text-light);
-  padding: 2rem 1rem;
-  font-size: 0.875rem;
 }
 
 .form-grid {

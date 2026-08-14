@@ -2,6 +2,10 @@ import { CLINIC, clinicTaxLine } from './clinic'
 import { formatFcfa } from './format-fcfa'
 import { getAppLocale, translateUi, translateUiLocale } from '@/i18n/translate'
 import { formatAppDate, formatAppTime, intlLocaleFor } from '@/i18n/locale-format'
+import {
+  extractBasePanelLabel,
+  normalizeLabLabelKey,
+} from '@/lib/lab-prescribed-panels'
 
 const formatFcfaPrint = formatFcfa
 const t = translateUi
@@ -1163,25 +1167,26 @@ export function buildThermalClinicHeaderHtml(options?: {
 }
 
 function buildGroupedExamInvoiceRows(examLines: LabExamInvoiceLine[]) {
+  const summaryLines = summarizeExamLinesByPanel(examLines)
   const renderRow = (line: LabExamInvoiceLine, kind: ExamKindSlug) => `
       <div class="receipt-invoice__line receipt-invoice__exam-row receipt-invoice__exam-row--${kind}">
-        <span>${escapeHtml(line.label)}</span>
+        <span>${escapeHtml(t(line.label))}</span>
         <strong>${formatFcfaPrint(line.amountFcfa)}</strong>
       </div>`
 
-  if (examLines.length === 1) {
-    const line = examLines[0]
+  if (summaryLines.length === 1) {
+    const line = summaryLines[0]
     return renderRow(line, line.kind ?? 'examen')
   }
 
-  const kinds = new Set(examLines.map((line) => line.kind ?? 'examen'))
+  const kinds = new Set(summaryLines.map((line) => line.kind ?? 'examen'))
   if (kinds.size === 1) {
     const kind = [...kinds][0] as ExamKindSlug
-    return examLines.map((line) => renderRow(line, kind)).join('')
+    return summaryLines.map((line) => renderRow(line, kind)).join('')
   }
 
   const grouped = emptyExamLinesByKind()
-  for (const line of examLines) {
+  for (const line of summaryLines) {
     grouped[line.kind ?? 'examen'].push(line)
   }
 
@@ -1280,6 +1285,9 @@ export function buildConsultationReceiptHtml(data: ConsultationReceiptData): str
   const { shortDate, timeShort } = parseReceiptDateTime(data.date, true)
   const consultNo = data.invoiceNumber ?? '—'
   const dateLabel = `${shortDate} ${timeShort}`
+  const grossFcfa = data.amount > 0 ? data.amount : data.total + Math.max(0, data.reduction)
+  const reductionFcfa = Math.max(0, data.reduction)
+  const netFcfa = data.total > 0 ? data.total : Math.max(0, grossFcfa - reductionFcfa)
 
   const metaRows = [
     thermalMetaRow('Date', dateLabel, ''),
@@ -1288,9 +1296,15 @@ export function buildConsultationReceiptHtml(data: ConsultationReceiptData): str
     ...(data.processedBy ? [thermalMetaRow('Par', data.processedBy, '')] : []),
   ].join('')
 
+  const priceRows = [
+    thermalMetaRow('Prix consultation', formatFcfaPrint(grossFcfa), ''),
+    ...(reductionFcfa > 0 ? [thermalMetaRow('Réduction', `- ${formatFcfaPrint(reductionFcfa)}`, '')] : []),
+    thermalMetaRow('Net payé', formatFcfaPrint(netFcfa), ''),
+  ].join('')
+
   return `
 <div class="thermal-receipt thermal-receipt--ticket">
-  ${buildThermalTicketHeadHtml({ title: 'Clinique Alwatan Consultation', number: consultNo })}
+  ${buildThermalTicketHeadHtml({ title: 'Reçu de consultation', number: consultNo })}
   <hr class="thermal-receipt__rule" />
 
   <div class="thermal-receipt__fields">
@@ -1299,10 +1313,11 @@ export function buildConsultationReceiptHtml(data: ConsultationReceiptData): str
 
   <hr class="thermal-receipt__rule" />
   <div class="thermal-receipt__fields">
-    ${thermalMetaRow('TOTAL', formatFcfaPrint(data.total), '')}
+    ${priceRows}
   </div>
 
   <hr class="thermal-receipt__rule" />
+  <p class="thermal-receipt__thanks" style="font-weight:700;">Payé</p>
   <p class="thermal-receipt__thanks">Merci</p>
 </div>`
 }
@@ -1382,6 +1397,29 @@ export type LabExamInvoiceLine = {
   kind?: ExamKindSlug
 }
 
+/**
+ * Ticket / facture : une ligne par examen principal (Biochimie, NFS…),
+ * sans détail des formulaires, montants additionnés.
+ */
+export function summarizeExamLinesByPanel(examLines: LabExamInvoiceLine[]): LabExamInvoiceLine[] {
+  const order: string[] = []
+  const map = new Map<string, LabExamInvoiceLine>()
+  for (const line of examLines) {
+    const base = extractBasePanelLabel(line.label).trim() || line.label.trim()
+    if (!base) continue
+    const kind = line.kind ?? 'examen'
+    const key = `${kind}::${normalizeLabLabelKey(base)}`
+    const existing = map.get(key)
+    if (!existing) {
+      map.set(key, { label: base, amountFcfa: Math.max(0, Number(line.amountFcfa) || 0), kind })
+      order.push(key)
+      continue
+    }
+    existing.amountFcfa += Math.max(0, Number(line.amountFcfa) || 0)
+  }
+  return order.map((key) => map.get(key)!)
+}
+
 export type LabExamInvoiceData = {
   patientCode: string
   patientName: string
@@ -1448,7 +1486,7 @@ export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string
     ? `<p class="thermal-receipt__note" dir="ltr">${escapeHtml(kindComment)}</p>`
     : ''
 
-  const examRows = data.examLines
+  const examRows = summarizeExamLinesByPanel(data.examLines)
     .map((line) => thermalMetaRow(line.label, formatFcfaPrint(line.amountFcfa), ''))
     .join('')
 

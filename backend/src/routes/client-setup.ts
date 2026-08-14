@@ -34,6 +34,14 @@ function buildUrl(scheme: "http" | "https", host: string, port?: number): string
   return `${scheme}://${host}:${p}`;
 }
 
+function isTailscaleHost(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, "").split(":")[0] ?? "";
+  const m = /^100\.(\d+)\./.exec(h);
+  if (!m) return false;
+  const second = Number(m[1]);
+  return second >= 64 && second <= 127;
+}
+
 function resolveAccessBases(req: Request): {
   primary: string;
   wifi: string | null;
@@ -68,18 +76,38 @@ function resolveAccessBases(req: Request): {
     if (!all.includes(value)) all.push(value);
   };
 
+  // Wi‑Fi puis hotspot puis Tailscale (jamais Tailscale en premier)
   push(wifi);
-  push(tailscale);
   push(hotspot);
-  push(requestBase);
+  push(tailscale);
+  if (requestBase) {
+    try {
+      const reqHost = new URL(requestBase).hostname;
+      if (!isTailscaleHost(reqHost) || (!wifi && !hotspot)) {
+        push(requestBase);
+      }
+    } catch {
+      push(requestBase);
+    }
+  }
 
   if (all.length === 0) {
     const fallbackIp = getLanIpv4() ?? getTailscaleIpv4() ?? "127.0.0.1";
     push(buildUrl(scheme, fallbackIp, port));
   }
 
+  // primary = première adresse non-Tailscale si possible
+  const primaryNonTs =
+    all.find((base) => {
+      try {
+        return !isTailscaleHost(new URL(base).hostname);
+      } catch {
+        return true;
+      }
+    }) ?? all[0];
+
   return {
-    primary: all[0],
+    primary: primaryNonTs,
     wifi,
     tailscale,
     hotspot,
@@ -273,8 +301,19 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "function Test-AlwatanUrl([string]$Url) {",
     "  if (-not $Url) { return $false }",
     "  try {",
-    "    $r = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 3",
+    "    $base = $Url.TrimEnd('/')",
+    "    $r = Invoke-WebRequest -Uri ($base + '/api/health') -UseBasicParsing -TimeoutSec 3",
     "    return ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400)",
+    "  } catch { return $false }",
+    "}",
+    "",
+    "function Test-IsTailscaleUrl([string]$Url) {",
+    "  if (-not $Url) { return $false }",
+    "  try {",
+    "    $h = ([uri]$Url).Host",
+    "    if ($h -notmatch '^100\\.(\\d+)\\.') { return $false }",
+    "    $n = [int]$Matches[1]",
+    "    return ($n -ge 64 -and $n -le 127)",
     "  } catch { return $false }",
     "}",
     "",
@@ -357,8 +396,10 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "}",
     "",
     "$candidates = New-Object System.Collections.Generic.List[string]",
-    "if ($wifi) { [void]$candidates.Add($wifi) }",
+    "# Wi-Fi d'abord — ne jamais placer Tailscale en tête même si $wifi est vide/erroné",
+    "if ($wifi -and -not (Test-IsTailscaleUrl $wifi)) { [void]$candidates.Add($wifi) }",
     "if ($ts -and $ts -ne $wifi) { [void]$candidates.Add($ts) }",
+    "if ($wifi -and (Test-IsTailscaleUrl $wifi) -and -not $candidates.Contains($wifi)) { [void]$candidates.Add($wifi) }",
     "",
     "$opened = $false",
     "foreach ($url in $candidates) {",
@@ -370,7 +411,10 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "}",
     "",
     "if (-not $opened) {",
-    "  $fallback = if ($wifi) { $wifi } elseif ($ts) { $ts } else { $null }",
+    "  $fallback = $null",
+    "  if ($wifi -and -not (Test-IsTailscaleUrl $wifi)) { $fallback = $wifi }",
+    "  elseif ($wifi) { $fallback = $wifi }",
+    "  elseif ($ts) { $fallback = $ts }",
     "  if ($fallback) { Open-AlwatanUrl $fallback }",
     "}",
   ].join("\r\n");
@@ -523,9 +567,23 @@ router.get("/install-desktop-shortcut.cmd", (req, res) => {
     return;
   }
 
+  // Jamais d’IP Tailscale comme URL Wi‑Fi principale
+  let wifiUrl = bases.wifi ?? bases.hotspot ?? bases.primary;
+  try {
+    if (wifiUrl && isTailscaleHost(new URL(wifiUrl).hostname)) {
+      wifiUrl = bases.hotspot ?? bases.primary;
+      if (wifiUrl && isTailscaleHost(new URL(wifiUrl).hostname)) {
+        // dernier recours : garder l’IP demandée mais signaler via logs clients
+        wifiUrl = bases.primary;
+      }
+    }
+  } catch {
+    /* keep wifiUrl */
+  }
+
   const body = buildDesktopShortcutCmd({
-    apiBase: bases.wifi ?? bases.primary,
-    wifiUrl: bases.wifi ?? bases.primary,
+    apiBase: wifiUrl,
+    wifiUrl,
     tailscaleUrl: bases.tailscale ?? "",
   });
 

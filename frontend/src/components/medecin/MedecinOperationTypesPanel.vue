@@ -4,7 +4,6 @@ import { Plus, RefreshCw, Save, Stethoscope } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
-import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import { clinicPercentFromSplits, validateInterventionPercents } from '@/lib/intervention-splits'
 import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
 import { useAppI18n } from '@/i18n/useAppI18n'
@@ -15,7 +14,8 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
+import '@/assets/simple-table.css'
 
 type Category = 'MAJEURE_A' | 'MOYENNE_B' | 'PETITE_C'
 
@@ -154,35 +154,6 @@ const tableRows = computed(() => {
     isActive: item.active,
   }))
 })
-
-const columns = [
-  { data: 'label', title: 'Libellé', render: (v: string) => `<span class="dt-name">${v}</span>` },
-  { data: 'code', title: 'Code' },
-  { data: 'category', title: 'Catégorie' },
-  {
-    data: 'priceSort',
-    title: 'Coût total',
-    render: (_d: number, _t: string, row: { price: string }) =>
-      `<span class="dt-amount">${row.price}</span>`,
-  },
-  { data: 'splits', title: 'Chirurgien / Assist. / Clinique' },
-  { data: 'surgeons', title: 'Chirurgiens autorisés' },
-  { data: 'assistant', title: 'Assistant' },
-  {
-    data: 'statusLabel',
-    title: 'Statut',
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: 'Actions',
-    orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog',
-    render: (_d: unknown, _t: string, row: { id: string; toggleLabel: string }) =>
-      catalogRowActionsHtml(row),
-  },
-]
 
 function resetMessages() {
   message.value = ''
@@ -466,15 +437,59 @@ onMounted(() => {
       </div>
 
       <div class="table-panel-scroll">
-        <UiDataTable
-          :table-key="`medecin-operation-types-${searchQuery}`"
-          compact
-          :data="tableRows"
-          :columns="columns"
-          :loading="loading"
-          loading-label="Chargement des opérations…"
-          @action="onTableAction"
-        />
+        <div class="simple-table-shell">
+          <div
+            v-if="loading"
+            class="simple-table-overlay" role="status"
+            aria-live="polite"
+          >
+            <span class="simple-table-spinner" aria-hidden="true" />
+            Chargement des opérations…
+          </div>
+          <div class="simple-table-scroll">
+            <div class="simple-table-wrap">
+              <table class="simple-table">
+                <thead>
+                  <tr>
+                    <th class="simple-table__num">#</th>
+                    <th>Libellé</th>
+                    <th>Code</th>
+                    <th>Catégorie</th>
+                    <th>Coût total</th>
+                    <th>Chirurgien / Assist. / Clinique</th>
+                    <th>Chirurgiens autorisés</th>
+                    <th>Assistant</th>
+                    <th>Statut</th>
+                    <th class="simple-table__actions-head">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in tableRows" :key="row.id">
+                    <td class="simple-table__num">{{ index + 1 }}</td>
+                    <td><span class="st-name">{{ row.label }}</span></td>
+                    <td>{{ row.code }}</td>
+                    <td>{{ row.category }}</td>
+                    <td><span class="st-amount">{{ row.price }}</span></td>
+                    <td>{{ row.splits }}</td>
+                    <td>{{ row.surgeons }}</td>
+                    <td>{{ row.assistant }}</td>
+                    <td>
+                      <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                    </td>
+                    <td class="simple-table__actions">
+                      <StCatalogActions
+                        :id="row.id"
+                        :is-active="row.isActive"
+                        :toggle-label="row.toggleLabel"
+                        @action="onTableAction"
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
     </UiCard>
 

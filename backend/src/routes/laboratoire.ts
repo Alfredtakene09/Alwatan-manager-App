@@ -9,6 +9,8 @@ import {
   labsWaitingWhere,
   labsCompletedWhere,
   parsePrescribedExamsByKind,
+  formatGroupedPrescribedLabels,
+  countGroupedPrescribedPanels,
 } from "../lib/lab-notes.js";
 import { normalizeExamFormLabelKey } from "../lib/exam-lab-panel.js";
 import {
@@ -209,7 +211,7 @@ router.get("/alerts", async (_req, res) => {
       continue;
     }
     const exams = parsePrescribedExamsByKind(visit.consultation?.clinicalNotes).examen;
-    const examCount = exams.length;
+    const examCount = countGroupedPrescribedPanels(exams);
     const sentAt = visit.consultation?.labSentToLabAt ?? null;
     const recent = Boolean(sentAt && sentAt.getTime() >= recentCutoff);
     waitingExamCount += examCount;
@@ -219,7 +221,7 @@ router.get("/alerts", async (_req, res) => {
       patientCode: visit.patient.code,
       patientName: `${visit.patient.firstName} ${visit.patient.lastName}`.trim(),
       examCount,
-      exams: exams.slice(0, 6),
+      exams: formatGroupedPrescribedLabels(exams).slice(0, 6),
       labSentToLabAt: sentAt ? sentAt.toISOString() : null,
       recent,
     });

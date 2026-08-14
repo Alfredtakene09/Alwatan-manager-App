@@ -66,7 +66,7 @@ type CashierBucket = {
 
 function roleSortOrder(role: UserRole) {
   if (role === UserRole.COMPTABLE) return 0;
-  if (role === UserRole.RECEPTIONNISTE) return 1;
+  if (role === UserRole.GESTIONNAIRE) return 1;
   return 2;
 }
 
@@ -177,6 +177,7 @@ function sumRoleTotals(cashiers: CashierBucket[]) {
   let receptionFcfa = 0;
   let comptabiliteFcfa = 0;
   for (const row of cashiers) {
+    // Historique : anciennes caisses réceptionniste. Nouveau : gestionnaire → comptabilité.
     if (row.cashier.role === UserRole.RECEPTIONNISTE) {
       receptionFcfa += row.systemTotalFcfa;
     } else {

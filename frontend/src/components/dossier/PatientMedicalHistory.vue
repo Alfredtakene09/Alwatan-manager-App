@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ChevronDown,
@@ -18,6 +18,11 @@ import { fullName } from '@/lib/roles'
 import { getLabFormPanel, getFilledLabPanelSections, labFieldCommentKey, type LabPanelSlug } from '@/lib/lab-form-panels'
 import { useLabPanelsStore } from '@/stores/lab-panels'
 import type { PharmacyOrdonnanceLine } from '@/lib/lab-notes'
+import {
+  groupPrescribedByPanel,
+  formatPanelGroupDetails,
+  type PrescribedPanelChipGroup,
+} from '@/lib/lab-prescribed-panels'
 import { printPharmacyOrdonnance } from '@/lib/pharmacy-ordonnance-print'
 import UiButton from '@/components/ui/UiButton.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
@@ -58,22 +63,42 @@ const props = defineProps<{
     gender?: string | null
   } | null
   expandFirst?: boolean
+  /** Visite encore ouverte : affiche « Continuer la consultation » sur cette entrée. */
+  continueVisitId?: string | null
+  continueLoading?: boolean
+}>()
+
+const emit = defineEmits<{
+  'continue-consultation': [visitId: string]
 }>()
 
 const router = useRouter()
 const labPanels = useLabPanelsStore()
-const { uiText, dateText, timeText, localeCode } = useAppI18n()
+const { uiText, dateText, timeText, localeCode, t } = useAppI18n()
 const expandedVisitId = ref<string | null>(null)
+/** Un seul formulaire labo déplié à la fois (compact, surtout tablette). */
+const expandedPanelKey = ref<string | null>(null)
+
+const continueConsultationLabel = computed(() => {
+  void localeCode.value
+  return t('common.continueConsultation')
+})
 
 onMounted(() => {
   labPanels.fetchPanels()
 })
 
 watch(
-  () => [props.entries, props.expandFirst] as const,
-  ([entries, expandFirst]) => {
+  () => [props.entries, props.expandFirst, props.continueVisitId] as const,
+  ([entries, expandFirst, continueVisitId]) => {
+    if (continueVisitId && entries.some((entry) => entry.visitId === continueVisitId)) {
+      expandedVisitId.value = continueVisitId
+      expandedPanelKey.value = null
+      return
+    }
     if (expandFirst !== false && entries.length && !expandedVisitId.value) {
       expandedVisitId.value = entries[0]!.visitId
+      expandedPanelKey.value = null
     }
   },
   { immediate: true },
@@ -112,6 +137,10 @@ function otherPrescribedOf(entry: MedicalHistoryEntry) {
   return entry.prescribedExams.filter((exam) => !known.has(exam))
 }
 
+function prescribedExamGroups(entry: MedicalHistoryEntry): PrescribedPanelChipGroup[] {
+  return groupPrescribedByPanel([...labExamsOf(entry), ...otherPrescribedOf(entry)])
+}
+
 function formatPharmacyLine(line: PharmacyOrdonnanceLine) {
   void localeCode.value
   const parts = [line.name]
@@ -136,7 +165,40 @@ function statusLabel(status: string) {
 }
 
 function toggleVisit(visitId: string) {
-  expandedVisitId.value = expandedVisitId.value === visitId ? null : visitId
+  if (expandedVisitId.value === visitId) {
+    expandedVisitId.value = null
+    expandedPanelKey.value = null
+    return
+  }
+  expandedVisitId.value = visitId
+  expandedPanelKey.value = null
+}
+
+function panelExpandKey(visitId: string, slug: string) {
+  return `${visitId}:${slug}`
+}
+
+function isPanelExpanded(visitId: string, slug: string) {
+  return expandedPanelKey.value === panelExpandKey(visitId, slug)
+}
+
+function togglePanel(visitId: string, slug: string) {
+  const key = panelExpandKey(visitId, slug)
+  expandedPanelKey.value = expandedPanelKey.value === key ? null : key
+}
+
+function panelSummary(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
+  void localeCode.value
+  const parts = panelSections(entry, slug).flatMap((section) =>
+    section.fields.map((field) => {
+      const label = uiText(field.label)
+      const unit = field.unit && field.value ? ` ${field.unit}` : ''
+      return `${label}: ${field.value || '—'}${unit}`
+    }),
+  )
+  if (!parts.length) return uiText('Aucune valeur détaillée.')
+  if (parts.length <= 2) return parts.join(' · ')
+  return `${parts.slice(0, 2).join(' · ')} · +${parts.length - 2}`
 }
 
 function openLabDossier(visitId: string) {
@@ -208,54 +270,71 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
       />
 
       <article class="timeline-card">
-        <button type="button" class="timeline-card__head" @click="toggleVisit(entry.visitId)">
-          <div class="timeline-card__title-row">
-            <component :is="expandedVisitId === entry.visitId ? ChevronDown : ChevronRight" :size="16" />
-            <strong>{{ formatDate(entry.date) }}</strong>
-            <span class="timeline-card__time">{{ formatTime(entry.date) }}</span>
-            <span class="badge badge--status">{{ statusLabel(entry.status) }}</span>
-          </div>
-          <div class="timeline-card__badges">
-            <span v-if="entry.diagnosis" class="badge badge--diagnosis">
-              <ClipboardList :size="12" />
-              {{ uiText('Diagnostic') }}
-            </span>
-            <span v-if="entry.doctorComment" class="badge badge--comment">
-              <MessageSquare :size="12" />
-              {{ uiText('Note finale') }}
-            </span>
-            <span v-if="pharmacyLines(entry).length" class="badge badge--pharmacy">
-              <PillBottle :size="12" />
-              {{ pharmacyLines(entry).length }}
-            </span>
-            <span v-if="labExamsOf(entry).length || otherPrescribedOf(entry).length" class="badge badge--exam">
-              <FlaskConical :size="12" />
-              {{ labExamsOf(entry).length + otherPrescribedOf(entry).length }}
-            </span>
-            <span v-if="operationsOf(entry).length" class="badge badge--operation">
-              <Scissors :size="12" />
-              {{ operationsOf(entry).length }}
-            </span>
-            <span v-if="entry.labPanels.length" class="badge badge--result">
-              {{ translateTemplate('{n} résultat(s)', { n: entry.labPanels.length }) }}
-            </span>
-          </div>
-          <p v-if="entry.diagnosis && expandedVisitId !== entry.visitId" class="timeline-card__preview">
-            {{ entry.diagnosis }}
-          </p>
-          <p
-            v-else-if="entry.doctorComment && expandedVisitId !== entry.visitId"
-            class="timeline-card__preview"
+        <div class="timeline-card__top">
+          <button type="button" class="timeline-card__head" @click="toggleVisit(entry.visitId)">
+            <div class="timeline-card__title-row">
+              <component :is="expandedVisitId === entry.visitId ? ChevronDown : ChevronRight" :size="16" />
+              <strong>{{ formatDate(entry.date) }}</strong>
+              <span class="timeline-card__time">{{ formatTime(entry.date) }}</span>
+              <span class="badge badge--status">{{ statusLabel(entry.status) }}</span>
+            </div>
+            <div class="timeline-card__badges">
+              <span v-if="entry.diagnosis" class="badge badge--diagnosis">
+                <ClipboardList :size="12" />
+                {{ uiText('Diagnostic') }}
+              </span>
+              <span v-if="entry.doctorComment" class="badge badge--comment">
+                <MessageSquare :size="12" />
+                {{ uiText('Note finale') }}
+              </span>
+              <span v-if="pharmacyLines(entry).length" class="badge badge--pharmacy">
+                <PillBottle :size="12" />
+                {{ pharmacyLines(entry).length }}
+              </span>
+              <span v-if="prescribedExamGroups(entry).length" class="badge badge--exam">
+                <FlaskConical :size="12" />
+                {{ prescribedExamGroups(entry).length }}
+              </span>
+              <span v-if="operationsOf(entry).length" class="badge badge--operation">
+                <Scissors :size="12" />
+                {{ operationsOf(entry).length }}
+              </span>
+              <span v-if="entry.labPanels.length" class="badge badge--result">
+                {{ translateTemplate('{n} résultat(s)', { n: entry.labPanels.length }) }}
+              </span>
+            </div>
+            <p v-if="entry.diagnosis && expandedVisitId !== entry.visitId" class="timeline-card__preview">
+              {{ entry.diagnosis }}
+            </p>
+            <p
+              v-else-if="entry.doctorComment && expandedVisitId !== entry.visitId"
+              class="timeline-card__preview"
+            >
+              {{ entry.doctorComment }}
+            </p>
+            <p
+              v-else-if="entry.labPanels.length && expandedVisitId !== entry.visitId"
+              class="timeline-card__preview"
+            >
+              {{ entry.labPanels.map((panel) => uiText(panel.label)).join(' · ') }}
+            </p>
+          </button>
+
+          <div
+            v-if="continueVisitId && continueVisitId === entry.visitId"
+            class="timeline-card__continue"
           >
-            {{ entry.doctorComment }}
-          </p>
-          <p
-            v-else-if="entry.labPanels.length && expandedVisitId !== entry.visitId"
-            class="timeline-card__preview"
-          >
-            {{ entry.labPanels.map((panel) => uiText(panel.label)).join(' · ') }}
-          </p>
-        </button>
+            <UiButton
+              variant="primary"
+              size="sm"
+              :icon="Stethoscope"
+              :loading="continueLoading"
+              @click="emit('continue-consultation', entry.visitId)"
+            >
+              {{ continueConsultationLabel }}
+            </UiButton>
+          </div>
+        </div>
 
         <div v-if="expandedVisitId === entry.visitId" class="timeline-card__body">
           <div class="timeline-card__toolbar">
@@ -285,7 +364,10 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
 
           <div v-if="entry.labPanels.length" class="timeline-block">
             <div class="timeline-block__head">
-              <h4>{{ uiText('Résultats labo') }}</h4>
+              <h4>
+                {{ uiText('Résultats labo') }}
+                <span class="timeline-block__count">{{ entry.labPanels.length }}</span>
+              </h4>
               <UiButton
                 v-if="showOpenLabLink && entry.hasLabResults"
                 variant="ghost"
@@ -298,14 +380,34 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
             </div>
 
             <div class="panel-grid">
-              <div v-for="panel in entry.labPanels" :key="panel.slug" class="panel-card">
-                <div class="panel-card__head panel-card__head--static">
+              <div
+                v-for="panel in entry.labPanels"
+                :key="panel.slug"
+                class="panel-card"
+                :class="{ 'panel-card--open': isPanelExpanded(entry.visitId, panel.slug) }"
+              >
+                <button
+                  type="button"
+                  class="panel-card__head"
+                  :aria-expanded="isPanelExpanded(entry.visitId, panel.slug)"
+                  @click="togglePanel(entry.visitId, panel.slug)"
+                >
+                  <component
+                    :is="isPanelExpanded(entry.visitId, panel.slug) ? ChevronDown : ChevronRight"
+                    :size="14"
+                    class="panel-card__chevron"
+                  />
                   <FileText :size="14" />
-                  <span>{{ uiText(panel.label) }}</span>
+                  <span class="panel-card__title">{{ uiText(panel.label) }}</span>
                   <span class="panel-card__count">{{ panel.filledCount }}</span>
-                </div>
-
-                <div class="panel-card__body">
+                </button>
+                <p
+                  v-if="!isPanelExpanded(entry.visitId, panel.slug)"
+                  class="panel-card__summary"
+                >
+                  {{ panelSummary(entry, panel.slug) }}
+                </p>
+                <div v-else class="panel-card__body">
                   <div
                     v-for="section in panelSections(entry, panel.slug)"
                     :key="section.title ?? 'default'"
@@ -333,16 +435,36 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
             </div>
           </div>
 
-          <div v-if="labExamsOf(entry).length || otherPrescribedOf(entry).length" class="timeline-block">
-            <h4>{{ uiText('Examens prescrits') }}</h4>
-            <div class="chip-row">
-              <span
-                v-for="exam in [...labExamsOf(entry), ...otherPrescribedOf(entry)]"
-                :key="`exam-${exam}`"
-                class="mini-chip"
-              >
-                {{ uiText(exam) }}
-              </span>
+          <div
+            v-if="prescribedExamGroups(entry).length || pharmacyLines(entry).length || entry.doctorComment"
+            class="timeline-grid"
+          >
+            <div v-if="prescribedExamGroups(entry).length" class="timeline-block timeline-grid__item">
+              <h4>{{ uiText('Examens prescrits') }}</h4>
+              <div class="chip-row">
+                <span
+                  v-for="group in prescribedExamGroups(entry)"
+                  :key="`exam-${group.panel}`"
+                  class="mini-chip"
+                  :title="formatPanelGroupDetails(group)"
+                >
+                  {{ uiText(group.panel) }} ({{ group.items.length }})
+                </span>
+              </div>
+            </div>
+
+            <div v-if="pharmacyLines(entry).length" class="timeline-block timeline-block--pharmacy timeline-grid__item">
+              <h4>{{ uiText('Ordonnance') }}</h4>
+              <ul class="pharmacy-list">
+                <li v-for="line in pharmacyLines(entry)" :key="`${line.productId}-${line.name}`">
+                  {{ formatPharmacyLine(line) }}
+                </li>
+              </ul>
+            </div>
+
+            <div v-if="entry.doctorComment" class="timeline-block timeline-block--comment timeline-grid__item">
+              <h4>{{ uiText('Commentaire final') }}</h4>
+              <p class="timeline-block__text">{{ entry.doctorComment }}</p>
             </div>
           </div>
 
@@ -358,20 +480,6 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
                 {{ uiText(op) }}
               </span>
             </div>
-          </div>
-
-          <div v-if="pharmacyLines(entry).length" class="timeline-block timeline-block--pharmacy">
-            <h4>{{ uiText('Ordonnance') }}</h4>
-            <ul class="pharmacy-list">
-              <li v-for="line in pharmacyLines(entry)" :key="`${line.productId}-${line.name}`">
-                {{ formatPharmacyLine(line) }}
-              </li>
-            </ul>
-          </div>
-
-          <div v-if="entry.doctorComment" class="timeline-block timeline-block--comment">
-            <h4>{{ uiText('Commentaire final') }}</h4>
-            <p class="timeline-block__text">{{ entry.doctorComment }}</p>
           </div>
         </div>
       </article>
@@ -430,16 +538,31 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
   overflow: hidden;
 }
 
+.timeline-card__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.65rem 0.85rem;
+  padding-right: 0.85rem;
+}
+
 .timeline-card__head {
-  width: 100%;
+  flex: 1 1 14rem;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-  padding: 0.9rem 1rem;
+  padding: 0.9rem 0.15rem 0.9rem 1rem;
   border: 0;
   background: transparent;
   text-align: left;
   cursor: pointer;
+}
+
+.timeline-card__continue {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 0.65rem 0;
 }
 
 .timeline-card__title-row {
@@ -549,6 +672,16 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
   background: rgba(15, 40, 80, 0.03);
 }
 
+.timeline-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+.timeline-grid__item {
+  height: 100%;
+}
+
 .timeline-block--diagnosis {
   background: rgba(124, 58, 237, 0.06);
   border: 1px solid rgba(124, 58, 237, 0.14);
@@ -619,6 +752,25 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
 
 .timeline-block__head h4 {
   margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.timeline-block__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: #0f766e;
+  background: rgba(13, 148, 136, 0.14);
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .pharmacy-list {
@@ -629,7 +781,7 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
 
 .panel-grid {
   display: grid;
-  gap: 0.55rem;
+  gap: 0.4rem;
 }
 
 .panel-card {
@@ -639,30 +791,63 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
   background: #fff;
 }
 
+.panel-card--open {
+  border-color: rgba(13, 148, 136, 0.28);
+}
+
 .panel-card__head {
   width: 100%;
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.55rem 0.7rem;
+  padding: 0.5rem 0.65rem;
   border: 0;
   background: rgba(13, 148, 136, 0.06);
   font-size: 0.8125rem;
   font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
 }
 
-.panel-card__head--static {
-  cursor: default;
+.panel-card__head:hover {
+  background: rgba(13, 148, 136, 0.1);
+}
+
+.panel-card__chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.panel-card__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel-card__count {
   margin-inline-start: auto;
+  flex-shrink: 0;
   color: var(--text-muted);
   font-weight: 500;
 }
 
+.panel-card__summary {
+  margin: 0;
+  padding: 0.4rem 0.65rem 0.55rem;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .panel-card__body {
-  padding: 0.55rem 0.7rem 0.7rem;
+  padding: 0.45rem 0.65rem 0.6rem;
+  border-top: 1px solid rgba(15, 40, 80, 0.06);
 }
 
 .result-empty {
@@ -672,19 +857,19 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
 }
 
 .result-section + .result-section {
-  margin-top: 0.65rem;
+  margin-top: 0.55rem;
 }
 
 .result-section h5 {
-  margin: 0 0 0.35rem;
+  margin: 0 0 0.3rem;
   font-size: 0.75rem;
   color: var(--text-muted);
 }
 
 .result-grid {
   display: grid;
-  grid-template-columns: minmax(7rem, 34%) 1fr;
-  gap: 0.25rem 0.65rem;
+  grid-template-columns: minmax(6rem, 38%) 1fr;
+  gap: 0.2rem 0.5rem;
   margin: 0;
   font-size: 0.8125rem;
 }
@@ -695,6 +880,7 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
 
 .result-grid dd {
   margin: 0;
+  word-break: break-word;
 }
 
 .unit {
@@ -706,5 +892,60 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
   margin: 0.15rem 0 0;
   color: var(--text-muted);
   font-size: 0.75rem;
+  font-style: italic;
+}
+
+@media (max-width: 1024px) {
+  .timeline-card__body {
+    padding: 0 0.75rem 0.75rem;
+    gap: 0.55rem;
+  }
+
+  .timeline-block {
+    padding: 0.55rem 0.65rem;
+  }
+
+  .timeline-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .panel-card__summary {
+    -webkit-line-clamp: 1;
+  }
+
+  .result-grid {
+    grid-template-columns: minmax(5.5rem, 42%) 1fr;
+    font-size: 0.78rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  .timeline-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .timeline-item {
+    grid-template-columns: 8px 1fr;
+    gap: 0.55rem;
+  }
+
+  .timeline-card__head {
+    padding: 0.7rem 0.1rem 0.7rem 0.75rem;
+  }
+
+  .timeline-card__continue {
+    width: 100%;
+    padding: 0 0.75rem 0.65rem;
+  }
+
+  .timeline-card__continue :deep(.ui-btn) {
+    width: 100%;
+  }
+
+  .timeline-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

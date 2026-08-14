@@ -20,24 +20,15 @@ const router = createRouter({
           meta: { module: 'reception', dashboard: true },
         },
         { path: 'reception/etat-patients', name: 'reception-etat', component: () => import('@/views/ReceptionQueueView.vue'), meta: { module: 'reception' } },
-        { path: 'reception/comptabilite', name: 'reception-comptabilite', component: () => import('@/views/ReceptionComptabiliteView.vue'), meta: { module: 'reception' } },
         {
-          path: 'reception/en-attente-paiement',
-          name: 'reception-attente-paiement',
-          component: () => import('@/views/comptabilite/ComptabiliteAttentePaiementView.vue'),
-          meta: { module: 'reception' },
+          path: 'reception/comptabilite',
+          redirect: { path: '/comptabilite/tableau-de-bord', query: { tab: 'historique' } },
         },
-        {
-          path: 'reception/examens-payes',
-          name: 'reception-examens-payes',
-          component: () => import('@/views/comptabilite/ComptabiliteExamensPayesView.vue'),
-          meta: { module: 'reception' },
-        },
+        { path: 'reception/en-attente-paiement', redirect: { path: '/comptabilite/tableau-de-bord', query: { tab: 'attente' } } },
+        { path: 'reception/examens-payes', redirect: '/comptabilite/examens-payes' },
         {
           path: 'reception/examens-payes/reclamations',
-          name: 'reception-examens-reclamations',
-          component: () => import('@/views/comptabilite/ComptabiliteExamReclamationsView.vue'),
-          meta: { module: 'reception' },
+          redirect: '/comptabilite/examens-payes/reclamations',
         },
         {
           path: 'reception/patient-externe',
@@ -118,19 +109,17 @@ const router = createRouter({
           component: () => import('@/views/PatientDossierView.vue'),
           meta: { module: 'dossier-patient' },
         },
-        { path: 'comptabilite', redirect: '/comptabilite/en-attente-paiement' },
+        { path: 'comptabilite', redirect: '/comptabilite/tableau-de-bord' },
         {
           path: 'comptabilite/tableau-de-bord',
           name: 'comptabilite-tableau-de-bord',
           component: () => import('@/views/comptabilite/ComptabiliteEncaissementsDashboardView.vue'),
           meta: { module: 'comptabilite', dashboard: true },
         },
-        { path: 'comptabilite/encaissements', redirect: '/comptabilite/journal-encaissements' },
+        { path: 'comptabilite/encaissements', redirect: { path: '/comptabilite/tableau-de-bord', query: { tab: 'historique' } } },
         {
           path: 'comptabilite/journal-encaissements',
-          name: 'comptabilite-journal-encaissements',
-          component: () => import('@/views/comptabilite/ComptabiliteEncaissementsJournalView.vue'),
-          meta: { module: 'comptabilite' },
+          redirect: { path: '/comptabilite/tableau-de-bord', query: { tab: 'historique' } },
         },
         {
           path: 'hospitalisation',
@@ -148,9 +137,7 @@ const router = createRouter({
         },
         {
           path: 'comptabilite/en-attente-paiement',
-          name: 'comptabilite-attente-paiement',
-          component: () => import('@/views/comptabilite/ComptabiliteAttentePaiementView.vue'),
-          meta: { module: 'comptabilite' },
+          redirect: { path: '/comptabilite/tableau-de-bord', query: { tab: 'attente' } },
         },
         {
           path: 'comptabilite/examens-payes',
@@ -166,9 +153,7 @@ const router = createRouter({
         },
         {
           path: 'comptabilite/compte-rendu-caisse',
-          name: 'comptabilite-compte-rendu-caisse',
-          component: () => import('@/views/comptabilite/ComptabiliteCompteRenduCaisseView.vue'),
-          meta: { module: 'comptabilite' },
+          redirect: { path: '/gestionnaire/livre-journal', query: { tab: 'historique' } },
         },
         {
           path: 'comptabilite/depenses',
@@ -178,7 +163,7 @@ const router = createRouter({
         },
         {
           path: 'comptabilite/compte-rendu-receptions',
-          redirect: { path: '/reception/comptabilite', query: { tab: 'consultations' } },
+          redirect: { path: '/comptabilite/tableau-de-bord', query: { tab: 'historique' } },
         },
         {
           path: 'comptabilite/operations-attente',
@@ -391,9 +376,7 @@ const router = createRouter({
         },
         {
           path: 'gestionnaire/caisse',
-          name: 'gestionnaire-caisse',
-          component: () => import('@/views/gestionnaire/GestionnaireCaisseView.vue'),
-          meta: { module: 'gestionnaire' },
+          redirect: { path: '/gestionnaire/livre-journal', query: { tab: 'historique' } },
         },
         {
           path: 'gestionnaire/livre-journal',
@@ -416,9 +399,7 @@ const router = createRouter({
         },
         {
           path: 'gestionnaire/finances',
-          name: 'gestionnaire-finances',
-          component: () => import('@/views/gestionnaire/GestionnaireFinancesView.vue'),
-          meta: { module: 'gestionnaire', dashboard: true },
+          redirect: '/dashboard',
         },
         { path: 'gestionnaire/supervision', redirect: '/dashboard' },
         { path: 'laboratoire', name: 'laboratoire', component: () => import('@/views/LaboratoireView.vue'), meta: { module: 'laboratoire' } },

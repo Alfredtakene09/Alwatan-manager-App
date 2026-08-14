@@ -4,7 +4,6 @@ import axios from 'axios'
 import { Plus, RefreshCw, Save, ArrowDownUp } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName, canManagePharmacyCatalog } from '@/lib/roles'
-import { statusBadge } from '@/lib/datatable-defaults'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { PharmacyProductRecord } from '@/components/pharmacie/PharmacyProductsPanel.vue'
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
@@ -16,7 +15,6 @@ import UiTextarea from '@/components/ui/UiTextarea.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -98,36 +96,6 @@ const tableRows = computed(() => {
     reference: m.reference?.trim() || '—',
     unitCost: m.unitCostFcfa ? formatFcfa(m.unitCostFcfa) : '—',
   }))
-})
-
-const columns = computed(() => {
-  void localeCode.value
-  return [
-    {
-      data: 'dateSort',
-      title: uiText('Date'),
-      responsivePriority: 1,
-      render: (_d: number, _t: string, row: { date: string }) => `<span>${row.date}</span>`,
-    },
-    {
-      data: 'productName',
-      title: uiText('Produit'),
-      responsivePriority: 1,
-      render: (name: string) => `<span class="dt-name">${name}</span>`,
-    },
-    {
-      data: 'typeLabel',
-      title: uiText('Type'),
-      responsivePriority: 2,
-      render: (label: string, _t: string, row: { typeVariant: string }) =>
-        statusBadge(label, row.typeVariant as 'success' | 'danger' | 'warning' | 'info'),
-    },
-    { data: 'quantity', title: uiText('Qté'), responsivePriority: 3 },
-    { data: 'stockAfter', title: uiText('Stock après'), responsivePriority: 3 },
-    { data: 'supplierName', title: uiText('Fournisseur'), responsivePriority: 4 },
-    { data: 'reference', title: uiText('Référence'), responsivePriority: 5 },
-    { data: 'userName', title: uiText('Par'), responsivePriority: 4 },
-  ]
 })
 
 function apiErrorMessage(error: unknown, fallback: string) {
@@ -300,16 +268,46 @@ defineExpose({ reload })
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
 
     <p v-if="!loading && !movements.length" class="empty">{{ uiText('Aucun mouvement enregistré') }}</p>
-    <UiDataTable
-      v-else
-      fill
-      table-key="pharmacy-stock-movements"
-      compact
-      :data="tableRows"
-      :columns="columns"
-      :loading="loading"
-      loading-label="Chargement des mouvements…"
-    />
+    <div v-else class="simple-table-shell" :class="{ 'simple-table-shell--fill': true }">
+      <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+        <span class="simple-table-spinner" aria-hidden="true" />
+        Chargement des mouvements…
+      </div>
+      <div class="simple-table-scroll">
+        <div class="simple-table-wrap">
+          <table class="simple-table">
+            <thead>
+              <tr>
+                <th class="simple-table__num">#</th>
+                <th>{{ uiText('Date') }}</th>
+                <th>{{ uiText('Produit') }}</th>
+                <th>{{ uiText('Type') }}</th>
+                <th>{{ uiText('Qté') }}</th>
+                <th>{{ uiText('Stock après') }}</th>
+                <th>{{ uiText('Fournisseur') }}</th>
+                <th>{{ uiText('Référence') }}</th>
+                <th>{{ uiText('Par') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in tableRows" :key="row.id">
+                <td class="simple-table__num">{{ index + 1 }}</td>
+                <td><span class="st-date">{{ row.date }}</span></td>
+                <td><span class="st-name">{{ row.productName }}</span></td>
+                <td>
+                  <span class="st-badge" :class="`st-badge--${row.typeVariant}`">{{ row.typeLabel }}</span>
+                </td>
+                <td>{{ row.quantity }}</td>
+                <td>{{ row.stockAfter }}</td>
+                <td>{{ row.supplierName }}</td>
+                <td>{{ row.reference }}</td>
+                <td>{{ row.userName }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </PageTableSection>
 
   <UiFormModal

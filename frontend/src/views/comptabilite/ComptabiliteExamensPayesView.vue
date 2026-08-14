@@ -152,8 +152,7 @@ onMounted(load)
     </section>
 
     <section class="page-with-table__body">
-      <UiCard
-        title="Examens payés"
+      <UiCard direct title="Examens payés"
         description="Laboratoire, radiologie, échographie et odontologie"
         class="ui-card--table-panel"
         :icon="FlaskConical"

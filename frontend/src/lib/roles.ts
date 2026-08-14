@@ -140,7 +140,7 @@ export function getDefaultRoute(role: AppUserRole) {
     case 'SOIGNANT':
       return '/bloc-salles/tableau-de-bord'
     case 'PHARMACIEN':
-      return '/pharmacie/tableau-de-bord'
+      return '/pharmacie/caisse'
     case 'LOGISTIQUE':
       return '/logistique/tableau-de-bord'
     case 'LABORANTIN':

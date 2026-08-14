@@ -6,7 +6,6 @@ import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import PharmacyCategoriesPanel from '@/components/pharmacie/PharmacyCategoriesPanel.vue'
 import PharmacyFormsPanel from '@/components/pharmacie/PharmacyFormsPanel.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
-import '@/assets/datatable-theme.css'
 
 type TabId = 'categories' | 'formes'
 

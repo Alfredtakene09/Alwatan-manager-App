@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Banknote, Clock, Scissors, BedDouble, FlaskConical } from '@lucide/vue'
+import { Banknote, Clock, Scissors, BedDouble, FlaskConical, Stethoscope } from '@lucide/vue'
 import { formatFcfa } from '@/lib/roles'
 import UiCard from '@/components/ui/UiCard.vue'
 import DashboardLineChart from '@/components/dashboard/DashboardLineChart.vue'
@@ -50,8 +50,16 @@ const pendingQueues = computed(() => {
   const s = props.stats
   return [
     {
+      key: 'consult',
+      label: 'Consultations',
+      count: s.consultationsPendingCount ?? 0,
+      amountFcfa: s.consultationsPendingFcfa ?? 0,
+      icon: Stethoscope,
+      variant: 'blue',
+    },
+    {
       key: 'labs',
-      label: 'Examens en attente',
+      label: 'Examens / actes',
       count: s.labPendingCount,
       amountFcfa: s.labPendingGrossFcfa,
       icon: FlaskConical,
@@ -133,7 +141,7 @@ const weekAverage = computed(() =>
 
     <UiCard
       title="Files d'attente d'encaissement"
-      description="Dossiers à traiter avant encaissement — volume et montants estimés"
+      description="Dossiers enregistrés ou prescrits — à régler par le gestionnaire"
       :icon="Clock"
       icon-variant="amber"
     >

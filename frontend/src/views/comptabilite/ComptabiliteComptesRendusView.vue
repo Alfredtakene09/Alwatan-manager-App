@@ -25,22 +25,22 @@ const sections = computed(() => {
   void localeCode.value
   return [
   {
-    to: '/comptabilite/en-attente-paiement',
+    to: '/comptabilite/tableau-de-bord?tab=attente',
     label: uiText('En attente de paiement'),
     description: uiText('Examens prescrits par les médecins'),
     icon: Clock,
     countKey: 'labPending' as const,
   },
   {
-    to: '/comptabilite/compte-rendu-caisse',
-    label: uiText('Compte rendu caisse'),
-    description: uiText('Matin & soir — décaissement par caissier'),
+    to: '/gestionnaire/livre-journal?tab=historique',
+    label: uiText('Caisse & journal'),
+    description: uiText('Livre journal et historique des journées'),
     icon: Banknote,
     countKey: null,
   },
   {
-    to: '/reception/comptabilite',
-    label: uiText('Encaissements clinique'),
+    to: '/comptabilite/tableau-de-bord',
+    label: uiText('Encaissements'),
     description: uiText('Consultations, examens, chirurgie et hospitalisation'),
     icon: Receipt,
     countKey: null,

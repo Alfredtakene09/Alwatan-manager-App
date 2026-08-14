@@ -1,7 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { LayoutDashboard, Clock, Banknote, TrendingUp, Layers, FlaskConical } from '@lucide/vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import {
+  LayoutDashboard,
+  Clock,
+  Banknote,
+  Layers,
+  FlaskConical,
+  Stethoscope,
+  History,
+} from '@lucide/vue'
 import { isAxiosError } from 'axios'
 import api from '@/api/client'
 import { showApiErrorModal } from '@/lib/api-modal-helper'
@@ -12,6 +20,8 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import RoleDashboardShell from '@/components/dashboard/RoleDashboardShell.vue'
 import EncaissementsOverviewCharts from '@/components/comptabilite/EncaissementsOverviewCharts.vue'
+import ConsultationsComptabilitePanel from '@/components/comptabilite/ConsultationsComptabilitePanel.vue'
+import EncaissementsComptabilitePanel from '@/components/comptabilite/EncaissementsComptabilitePanel.vue'
 import LabExamsPendingDataTable, { type LabExamPendingRow } from '@/components/ui/LabExamsPendingDataTable.vue'
 import LabExamPaymentModal, {
   type LabExamPaymentConfirmPayload,
@@ -24,15 +34,47 @@ import { printLabExamPaymentReceipts, printPendingLabExamInvoices } from '@/lib/
 import type { SummaryStat } from '@/lib/dashboard-summary'
 import type { ComptabiliteStats } from '@/components/comptabilite/ComptabiliteStatsGrid.vue'
 
+type TabId = 'suivi' | 'attente' | 'historique'
+
+const route = useRoute()
+const router = useRouter()
+
+function tabFromQuery(): TabId {
+  const tab = String(route.query.tab ?? '')
+  if (tab === 'attente' || tab === 'consultations' || tab === 'examens') return 'attente'
+  if (tab === 'historique' || tab === 'encaissements') return 'historique'
+  return 'suivi'
+}
+
+const activeTab = ref<TabId>(tabFromQuery())
+
+watch(
+  () => route.query.tab,
+  () => {
+    activeTab.value = tabFromQuery()
+  },
+)
+
+function setTab(tab: TabId) {
+  activeTab.value = tab
+  void router.replace({ query: { ...route.query, tab } })
+}
+
+const tabs: { id: TabId; label: string; icon: typeof LayoutDashboard }[] = [
+  { id: 'suivi', label: 'Vue d’ensemble', icon: LayoutDashboard },
+  { id: 'attente', label: 'À encaisser', icon: Clock },
+  { id: 'historique', label: 'Historique', icon: History },
+]
+
 const stats = ref<ComptabiliteStats | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 
 const { data: queueData, message, messageType, loading: queueLoading, load: loadQueue } = useComptabiliteQueue()
-const router = useRouter()
 const selectedId = ref<string | null>(null)
 const submitting = ref(false)
 const submittingKind = ref<ExamKindSlug | null>(null)
+const consultationsRefreshKey = ref(0)
 
 const pendingItems = computed<LabExamPendingRow[]>(() => queueData.value?.labExamsPending ?? [])
 
@@ -45,7 +87,11 @@ const summaryStats = computed((): SummaryStat[] => {
   if (!stats.value) return []
   const s = stats.value
   const weekTotal = (s.revenueLast7Days ?? []).reduce((sum, day) => sum + day.totalFcfa, 0)
-  const pendingTotal = s.labPendingCount + s.surgeriesPending + s.hospitalizationsPending
+  const pendingTotal =
+    (s.consultationsPendingCount ?? 0) +
+    s.labPendingCount +
+    s.surgeriesPending +
+    s.hospitalizationsPending
 
   return [
     {
@@ -54,31 +100,31 @@ const summaryStats = computed((): SummaryStat[] => {
       value: formatFcfa(s.collectedTodayTotalFcfa ?? 0),
       icon: Banknote,
       variant: 'teal',
-      trend: `${s.consultationsTodayCount + s.labPaidTodayCount + (s.surgeryPaidTodayCount ?? 0) + (s.hospitalizationPaidTodayCount ?? 0)} encaissement(s)`,
+      trend: `${s.consultationsTodayCount + s.labPaidTodayCount + (s.surgeryPaidTodayCount ?? 0) + (s.hospitalizationPaidTodayCount ?? 0)} règlement(s)`,
+    },
+    {
+      id: 'consult-pending',
+      label: 'Consultations à encaisser',
+      value: s.consultationsPendingCount ?? 0,
+      icon: Stethoscope,
+      variant: 'blue',
+      trend: formatFcfa(s.consultationsPendingFcfa ?? 0),
     },
     {
       id: 'lab-pending',
-      label: 'Examens en attente',
+      label: 'Examens / actes à encaisser',
       value: s.labPendingCount,
-      icon: Clock,
+      icon: FlaskConical,
       variant: 'amber',
       trend: formatFcfa(s.labPendingGrossFcfa),
     },
     {
-      id: 'week-total',
-      label: 'Total 7 derniers jours',
-      value: formatFcfa(weekTotal),
-      icon: TrendingUp,
-      variant: 'green',
-      trend: `~${formatFcfa(Math.round(weekTotal / 7))} / jour`,
-    },
-    {
       id: 'pending-total',
-      label: 'Dossiers en attente',
+      label: 'Files en attente',
       value: pendingTotal,
       icon: Layers,
-      variant: 'blue',
-      trend: 'Examens, bloc, hospitalisation',
+      variant: 'violet',
+      trend: `7 j : ${formatFcfa(weekTotal)}`,
     },
   ]
 })
@@ -98,6 +144,7 @@ async function loadStats() {
 }
 
 async function refreshAll() {
+  consultationsRefreshKey.value += 1
   await Promise.all([loadStats(), loadQueue()])
 }
 
@@ -121,7 +168,7 @@ async function goToHospitalization(visitId: string) {
   try {
     await api.post('/hospitalisation/actions', { action: 'ensure_referral', visitId })
   } catch {
-    /* le GET hospitalisation resynchronisera si besoin */
+    /* ignore */
   }
   await router.push({ path: '/hospitalisation', query: { tab: 'queue', visitId } })
 }
@@ -140,6 +187,8 @@ async function confirmPayment(payload: LabExamPaymentConfirmPayload) {
       kinds: payload.kinds,
       reductionsByKind: payload.reductionsByKind,
       reductionFcfa: payload.reductionFcfa,
+      installmentAmountFcfa: payload.installmentAmountFcfa,
+      installmentsByKind: payload.installmentsByKind,
     })
     const shouldClose =
       res.allKindsPaid ||
@@ -159,9 +208,7 @@ async function confirmPayment(payload: LabExamPaymentConfirmPayload) {
     message.value = `${kindLabel} encaissé.`
     messageType.value = 'success'
     await refreshAll()
-    if (!shouldClose) {
-      submittingKind.value = null
-    }
+    if (!shouldClose) submittingKind.value = null
   } catch (error) {
     await showApiErrorModal(error, 'Erreur lors du paiement.')
     message.value = isAxiosError(error)
@@ -178,26 +225,54 @@ onMounted(refreshAll)
 </script>
 
 <template>
-  <div class="page-with-table">
-    <section class="page-with-table__head">
-      <RoleDashboardShell
-        subtitle="Performance des encaissements et suivi des files d'attente"
-        :icon="LayoutDashboard"
-        :stats="summaryStats"
-        :loading="loading"
-        :load-error="loadError"
-        @refresh="refreshAll"
+  <div class="encaissements-page">
+    <div class="encaissements-tabs" role="tablist" aria-label="Encaissements">
+      <button
+        v-for="tab in tabs"
+        :key="tab.id"
+        type="button"
+        role="tab"
+        class="encaissements-tabs__btn"
+        :class="{ 'encaissements-tabs__btn--active': activeTab === tab.id }"
+        :aria-selected="activeTab === tab.id"
+        @click="setTab(tab.id)"
       >
-        <EncaissementsOverviewCharts :stats="stats" :loading="loading" />
-      </RoleDashboardShell>
+        <component :is="tab.icon" :size="16" />
+        {{ tab.label }}
+      </button>
+    </div>
 
+    <div v-if="activeTab === 'suivi'" class="page-with-table">
+      <section class="page-with-table__head">
+        <RoleDashboardShell
+          subtitle="Suivi des encaissements — consultations, examens, opérations et hospitalisation (gestionnaire)"
+          :icon="LayoutDashboard"
+          :stats="summaryStats"
+          :loading="loading"
+          :load-error="loadError"
+          @refresh="refreshAll"
+        >
+          <EncaissementsOverviewCharts :stats="stats" :loading="loading" />
+        </RoleDashboardShell>
+      </section>
+    </div>
+
+    <div v-else-if="activeTab === 'attente'" class="encaissements-attente">
       <UiAlert v-if="message" :type="messageType" :message="message" />
-    </section>
 
-    <section class="page-with-table__body">
+      <ConsultationsComptabilitePanel
+        :key="`consult-${consultationsRefreshKey}`"
+        title="Consultations à encaisser"
+        subtitle="Patients enregistrés à la réception — règlement par le gestionnaire"
+        :icon="Stethoscope"
+        table-key="encaissements-consultations-attente"
+        card-title="File consultations"
+      />
+
       <UiCard
-        title="Patients en attente de paiement"
-        description="Liste des patients — examens, radiologie et échographie"
+        direct
+        title="Examens, radiologie, échographie, opérations"
+        description="Prescriptions médecin / patient externe — encaisser puis envoyer au service"
         class="ui-card--table-panel"
         :icon="FlaskConical"
         icon-variant="amber"
@@ -221,7 +296,15 @@ onMounted(refreshAll)
           @hospitalize="goToHospitalization"
         />
       </UiCard>
-    </section>
+    </div>
+
+    <div v-else class="encaissements-historique">
+      <EncaissementsComptabilitePanel
+        title="Historique des encaissements"
+        subtitle="Tous les règlements enregistrés — consultations, examens, chirurgie et hospitalisation"
+        table-key="encaissements-historique"
+      />
+    </div>
 
     <LabExamPaymentModal
       :item="selectedItem"
@@ -235,6 +318,50 @@ onMounted(refreshAll)
 
 <style scoped>
 @import '@/styles/dashboard-charts.css';
+
+.encaissements-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.encaissements-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.25rem;
+  background: #f1f5f9;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: fit-content;
+}
+
+.encaissements-tabs__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.85rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.encaissements-tabs__btn--active {
+  background: #fff;
+  color: var(--primary-800);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.encaissements-attente,
+.encaissements-historique {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
 
 .empty {
   margin: 0;

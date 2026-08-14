@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Config } from 'datatables.net'
+import { Pencil, RefreshCw, Trash2 } from '@lucide/vue'
 import { fullName } from '@/lib/roles'
 import { sortPatientsNewestFirst } from '@/lib/patient-sort'
-import { genderBadge, patientRowActionsHtml } from '@/lib/datatable-defaults'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import '@/assets/simple-table.css'
 
 export type PatientRow = {
   id: string
@@ -17,6 +17,7 @@ export type PatientRow = {
   createdAt?: string
   /** false = déjà envoyé / consulté (ou données liées) — pas de bouton supprimer */
   canDelete?: boolean
+  createdBy?: { id: string; firstName: string; lastName: string } | null
 }
 
 const props = withDefaults(
@@ -25,18 +26,34 @@ const props = withDefaults(
     loading?: boolean
     fill?: boolean
     showDelete?: boolean
+    showReceptionist?: boolean
   }>(),
-  { showDelete: true },
+  { showDelete: true, showReceptionist: false },
 )
 
 const emit = defineEmits<{
-  print: [patient: PatientRow]
   edit: [patient: PatientRow]
   reconsult: [patient: PatientRow]
   delete: [patient: PatientRow]
 }>()
 
-const patientsById = computed(() => new Map(props.patients.map((p) => [p.id, p])))
+const { uiText } = useAppI18n()
+
+const rows = computed(() =>
+  sortPatientsNewestFirst(props.patients).map((p) => ({
+    patient: p,
+    code: p.code,
+    fullName: fullName(p.firstName, p.lastName),
+    service: p.service?.trim() || '',
+    phone: p.phone || '',
+    gender: p.gender,
+    createdAt: formatDate(p.createdAt),
+    receptionistName: p.createdBy
+      ? fullName(p.createdBy.firstName, p.createdBy.lastName)
+      : '',
+    canDelete: props.showDelete && p.canDelete !== false,
+  })),
+)
 
 function formatDate(iso?: string) {
   if (!iso) return '—'
@@ -47,95 +64,123 @@ function formatDate(iso?: string) {
   })
 }
 
-const tableData = computed(() =>
-  sortPatientsNewestFirst(props.patients).map((p) => ({
-    id: p.id,
-    code: p.code,
-    fullName: fullName(p.firstName, p.lastName),
-    service: p.service?.trim() || '—',
-    phone: p.phone || '—',
-    genderRaw: p.gender,
-    createdAt: formatDate(p.createdAt),
-    createdAtSort: p.createdAt ? new Date(p.createdAt).getTime() : 0,
-    canDelete: p.canDelete !== false,
-  })),
-)
-
-const columns = computed(() => [
-  {
-    data: 'code',
-    title: 'Matricule',
-    responsivePriority: 1,
-    render: (code: string) => `<span class="dt-badge">${code}</span>`,
-  },
-  {
-    data: 'fullName',
-    title: 'Nom complet',
-    responsivePriority: 2,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  {
-    data: 'service',
-    title: 'Service',
-    responsivePriority: 4,
-    render: (service: string) =>
-      service === '—' ? '<span class="dt-muted">—</span>' : `<span class="dt-date">${service}</span>`,
-  },
-  {
-    data: 'phone',
-    title: 'Téléphone',
-    responsivePriority: 5,
-    render: (phone: string) =>
-      phone === '—' ? '<span class="dt-muted">—</span>' : `<a class="dt-phone" href="tel:${phone}">${phone}</a>`,
-  },
-  {
-    data: 'genderRaw',
-    title: 'Genre',
-    responsivePriority: 6,
-    render: (_d: unknown, _t: string, row: { genderRaw?: string }) => genderBadge(row.genderRaw),
-  },
-  {
-    data: 'createdAtSort',
-    title: "Date d'inscription",
-    responsivePriority: 3,
-    render: (_d: number, _t: string, row: { createdAt: string }) =>
-      `<span class="dt-date">${row.createdAt}</span>`,
-  },
-  {
-    data: null,
-    title: 'Actions',
-    orderable: false,
-    searchable: false,
-    className: 'dt-actions-col dt-actions-col--patients all',
-    responsivePriority: 1,
-    render: (_d: unknown, _t: string, row: { id: string; canDelete?: boolean }) =>
-      patientRowActionsHtml(row, { showDelete: props.showDelete }),
-  },
-])
-
-const options: Config = {
-  columnDefs: [{ targets: 5, type: 'num' }],
+function genderLabel(gender?: string) {
+  if (gender === 'F') return uiText('Féminin')
+  if (gender === 'M') return uiText('Masculin')
+  return '—'
 }
 
-function onAction({ action, id }: { action: string; id: string }) {
-  const patient = patientsById.value.get(id)
-  if (!patient) return
-  if (action === 'print') emit('print', patient)
-  if (action === 'edit') emit('edit', patient)
-  if (action === 'reconsult') emit('reconsult', patient)
-  if (action === 'delete') emit('delete', patient)
+function genderClass(gender?: string) {
+  if (gender === 'F') return 'st-pill st-pill--f'
+  if (gender === 'M') return 'st-pill st-pill--m'
+  return 'st-pill st-pill--na'
 }
 </script>
 
 <template>
-  <UiDataTable
-    table-key="patients"
-    :data="tableData"
-    :columns="columns"
-    :options="options"
-    :loading="loading"
-    :fill="fill"
-    loading-label="Chargement des dossiers…"
-    @action="onAction"
-  />
+  <div
+    class="simple-table-shell"
+    :class="{
+      'simple-table-shell--fill': fill,
+    }"
+  >
+    <div
+      v-if="loading"
+      class="simple-table-overlay" role="status"
+      aria-live="polite"
+    >
+      <span class="simple-table-spinner" aria-hidden="true" />
+      Chargement des dossiers…
+    </div>
+
+    <div class="simple-table-scroll">
+      <p v-if="!loading && !rows.length" class="simple-table__empty">
+        Aucun patient à afficher
+      </p>
+      <div v-else class="simple-table-wrap">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th class="simple-table__num">#</th>
+              <th>Matricule</th>
+              <th>Nom complet</th>
+              <th>Service</th>
+              <th>Téléphone</th>
+              <th>Genre</th>
+              <th>Date d'inscription</th>
+              <th v-if="showReceptionist">Réceptionniste</th>
+              <th class="simple-table__actions-head">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, index) in rows" :key="row.patient.id">
+              <td class="simple-table__num">{{ index + 1 }}</td>
+              <td>
+                <span class="st-badge">{{ row.code }}</span>
+              </td>
+              <td>
+                <span class="st-name">{{ row.fullName }}</span>
+              </td>
+              <td>
+                <span v-if="row.service" class="st-date">{{ row.service }}</span>
+                <span v-else class="st-muted">—</span>
+              </td>
+              <td>
+                <a
+                  v-if="row.phone"
+                  class="st-phone"
+                  :href="`tel:${row.phone}`"
+                >{{ row.phone }}</a>
+                <span v-else class="st-muted">—</span>
+              </td>
+              <td>
+                <span :class="genderClass(row.gender)">{{ genderLabel(row.gender) }}</span>
+              </td>
+              <td>
+                <span class="st-date">{{ row.createdAt }}</span>
+              </td>
+              <td v-if="showReceptionist">
+                <span v-if="row.receptionistName" class="st-date">{{ row.receptionistName }}</span>
+                <span v-else class="st-muted">—</span>
+              </td>
+              <td class="simple-table__actions">
+                <div class="st-actions">
+                  <button
+                    type="button"
+                    class="st-btn st-btn--edit"
+                    title="Modifier le dossier"
+                    aria-label="Modifier le dossier"
+                    @click="emit('edit', row.patient)"
+                  >
+                    <Pencil :size="15" />
+                  </button>
+                  <button
+                    type="button"
+                    class="st-btn st-btn--accent"
+                    title="Reconsultation"
+                    aria-label="Reconsultation"
+                    @click="emit('reconsult', row.patient)"
+                  >
+                    <RefreshCw :size="15" />
+                  </button>
+                  <template v-if="row.canDelete">
+                    <span class="st-sep" aria-hidden="true" />
+                    <button
+                      type="button"
+                      class="st-btn st-btn--delete"
+                      title="Supprimer le dossier"
+                      aria-label="Supprimer le dossier"
+                      @click="emit('delete', row.patient)"
+                    >
+                      <Trash2 :size="15" />
+                    </button>
+                  </template>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </template>

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { LayoutDashboard, Users, CalendarDays, Banknote, Clock, Search, X, UserPlus } from '@lucide/vue'
+import { LayoutDashboard, Users, CalendarDays, Clock, Search, X, UserPlus } from '@lucide/vue'
 import api from '@/api/client'
-import { formatFcfa } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth'
 import { sortPatientsNewestFirst } from '@/lib/patient-sort'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -13,6 +13,7 @@ import DashboardSplitChart from '@/components/dashboard/DashboardSplitChart.vue'
 import DashboardPendingBars from '@/components/dashboard/DashboardPendingBars.vue'
 import PatientsDataTable, { type PatientRow } from '@/components/ui/PatientsDataTable.vue'
 import type { SummaryStat } from '@/lib/dashboard-summary'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 type ReceptionDashboardStats = {
   registeredToday: number
@@ -35,12 +36,17 @@ type ReceptionDashboardStats = {
 }
 
 const router = useRouter()
+const auth = useAuthStore()
+const { uiText } = useAppI18n()
 const stats = ref<ReceptionDashboardStats | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const patients = ref<PatientRow[]>([])
 const loadingPatients = ref(false)
 const search = ref('')
+const receptionists = ref<{ id: string; name: string }[]>([])
+const filterReceptionistId = ref('')
+const canFilterByReceptionist = computed(() => auth.user?.role !== 'RECEPTIONNISTE')
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -57,29 +63,27 @@ const summaryStats = computed((): SummaryStat[] => {
       trend: `${s.registeredToday} nouveau(x) patient(s)`,
     },
     {
-      id: 'revenue',
-      label: 'Mes encaissements (jour)',
-      value: formatFcfa(s.netTodayFcfa ?? s.revenueTodayFcfa),
-      icon: Banknote,
-      variant: 'green',
-      trend: s.expensesTodayFcfa
-        ? `Brut ${formatFcfa(s.revenueTodayFcfa)} − dép. ${formatFcfa(s.expensesTodayFcfa)}`
-        : 'Uniquement vos encaissements',
+      id: 'female',
+      label: 'Féminin',
+      value: s.femalePatients,
+      icon: Users,
+      variant: 'rose',
+      trend: 'Dossiers patients',
     },
     {
-      id: 'pending',
-      label: 'En attente paiement',
-      value: s.pendingPayments,
-      icon: Clock,
-      variant: 'amber',
-      trend: 'Examens à encaisser',
+      id: 'male',
+      label: 'Masculin',
+      value: s.malePatients,
+      icon: Users,
+      variant: 'blue',
+      trend: 'Dossiers patients',
     },
     {
       id: 'queues',
       label: 'Files actives',
       value: s.externalQueue,
-      icon: Users,
-      variant: 'blue',
+      icon: Clock,
+      variant: 'amber',
       trend: `${s.hospitalizationsPending} hospitalisation(s)`,
     },
   ]
@@ -110,7 +114,6 @@ const pendingBars = computed(() => {
   if (!stats.value) return []
   const s = stats.value
   return [
-    { label: 'Examens en attente', count: s.pendingPayments, color: '#d97706' },
     { label: 'Patients externes', count: s.externalQueue, color: '#2563eb' },
     { label: 'Hospitalisations', count: s.hospitalizationsPending, color: '#e11d48' },
   ]
@@ -138,7 +141,10 @@ async function loadPatients() {
   loadingPatients.value = true
   try {
     const { data } = await api.get<PatientRow[]>('/patients', {
-      params: { q: search.value.trim() || undefined },
+      params: {
+        q: search.value.trim() || undefined,
+        createdById: canFilterByReceptionist.value ? filterReceptionistId.value || undefined : undefined,
+      },
     })
     patients.value = sortPatientsNewestFirst(data)
   } finally {
@@ -146,8 +152,21 @@ async function loadPatients() {
   }
 }
 
+async function loadReceptionists() {
+  if (!canFilterByReceptionist.value) {
+    receptionists.value = []
+    return
+  }
+  try {
+    const { data } = await api.get<{ id: string; name: string }[]>('/patients/receptionists')
+    receptionists.value = Array.isArray(data) ? data : []
+  } catch {
+    receptionists.value = []
+  }
+}
+
 async function refreshAll() {
-  await Promise.all([loadStats(), loadPatients()])
+  await Promise.all([loadStats(), loadPatients(), loadReceptionists()])
 }
 
 function clearSearch() {
@@ -163,6 +182,10 @@ watch(search, () => {
   searchTimer = setTimeout(loadPatients, 300)
 })
 
+watch(filterReceptionistId, () => {
+  void loadPatients()
+})
+
 onMounted(refreshAll)
 </script>
 
@@ -170,7 +193,7 @@ onMounted(refreshAll)
   <div class="page-with-table">
     <section class="page-with-table__head">
       <RoleDashboardShell
-        subtitle="Résumé de l'activité réception — flux patients et encaissements"
+        subtitle="Résumé de l'activité réception — flux patients"
         :icon="LayoutDashboard"
         :stats="summaryStats"
         :loading="loading"
@@ -205,8 +228,7 @@ onMounted(refreshAll)
     </section>
 
     <section class="page-with-table__body">
-      <UiCard
-        title="Patients enregistrés"
+      <UiCard direct title="Patients enregistrés"
         description="Liste des dossiers créés à la réception"
         class="ui-card--table-panel"
         :icon="Users"
@@ -214,6 +236,15 @@ onMounted(refreshAll)
       >
         <template #actions>
           <div class="table-toolbar">
+            <label v-if="canFilterByReceptionist" class="receptionist-filter">
+              <span>{{ uiText('Réceptionniste') }}</span>
+              <select v-model="filterReceptionistId">
+                <option value="">{{ uiText('Tous les réceptionnistes') }}</option>
+                <option v-for="item in receptionists" :key="item.id" :value="item.id">
+                  {{ item.name }}
+                </option>
+              </select>
+            </label>
             <div class="search-compact">
               <Search :size="16" class="search-compact__icon" />
               <input
@@ -243,9 +274,9 @@ onMounted(refreshAll)
         <PatientsDataTable
           fill
           :show-delete="false"
+          :show-receptionist="canFilterByReceptionist"
           :patients="patients"
           :loading="loadingPatients"
-          @print="goToRegistration"
           @edit="goToRegistration"
           @reconsult="goToRegistration"
         />
@@ -262,6 +293,28 @@ onMounted(refreshAll)
   flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
+}
+
+.receptionist-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.receptionist-filter select {
+  height: 2.25rem;
+  min-width: 12rem;
+  padding: 0 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
 }
 
 .search-compact {

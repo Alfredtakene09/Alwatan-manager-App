@@ -71,6 +71,9 @@ $ServerIp = $ServerIp.Trim()
 if ($ServerIp -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
     throw "Adresse IP invalide : $ServerIp"
 }
+if (Test-AlwatanTailscaleIpv4 $ServerIp) {
+    throw "SERVER_IP doit être l'IP Wi-Fi du serveur (ex. 192.168.88.161), pas Tailscale ($ServerIp)."
+}
 if (-not $TailscaleIp) {
     $TailscaleIp = Read-AlwatanTailscaleIp
 }
@@ -102,6 +105,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0lancer-client.ps1"
 if errorlevel 1 pause
 "@
 Set-Content -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan.bat') -Value $bat -Encoding ASCII
+
+$batHard = @"
+@echo off
+title Alwatan Manager (rechargement force)
+cd /d "%~dp0"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0lancer-client.ps1" -ForceHardReload
+if errorlevel 1 pause
+"@
+Set-Content -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan (rechargement force).bat') -Value $batHard -Encoding ASCII
 
 $urlShortcut = @"
 [InternetShortcut]
@@ -135,6 +147,8 @@ $desktopUrl = Join-Path $userDesktop 'Alwatan Manager (Wi-Fi).url'
 Copy-Item -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan (Wi-Fi).url') -Destination $desktopUrl -Force
 $desktopBat = Join-Path $userDesktop 'Alwatan Manager (direct).bat'
 Copy-Item -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan.bat') -Destination $desktopBat -Force
+$desktopHardBat = Join-Path $userDesktop 'Alwatan Manager (rechargement force).bat'
+Copy-Item -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan (rechargement force).bat') -Destination $desktopHardBat -Force
 if ($tsUrl) {
     Copy-Item -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan (Tailscale).url') `
         -Destination (Join-Path $userDesktop 'Alwatan Manager (Tailscale).url') -Force
@@ -176,6 +190,7 @@ Secours Bureau :
   « Alwatan Manager (Wi-Fi) »
   « Alwatan Manager (Tailscale) » (si disponible)
   « Alwatan Manager (direct) »
+  « Alwatan Manager (rechargement force) »  (purge cache + URL anti-cache)
 "@
 Set-Content -Path (Join-Path $installDir 'LISEZMOI.txt') -Value $readme -Encoding UTF8
 
@@ -187,6 +202,7 @@ if (-not $Quiet) {
     if ($tsUrl) { Write-Host "  Tailscale : $tsUrl" }
     Write-Host "  Bureau  : $desktopShortcut"
     Write-Host "  Secours : $desktopBat"
+    Write-Host "  Reload+ : $desktopHardBat"
     Write-Host "  Menu Démarrer : $startLnk"
     Write-Host ''
     $msgTs = if ($tsUrl) { "`nTailscale : $tsUrl" } else { '' }

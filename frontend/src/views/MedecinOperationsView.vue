@@ -10,6 +10,7 @@ import {
   Calendar,
   CalendarRange,
   X,
+  Eye,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
@@ -29,7 +30,7 @@ import {
   todayDateKey,
   type DateFilterMode,
 } from '@/lib/date-filters'
-import { isAwaitingPayment, isAwaitingPerformance, isDoctorAwaiting } from '@/lib/surgery-status'
+import { isAwaitingPayment, isAwaitingPerformance, isCompletable, isDoctorAwaiting } from '@/lib/surgery-status'
 import { showApiErrorModal } from '@/lib/api-modal-helper'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -75,6 +76,7 @@ const filterFrom = ref('')
 const filterTo = ref('')
 const completeTarget = ref<SurgeryCaseRow | null>(null)
 const completeNote = ref('')
+const detailTarget = ref<SurgeryCaseRow | null>(null)
 const { uiText } = useAppI18n()
 
 const isAwaiting = (surgery: SurgeryCaseRow) => isDoctorAwaiting(surgery.status)
@@ -183,7 +185,7 @@ function roleLabel(surgery: SurgeryCaseRow) {
 }
 
 function canMarkCompleted(surgery: SurgeryCaseRow) {
-  return isAwaitingPerformance(surgery.status)
+  return isCompletable(surgery.status)
 }
 
 function openCompleteModal(surgery: SurgeryCaseRow) {
@@ -198,17 +200,31 @@ function closeCompleteModal() {
   completeNote.value = ''
 }
 
+function openDetailsModal(surgery: SurgeryCaseRow) {
+  detailTarget.value = surgery
+}
+
+function closeDetailsModal() {
+  detailTarget.value = null
+}
+
 async function confirmComplete() {
   const surgery = completeTarget.value
+  const note = completeNote.value.trim()
   if (!surgery) return
+  if (note.length < 2) {
+    message.value = uiText('Saisissez le commentaire pour enregistrer le dossier.')
+    messageType.value = 'error'
+    return
+  }
 
   actionId.value = surgery.id
   message.value = ''
   try {
     await api.post(`/surgeries/mine/${surgery.id}/complete`, {
-      notes: completeNote.value.trim() || undefined,
+      notes: note,
     })
-    message.value = uiText('Opération enregistrée — note ajoutée au dossier patient.')
+    message.value = uiText('Dossier enregistré — opération marquée comme effectuée.')
     messageType.value = 'success'
     completeTarget.value = null
     completeNote.value = ''
@@ -345,9 +361,8 @@ onMounted(load)
     </section>
 
     <section class="page-with-table__body">
-      <UiCard
-        :title="uiText('Suivi opératoire')"
-        :description="uiText('Résultats / note finale à la clôture — parts dans À percevoir')"
+      <UiCard direct :title="uiText('Suivi opératoire')"
+        :description="uiText('À l’effectuation : commenter et enregistrer le dossier — le paiement reste à part')"
         class="ui-card--table-panel"
         :icon="Scissors"
         icon-variant="green"
@@ -390,11 +405,10 @@ onMounted(load)
               <tr>
                 <th>Patient</th>
                 <th>Intervention</th>
-                <th>Votre rôle</th>
                 <th>Évolution</th>
                 <th>Ma part</th>
                 <th>Règlement</th>
-                <th v-if="filterTab === 'awaiting'">Action</th>
+                <th class="ops-table__actions-col">{{ uiText('Actions') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -411,7 +425,6 @@ onMounted(load)
                   </p>
                 </td>
                 <td>{{ surgery.interventionType.label }}</td>
-                <td>{{ roleLabel(surgery) }}</td>
                 <td>{{ evolutionLabel(surgery) }}</td>
                 <td>
                   <strong>{{ formatFcfa(myShareAmount(surgery)) }}</strong>
@@ -424,29 +437,44 @@ onMounted(load)
                     {{ paymentLabel(surgery) }}
                   </UiBadge>
                   <UiBadge v-else-if="canMarkCompleted(surgery)" variant="info">
-                    {{ uiText('Payée — à clôturer') }}
+                    {{
+                      isAwaitingPerformance(surgery.status)
+                        ? uiText('Payée — à clôturer')
+                        : uiText('À clôturer')
+                    }}
                   </UiBadge>
                   <UiBadge v-else-if="mySharePaid(surgery)" variant="success">
                     {{ paymentLabel(surgery) }}
                   </UiBadge>
                   <UiBadge v-else variant="danger">{{ paymentLabel(surgery) }}</UiBadge>
                 </td>
-                <td v-if="filterTab === 'awaiting'">
-                  <UiButton
-                    v-if="canMarkCompleted(surgery)"
-                    size="sm"
-                    variant="primary"
-                    :icon="CheckCircle2"
-                    :loading="actionId === surgery.id"
-                    :disabled="!!actionId"
-                    @click="openCompleteModal(surgery)"
-                  >
-                    {{ uiText('Effectuée') }}
-                  </UiButton>
-                  <span v-else-if="isUnpaidCase(surgery)" class="ops-table__hint">
-                    {{ uiText('En attente paiement') }}
-                  </span>
-                  <span v-else class="ops-table__hint">—</span>
+                <td class="ops-table__actions-col">
+                  <div v-if="surgery.status === 'COMPLETED'" class="ops-table__actions">
+                    <button
+                      type="button"
+                      class="ops-act ops-act--ghost"
+                      :title="uiText('Voir détails')"
+                      :aria-label="uiText('Voir détails')"
+                      :disabled="!!actionId"
+                      @click="openDetailsModal(surgery)"
+                    >
+                      <Eye :size="15" />
+                      <span>{{ uiText('Voir') }}</span>
+                    </button>
+                  </div>
+                  <div v-else class="ops-table__actions">
+                    <button
+                      v-if="canMarkCompleted(surgery)"
+                      type="button"
+                      class="ops-act ops-act--primary"
+                      :disabled="!!actionId"
+                      @click="openCompleteModal(surgery)"
+                    >
+                      <CheckCircle2 :size="15" />
+                      {{ uiText('Effectuée') }}
+                    </button>
+                    <span v-else class="ops-table__hint">—</span>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -460,7 +488,7 @@ onMounted(load)
         <div class="ops-modal" role="dialog" aria-modal="true" aria-labelledby="ops-complete-title">
           <header class="ops-modal__header">
             <div>
-              <h2 id="ops-complete-title">{{ uiText('Clôturer l’opération') }}</h2>
+              <h2 id="ops-complete-title">{{ uiText('Effectuer l’opération') }}</h2>
               <p>
                 {{
                   fullName(
@@ -482,14 +510,14 @@ onMounted(load)
             </button>
           </header>
           <div class="ops-modal__body">
-            <label class="ops-modal__label">{{ uiText('Commentaire final') }}</label>
+            <label class="ops-modal__label">{{ uiText('Commentaire final (opération)') }}</label>
             <p class="ops-modal__hint">
-              {{ uiText('Note opératoire enregistrée dans le dossier patient.') }}
+              {{ uiText('Rédigez le compte rendu puis enregistrez le dossier patient.') }}
             </p>
             <textarea
               v-model="completeNote"
               class="ops-modal__textarea"
-              rows="4"
+              rows="5"
               :placeholder="uiText('Déroulement, suite, surveillance…')"
             />
           </div>
@@ -501,9 +529,99 @@ onMounted(load)
               variant="primary"
               :icon="CheckCircle2"
               :loading="!!actionId"
+              :disabled="completeNote.trim().length < 2"
               @click="confirmComplete"
             >
-              {{ uiText('Enregistrer et clôturer') }}
+              {{ uiText('Enregistrer le dossier') }}
+            </UiButton>
+          </footer>
+        </div>
+      </div>
+
+      <div v-if="detailTarget" class="ops-modal-overlay" @click.self="closeDetailsModal">
+        <div
+          class="ops-modal ops-modal--wide"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="ops-detail-title"
+        >
+          <header class="ops-modal__header">
+            <div>
+              <h2 id="ops-detail-title">{{ uiText('Détails de l’opération') }}</h2>
+              <p>
+                {{
+                  fullName(
+                    detailTarget.visit.patient.firstName,
+                    detailTarget.visit.patient.lastName,
+                  )
+                }}
+                — {{ detailTarget.visit.patient.code }}
+              </p>
+            </div>
+            <button
+              type="button"
+              class="ops-modal__close"
+              :aria-label="uiText('Fermer')"
+              @click="closeDetailsModal"
+            >
+              <X :size="18" />
+            </button>
+          </header>
+          <div class="ops-modal__body ops-detail">
+            <dl class="ops-detail__grid">
+              <div>
+                <dt>{{ uiText('Intervention') }}</dt>
+                <dd>{{ detailTarget.interventionType.label }}</dd>
+              </div>
+              <div>
+                <dt>{{ uiText('Votre rôle') }}</dt>
+                <dd>{{ roleLabel(detailTarget) }}</dd>
+              </div>
+              <div>
+                <dt>{{ uiText('Évolution') }}</dt>
+                <dd>{{ evolutionLabel(detailTarget) }}</dd>
+              </div>
+              <div>
+                <dt>{{ uiText('Date prévue') }}</dt>
+                <dd>{{ formatSurgeryDate(detailTarget.operationScheduledAt) }}</dd>
+              </div>
+              <div>
+                <dt>{{ uiText('Effectuée le') }}</dt>
+                <dd>{{ formatSurgeryDate(detailTarget.completedAt) }}</dd>
+              </div>
+              <div>
+                <dt>{{ uiText('Ma part') }}</dt>
+                <dd>
+                  {{ formatFcfa(myShareAmount(detailTarget)) }}
+                  ({{ SHARE_KIND_LABELS[myShareKind(detailTarget)] }})
+                </dd>
+              </div>
+              <div>
+                <dt>{{ uiText('Règlement') }}</dt>
+                <dd>{{ paymentLabel(detailTarget) }}</dd>
+              </div>
+              <div v-if="detailTarget.visit.patient.phone">
+                <dt>{{ uiText('Téléphone') }}</dt>
+                <dd>{{ detailTarget.visit.patient.phone }}</dd>
+              </div>
+              <div v-if="detailTarget.visit.consultation?.diagnosis" class="ops-detail__full">
+                <dt>{{ uiText('Diagnostic') }}</dt>
+                <dd>{{ detailTarget.visit.consultation.diagnosis }}</dd>
+              </div>
+              <div class="ops-detail__full">
+                <dt>{{ uiText('Commentaire final') }}</dt>
+                <dd>
+                  {{
+                    detailTarget.visit.consultation?.doctorComment?.trim() ||
+                    uiText('Aucun commentaire final.')
+                  }}
+                </dd>
+              </div>
+            </dl>
+          </div>
+          <footer class="ops-modal__footer">
+            <UiButton variant="primary" @click="closeDetailsModal">
+              {{ uiText('Fermer') }}
             </UiButton>
           </footer>
         </div>
@@ -635,18 +753,22 @@ onMounted(load)
 
 .ops-table-wrap {
   overflow: auto;
+  flex: 1 1 0;
+  min-height: 0;
+  max-width: 100%;
 }
 
 .ops-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.9375rem;
+  min-width: 52rem;
 }
 
 .ops-table th,
 .ops-table td {
   padding: 0.85rem 0.9rem;
-  text-align: left;
+  text-align: start;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
@@ -675,6 +797,68 @@ onMounted(load)
   font-size: 0.75rem;
   color: var(--text-muted);
   font-weight: 500;
+}
+
+.ops-table__actions-col {
+  position: sticky;
+  inset-inline-end: 0;
+  z-index: 2;
+  min-width: 11.5rem;
+  background: #fff;
+  box-shadow: -6px 0 10px -8px rgba(15, 23, 42, 0.25);
+}
+
+.ops-table thead .ops-table__actions-col {
+  background: #f8fafc;
+  z-index: 3;
+}
+
+.ops-table__actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.ops-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ops-act:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ops-act--ghost:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.ops-act--accent {
+  background: var(--primary-50, #eff6ff);
+  border-color: var(--primary-200, #bfdbfe);
+  color: var(--primary-800, #1e40af);
+}
+
+.ops-act--accent:hover:not(:disabled) {
+  background: var(--primary-100, #dbeafe);
+}
+
+.ops-act--primary {
+  background: linear-gradient(135deg, var(--action), var(--action-hover));
+  border-color: transparent;
+  color: #fff;
 }
 
 .ops-empty {
@@ -717,6 +901,10 @@ onMounted(load)
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
+}
+
+.ops-modal--wide {
+  max-width: 36rem;
 }
 
 .ops-modal__header {
@@ -785,6 +973,59 @@ onMounted(load)
   outline: none;
   border-color: var(--primary-400);
   box-shadow: 0 0 0 3px var(--focus-ring-sm);
+}
+
+.ops-modal__existing {
+  margin: 0 0 0.5rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  line-height: 1.4;
+  max-height: 8rem;
+  overflow: auto;
+}
+
+.ops-modal__existing strong {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: var(--primary-800);
+  font-size: 0.75rem;
+}
+
+.ops-detail__grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+}
+
+.ops-detail__grid > div {
+  min-width: 0;
+}
+
+.ops-detail__full {
+  grid-column: 1 / -1;
+}
+
+.ops-detail__grid dt {
+  margin: 0;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-light);
+}
+
+.ops-detail__grid dd {
+  margin: 0.2rem 0 0;
+  font-size: 0.875rem;
+  color: var(--text);
+  white-space: pre-wrap;
+  line-height: 1.4;
 }
 
 .ops-modal__footer {

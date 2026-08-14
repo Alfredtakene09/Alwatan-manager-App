@@ -4,7 +4,6 @@ import { RouterLink } from 'vue-router'
 import { Settings, Scissors, Eye, ExternalLink } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
-import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import { clinicPercentFromSplits } from '@/lib/intervention-splits'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -12,7 +11,8 @@ import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
+import '@/assets/simple-table.css'
 
 const { uiText, localeCode } = useAppI18n()
 
@@ -49,34 +49,6 @@ const interventionRows = computed(() => {
     isActive: item.active,
   }))
 })
-
-const interventionColumns = [
-  { data: 'label', title: 'Libellé', render: (v: string) => `<span class="dt-name">${v}</span>` },
-  { data: 'category', title: 'Catégorie' },
-  {
-    data: 'costSort',
-    title: 'Coût',
-    render: (_d: number, _t: string, row: { cost: string }) => `<span class="dt-amount">${row.cost}</span>`,
-  },
-  { data: 'surgeonPercent', title: '% Chir.' },
-  {
-    data: 'statusLabel',
-    title: 'Statut',
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: 'Actions',
-    orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog',
-    render: (
-      _d: unknown,
-      _t: string,
-      row: { id: string; toggleLabel: string; isActive: boolean },
-    ) => catalogRowActionsHtml({ ...row, showEdit: false, showView: true, canDelete: false }),
-  },
-]
 
 async function load() {
   const i = await api.get('/admin/interventions')
@@ -147,13 +119,48 @@ onMounted(load)
     <template v-if="tab === 'interventions'">
       <UiCard title="Nomenclature chirurgicale" description="Tarifs et pourcentages médecin opérateur — activation rapide ci-dessous" :icon="Scissors" icon-variant="rose" class="section">
         <div class="table-panel-scroll">
-          <UiDataTable
-            table-key="admin-interventions"
-            compact
-            :data="interventionRows"
-            :columns="interventionColumns"
-            @action="onInterventionAction"
-          />
+          <div class="simple-table-shell simple-table-shell--fill">
+            <div class="simple-table-scroll">
+              <div class="simple-table-wrap">
+                <table class="simple-table">
+                  <thead>
+                    <tr>
+                      <th class="simple-table__num">#</th>
+                      <th>Libellé</th>
+                      <th>Catégorie</th>
+                      <th>Coût</th>
+                      <th>% Chir.</th>
+                      <th>Statut</th>
+                      <th class="simple-table__actions-head">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, index) in interventionRows" :key="row.id">
+                      <td class="simple-table__num">{{ index + 1 }}</td>
+                      <td><span class="st-name">{{ row.label }}</span></td>
+                      <td>{{ row.category }}</td>
+                      <td><span class="st-amount">{{ row.cost }}</span></td>
+                      <td>{{ row.surgeonPercent }}</td>
+                      <td>
+                        <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                      </td>
+                      <td class="simple-table__actions">
+                        <StCatalogActions
+                          :id="row.id"
+                          :is-active="row.isActive"
+                          :toggle-label="row.toggleLabel"
+                          :show-edit="false"
+                          :show-view="true"
+                          :can-delete="false"
+                          @action="onInterventionAction"
+                        />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
       </UiCard>
 

@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { ExamCatalogKind } from "@prisma/client";
+import { ExamCatalogKind, type Prisma } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import {
   resolveDoctorClinicServices,
@@ -80,6 +80,27 @@ async function requireDoctorService(req: Request, res: Response) {
   return { default: services.default, ids: services.ids, all: services.all };
 }
 
+/** Labo/Radio/Écho/Odonto : le médecin du service canonique voit toute la nomenclature du type. */
+function isCanonicalDoctorCatalogKind(kind: ExamCatalogKind): boolean {
+  return (
+    kind === ExamCatalogKind.ODONTO ||
+    kind === ExamCatalogKind.RADIO ||
+    kind === ExamCatalogKind.ECHO
+  );
+}
+
+function doctorCatalogAccessWhere(
+  clinicServiceIds: string[],
+  suggestedKind: ExamCatalogKind,
+): Prisma.ExamCatalogItemWhereInput {
+  if (isCanonicalDoctorCatalogKind(suggestedKind)) {
+    return {
+      OR: [{ clinicServiceId: { in: clinicServiceIds } }, { kind: suggestedKind }],
+    };
+  }
+  return { clinicServiceId: { in: clinicServiceIds } };
+}
+
 router.get("/me", async (req, res) => {
   const ctx = await requireDoctorService(req, res);
   if (!ctx) return;
@@ -95,8 +116,9 @@ router.get("/", async (req, res) => {
   const ctx = await requireDoctorService(req, res);
   if (!ctx) return;
 
+  const suggestedKind = suggestExamCatalogKindFromServiceName(ctx.default.name);
   const items = await prisma.examCatalogItem.findMany({
-    where: { clinicServiceId: { in: ctx.ids } },
+    where: doctorCatalogAccessWhere(ctx.ids, suggestedKind),
     orderBy: [{ kind: "asc" }, { sortOrder: "asc" }, { label: "asc" }],
     select: examCatalogSelect,
   });
@@ -197,8 +219,12 @@ router.put("/:id", async (req, res) => {
 
   try {
     const body = catalogItemSchema.partial().parse(req.body);
+    const suggestedKind = suggestExamCatalogKindFromServiceName(ctx.default.name);
     const existing = await prisma.examCatalogItem.findFirst({
-      where: { id: String(req.params.id), clinicServiceId: { in: ctx.ids } },
+      where: {
+        id: String(req.params.id),
+        ...doctorCatalogAccessWhere(ctx.ids, suggestedKind),
+      },
     });
     if (!existing) return res.status(404).json({ error: "Élément introuvable" });
 
@@ -265,8 +291,12 @@ router.delete("/:id", async (req, res) => {
   if (!ctx) return;
 
   try {
+    const suggestedKind = suggestExamCatalogKindFromServiceName(ctx.default.name);
     const existing = await prisma.examCatalogItem.findFirst({
-      where: { id: String(req.params.id), clinicServiceId: { in: ctx.ids } },
+      where: {
+        id: String(req.params.id),
+        ...doctorCatalogAccessWhere(ctx.ids, suggestedKind),
+      },
     });
     if (!existing) return res.status(404).json({ error: "Élément introuvable" });
 

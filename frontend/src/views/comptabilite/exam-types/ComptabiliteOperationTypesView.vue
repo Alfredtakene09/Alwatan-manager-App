@@ -5,7 +5,6 @@ import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth'
-import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import { clinicPercentFromSplits, validateInterventionPercents } from '@/lib/intervention-splits'
 import { OPERATION_KIND_CONFIG } from '@/lib/exam-catalog-kinds'
 import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
@@ -18,7 +17,8 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
+import '@/assets/simple-table.css'
 
 type DoctorOption = {
   id: string
@@ -214,39 +214,6 @@ const viewingServiceLabel = computed(() => {
   if (!item) return '—'
   return item.clinicService?.name || '—'
 })
-
-const columns = [
-  {
-    data: 'label',
-    title: 'Libellé',
-    render: (v: string, _t: string, row: { medecins: string }) =>
-      `<span class="dt-name">${v}</span><span class="dt-muted">${row.medecins}</span>`,
-  },
-  { data: 'service', title: 'Service' },
-  {
-    data: 'costSort',
-    title: 'Coût',
-    render: (_d: number, _t: string, row: { cost: string }) => `<span class="dt-amount">${row.cost}</span>`,
-  },
-  { data: 'surgeonPercent', title: '% Chir.' },
-  { data: 'anesthesiologistPercent', title: '% Ass.' },
-  { data: 'clinicPercent', title: '% Clin.' },
-  {
-    data: 'statusLabel',
-    title: 'Statut',
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: 'Actions',
-    orderable: false,
-    responsivePriority: 1,
-    className: 'dt-actions-col dt-actions-col--catalog all',
-    render: (_d: unknown, _t: string, row: { id: string; toggleLabel: string; isActive: boolean }) =>
-      catalogRowActionsHtml({ ...row, showEdit: true, showView: true, canDelete: true }),
-  },
-]
 
 const isEditing = computed(() => Boolean(editingId.value))
 const formModalTitle = computed(() =>
@@ -685,16 +652,62 @@ onMounted(async () => {
       </div>
 
       <div class="table-panel-scroll">
-        <UiDataTable
-          table-key="exam-catalog-operations-v4"
-          compact
-          :scrollable="false"
-          :data="tableRows"
-          :columns="columns"
-          :loading="loading"
-          loading-label="Chargement des opérations…"
-          @action="onTableAction"
-        />
+        <div class="simple-table-shell simple-table-shell--static">
+          <div
+            v-if="loading"
+            class="simple-table-overlay" role="status"
+            aria-live="polite"
+          >
+            <span class="simple-table-spinner" aria-hidden="true" />
+            Chargement des opérations…
+          </div>
+          <div class="simple-table-scroll">
+            <div class="simple-table-wrap">
+              <table class="simple-table">
+                <thead>
+                  <tr>
+                    <th class="simple-table__num">#</th>
+                    <th>Libellé</th>
+                    <th>Service</th>
+                    <th>Coût</th>
+                    <th>% Chir.</th>
+                    <th>% Ass.</th>
+                    <th>% Clin.</th>
+                    <th>Statut</th>
+                    <th class="simple-table__actions-head">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in tableRows" :key="row.id">
+                    <td class="simple-table__num">{{ index + 1 }}</td>
+                    <td>
+                      <span class="st-name">{{ row.label }}</span>
+                      <span class="st-muted">{{ row.medecins }}</span>
+                    </td>
+                    <td>{{ row.service }}</td>
+                    <td><span class="st-amount">{{ row.cost }}</span></td>
+                    <td>{{ row.surgeonPercent }}</td>
+                    <td>{{ row.anesthesiologistPercent }}</td>
+                    <td>{{ row.clinicPercent }}</td>
+                    <td>
+                      <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                    </td>
+                    <td class="simple-table__actions">
+                      <StCatalogActions
+                        :id="row.id"
+                        :is-active="row.isActive"
+                        :toggle-label="row.toggleLabel"
+                        :show-view="true"
+                        :can-delete="true"
+                        @action="onTableAction"
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
     </UiCard>
 
@@ -984,8 +997,8 @@ onMounted(async () => {
   max-height: min(70dvh, 720px);
 }
 
-.table-panel-scroll :deep(.ui-dt-shell),
-.table-panel-scroll :deep(.ui-dt-scroll) {
+.table-panel-scroll :deep(.simple-table-shell),
+.table-panel-scroll :deep(.simple-table-scroll) {
   display: block;
   flex: none;
   height: auto;

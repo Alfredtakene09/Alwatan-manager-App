@@ -6,6 +6,7 @@ import { formatFcfa } from '@/lib/roles'
 import type { PharmacyOrdonnanceLine } from '@/lib/lab-notes'
 import { isPharmacyCatalogLine } from '@/lib/lab-notes'
 import { printPharmacyOrdonnance } from '@/lib/pharmacy-ordonnance-print'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -23,23 +24,34 @@ export type PharmacyCatalogProduct = {
 
 type LineWithKey = PharmacyOrdonnanceLine & { _key: string }
 
-const props = defineProps<{
-  modelValue: PharmacyOrdonnanceLine[]
-  patient?: {
-    code: string
-    firstName: string
-    lastName: string
-    age?: number | null
-    gender?: string | null
-  } | null
-  doctorName?: string | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    modelValue: PharmacyOrdonnanceLine[]
+    patient?: {
+      code: string
+      firstName: string
+      lastName: string
+      age?: number | null
+      gender?: string | null
+    } | null
+    doctorName?: string | null
+    /**
+     * all = catalogue + hors stock (défaut)
+     * catalog = stock clinique uniquement
+     * external = médicaments hors pharmacie uniquement
+     */
+    mode?: 'all' | 'catalog' | 'external'
+  }>(),
+  {
+    mode: 'all',
+  },
+)
 
 const emit = defineEmits<{
   'update:modelValue': [value: PharmacyOrdonnanceLine[]]
 }>()
 
-const { uiText } = useAppI18n()
+const { uiText, localeCode } = useAppI18n()
 
 const loading = ref(false)
 const loadError = ref('')
@@ -86,24 +98,85 @@ const lines = computed({
   },
 })
 
+const showCatalog = computed(() => props.mode === 'all' || props.mode === 'catalog')
+const showExternal = computed(() => props.mode === 'all' || props.mode === 'external')
+
+const visibleLines = computed(() => {
+  if (props.mode === 'catalog') return lines.value.filter((line) => isPharmacyCatalogLine(line))
+  if (props.mode === 'external') return lines.value.filter((line) => !isPharmacyCatalogLine(line))
+  return lines.value
+})
+
+const headTitle = computed(() => {
+  void localeCode.value
+  if (props.mode === 'external') return uiText('Prescription hors pharmacie')
+  return uiText('Ordonnance pharmacie')
+})
+
+const headHint = computed(() => {
+  void localeCode.value
+  if (props.mode === 'external') {
+    return uiText('Saisissez le médicament à se procurer en officine — imprimé sur l’ordonnance, sans débit stock.')
+  }
+  if (props.mode === 'catalog') {
+    return uiText('Produits du catalogue clinique — sans débit automatique.')
+  }
+  return uiText(
+    'Catalogue clinique ou saisie libre si le produit n’est pas en stock — sans débit automatique.',
+  )
+})
+
+const cartTitle = computed(() => {
+  void localeCode.value
+  if (props.mode === 'external') return uiText('Médicaments hors pharmacie')
+  if (props.mode === 'catalog') return uiText('Médicaments en stock')
+  return uiText('Médicaments sélectionnés')
+})
+
 const filteredProducts = computed(() => {
   const q = search.value.trim().toLowerCase()
   const selected = new Set(
     lines.value.filter((line) => isPharmacyCatalogLine(line)).map((line) => line.productId!),
   )
-  const list = products.value.filter((product) => !selected.has(product.id))
-  if (!q) return list.slice(0, 40)
-  return list
-    .filter(
-      (product) =>
-        product.name.toLowerCase().includes(q) ||
-        product.sku.toLowerCase().includes(q) ||
-        (product.barcode?.toLowerCase().includes(q) ?? false) ||
-        (product.dosage?.toLowerCase().includes(q) ?? false) ||
-        (product.pharmaceuticalForm?.toLowerCase().includes(q) ?? false),
-    )
-    .slice(0, 40)
+  const list = products.value
+    .filter((product) => !selected.has(product.id))
+    .slice()
+    .sort((a, b) => {
+      const aInStock = a.quantity > 0 ? 0 : 1
+      const bInStock = b.quantity > 0 ? 0 : 1
+      if (aInStock !== bInStock) return aInStock - bInStock
+      return a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' })
+    })
+  if (!q) return list
+  return list.filter(
+    (product) =>
+      product.name.toLowerCase().includes(q) ||
+      product.sku.toLowerCase().includes(q) ||
+      (product.barcode?.toLowerCase().includes(q) ?? false) ||
+      (product.dosage?.toLowerCase().includes(q) ?? false) ||
+      (product.pharmaceuticalForm?.toLowerCase().includes(q) ?? false),
+  )
 })
+
+const catalogListHint = computed(() => {
+  void localeCode.value
+  const n = filteredProducts.value.length
+  if (search.value.trim()) {
+    return n === 1
+      ? translateTemplate('{n} produit trouvé', { n })
+      : translateTemplate('{n} produits trouvés', { n })
+  }
+  return n === 1
+    ? translateTemplate('{n} produit du catalogue', { n })
+    : translateTemplate('{n} produits du catalogue', { n })
+})
+
+function productStockLabel(product: PharmacyCatalogProduct) {
+  if (product.quantity > 0) {
+    return translateTemplate('{n} en stock', { n: product.quantity })
+  }
+  return uiText('Hors stock')
+}
 
 async function loadProducts() {
   loading.value = true
@@ -192,72 +265,80 @@ function printCurrentOrdonnance() {
 }
 
 onMounted(() => {
-  void loadProducts()
+  if (showCatalog.value) void loadProducts()
 })
 
 watch(
   () => props.modelValue.length,
   () => {
+    if (!showCatalog.value) return
     if (!products.value.length && !loading.value) void loadProducts()
   },
 )
 </script>
 
 <template>
-  <div class="ordo-picker">
+  <div
+    class="ordo-picker"
+    :class="{
+      'ordo-picker--catalog': mode === 'catalog',
+      'ordo-picker--external': mode === 'external',
+    }"
+  >
     <div class="ordo-picker__head">
-      <PillBottle :size="16" />
+      <component :is="mode === 'external' ? PenLine : PillBottle" :size="16" />
       <div>
-        <h4>{{ uiText('Ordonnance pharmacie') }}</h4>
-        <p>
-          {{
-            uiText(
-              'Catalogue clinique ou saisie libre si le produit n’est pas en stock — sans débit automatique.',
-            )
-          }}
-        </p>
+        <h4>{{ headTitle }}</h4>
+        <p>{{ headHint }}</p>
       </div>
     </div>
 
-    <UiInput
-      v-model="search"
-      :icon="Search"
-      :label="uiText('Rechercher un produit en stock')"
-      :placeholder="uiText('Nom, dosage, code-barres…')"
-    />
+    <template v-if="showCatalog">
+      <UiInput
+        v-model="search"
+        :icon="Search"
+        :label="uiText('Rechercher un produit')"
+        :placeholder="uiText('Nom, dosage, code-barres…')"
+      />
 
-    <p v-if="loading" class="ordo-picker__hint">{{ uiText('Chargement du catalogue…') }}</p>
-    <p v-else-if="loadError" class="ordo-picker__error">{{ loadError }}</p>
+      <p v-if="loading" class="ordo-picker__hint">{{ uiText('Chargement du catalogue…') }}</p>
+      <p v-else-if="loadError" class="ordo-picker__error">{{ loadError }}</p>
+      <template v-else>
+        <p v-if="filteredProducts.length" class="ordo-picker__hint">{{ catalogListHint }}</p>
+        <div class="ordo-picker__catalog">
+          <button
+            v-for="(product, index) in filteredProducts"
+            :key="product.id"
+            type="button"
+            class="ordo-picker__product"
+            :class="{ 'ordo-picker__product--oos': product.quantity <= 0 }"
+            @click="addProduct(product)"
+          >
+            <span class="ordo-picker__num">{{ index + 1 }}</span>
+            <Package :size="14" />
+            <span class="ordo-picker__product-main">
+              <strong>{{ product.name }}</strong>
+              <small>
+                {{ product.dosage || product.pharmaceuticalForm || product.sku }}
+                · {{ formatFcfa(product.unitPriceFcfa) }}
+                · {{ productStockLabel(product) }}
+              </small>
+            </span>
+            <Plus :size="15" />
+          </button>
+          <p v-if="!filteredProducts.length" class="ordo-picker__hint">
+            {{ uiText('Aucun produit trouvé dans le catalogue.') }}
+          </p>
+        </div>
+      </template>
+    </template>
 
-    <div v-else class="ordo-picker__catalog">
-      <button
-        v-for="product in filteredProducts"
-        :key="product.id"
-        type="button"
-        class="ordo-picker__product"
-        @click="addProduct(product)"
-      >
-        <Package :size="14" />
-        <span class="ordo-picker__product-main">
-          <strong>{{ product.name }}</strong>
-          <small>
-            {{ product.dosage || product.pharmaceuticalForm || product.sku }}
-            · {{ formatFcfa(product.unitPriceFcfa) }}
-          </small>
-        </span>
-        <Plus :size="15" />
-      </button>
-      <p v-if="!filteredProducts.length" class="ordo-picker__hint">
-        {{ uiText('Aucun produit trouvé dans le catalogue.') }}
-      </p>
-    </div>
-
-    <div class="ordo-picker__free">
-      <div class="ordo-picker__free-head">
+    <div v-if="showExternal" class="ordo-picker__free">
+      <div v-if="mode === 'all'" class="ordo-picker__free-head">
         <PenLine :size="14" />
         <strong>{{ uiText('Médicament hors pharmacie') }}</strong>
       </div>
-      <p class="ordo-picker__hint">
+      <p v-if="mode === 'all'" class="ordo-picker__hint">
         {{ uiText('Saisissez le nom pour l’imprimer sur l’ordonnance (à se procurer en officine).') }}
       </p>
       <div class="ordo-picker__free-grid">
@@ -279,11 +360,11 @@ watch(
       </UiButton>
     </div>
 
-    <div v-if="lines.length" class="ordo-picker__cart">
+    <div v-if="visibleLines.length" class="ordo-picker__cart">
       <div class="ordo-picker__cart-head">
-        <h5>{{ uiText('Médicaments sélectionnés') }} ({{ lines.length }})</h5>
+        <h5>{{ cartTitle }} ({{ visibleLines.length }})</h5>
         <UiButton
-          v-if="patient"
+          v-if="patient && modelValue.length"
           type="button"
           variant="ghost"
           size="sm"
@@ -294,12 +375,13 @@ watch(
         </UiButton>
       </div>
       <article
-        v-for="line in lines"
+        v-for="(line, index) in visibleLines"
         :key="line._key"
         class="ordo-picker__line"
         :class="{ 'ordo-picker__line--free': !isPharmacyCatalogLine(line) }"
       >
         <div class="ordo-picker__line-top">
+          <span class="ordo-picker__num">{{ index + 1 }}</span>
           <div>
             <strong>{{ line.name }}</strong>
             <small v-if="line.dosage">{{ line.dosage }}</small>
@@ -359,6 +441,16 @@ watch(
   background: linear-gradient(180deg, #fff8f8, #fff);
 }
 
+.ordo-picker--catalog {
+  border-color: #bbf7d0;
+  background: linear-gradient(180deg, #f0fdf4, #fff);
+}
+
+.ordo-picker--external {
+  border-color: #fde68a;
+  background: linear-gradient(180deg, #fffbeb, #fff);
+}
+
 .ordo-picker__head {
   display: flex;
   gap: 0.55rem;
@@ -391,7 +483,7 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  max-height: 11rem;
+  max-height: 22rem;
   overflow: auto;
   padding-right: 0.15rem;
 }
@@ -414,6 +506,32 @@ watch(
 .ordo-picker__product:hover {
   border-color: var(--primary-300);
   background: var(--primary-50);
+}
+
+.ordo-picker__product--oos {
+  opacity: 0.72;
+}
+
+.ordo-picker__num {
+  min-width: 1.55rem;
+  height: 1.55rem;
+  padding: 0 0.2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--primary-100, #dcfce7);
+  color: var(--primary-800, #166534);
+  font-size: 0.6875rem;
+  font-weight: 800;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ordo-picker--external .ordo-picker__num,
+.ordo-picker__line--free .ordo-picker__num {
+  background: #fde68a;
+  color: #92400e;
 }
 
 .ordo-picker__product-main {
@@ -507,9 +625,15 @@ watch(
 
 .ordo-picker__line-top {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.5rem;
   margin-bottom: 0.4rem;
+}
+
+.ordo-picker__line-top > div {
+  flex: 1;
+  min-width: 0;
 }
 
 .ordo-picker__line-top strong {

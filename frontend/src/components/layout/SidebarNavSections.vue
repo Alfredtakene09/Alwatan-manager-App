@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { nextTick } from 'vue'
 import { ChevronRight, ChevronDown } from '@lucide/vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -46,17 +47,57 @@ function prefetchGroup(item: NavItem) {
   }
 }
 
-function onToggleGroup(item: NavItem) {
-  emit('toggleGroup', item)
-  prefetchGroup(item)
+/** Amène le sous-menu déroulé dans la zone visible (sans scroller manuellement). */
+function revealExpandedSubmenu(trigger: HTMLElement | null) {
+  if (!trigger) return
+  const submenu = trigger.closest('.nav-submenu') as HTMLElement | null
+  if (!submenu) return
+
+  const scrollReveal = () => {
+    const children = submenu.querySelector(
+      ':scope > .nav-submenu__children',
+    ) as HTMLElement | null
+    if (!children || children.offsetParent === null) return
+
+    const lastVisible = children.querySelector(
+      ':scope > .nav-item:last-child, :scope > .nav-submenu:last-child',
+    ) as HTMLElement | null
+
+    trigger.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+    ;(lastVisible ?? children).scrollIntoView({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'nearest',
+    })
+  }
+
+  // Attendre l’ouverture (props parent + v-show) avant de scroller
+  void nextTick(() => {
+    void nextTick(() => {
+      requestAnimationFrame(scrollReveal)
+    })
+  })
 }
 
-function onToggleChildGroup(parentLabel: string, child: NavChildItem) {
+function onToggleGroup(item: NavItem, event: MouseEvent) {
+  const wasExpanded = isGroupExpanded(item)
+  emit('toggleGroup', item)
+  prefetchGroup(item)
+  if (!wasExpanded) {
+    revealExpandedSubmenu(event.currentTarget as HTMLElement)
+  }
+}
+
+function onToggleChildGroup(parentLabel: string, child: NavChildItem, event: MouseEvent) {
+  const wasExpanded = isChildGroupExpanded(parentLabel, child)
   emit('toggleChildGroup', parentLabel, child)
   if (child.children) {
     for (const nested of child.children) {
       if (nested.to) prefetch(nested.to)
     }
+  }
+  if (!wasExpanded) {
+    revealExpandedSubmenu(event.currentTarget as HTMLElement)
   }
 }
 
@@ -99,7 +140,7 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
               'nav-item--group-open': isGroupExpanded(item),
               'nav-item--group-active': isNavGroupActive(route.path, item),
             }"
-            @click="onToggleGroup(item)"
+            @click="onToggleGroup(item, $event)"
           >
             <span class="nav-item__icon">
               <component :is="item.icon" :size="18" />
@@ -124,7 +165,7 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
                     'nav-item--group-open': isChildGroupExpanded(item.label, child),
                     'nav-item--group-active': isNavChildGroupActive(route.path, child),
                   }"
-                  @click="onToggleChildGroup(item.label, child)"
+                  @click="onToggleChildGroup(item.label, child, $event)"
                 >
                   <span class="nav-item__icon nav-item__icon--child">
                     <component :is="child.icon" :size="16" />

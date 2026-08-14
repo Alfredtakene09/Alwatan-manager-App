@@ -6,8 +6,6 @@ import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
 import { backfillClinicServiceDoctorLinks } from "../lib/clinic-service-doctors.js";
 import {
   EXAMS_PRESCRIBED_PREFIX,
-  CASHIER_PAYMENT_QUEUE_KINDS,
-  appendPaidExamKindMarker,
   hasExamsPrescribed,
   buildPrescribedExamsNotes,
   buildPrescribedExamsNotesByKind,
@@ -45,7 +43,7 @@ import {
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
 import { serializeDoctorFields, selectableDoctorWhere, selectableDoctorByIdWhere, selectableDoctorIncludingPausedWhere } from "../lib/doctor-compensation.js";
 import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
-import { resolveConsultationBilling, shouldCreateImmediateInvoice, isComptabiliteBillablePatient, comptabilitePatientWhere } from "../lib/patient-billing.js";
+import { resolveConsultationBilling, isComptabiliteBillablePatient, comptabilitePatientWhere } from "../lib/patient-billing.js";
 import { consultationInvoiceCreateData, consultationInvoiceUpdateData } from "../lib/consultation-invoice.js";
 import { planReconsultation, archiveVisitsForReconsultation } from "../lib/reconsultation.js";
 import {
@@ -404,31 +402,19 @@ router.patch("/:id/transfer", requireModule("consultation"), async (req, res) =>
 
 router.get("/consultations-comptabilite", async (req, res) => {
   const user = req.user!;
-  if (!canAccessModule(user.role, "reception") && !canAccessModule(user.role, "comptabilite")) {
+  if (!canAccessModule(user.role, "comptabilite")) {
     return res.status(403).json({ error: "Accès refusé" });
   }
 
   const statusFilter = req.query.status as string | undefined;
-  const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
 
   const visits = await prisma.visit.findMany({
     where: {
       patient: comptabilitePatientWhere(),
-      ...(isReceptionist
-        ? {
-            invoices: {
-              some: {
-                type: InvoiceType.CONSULTATION,
-                issuedById: user.id,
-              },
-            },
-          }
-        : {
-            OR: [
-              { consultationFeeFcfa: { not: null } },
-              { invoices: { some: { type: InvoiceType.CONSULTATION } } },
-            ],
-          }),
+      OR: [
+        { consultationFeeFcfa: { not: null } },
+        { invoices: { some: { type: InvoiceType.CONSULTATION } } },
+      ],
     },
     include: {
       patient: { select: { code: true, firstName: true, lastName: true, service: true } },
@@ -436,7 +422,6 @@ router.get("/consultations-comptabilite", async (req, res) => {
       invoices: {
         where: {
           type: InvoiceType.CONSULTATION,
-          ...(isReceptionist ? { issuedById: user.id } : {}),
         },
         orderBy: { createdAt: "desc" },
         take: 1,
@@ -474,7 +459,7 @@ router.get("/consultations-comptabilite", async (req, res) => {
 
 router.get("/encaissements-comptabilite", async (req, res) => {
   const user = req.user!;
-  if (!canAccessModule(user.role, "reception") && !canAccessModule(user.role, "comptabilite")) {
+  if (!canAccessModule(user.role, "comptabilite")) {
     return res.status(403).json({ error: "Accès refusé" });
   }
 
@@ -485,7 +470,6 @@ router.get("/encaissements-comptabilite", async (req, res) => {
     where: {
       ...collectedInvoicesWhere(new Date(0)),
       ...(typeFilter ? { type: typeFilter as InvoiceType } : {}),
-      ...(user.role === UserRole.RECEPTIONNISTE ? { issuedById: user.id } : {}),
     },
     include: {
       patient: { select: { code: true, firstName: true, lastName: true, service: true } },
@@ -526,30 +510,17 @@ router.get("/encaissements-comptabilite", async (req, res) => {
 
 router.get("/compte-rendu-receptions", async (req, res) => {
   const user = req.user!;
-  if (!canAccessModule(user.role, "reception") && !canAccessModule(user.role, "comptabilite")) {
+  if (!canAccessModule(user.role, "comptabilite")) {
     return res.status(403).json({ error: "Accès refusé" });
   }
-
-  const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
 
   const visits = await prisma.visit.findMany({
     where: {
       patient: comptabilitePatientWhere(),
-      ...(isReceptionist
-        ? {
-            invoices: {
-              some: {
-                type: InvoiceType.CONSULTATION,
-                issuedById: user.id,
-              },
-            },
-          }
-        : {
-            OR: [
-              { consultationFeeFcfa: { not: null } },
-              { invoices: { some: { type: InvoiceType.CONSULTATION } } },
-            ],
-          }),
+      OR: [
+        { consultationFeeFcfa: { not: null } },
+        { invoices: { some: { type: InvoiceType.CONSULTATION } } },
+      ],
     },
     include: {
       patient: { select: { code: true, firstName: true, lastName: true, service: true } },
@@ -557,7 +528,6 @@ router.get("/compte-rendu-receptions", async (req, res) => {
       invoices: {
         where: {
           type: InvoiceType.CONSULTATION,
-          ...(isReceptionist ? { issuedById: user.id } : {}),
         },
         orderBy: { createdAt: "desc" },
         take: 1,
@@ -730,7 +700,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
     const billing = resolveConsultationBilling(
       patient.category,
       consultationAmountFcfa,
-      body.reductionFcfa,
+      0,
     );
 
     const visit = await prisma.$transaction(async (tx) => {
@@ -797,7 +767,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
           invoiceNumber,
           totalFcfa: billing.billableAmountFcfa,
           patientCategory: patient.category,
-          billingDeferred: !shouldCreateImmediateInvoice(patient.category),
+          billingDeferred: true,
           renewalHint,
         };
       }
@@ -843,7 +813,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
           invoiceNumber: invoice.invoiceNumber,
           totalFcfa: billing.billableAmountFcfa,
           patientCategory: patient.category,
-          billingDeferred: !shouldCreateImmediateInvoice(patient.category),
+          billingDeferred: true,
           renewalHint,
         };
       }
@@ -852,7 +822,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
         ...createdVisit,
         totalFcfa: billing.billableAmountFcfa,
         patientCategory: patient.category,
-        billingDeferred: !shouldCreateImmediateInvoice(patient.category),
+        billingDeferred: true,
         renewalHint,
       };
     });
@@ -1199,20 +1169,6 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
         throw new Error("ACTIVE_VISIT_EXISTS");
       }
 
-      const paidAt = new Date();
-
-      let notesWithPayment = clinicalNotes;
-      if (body.examsByKind) {
-        for (const kind of CASHIER_PAYMENT_QUEUE_KINDS) {
-          const exams = (body.examsByKind as Record<ExamKindSlug, string[]>)[kind];
-          if (exams?.length) {
-            notesWithPayment = appendPaidExamKindMarker(notesWithPayment, kind, paidAt);
-          }
-        }
-      } else if (examLabels.length) {
-        notesWithPayment = appendPaidExamKindMarker(notesWithPayment, "examen", paidAt);
-      }
-
       const pendingExternal =
         activeVisit?.notes?.includes(EXTERNAL_PATIENT_VISIT_NOTE) &&
         activeVisit.consultation &&
@@ -1239,10 +1195,8 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
         consultation = await tx.consultation.update({
           where: { id: pendingExternal.consultation.id },
           data: {
-            clinicalNotes: notesWithPayment,
+            clinicalNotes: clinicalNotes,
             labExamReductionFcfa: examReduction,
-            labSentToLabAt: paidAt,
-            labApprovedById: user.id,
             ...(assignedDoctorId ? { doctorId: assignedDoctorId } : {}),
           },
         });
@@ -1261,30 +1215,15 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
         consultation = await tx.consultation.create({
           data: {
             visitId: newVisit.id,
-            clinicalNotes: notesWithPayment,
+            clinicalNotes: clinicalNotes,
             labExamReductionFcfa: examReduction,
-            labSentToLabAt: paidAt,
-            labApprovedById: user.id,
             doctorId: assignedDoctorId ?? undefined,
           },
         });
       }
 
-      let invoice = null;
-      if (shouldCreateImmediateInvoice(patientCategory!) && netFcfa > 0) {
-        invoice = await tx.invoice.create({
-          data: {
-            invoiceNumber: await generateInvoiceNumber(),
-            patientId,
-            visitId,
-            type: InvoiceType.LAB_EXAM,
-            amountFcfa: netFcfa,
-            status: InvoiceStatus.PAID,
-            issuedById: user.id,
-            paidAt: new Date(),
-          },
-        });
-      }
+      // Pas d'encaissement ici — file d'attente gestionnaire.
+      const invoice = null;
 
       // Opération prescrite : créer le dossier bloc si un médecin est assigné
       const operationLabel = body.examsByKind?.operation?.find(Boolean);
@@ -1368,7 +1307,7 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
       }
       if (error.message === "ACTIVE_VISIT_EXISTS") {
         return res.status(409).json({
-          error: "Ce patient a déjà une visite en cours. Utilisez la file d'attente de paiement.",
+          error: "Ce patient a déjà une visite en cours. Terminez-la ou utilisez un autre dossier.",
         });
       }
       if (error.message === "PATIENT_NOT_BILLABLE") {

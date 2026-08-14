@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RefreshCw, Printer } from '@lucide/vue'
+import { RefreshCw, Printer, Eye } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { CLINIC } from '@/lib/clinic'
@@ -10,13 +10,11 @@ import { buildThermalTicketHeadHtml, openPrintDocument, thermalMetaRow } from '@
 import { translateUi } from '@/i18n/translate'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
-import { DT_ICONS } from '@/lib/datatable-defaults'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiInput from '@/components/ui/UiInput.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 
 type SaleLine = {
@@ -100,43 +98,6 @@ const tableRows = computed(() => {
     totalSort: item.totalFcfa,
     invoice: item.invoiceNumber ?? '—',
   }))
-})
-
-const columns = computed(() => {
-  void localeCode.value
-  return [
-    {
-      data: 'dateSort',
-      title: uiText('Date'),
-      responsivePriority: 1,
-      render: (_d: number, _t: string, row: { date: string }) => row.date,
-    },
-    { data: 'patient', title: uiText('Acheteur'), responsivePriority: 1 },
-    { data: 'pharmacist', title: uiText('Pharmacien'), responsivePriority: 3 },
-    { data: 'linesLabel', title: uiText('Lignes'), responsivePriority: 4 },
-    {
-      data: 'totalSort',
-      title: uiText('Total'),
-      responsivePriority: 2,
-      render: (_d: number, _t: string, row: { total: string }) =>
-        `<span class="dt-amount">${row.total}</span>`,
-    },
-    { data: 'invoice', title: uiText('Facture'), responsivePriority: 4 },
-    {
-      data: null,
-      title: uiText('Actions'),
-      orderable: false,
-      searchable: false,
-      className: 'dt-actions-col dt-actions-col--catalog all',
-      responsivePriority: 1,
-      width: '6.5rem',
-      render: (_d: unknown, _t: string, row: { id: string }) =>
-        `<div class="dt-row-actions" data-id="${row.id}">
-        <button type="button" class="dt-btn dt-btn--icon dt-btn--accent" data-action="print" data-id="${row.id}" title="${uiText('Imprimer')}" aria-label="${uiText('Imprimer')}">${DT_ICONS.print}</button>
-        <button type="button" class="dt-btn dt-btn--icon dt-btn--icon-soft" data-action="view" data-id="${row.id}" title="${uiText('Détail')}" aria-label="${uiText('Détail')}">${DT_ICONS.view}</button>
-      </div>`,
-    },
-  ]
 })
 
 const expandedSale = computed(() => items.value.find((item) => item.id === expandedId.value) ?? null)
@@ -279,17 +240,63 @@ defineExpose({ reload: loadItems })
     <UiAlert v-if="message" type="error" :message="message" class="panel-alert" />
 
     <p v-if="!loading && !items.length" class="empty">{{ uiText('Aucune vente enregistrée pour cette période.') }}</p>
-    <UiDataTable
-      v-else
-      fill
-      table-key="pharmacy-sales-history-v3"
-      compact
-      :data="tableRows"
-      :columns="columns"
-      :loading="loading"
-      loading-label="Chargement des ventes…"
-      @action="onTableAction"
-    />
+    <div v-else class="simple-table-shell" :class="{ 'simple-table-shell--fill': true }">
+      <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+        <span class="simple-table-spinner" aria-hidden="true" />
+        Chargement des ventes…
+      </div>
+      <div class="simple-table-scroll">
+        <div class="simple-table-wrap">
+          <table class="simple-table">
+            <thead>
+              <tr>
+                <th class="simple-table__num">#</th>
+                <th>{{ uiText('Date') }}</th>
+                <th>{{ uiText('Acheteur') }}</th>
+                <th>{{ uiText('Pharmacien') }}</th>
+                <th>{{ uiText('Lignes') }}</th>
+                <th>{{ uiText('Total') }}</th>
+                <th>{{ uiText('Facture') }}</th>
+                <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in tableRows" :key="row.id">
+                <td class="simple-table__num">{{ index + 1 }}</td>
+                <td><span class="st-date">{{ row.date }}</span></td>
+                <td><span class="st-name">{{ row.patient }}</span></td>
+                <td>{{ row.pharmacist }}</td>
+                <td>{{ row.linesLabel }}</td>
+                <td><span class="st-amount">{{ row.total }}</span></td>
+                <td>{{ row.invoice }}</td>
+                <td class="simple-table__actions">
+                  <div class="st-actions">
+                    <button
+                      type="button"
+                      class="st-btn st-btn--accent"
+                      :title="uiText('Imprimer')"
+                      :aria-label="uiText('Imprimer')"
+                      @click="onTableAction({ action: 'print', id: row.id })"
+                    >
+                      <Printer :size="15" />
+                    </button>
+                    <button
+                      type="button"
+                      class="st-btn st-btn--soft"
+                      :title="uiText('Détail')"
+                      :aria-label="uiText('Détail')"
+                      @click="onTableAction({ action: 'view', id: row.id })"
+                    >
+                      <Eye :size="15" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </PageTableSection>
 
   <UiFormModal

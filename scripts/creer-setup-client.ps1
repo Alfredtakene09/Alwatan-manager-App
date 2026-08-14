@@ -17,11 +17,18 @@ if (-not $OutputRoot) {
 if (-not $ServerIp) {
     $ServerIp = Read-AlwatanServerIp
 }
+if ($ServerIp -and (Test-AlwatanTailscaleIpv4 $ServerIp)) {
+    Write-Host "SERVER_IP=$ServerIp est Tailscale - bascule sur IP Wi-Fi locale." -ForegroundColor Yellow
+    $ServerIp = $null
+}
 if (-not $ServerIp) {
     $ServerIp = Get-LocalLanIpv4
 }
 if (-not $ServerIp) {
-    $ServerIp = Read-Host 'IP du serveur Alwatan pour ce package (ex. 192.168.1.50)'
+    $ServerIp = Read-Host 'IP Wi-Fi du serveur Alwatan (ex. 192.168.88.161)'
+}
+if ($ServerIp -and (Test-AlwatanTailscaleIpv4 $ServerIp)) {
+    throw "IP principale = Wi-Fi (ex. 192.168.x.x), pas Tailscale ($ServerIp)."
 }
 $TailscaleIp = Get-TailscaleIpv4
 if (-not $TailscaleIp) {
@@ -75,6 +82,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0lancer-client.ps1"
 if errorlevel 1 pause
 "@
 Set-Content -LiteralPath (Join-Path $packageDir 'Ouvrir Alwatan.bat') -Value $ouvrirBat -Encoding ASCII
+
+$ouvrirHardBat = @"
+@echo off
+title Alwatan Manager (rechargement force)
+cd /d "%~dp0"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0lancer-client.ps1" -ForceHardReload
+if errorlevel 1 pause
+"@
+Set-Content -LiteralPath (Join-Path $packageDir 'Ouvrir Alwatan (rechargement force).bat') -Value $ouvrirHardBat -Encoding ASCII
 
 $ouvrirUrl = @"
 [InternetShortcut]
@@ -135,16 +151,17 @@ Clinique Alwatan - Setup client (acces reseau)
 
 Sur ce PC (reception, medecin, etc.) - pas le serveur :
 
-1. Copiez tout le dossier « $packageName » (cle USB ou reseau).
+1. Copiez tout le dossier $packageName (cle USB ou reseau).
 2. Double-cliquez sur INSTALLER.bat
 3. Validez l'IP Wi-Fi du serveur si demandee (defaut : $ServerIp)
-4. Utilisez le raccourci Bureau « Alwatan Manager »
+4. Utilisez le raccourci Bureau Alwatan Manager
    (teste Wi-Fi puis Tailscale automatiquement)
 
-SECOURS immédiat (sans installation) :
-  « Ouvrir Alwatan.bat »  → Wi-Fi puis Tailscale
-  « Ouvrir Alwatan (Wi-Fi).url »
-  « Ouvrir Alwatan (Tailscale).url » (si disponible)
+SECOURS immediat (sans installation) :
+  Ouvrir Alwatan.bat  -> Wi-Fi puis Tailscale
+  Ouvrir Alwatan (rechargement force).bat  -> purge cache + URL anti-cache
+  Ouvrir Alwatan (Wi-Fi).url
+  Ouvrir Alwatan (Tailscale).url (si disponible)
 
 Wi-Fi      : $url
 Tailscale  : $(if ($tsUrl) { $tsUrl } else { '(non detecte)' })
@@ -178,5 +195,5 @@ Write-Host ''
 
 if (-not $Quiet) {
     $msgTs = if ($tsUrl) { "`nTailscale : $tsUrl" } else { '' }
-    Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Setup client créé.`n`nZIP :`n$zipPath`n`nWi-Fi : $url$msgTs`n`nCopiez-le sur les autres PC et lancez INSTALLER.bat"
+    Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Setup client cree.`n`nZIP :`n$zipPath`n`nWi-Fi : $url$msgTs`n`nCopiez-le sur les autres PC et lancez INSTALLER.bat"
 }

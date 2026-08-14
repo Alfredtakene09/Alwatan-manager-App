@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { ClipboardList, Plus, RefreshCw, Save, X } from '@lucide/vue'
+import { ClipboardList, Plus, RefreshCw, Save, X, Check, Ban } from '@lucide/vue'
 import api from '@/api/client'
 import { fullName } from '@/lib/roles'
-import { statusBadge, DT_ICONS } from '@/lib/datatable-defaults'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { LogisticsItemRecord } from '@/components/logistique/LogisticsItemsPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
@@ -15,8 +14,8 @@ import UiTextarea from '@/components/ui/UiTextarea.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
 import { confirmAppModal } from '@/lib/api-modal-helper'
+import '@/assets/simple-table.css'
 
 type RequestStatus = 'PENDING' | 'FULFILLED' | 'REJECTED'
 
@@ -97,46 +96,6 @@ const tableRows = computed(() =>
     canReject: r.status === 'PENDING',
   })),
 )
-
-const columns = [
-  {
-    data: 'code',
-    title: 'N°',
-    responsivePriority: 1,
-    render: (code: string) => `<span class="dt-name">${code}</span>`,
-  },
-  { data: 'service', title: 'Service', responsivePriority: 1 },
-  {
-    data: 'dateSort',
-    title: 'Date',
-    responsivePriority: 2,
-    render: (_d: number, _t: string, row: { date: string }) => row.date,
-  },
-  { data: 'linesLabel', title: 'Art.', responsivePriority: 3 },
-  {
-    data: 'statusLabel',
-    title: 'État',
-    responsivePriority: 2,
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'warning' | 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: '',
-    orderable: false,
-    className: 'dt-actions-col all',
-    responsivePriority: 1,
-    render: (_d: unknown, _t: string, row: { id: string; canFulfill: boolean; canReject: boolean }) => {
-      if (!row.canFulfill && !row.canReject) return '—'
-      return `
-        <div class="dt-row-actions" data-id="${row.id}">
-          ${row.canFulfill ? `<button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-on" data-action="fulfill" title="Livrer" aria-label="Livrer">${DT_ICONS.check}</button>` : ''}
-          ${row.canReject ? `<button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-off" data-action="reject" title="Refuser" aria-label="Refuser">${DT_ICONS.ban}</button>` : ''}
-        </div>
-      `
-    },
-  },
-]
 
 function apiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error) && typeof error.response?.data?.error === 'string') {
@@ -322,18 +281,67 @@ defineExpose({ reload })
 
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
 
-    <p v-if="!loading && !requests.length" class="empty">Aucune demande enregistrée</p>
-    <UiDataTable
-      v-else
-      fill
-      table-key="logistics-requests"
-      compact
-      :data="tableRows"
-      :columns="columns"
-      :loading="loading"
-      loading-label="Chargement des demandes…"
-      @action="onTableAction"
-    />
+    <div class="simple-table-shell simple-table-shell--fill">
+      <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+        <span class="simple-table-spinner" aria-hidden="true" />
+        Chargement des demandes…
+      </div>
+      <div class="simple-table-scroll">
+        <p v-if="!loading && !tableRows.length" class="simple-table__empty">Aucune demande enregistrée</p>
+        <div v-else class="simple-table-wrap">
+          <table class="simple-table">
+            <thead>
+              <tr>
+                <th class="simple-table__num">#</th>
+                <th>N°</th>
+                <th>Service</th>
+                <th>Date</th>
+                <th>Art.</th>
+                <th>État</th>
+                <th class="simple-table__actions-head"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in tableRows" :key="row.id">
+                <td class="simple-table__num">{{ index + 1 }}</td>
+                <td><span class="st-name">{{ row.code }}</span></td>
+                <td><span class="st-date">{{ row.service }}</span></td>
+                <td><span class="st-date">{{ row.date }}</span></td>
+                <td><span class="st-muted">{{ row.linesLabel }}</span></td>
+                <td>
+                  <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                </td>
+                <td class="simple-table__actions">
+                  <div v-if="row.canFulfill || row.canReject" class="st-actions">
+                    <button
+                      v-if="row.canFulfill"
+                      type="button"
+                      class="st-btn st-btn--catalog-on"
+                      title="Livrer"
+                      aria-label="Livrer"
+                      @click="onTableAction({ action: 'fulfill', id: row.id })"
+                    >
+                      <Check :size="15" />
+                    </button>
+                    <button
+                      v-if="row.canReject"
+                      type="button"
+                      class="st-btn st-btn--catalog-off"
+                      title="Refuser"
+                      aria-label="Refuser"
+                      @click="onTableAction({ action: 'reject', id: row.id })"
+                    >
+                      <Ban :size="15" />
+                    </button>
+                  </div>
+                  <span v-else class="st-muted">—</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </PageTableSection>
 
   <UiFormModal
@@ -389,13 +397,6 @@ defineExpose({ reload })
 <style scoped>
 .panel-alert {
   margin-bottom: 1rem;
-}
-
-.empty {
-  text-align: center;
-  color: var(--text-light);
-  padding: 2rem 1rem;
-  font-size: 0.875rem;
 }
 
 .filter-select {

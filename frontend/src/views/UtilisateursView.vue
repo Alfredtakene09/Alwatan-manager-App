@@ -12,7 +12,6 @@ import {
   type AdminAssignableUserRole,
 } from '@/lib/roles'
 import { isHiddenPlatformAdminEmployee } from '@/lib/employee-app-account'
-import { catalogRowActionsHtml, DT_ICONS, statusBadge } from '@/lib/datatable-defaults'
 import { shiftButtonLabel, type ShiftSlot } from '@/lib/cash-shift'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -21,10 +20,11 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import { useAuthStore } from '@/stores/auth'
+import '@/assets/simple-table.css'
 
 type LinkedEmployee = {
   id: string
@@ -230,79 +230,6 @@ const tableRows = computed(() => {
     }
   })
 })
-
-const columns = [
-  {
-    data: 'name',
-    title: 'Nom',
-    responsivePriority: 1,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  {
-    data: 'username',
-    title: "Nom d'utilisateur",
-    responsivePriority: 1,
-    className: 'dt-col-username',
-  },
-  {
-    data: 'roleLabel',
-    title: 'Rôle',
-    responsivePriority: 1,
-    render: (label: string) => statusBadge(label, 'info'),
-  },
-  {
-    data: 'statusLabel',
-    title: 'Statut',
-    responsivePriority: 1,
-    className: 'dt-col-status',
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger' | 'warning'),
-  },
-  {
-    data: 'employeeLabel',
-    title: 'Employé lié',
-    responsivePriority: 3,
-    render: (label: string) => `<span class="dt-date">${label}</span>`,
-  },
-  {
-    data: 'email',
-    title: 'E-mail',
-    responsivePriority: 4,
-    className: 'dt-col-email',
-  },
-  {
-    data: null,
-    title: 'Actions',
-    orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog dt-actions-col--sticky all',
-    responsivePriority: 1,
-    render: (
-      _d: unknown,
-      _t: string,
-      row: {
-        id: string
-        toggleLabel: string
-        isActive: boolean
-        canDelete: boolean
-        canUnlock: boolean
-      },
-    ) => {
-      const base = catalogRowActionsHtml({
-        ...row,
-        showView: true,
-        showEdit: true,
-        showToggle: true,
-        canDelete: true,
-      })
-      if (!row.canUnlock) return base
-      const unlockLabel = uiText('Déverrouiller')
-      return base.replace(
-        '</div>',
-        `<button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-on" data-action="unlock" title="${unlockLabel}" aria-label="${unlockLabel}">${DT_ICONS.undo}</button></div>`,
-      )
-    },
-  },
-]
 
 function resetForm() {
   form.value = {
@@ -732,8 +659,7 @@ onMounted(loadUsers)
     </section>
 
     <section class="page-with-table__body">
-      <UiCard
-        title="Comptes utilisateurs"
+      <UiCard direct title="Comptes utilisateurs"
         description="Créez d'abord l'employé dans Employés, puis liez-le ici pour lui ouvrir un accès"
         class="ui-card--table-panel"
         :icon="Users"
@@ -775,17 +701,67 @@ onMounted(loadUsers)
         <p v-else-if="!loading && users.length && !filteredUsers.length" class="empty">
           {{ uiText('Aucun utilisateur pour ce filtre') }}
         </p>
-        <UiDataTable
-          v-else
-          fill
-          table-key="admin-users"
-          compact
-          :data="tableRows"
-          :columns="columns"
-          :loading="loading"
-          loading-label="Chargement des utilisateurs…"
-          @action="onTableAction"
-        />
+        <div v-else class="simple-table-shell simple-table-shell--fill">
+          <div
+            v-if="loading"
+            class="simple-table-overlay" role="status"
+            aria-live="polite"
+          >
+            <span class="simple-table-spinner" aria-hidden="true" />
+            Chargement des utilisateurs…
+          </div>
+          <div class="simple-table-scroll">
+            <div class="simple-table-wrap">
+              <table class="simple-table">
+                <thead>
+                  <tr>
+                    <th class="simple-table__num">#</th>
+                    <th>Nom</th>
+                    <th>Nom d'utilisateur</th>
+                    <th>Rôle</th>
+                    <th>Statut</th>
+                    <th>Employé lié</th>
+                    <th>E-mail</th>
+                    <th class="simple-table__actions-head">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in tableRows" :key="row.id">
+                    <td class="simple-table__num">{{ index + 1 }}</td>
+                    <td><span class="st-name">{{ row.name }}</span></td>
+                    <td>{{ row.username }}</td>
+                    <td><span class="st-badge st-badge--info">{{ row.roleLabel }}</span></td>
+                    <td>
+                      <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                    </td>
+                    <td><span class="st-date">{{ row.employeeLabel }}</span></td>
+                    <td>{{ row.email }}</td>
+                    <td class="simple-table__actions users-row-actions">
+                      <StCatalogActions
+                        :id="row.id"
+                        :is-active="row.isActive"
+                        :toggle-label="row.toggleLabel"
+                        :can-delete="true"
+                        :show-view="true"
+                        @action="onTableAction"
+                      />
+                      <button
+                        v-if="row.canUnlock"
+                        type="button"
+                        class="st-btn st-btn--catalog-on"
+                        :title="uiText('Déverrouiller')"
+                        :aria-label="uiText('Déverrouiller')"
+                        @click="onTableAction({ action: 'unlock', id: row.id })"
+                      >
+                        <Unlock :size="15" />
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </UiCard>
     </section>
 
@@ -1038,6 +1014,17 @@ onMounted(loadUsers)
 </template>
 
 <style scoped>
+.users-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.3rem;
+}
+
+.users-row-actions :deep(.st-actions) {
+  display: contents;
+}
+
 .empty,
 .employee-hint {
   text-align: center;

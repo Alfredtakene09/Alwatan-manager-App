@@ -18,7 +18,7 @@ import UiButton from '@/components/ui/UiButton.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiCard from '@/components/ui/UiCard.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import '@/assets/simple-table.css'
 
 type ReportData = {
   period: string
@@ -54,32 +54,6 @@ const topExitRows = computed(() =>
     quantity: row.quantity,
   })),
 )
-
-const categoryColumns = [
-  {
-    data: 'name',
-    title: 'Catégorie',
-    responsivePriority: 1,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  { data: 'itemsCount', title: 'Art.', responsivePriority: 2 },
-  {
-    data: 'stockValueSort',
-    title: 'Valeur',
-    responsivePriority: 1,
-    render: (_d: number, _t: string, row: { stockValue: string }) => `<span class="dt-amount">${row.stockValue}</span>`,
-  },
-]
-
-const topExitColumns = [
-  {
-    data: 'name',
-    title: 'Article',
-    responsivePriority: 1,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  { data: 'quantity', title: 'Sorties', responsivePriority: 1 },
-]
 
 async function loadReport() {
   loading.value = true
@@ -185,32 +159,68 @@ defineExpose({ reload: loadReport })
         <div class="page-table-toolbar">
           <strong class="panel-table-title">Valeur par catégorie</strong>
         </div>
-        <p v-if="!loading && !categoryRows.length" class="empty">Aucune donnée.</p>
-        <UiDataTable
-          v-else
-          fill
-          table-key="logistics-reports-categories"
-          compact
-          :data="categoryRows"
-          :columns="categoryColumns"
-          :loading="loading"
-        />
+        <div class="simple-table-shell simple-table-shell--fill">
+          <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+            <span class="simple-table-spinner" aria-hidden="true" />
+            Chargement…
+          </div>
+          <div class="simple-table-scroll">
+            <p v-if="!loading && !categoryRows.length" class="simple-table__empty">Aucune donnée.</p>
+            <div v-else class="simple-table-wrap">
+              <table class="simple-table">
+                <thead>
+                  <tr>
+                    <th class="simple-table__num">#</th>
+                    <th>Catégorie</th>
+                    <th>Art.</th>
+                    <th>Valeur</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in categoryRows" :key="row.id">
+                    <td class="simple-table__num">{{ index + 1 }}</td>
+                    <td><span class="st-name">{{ row.name }}</span></td>
+                    <td><span class="st-muted">{{ row.itemsCount }}</span></td>
+                    <td><span class="st-amount">{{ row.stockValue }}</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="page-table-section">
         <div class="page-table-toolbar">
           <strong class="panel-table-title">Top sorties</strong>
         </div>
-        <p v-if="!loading && !topExitRows.length" class="empty">Aucune sortie sur la période.</p>
-        <UiDataTable
-          v-else
-          fill
-          table-key="logistics-reports-exits"
-          compact
-          :data="topExitRows"
-          :columns="topExitColumns"
-          :loading="loading"
-        />
+        <div class="simple-table-shell simple-table-shell--fill">
+          <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+            <span class="simple-table-spinner" aria-hidden="true" />
+            Chargement…
+          </div>
+          <div class="simple-table-scroll">
+            <p v-if="!loading && !topExitRows.length" class="simple-table__empty">Aucune sortie sur la période.</p>
+            <div v-else class="simple-table-wrap">
+              <table class="simple-table">
+                <thead>
+                  <tr>
+                    <th class="simple-table__num">#</th>
+                    <th>Article</th>
+                    <th>Sorties</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in topExitRows" :key="row.id">
+                    <td class="simple-table__num">{{ index + 1 }}</td>
+                    <td><span class="st-name">{{ row.name }}</span></td>
+                    <td><span class="st-muted">{{ row.quantity }}</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -251,13 +261,6 @@ defineExpose({ reload: loadReport })
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
-}
-
-.empty {
-  text-align: center;
-  color: var(--text-light);
-  padding: 2rem 1rem;
-  font-size: 0.875rem;
 }
 
 @media (max-width: 960px) {

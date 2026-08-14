@@ -142,8 +142,7 @@ onActivated(() => {
     </section>
 
     <section class="page-with-table__body">
-      <UiCard
-        title="Dossiers clôturés"
+      <UiCard direct title="Dossiers clôturés"
         description="Matricule · Patient · Date · Examens — Imprimer · Consulter · Modifier · Ajouter"
         class="ui-card--table-panel lab-table-card"
         :icon="CheckCircle2"

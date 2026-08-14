@@ -9,6 +9,8 @@ const props = defineProps<{
   icon?: Component
   iconVariant?: 'green' | 'teal' | 'blue' | 'amber' | 'rose' | 'violet' | 'cyan'
   padding?: boolean
+  /** Affichage direct : header compact, corps serré (listes / tableaux) */
+  direct?: boolean
 }>()
 
 const { uiText, localeCode, isArabic } = useAppI18n()
@@ -27,7 +29,10 @@ const descriptionText = computed(() => {
     class="ui-card card-accent"
     :class="[
       `card-accent--${iconVariant ?? 'green'}`,
-      { 'ui-card--flat': padding === false },
+      {
+        'ui-card--flat': padding === false,
+        'ui-card--direct': direct,
+      },
     ]"
   >
     <div v-if="title || description || icon" class="ui-card__header">
@@ -114,5 +119,39 @@ const descriptionText = computed(() => {
 
 .ui-card--flat .ui-card__body {
   padding-top: 0;
+}
+
+/* Affichage direct : données prioritaires, chrome réduit */
+.ui-card--direct .ui-card__header {
+  padding: 0.55rem 0.75rem 0;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.ui-card--direct .ui-card__icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 8px;
+}
+
+.ui-card--direct .ui-card__icon :deep(svg) {
+  width: 15px;
+  height: 15px;
+}
+
+.ui-card--direct .ui-card__titles h3 {
+  font-size: 0.9375rem;
+}
+
+.ui-card--direct .ui-card__titles p {
+  display: none;
+}
+
+.ui-card--direct .ui-card__body {
+  padding: 0.35rem 0.55rem 0.45rem;
+}
+
+.ui-card--direct.ui-card--flat .ui-card__body {
+  padding-top: 0.25rem;
 }
 </style>

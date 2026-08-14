@@ -556,6 +556,8 @@ model LabPanelField {
   unit         String?
   reference    String?
   defaultValue String?
+  /// Tarif partiel (FCFA) si le médecin ne coche que ce champ ; null = repli sur le tarif examen.
+  priceFcfa    Int?
   hasComment   Boolean  @default(false)
   type         String   @default("text")
   sortOrder    Int      @default(0)

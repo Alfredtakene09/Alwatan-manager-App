@@ -10,7 +10,12 @@ export type OperationShareBreakdown = {
 }
 
 export function surgeryCompletedAtIso(surgery: SurgeryCaseRow): string {
-  return surgery.completedAt ?? surgery.operationScheduledAt ?? surgery.updatedAt
+  return (
+    surgery.completedAt ??
+    surgery.operationScheduledAt ??
+    surgery.invoice?.paidAt ??
+    surgery.updatedAt
+  )
 }
 
 export function computeOperationShares(surgery: SurgeryCaseRow): OperationShareBreakdown {

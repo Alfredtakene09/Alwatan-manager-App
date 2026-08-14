@@ -6,6 +6,11 @@ import {
   buildExamSheetsByKind,
   computeExamGrossFcfa,
 } from "./exam-billing.js";
+import {
+  countPrescribedFieldUnits,
+  extractBasePanelLabel,
+  extractSelectedFormLabels,
+} from "./lab-notes.js";
 
 const DEFAULT_EXAM_PRICE_FCFA = 3000;
 
@@ -35,10 +40,66 @@ export const LAB_EXAM_PRICES_FCFA: Record<string, number> = {
 };
 
 let catalogPriceCache = new Map<string, number>();
+/** Clé : `panelLabel::fieldLabel` (casse / espaces normalisés côté lookup). */
+let fieldPriceCache = new Map<string, number>();
+
+function normalizePriceKey(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function fieldPriceLookupKey(panelLabel: string, fieldLabel: string) {
+  return `${normalizePriceKey(panelLabel)}::${normalizePriceKey(fieldLabel)}`;
+}
+
+/** Champs individuels dans « Panel (Section: A · B) » ou « Panel (champ) ». */
+export function extractPrescribedFieldLabels(prescribed: string): string[] {
+  const forms = extractSelectedFormLabels(prescribed);
+  if (forms === null || !forms.length) return [];
+  const fields: string[] = [];
+  for (const form of forms) {
+    const colon = form.indexOf(":");
+    if (colon >= 0) {
+      const rest = form.slice(colon + 1).trim();
+      if (!rest) continue;
+      fields.push(
+        ...rest
+          .split(/\s*·\s*/)
+          .map((part) => part.trim())
+          .filter(Boolean),
+      );
+    } else {
+      fields.push(form);
+    }
+  }
+  return fields;
+}
+
+function resolveExamBasePrice(label: string): number {
+  const cached = catalogPriceCache.get(label);
+  if (cached != null) return cached;
+  const base = extractBasePanelLabel(label);
+  if (base !== label) {
+    const baseCached = catalogPriceCache.get(base);
+    if (baseCached != null) return baseCached;
+    if (LAB_EXAM_PRICES_FCFA[base] != null) return LAB_EXAM_PRICES_FCFA[base];
+  }
+  return LAB_EXAM_PRICES_FCFA[label] ?? DEFAULT_EXAM_PRICE_FCFA;
+}
+
+function resolveFieldPrice(panelLabel: string, fieldLabel: string): number | null {
+  const exact = fieldPriceCache.get(fieldPriceLookupKey(panelLabel, fieldLabel));
+  if (exact != null && exact > 0) return exact;
+  return null;
+}
 
 export async function refreshExamPriceCache() {
   try {
-    const [items, interventions, rooms] = await Promise.all([
+    const [items, interventions, rooms, fields] = await Promise.all([
       prisma.examCatalogItem.findMany({
         where: { active: true },
         select: { label: true, priceFcfa: true },
@@ -51,6 +112,25 @@ export async function refreshExamPriceCache() {
         where: { active: true },
         select: { name: true, dailyRateFcfa: true, type: true },
       }),
+      prisma.labPanelField.findMany({
+        where: {
+          priceFcfa: { not: null, gt: 0 },
+          panel: { active: true },
+        },
+        select: {
+          label: true,
+          priceFcfa: true,
+          panel: {
+            select: {
+              label: true,
+              examCatalogItems: {
+                where: { active: true },
+                select: { label: true },
+              },
+            },
+          },
+        },
+      }),
     ]);
     const simpleRoom =
       rooms.find((room) => room.type === RoomType.SIMPLE) ?? rooms[0];
@@ -61,23 +141,49 @@ export async function refreshExamPriceCache() {
       ...rooms.map((room) => [room.name, room.dailyRateFcfa] as const),
       [HOSPITALISATION_PRESCRIPTION_LABEL, hospitalisationRateFcfa] as const,
     ]);
+
+    const nextFieldPrices = new Map<string, number>();
+    for (const field of fields) {
+      if (field.priceFcfa == null || field.priceFcfa < 1) continue;
+      const panelLabels = new Set<string>([
+        field.panel.label,
+        ...field.panel.examCatalogItems.map((item) => item.label),
+      ]);
+      for (const panelLabel of panelLabels) {
+        if (!panelLabel.trim()) continue;
+        nextFieldPrices.set(fieldPriceLookupKey(panelLabel, field.label), field.priceFcfa);
+      }
+    }
+    fieldPriceCache = nextFieldPrices;
   } catch {
     catalogPriceCache = new Map();
+    fieldPriceCache = new Map();
   }
 }
 
+/**
+ * Prix d’une ligne prescrite :
+ * - examen entier (« Panel ») → tarif catalogue ;
+ * - champs partiels (« Panel (Section: champ) ») → somme des prix champs (sinon tarif examen / champ).
+ */
 export function getLabExamPriceFcfa(label: string): number {
-  const cached = catalogPriceCache.get(label);
-  if (cached != null) return cached;
-  // Prescriptions « Panel (section: champs) » : tarif du panel parent.
-  const baseMatch = label.trim().match(/^(.*?)\s*\((.*)\)\s*$/);
-  const base = baseMatch?.[1]?.trim();
-  if (base) {
-    const baseCached = catalogPriceCache.get(base);
-    if (baseCached != null) return baseCached;
-    if (LAB_EXAM_PRICES_FCFA[base] != null) return LAB_EXAM_PRICES_FCFA[base];
+  const trimmed = label.trim();
+  if (!trimmed) return DEFAULT_EXAM_PRICE_FCFA;
+
+  const selectedFields = extractPrescribedFieldLabels(trimmed);
+  if (!selectedFields.length) {
+    const units = countPrescribedFieldUnits(trimmed);
+    return resolveExamBasePrice(trimmed) * units;
   }
-  return LAB_EXAM_PRICES_FCFA[label] ?? DEFAULT_EXAM_PRICE_FCFA;
+
+  const base = extractBasePanelLabel(trimmed);
+  let sum = 0;
+  for (const fieldLabel of selectedFields) {
+    const fieldPrice = resolveFieldPrice(base, fieldLabel);
+    // Sans tarif unitaire : non facturable en sélection partielle (pas de repli examen).
+    if (fieldPrice != null) sum += fieldPrice;
+  }
+  return sum;
 }
 
 /** @deprecated Utiliser buildExamLinesFromNotes depuis exam-billing */

@@ -57,9 +57,15 @@ const catalogReady = ref(false)
 const catalogEpoch = ref(0)
 /** Panel labo dont la checklist (sections / lignes) est dépliée. */
 const expandedPanelLabel = ref<string | null>(null)
+/** Message si le médecin tente de cocher un champ sans tarif unitaire. */
+const fieldNotice = ref('')
 const catalogItems = ref(
   getCatalogForKind(props.kind, props.doctorId, props.serviceId, props.clinicServiceId),
 )
+
+const NO_UNIT_PRICE_MESSAGE =
+  'Ce champ n’a pas de tarif individuel. Cochez le formulaire entier (« Tout sélectionner ») pour appliquer le tarif général.'
+
 
 const cart = computed({
   get: () => props.modelValue,
@@ -97,7 +103,7 @@ const gridHint = computed(() => {
   void localeCode.value
   if (props.kind === 'examen') {
     return uiText(
-      'Cliquez un examen pour ouvrir ses formulaires, puis cochez ce qu’il faut envoyer au labo.',
+      'Cochez un formulaire (ex. Routine) pour tout prendre, ou déroulez pour cocher champ par champ.',
     )
   }
   return uiText('Cliquez un examen pour le sélectionner ou le retirer.')
@@ -302,9 +308,12 @@ const chipGroups = computed(() => {
       label: string
       number: number
       selected: boolean
+      allSelected: boolean
+      partialSelected: boolean
       expandable: boolean
       expanded: boolean
       displaySuffix: string
+      selectedCount: number
       checkGroups: LabPrescriptionCheckGroup[]
       checkItems: LabPrescriptionCheckItem[]
       allCheckItems: LabPrescriptionCheckItem[]
@@ -329,18 +338,29 @@ const chipGroups = computed(() => {
             : []
           : parsedFields
         const selected = isPanelLabelInCart(cart.value, exam.label)
-        const displaySuffix =
-          selectedForms.length > 0 ? ` (${selectedForms.join(', ')})` : ''
-        const forceExpand = Boolean(q) && !matchedByName && checkItems.length > 0
+        // Sans formulaires (ex. Odonto) : sélection globale = case active.
+        const allSelected =
+          selected &&
+          (allCheckItems.length === 0 ||
+            allCheckItems.every((item) => selectedForms.includes(item.label)))
+        const partialSelected = selected && !allSelected && selectedForms.length > 0
+        // Compteur compact uniquement — pas la liste des champs (gagne de la place).
+        const selectedCount = selectedForms.length
+        const displaySuffix = selectedCount > 0 ? ` (${selectedCount})` : ''
+        const forceExpand = Boolean(q) && !matchedByName && checkItems.length > 0 && !selected
+        // Détail des champs uniquement si l’utilisateur déroule volontairement.
         const expanded = expandedPanelLabel.value === exam.label || forceExpand
         return {
           id: exam.id,
           label: exam.label,
           number: index,
           selected,
+          allSelected,
+          partialSelected,
           expandable: allCheckItems.length > 0,
           expanded,
           displaySuffix,
+          selectedCount,
           checkGroups,
           checkItems,
           allCheckItems,
@@ -366,6 +386,21 @@ const selectedCountLabel = computed(() => {
 
 function addExam(label: string) {
   if (isPanelLabelInCart(cart.value, label)) return
+  // Formulaires labo : tous les champs = 1 ligne tarif général ; partiel = 1 ligne / champ.
+  if (props.kind === 'examen') {
+    const catalogExam =
+      catalogItems.value.find((item) => item.label === label) ??
+      ({ id: label, code: '', label, category: 'Laboratoire', priceFcfa: 0 } as CatalogExam)
+    const allItems = checkItemsForExam(catalogExam)
+    if (allItems.length > 0) {
+      setPanelForms(
+        label,
+        allItems.map((item) => item.label),
+      )
+      if (!useChipGrid.value) search.value = ''
+      return
+    }
+  }
   cart.value = [...cart.value, label]
   if (!useChipGrid.value) search.value = ''
 }
@@ -378,7 +413,12 @@ function toggleExam(label: string) {
   }
 }
 
-async function onChipClick(exam: { label: string; expandable: boolean; expanded: boolean }) {
+async function onChipExpand(exam: {
+  label: string
+  expandable: boolean
+  expanded: boolean
+}) {
+  fieldNotice.value = ''
   if (exam.expandable) {
     expandedPanelLabel.value = exam.expanded ? null : exam.label
     return
@@ -397,6 +437,94 @@ async function onChipClick(exam: { label: string; expandable: boolean; expanded:
   }
 
   toggleExam(exam.label)
+}
+
+/** Coche le formulaire entier (tous les champs) ou le retire. */
+function togglePanelAll(exam: {
+  label: string
+  expandable: boolean
+  allSelected: boolean
+  allCheckItems: LabPrescriptionCheckItem[]
+}) {
+  if (!exam.expandable || exam.allCheckItems.length === 0) {
+    toggleExam(exam.label)
+    return
+  }
+  if (exam.allSelected) {
+    clearAllForms(exam.label)
+    return
+  }
+  selectAllForms(exam.label, exam.allCheckItems)
+  // Replier le détail : la carte ne garde que le nom + compteur.
+  if (expandedPanelLabel.value === exam.label) {
+    expandedPanelLabel.value = null
+  }
+}
+
+/** Coche / décoche tous les champs d’une section interne. */
+function toggleSectionForms(
+  panelLabel: string,
+  sectionFields: LabPrescriptionCheckItem[],
+) {
+  if (!sectionFields.length) return
+  const catalogExam =
+    catalogItems.value.find((item) => item.label === panelLabel) ??
+    ({
+      id: panelLabel,
+      code: '',
+      label: panelLabel,
+      category: 'Laboratoire',
+      priceFcfa: 0,
+    } as CatalogExam)
+  const allItems = checkItemsForExam(catalogExam)
+  const current = currentSelectedFields(panelLabel, allItems)
+  const pricedSection = sectionFields.filter((item) => item.hasUnitPrice)
+  const sectionLabels = sectionFields.map((item) => item.label)
+  const pricedLabels = pricedSection.map((item) => item.label)
+
+  if (!pricedLabels.length) {
+    fieldNotice.value = uiText(NO_UNIT_PRICE_MESSAGE)
+    return
+  }
+
+  const allPricedSelected = pricedLabels.every((label) => current.includes(label))
+  if (allPricedSelected) {
+    fieldNotice.value = ''
+    setPanelForms(
+      panelLabel,
+      current.filter((label) => !sectionLabels.includes(label)),
+    )
+    return
+  }
+
+  if (pricedLabels.length < sectionFields.length) {
+    fieldNotice.value = uiText(NO_UNIT_PRICE_MESSAGE)
+  } else {
+    fieldNotice.value = ''
+  }
+  const merged = new Set([...current, ...pricedLabels])
+  setPanelForms(panelLabel, [...merged])
+}
+
+function isSectionFullySelected(
+  selectedForms: string[],
+  sectionFields: LabPrescriptionCheckItem[],
+) {
+  if (!sectionFields.length) return false
+  const priced = sectionFields.filter((item) => item.hasUnitPrice)
+  const pool = priced.length ? priced : sectionFields
+  return pool.every((item) => selectedForms.includes(item.label))
+}
+
+function isSectionPartiallySelected(
+  selectedForms: string[],
+  sectionFields: LabPrescriptionCheckItem[],
+) {
+  if (!sectionFields.length) return false
+  const priced = sectionFields.filter((item) => item.hasUnitPrice)
+  const pool = priced.length ? priced : sectionFields
+  const count = pool.filter((item) => selectedForms.includes(item.label)).length
+  return count > 0 && count < pool.length
 }
 
 async function ensureLabPanelsReady() {
@@ -421,9 +549,38 @@ function setPanelForms(panelLabel: string, formLabels: string[]) {
       priceFcfa: 0,
     } as CatalogExam)
   const groups = checkGroupsForExam(catalogExam)
-  const nextEntries = buildCartEntriesForSelectedFields(panelLabel, groups, formLabels)
+  const allItems = flattenGroupFields(groups)
+  const selected = new Set(formLabels.map((label) => label.trim()).filter(Boolean))
+  const allKnown = allItems.map((item) => item.label.trim())
+  const knownSet = new Set(allKnown)
+  const allFormFieldsSelected =
+    allKnown.length > 0 &&
+    allKnown.every((label) => selected.has(label)) &&
+    [...selected].every((label) => knownSet.has(label))
+
+  let labels = [...selected]
+  if (!allFormFieldsSelected) {
+    const blocked = labels.filter((label) => {
+      const item = allItems.find((entry) => entry.label === label)
+      return item ? !item.hasUnitPrice : false
+    })
+    labels = labels.filter((label) => {
+      const item = allItems.find((entry) => entry.label === label)
+      return item?.hasUnitPrice === true
+    })
+    if (blocked.length) {
+      fieldNotice.value = uiText(NO_UNIT_PRICE_MESSAGE)
+    } else {
+      fieldNotice.value = ''
+    }
+  } else {
+    fieldNotice.value = ''
+  }
+
+  const nextEntries = buildCartEntriesForSelectedFields(panelLabel, groups, labels)
   const without = cart.value.filter((item) => !isPanelLabelInCart([item], panelLabel))
   cart.value = [...without, ...nextEntries]
+  // Garder le panneau ouvert pour cocher plusieurs champs sans re-développer.
 }
 
 function currentSelectedFields(panelLabel: string, allItems: LabPrescriptionCheckItem[]): string[] {
@@ -436,9 +593,9 @@ function currentSelectedFields(panelLabel: string, allItems: LabPrescriptionChec
   return parsed
 }
 
-function toggleFormItem(panelLabel: string, formLabel: string) {
+function toggleFormItem(panelLabel: string, item: LabPrescriptionCheckItem) {
   const catalogExam =
-    catalogItems.value.find((item) => item.label === panelLabel) ??
+    catalogItems.value.find((entry) => entry.label === panelLabel) ??
     ({
       id: panelLabel,
       code: '',
@@ -448,10 +605,25 @@ function toggleFormItem(panelLabel: string, formLabel: string) {
     } as CatalogExam)
   const allItems = checkItemsForExam(catalogExam)
   const current = currentSelectedFields(panelLabel, allItems)
-  const next = current.includes(formLabel)
-    ? current.filter((label) => label !== formLabel)
-    : [...current, formLabel]
-  setPanelForms(panelLabel, next)
+  if (current.includes(item.label)) {
+    fieldNotice.value = ''
+    setPanelForms(
+      panelLabel,
+      current.filter((label) => label !== item.label),
+    )
+    return
+  }
+  if (!item.hasUnitPrice) {
+    fieldNotice.value = uiText(NO_UNIT_PRICE_MESSAGE)
+    return
+  }
+  fieldNotice.value = ''
+  setPanelForms(panelLabel, [...current, item.label])
+}
+
+function onUnpricedFieldClick(item: LabPrescriptionCheckItem) {
+  if (item.hasUnitPrice) return
+  fieldNotice.value = uiText(NO_UNIT_PRICE_MESSAGE)
 }
 
 function selectAllForms(
@@ -472,6 +644,16 @@ function selectAllForms(
   const visibleSet = new Set(visibleItems.map((item) => item.label))
   const kept = current.filter((label) => !visibleSet.has(label))
   setPanelForms(panelLabel, [...kept, ...visibleItems.map((item) => item.label)])
+}
+
+function selectAllFormsAndCollapse(
+  panelLabel: string,
+  visibleItems: LabPrescriptionCheckItem[],
+) {
+  selectAllForms(panelLabel, visibleItems)
+  if (expandedPanelLabel.value === panelLabel) {
+    expandedPanelLabel.value = null
+  }
 }
 
 function clearAllForms(
@@ -668,32 +850,60 @@ function onCatalogInvalidate() {
               class="exam-picker__chip-block"
               :class="{ 'exam-picker__chip-block--expanded': exam.expanded }"
             >
-              <button
-                type="button"
-                role="option"
+              <div
                 class="exam-picker__chip"
                 :class="{
                   'exam-picker__chip--selected': exam.selected,
+                  'exam-picker__chip--partial': exam.partialSelected,
                   'exam-picker__chip--expanded': exam.expanded,
                 }"
+                role="option"
                 :aria-selected="exam.selected"
-                :aria-expanded="exam.expandable ? exam.expanded : undefined"
-                @click="onChipClick(exam)"
               >
-                <span class="exam-picker__chip-check" aria-hidden="true">
-                  <Check v-if="exam.selected" :size="14" />
-                </span>
-                <span class="exam-picker__chip-label"
-                  >{{ uiText(exam.label)
-                  }}<template v-if="exam.displaySuffix">{{ exam.displaySuffix }}</template></span
+                <button
+                  type="button"
+                  class="exam-picker__chip-check"
+                  :class="{
+                    'exam-picker__chip-check--on': exam.allSelected,
+                    'exam-picker__chip-check--partial': exam.partialSelected,
+                  }"
+                  :title="
+                    exam.expandable
+                      ? uiText('Tout sélectionner / tout retirer')
+                      : uiText('Sélectionner')
+                  "
+                  :aria-label="
+                    exam.expandable
+                      ? `${uiText(exam.label)} — ${uiText('Tout sélectionner / tout retirer')}`
+                      : uiText(exam.label)
+                  "
+                  @click="togglePanelAll(exam)"
                 >
-                <ChevronRight
-                  v-if="exam.expandable"
-                  :size="14"
-                  class="exam-picker__chip-chevron"
-                  :class="{ 'exam-picker__chip-chevron--open': exam.expanded }"
-                />
-              </button>
+                  <Check v-if="exam.allSelected" :size="12" />
+                  <span v-else-if="exam.partialSelected" class="exam-picker__chip-dash" />
+                </button>
+                <button
+                  type="button"
+                  class="exam-picker__chip-main"
+                  :aria-expanded="exam.expandable ? exam.expanded : undefined"
+                  @click="onChipExpand(exam)"
+                >
+                  <span class="exam-picker__chip-label">{{ uiText(exam.label) }}</span>
+                  <span
+                    v-if="exam.selectedCount > 0"
+                    class="exam-picker__chip-count-badge"
+                    :title="translateTemplate('{n} champs sélectionnés', { n: String(exam.selectedCount) })"
+                  >
+                    {{ exam.selectedCount }}
+                  </span>
+                  <ChevronRight
+                    v-if="exam.expandable"
+                    :size="12"
+                    class="exam-picker__chip-chevron"
+                    :class="{ 'exam-picker__chip-chevron--open': exam.expanded }"
+                  />
+                </button>
+              </div>
 
               <div v-if="exam.expanded" class="exam-picker__forms" @click.stop>
                 <div class="exam-picker__forms-toolbar">
@@ -704,7 +914,7 @@ function onCatalogInvalidate() {
                     <button
                       type="button"
                       class="exam-picker__forms-link"
-                      @click="selectAllForms(exam.label, exam.checkItems)"
+                      @click="selectAllFormsAndCollapse(exam.label, exam.checkItems)"
                     >
                       {{ uiText('Tout sélectionner') }}
                     </button>
@@ -717,20 +927,43 @@ function onCatalogInvalidate() {
                     </button>
                   </div>
                 </div>
+                <p v-if="fieldNotice" class="exam-picker__field-notice" role="status">
+                  {{ fieldNotice }}
+                </p>
                 <div class="exam-picker__forms-groups">
                   <div
-                    v-for="group in exam.checkGroups"
-                    :key="group.key"
+                    v-for="section in exam.checkGroups"
+                    :key="section.key"
                     class="exam-picker__forms-group"
                   >
-                    <div class="exam-picker__forms-section">{{ uiText(group.title) }}</div>
+                    <label class="exam-picker__forms-section">
+                      <input
+                        type="checkbox"
+                        :checked="isSectionFullySelected(exam.selectedForms, section.fields)"
+                        :indeterminate="
+                          isSectionPartiallySelected(exam.selectedForms, section.fields)
+                        "
+                        @change="toggleSectionForms(exam.label, section.fields)"
+                      />
+                      <span>{{ uiText(section.title) }}</span>
+                    </label>
                     <ul class="exam-picker__forms-list">
-                      <li v-for="item in group.fields" :key="item.key">
-                        <label class="exam-picker__form-row">
+                      <li v-for="item in section.fields" :key="item.key">
+                        <label
+                          class="exam-picker__form-row"
+                          :class="{ 'exam-picker__form-row--blocked': !item.hasUnitPrice }"
+                          :title="
+                            item.hasUnitPrice
+                              ? undefined
+                              : uiText(NO_UNIT_PRICE_MESSAGE)
+                          "
+                          @click="onUnpricedFieldClick(item)"
+                        >
                           <input
                             type="checkbox"
                             :checked="exam.selectedForms.includes(item.label)"
-                            @change="toggleFormItem(exam.label, item.label)"
+                            :disabled="!item.hasUnitPrice"
+                            @change="toggleFormItem(exam.label, item)"
                           />
                           <span>{{ uiText(item.label) }}</span>
                         </label>
@@ -1167,15 +1400,15 @@ function onCatalogInvalidate() {
 .exam-picker__chip-board {
   max-height: min(28rem, 52vh);
   overflow-y: auto;
-  padding: 0.15rem;
+  padding: 0.1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.55rem;
 }
 
 .exam-picker__chip-group-label {
-  margin: 0 0 0.4rem;
-  font-size: 0.6875rem;
+  margin: 0 0 0.3rem;
+  font-size: 0.625rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -1184,15 +1417,15 @@ function onCatalogInvalidate() {
 
 .exam-picker__chip-stack {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr));
-  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(9.25rem, 1fr));
+  gap: 0.35rem;
   align-items: start;
 }
 
 .exam-picker__chip-block {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.3rem;
   min-width: 0;
 }
 
@@ -1203,20 +1436,19 @@ function onCatalogInvalidate() {
 .exam-picker__chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.3rem;
   width: 100%;
   max-width: 100%;
-  min-height: 2.75rem;
-  padding: 0.55rem 0.7rem 0.55rem 0.5rem;
+  min-height: 2rem;
+  padding: 0.2rem 0.3rem 0.2rem 0.25rem;
   border: 1.5px solid var(--border);
-  border-radius: 12px;
+  border-radius: 8px;
   background: #fff;
   color: var(--text);
   font-family: inherit;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 600;
   text-align: left;
-  cursor: pointer;
   transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
 }
 
@@ -1225,41 +1457,122 @@ function onCatalogInvalidate() {
   background: var(--primary-50);
 }
 
-.exam-picker__chip--selected {
+.exam-picker__chip--selected,
+.exam-picker__chip--selected:hover {
   border-color: var(--brand-red, #c62828);
   background: var(--brand-red-50, #fdecea);
   color: var(--brand-red-800, #8e1515);
-  box-shadow: 0 0 0 1px rgba(198, 40, 40, 0.12);
+  box-shadow: 0 0 0 1px rgba(198, 40, 40, 0.18);
 }
 
-.exam-picker__chip--expanded {
+.exam-picker__chip--partial:not(.exam-picker__chip--selected),
+.exam-picker__chip--partial:not(.exam-picker__chip--selected):hover {
+  border-color: var(--brand-red, #c62828);
+  background: var(--brand-red-50, #fdecea);
+  color: var(--brand-red-800, #8e1515);
+}
+
+.exam-picker__chip--expanded:not(.exam-picker__chip--selected):not(.exam-picker__chip--partial) {
   border-color: var(--primary-400);
   box-shadow: 0 0 0 2px var(--focus-ring-sm);
+}
+
+.exam-picker__chip--selected.exam-picker__chip--expanded,
+.exam-picker__chip--partial.exam-picker__chip--expanded {
+  box-shadow: 0 0 0 1px rgba(198, 40, 40, 0.22), 0 0 0 3px rgba(198, 40, 40, 0.1);
 }
 
 .exam-picker__chip-check {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.2rem;
-  height: 1.2rem;
+  width: 1.1rem;
+  height: 1.1rem;
+  padding: 0;
   border-radius: 999px;
   border: 1.5px solid var(--border);
   background: #fff;
   flex-shrink: 0;
   color: #fff;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
 }
 
-.exam-picker__chip--selected .exam-picker__chip-check {
+.exam-picker__chip-check:hover {
+  border-color: var(--brand-red, #c62828);
+}
+
+.exam-picker__chip-check--on {
   border-color: var(--brand-red, #c62828);
   background: var(--brand-red, #c62828);
+}
+
+.exam-picker__chip-check--partial {
+  border-color: var(--brand-red, #c62828);
+  background: #fff;
+}
+
+.exam-picker__chip-dash {
+  display: block;
+  width: 0.45rem;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--brand-red, #c62828);
+}
+
+.exam-picker__chip-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 1;
+  min-width: 0;
+  min-height: 1.6rem;
+  padding: 0.15rem 0.25rem 0.15rem 0.1rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.exam-picker__chip-main:hover {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.exam-picker__chip--selected .exam-picker__chip-main:hover,
+.exam-picker__chip--partial .exam-picker__chip-main:hover {
+  background: rgba(198, 40, 40, 0.08);
 }
 
 .exam-picker__chip-label {
   flex: 1;
   min-width: 0;
-  overflow-wrap: anywhere;
-  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.exam-picker__chip-count-badge {
+  flex-shrink: 0;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.28rem;
+  border-radius: 999px;
+  background: var(--primary-600);
+  color: #fff;
+  font-size: 0.625rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.exam-picker__chip--partial .exam-picker__chip-count-badge,
+.exam-picker__chip--selected .exam-picker__chip-count-badge {
+  background: var(--brand-red, #c62828);
 }
 
 .exam-picker__chip-chevron {
@@ -1271,6 +1584,11 @@ function onCatalogInvalidate() {
 .exam-picker__chip-chevron--open {
   transform: rotate(90deg);
   color: var(--primary-600);
+}
+
+.exam-picker__chip--selected .exam-picker__chip-chevron,
+.exam-picker__chip--partial .exam-picker__chip-chevron {
+  color: var(--brand-red, #c62828);
 }
 
 .exam-picker__forms {
@@ -1333,12 +1651,24 @@ function onCatalogInvalidate() {
 }
 
 .exam-picker__forms-section {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   padding: 0.2rem 0.3rem;
   font-size: 0.6875rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--primary-700, #1d4ed8);
+  cursor: pointer;
+  user-select: none;
+}
+
+.exam-picker__forms-section input {
+  width: 0.9rem;
+  height: 0.9rem;
+  accent-color: var(--brand-red, #c62828);
+  cursor: pointer;
 }
 
 .exam-picker__forms-list {
@@ -1365,6 +1695,28 @@ function onCatalogInvalidate() {
   cursor: pointer;
 }
 
+.exam-picker__form-row--blocked {
+  opacity: 0.65;
+  cursor: not-allowed;
+  background: #f8fafc;
+}
+
+.exam-picker__form-row--blocked:hover {
+  background: #f8fafc;
+  border-color: var(--border);
+}
+
+.exam-picker__field-notice {
+  margin: 0.35rem 0 0.55rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
 .exam-picker__form-row:hover {
   background: rgba(27, 79, 156, 0.06);
   border-color: var(--primary-200);
@@ -1384,7 +1736,7 @@ function onCatalogInvalidate() {
 
 @media (max-width: 520px) {
   .exam-picker__chip-stack {
-    grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
   }
 
   .exam-picker__forms-list {

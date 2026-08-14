@@ -59,6 +59,8 @@ export type LabFormField = {
   unit?: string
   reference?: string
   defaultValue?: string
+  /** Tarif partiel (FCFA) si sélection d’un seul champ ; absent = tarif examen. */
+  priceFcfa?: number
   hasComment?: boolean
   /** Conservé pour rétro-compat ; tous les champs sont traités comme texte court. */
   type?: 'text' | 'textarea'
@@ -445,13 +447,19 @@ export function emptyPanelValues(panel: LabFormPanel): Record<string, string> {
   const values: Record<string, string> = {}
   for (const section of panel.sections) {
     for (const field of section.fields) {
-      values[field.key] = field.defaultValue ?? ''
+      // Texte par défaut = valeur préremplie (éditable) ; l’utilisateur l’efface s’il veut saisir autre chose.
+      values[field.key] = field.defaultValue?.trim() ?? ''
       if (field.hasComment) {
         values[labFieldCommentKey(field.key)] = ''
       }
     }
   }
   return values
+}
+
+/** Placeholder de saisie générique (le texte par défaut est une vraie valeur, pas un hint). */
+export function labFieldInputPlaceholder(field: LabFormField): string {
+  return field.unit ? `Résultat ${field.unit}` : 'Résultat'
 }
 
 export function isLabPanelFieldFilled(value: string | null | undefined) {

@@ -163,8 +163,7 @@ onActivated(() => {
     </section>
 
     <section class="page-with-table__body">
-      <UiCard
-        title="Liste des dossiers"
+      <UiCard direct title="Liste des dossiers"
         class="ui-card--table-panel lab-table-card"
         :icon="FlaskConical"
         icon-variant="teal"

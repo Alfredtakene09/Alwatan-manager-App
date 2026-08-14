@@ -1,0 +1,426 @@
+/* Layout pages listes + cartes tableau (sans DataTables) */
+
+.page-with-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  height: calc(100dvh - 5.25rem);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.page-with-table__head {
+  flex-shrink: 0;
+}
+
+.page-with-table__head .page-header {
+  margin-bottom: 0.35rem;
+}
+
+.page-with-table__head .page-header__icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 10px;
+}
+
+.page-with-table__head .page-header__icon svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.page-with-table__head .page-header h1 {
+  font-size: 1.15rem;
+}
+
+.page-with-table__head .page-header p {
+  margin-top: 0.1rem;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.page-with-table__body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  overflow: hidden;
+}
+
+.page-with-table__body > .ui-card,
+.page-with-table .ui-card--table-panel {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin-top: 0 !important;
+}
+
+.page-with-table .ui-card--table-panel .ui-card__header {
+  flex-shrink: 0;
+  padding: 0.45rem 0.65rem 0;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.page-with-table .ui-card--table-panel .ui-card__icon {
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 7px;
+}
+
+.page-with-table .ui-card--table-panel .ui-card__icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.page-with-table .ui-card--table-panel .ui-card__titles h3 {
+  font-size: 0.875rem;
+}
+
+.page-with-table .ui-card--table-panel .ui-card__titles p {
+  display: none;
+}
+
+.page-with-table .ui-card--table-panel .ui-card__body,
+.page-with-table__body > .ui-card .ui-card__body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0.2rem 0.4rem 0.3rem;
+}
+
+.page-with-table .ui-card--table-panel .simple-table-shell,
+.page-with-table .ui-card--table-panel .simple-table-shell--fill {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+}
+
+.page-with-table .ui-card--table-panel .simple-table-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 0.65rem;
+  scrollbar-gutter: stable;
+}
+
+.page-with-table .ui-card--table-panel .simple-table tbody tr:last-child td {
+  border-bottom: 0;
+  padding-bottom: 0.85rem;
+}
+
+.stats-grid,
+.medecin-stats,
+.ops-stats,
+.compta-stats,
+.kpi-grid,
+.supervision-grid,
+.clinical-cards,
+.cash-settlement-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: 0.4rem;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.stats-grid .stat-card,
+.medecin-stats .stat-card,
+.ops-stats .stat-card,
+.compta-stats .stat-card,
+.kpi-grid .stat-card,
+.supervision-grid .stat-card,
+.clinical-cards .stat-card,
+.cash-settlement-stats .stat-card {
+  padding: 0.45rem 0.55rem;
+}
+
+.stats-grid .stat-card__top,
+.medecin-stats .stat-card__top,
+.ops-stats .stat-card__top,
+.compta-stats .stat-card__top,
+.kpi-grid .stat-card__top,
+.supervision-grid .stat-card__top,
+.clinical-cards .stat-card__top,
+.cash-settlement-stats .stat-card__top {
+  margin-bottom: 0.2rem;
+}
+
+.stats-grid .stat-card__label,
+.medecin-stats .stat-card__label,
+.ops-stats .stat-card__label,
+.compta-stats .stat-card__label,
+.kpi-grid .stat-card__label,
+.supervision-grid .stat-card__label,
+.clinical-cards .stat-card__label,
+.cash-settlement-stats .stat-card__label {
+  font-size: 0.625rem;
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+.stats-grid .stat-card__icon,
+.medecin-stats .stat-card__icon,
+.ops-stats .stat-card__icon,
+.compta-stats .stat-card__icon,
+.kpi-grid .stat-card__icon,
+.supervision-grid .stat-card__icon,
+.clinical-cards .stat-card__icon,
+.cash-settlement-stats .stat-card__icon {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 6px;
+}
+
+.stats-grid .stat-card__icon svg,
+.medecin-stats .stat-card__icon svg,
+.ops-stats .stat-card__icon svg,
+.compta-stats .stat-card__icon svg,
+.kpi-grid .stat-card__icon svg,
+.supervision-grid .stat-card__icon svg,
+.clinical-cards .stat-card__icon svg,
+.cash-settlement-stats .stat-card__icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.stats-grid .stat-card__value,
+.medecin-stats .stat-card__value,
+.ops-stats .stat-card__value,
+.compta-stats .stat-card__value,
+.kpi-grid .stat-card__value,
+.supervision-grid .stat-card__value,
+.clinical-cards .stat-card__value,
+.cash-settlement-stats .stat-card__value {
+  font-size: 1.125rem;
+}
+
+.stats-grid .stat-card__trend,
+.medecin-stats .stat-card__trend,
+.ops-stats .stat-card__trend,
+.compta-stats .stat-card__trend,
+.kpi-grid .stat-card__trend,
+.supervision-grid .stat-card__trend,
+.clinical-cards .stat-card__trend,
+.cash-settlement-stats .stat-card__trend {
+  display: none;
+}
+
+.page-tabs {
+  display: inline-flex;
+  gap: 0.2rem;
+  margin-top: 0.25rem;
+  padding: 0.15rem;
+  border-radius: 9px;
+  background: var(--surface-muted, #eef2e6);
+  border: 1px solid var(--border);
+}
+
+.page-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.35rem 0.65rem;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.page-tab--active,
+.page-tab.active {
+  background: #fff;
+  color: var(--primary-800, #2d3319);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+}
+
+.table-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.table-panel-scroll {
+  display: block;
+  min-height: 12rem;
+  max-height: min(70dvh, 720px);
+  overflow: auto;
+  margin-bottom: 1rem;
+}
+
+.table-panel-scroll .simple-table-shell,
+.table-panel-scroll .simple-table-shell .simple-table-scroll {
+  display: block;
+  flex: none;
+  min-height: unset;
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}
+
+.data-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+}
+
+.data-table th,
+.data-table td {
+  padding: 0.7rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #eef2f7;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-bottom: 2px solid #dbe3ed;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.06);
+  white-space: nowrap;
+}
+
+.data-table thead tr:first-child th:first-child {
+  border-top-left-radius: 8px;
+}
+
+.data-table thead tr:first-child th:last-child {
+  border-top-right-radius: 8px;
+}
+
+.data-table .col-num {
+  width: 2.75rem;
+  min-width: 2.75rem;
+  max-width: 2.75rem;
+  text-align: center;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table tbody tr:hover {
+  background: #f8fbfd;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table-wrap--scroll {
+  overflow: auto;
+  overflow-anchor: none;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.5rem 0.75rem 0.75rem;
+}
+
+.ui-card--table-panel .ui-card__body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ui-card--table-panel .simple-table-shell {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+.stock-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 0;
+}
+
+.stock-card .ui-card__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.page-table-section,
+.page-table-section--embedded,
+.page-table-section-stack {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  overflow: hidden;
+}
+
+.page-table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .page-with-table {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .page-with-table__body,
+  .page-with-table .ui-card--table-panel,
+  .page-with-table .ui-card--table-panel .ui-card__body {
+    overflow: visible;
+  }
+
+  .page-with-table__body {
+    flex: none;
+    min-height: auto;
+  }
+
+  .page-with-table .ui-card--table-panel {
+    min-height: min(55dvh, 520px);
+  }
+
+  .page-with-table .ui-card--table-panel .simple-table-shell--fill {
+    min-height: min(48dvh, 480px);
+  }
+
+  .stats-grid,
+  .medecin-stats,
+  .ops-stats,
+  .compta-stats,
+  .kpi-grid,
+  .supervision-grid,
+  .clinical-cards,
+  .cash-settlement-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

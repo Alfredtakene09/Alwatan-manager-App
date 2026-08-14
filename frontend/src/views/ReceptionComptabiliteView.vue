@@ -4,13 +4,10 @@ import { useRoute } from 'vue-router'
 import { Wallet, Stethoscope, Layers } from '@lucide/vue'
 import ConsultationsComptabilitePanel from '@/components/comptabilite/ConsultationsComptabilitePanel.vue'
 import EncaissementsComptabilitePanel from '@/components/comptabilite/EncaissementsComptabilitePanel.vue'
-import { useAuthStore } from '@/stores/auth'
 
 type TabId = 'encaissements' | 'consultations'
 
 const route = useRoute()
-const auth = useAuthStore()
-const isReceptionist = computed(() => auth.user?.role === 'RECEPTIONNISTE')
 
 function tabFromQuery(): TabId {
   return route.query.tab === 'consultations' ? 'consultations' : 'encaissements'
@@ -31,15 +28,11 @@ const tabs: { id: TabId; label: string; icon: typeof Wallet }[] = [
 ]
 
 const encaissementsSubtitle = computed(() =>
-  isReceptionist.value
-    ? 'Uniquement vos encaissements — consultations, examens, chirurgie et hospitalisation'
-    : 'Tous les encaissements — consultations, examens, chirurgie et hospitalisation',
+  'Tous les encaissements — consultations, examens, chirurgie et hospitalisation',
 )
 
 const consultationsSubtitle = computed(() =>
-  isReceptionist.value
-    ? 'Uniquement vos enregistrements de consultation'
-    : 'Tous les enregistrements de consultation à la réception',
+  'Consultations enregistrées — encaissement par le gestionnaire',
 )
 </script>
 

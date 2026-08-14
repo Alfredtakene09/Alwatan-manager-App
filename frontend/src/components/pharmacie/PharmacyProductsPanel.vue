@@ -5,7 +5,6 @@ import { Package, Plus, RefreshCw, Save, Search } from '@lucide/vue'
 import api from '@/api/client'
 import { canManagePharmacyCatalog, formatFcfa } from '@/lib/roles'
 import { defaultExpiryDateInput, PHARMACEUTICAL_FORMS } from '@/lib/pharmacy-product-forms'
-import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
 import type { PharmacyFormRecord } from '@/components/pharmacie/PharmacyFormsPanel.vue'
@@ -16,7 +15,7 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
@@ -165,77 +164,6 @@ function applyFilters() {
   appliedForm.value = filterForm.value
   appliedCategoryId.value = filterCategoryId.value
 }
-
-const columns = computed(() => {
-  const cols = [
-    {
-      data: 'name',
-      title: 'Médicament',
-      responsivePriority: 1,
-      render: (name: string) => `<span class="dt-name">${name}</span>`,
-    },
-    { data: 'category', title: 'Catégorie', responsivePriority: 3 },
-    { data: 'form', title: 'Forme', responsivePriority: 3 },
-    {
-      data: 'priceSort',
-      title: 'Prix vente',
-      responsivePriority: 3,
-      render: (_d: number, _t: string, row: { price: string }) => `<span class="dt-amount">${row.price}</span>`,
-    },
-    {
-      data: 'purchasePriceSort',
-      title: "Prix d'achat",
-      responsivePriority: 4,
-      render: (_d: number, _t: string, row: { purchasePrice: string }) =>
-        `<span class="dt-amount">${row.purchasePrice}</span>`,
-    },
-    {
-      data: 'profitSort',
-      title: 'Bénéfice',
-      responsivePriority: 4,
-      render: (_d: number, _t: string, row: { profit: string }) =>
-        `<span class="dt-amount">${row.profit}</span>`,
-    },
-    { data: 'minStock', title: 'Seuil', responsivePriority: 4 },
-    {
-      data: 'quantity',
-      title: 'Disponible',
-      responsivePriority: 3,
-      render: (_d: number, _t: string, row: { stockLabel: string; stockVariant: string }) =>
-        statusBadge(row.stockLabel, row.stockVariant as 'success' | 'danger'),
-    },
-    {
-      data: 'statusLabel',
-      title: 'Statut',
-      responsivePriority: 4,
-      render: (label: string, _t: string, row: { statusVariant: string }) =>
-        statusBadge(label, row.statusVariant as 'success' | 'danger'),
-    },
-  ]
-  if (!canManageCatalog.value) return cols
-  return [
-    ...cols,
-    {
-      data: null,
-      title: 'Actions',
-      orderable: false,
-      className: 'dt-actions-col dt-actions-col--catalog all',
-      responsivePriority: 1,
-      render: (
-        _d: unknown,
-        _t: string,
-        row: {
-          id: string
-          toggleLabel: string
-          isActive: boolean
-          canDelete: boolean
-          showEdit: boolean
-          showToggle: boolean
-        },
-      ) => catalogRowActionsHtml(row),
-    },
-  ]
-})
 
 function apiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error) && typeof error.response?.data?.error === 'string') {
@@ -558,18 +486,62 @@ defineExpose({ reload: loadItems })
 
     <p v-if="!loading && !items.length" class="empty">{{ uiText('Aucun produit enregistré') }}</p>
     <p v-else-if="!loading && !tableRows.length" class="empty">{{ uiText('Aucun produit ne correspond à la recherche.') }}</p>
-    <UiDataTable
-      v-else
-      fill
-      :key="canManageCatalog ? 'pharmacy-products-rw' : 'pharmacy-products-ro'"
-      table-key="pharmacy-products"
-      compact
-      :data="tableRows"
-      :columns="columns"
-      :loading="loading"
-      loading-label="Chargement des produits…"
-      @action="onTableAction"
-    />
+    <div v-else class="simple-table-shell" :class="{ 'simple-table-shell--fill': true }">
+      <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+        <span class="simple-table-spinner" aria-hidden="true" />
+        Chargement des produits…
+      </div>
+      <div class="simple-table-scroll">
+        <div class="simple-table-wrap">
+          <table class="simple-table">
+            <thead>
+              <tr>
+                <th class="simple-table__num">#</th>
+                <th>Médicament</th>
+                <th>Catégorie</th>
+                <th>Forme</th>
+                <th>Prix vente</th>
+                <th>Prix d'achat</th>
+                <th>Bénéfice</th>
+                <th>Seuil</th>
+                <th>Disponible</th>
+                <th>Statut</th>
+                <th v-if="canManageCatalog" class="simple-table__actions-head">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in tableRows" :key="row.id">
+                <td class="simple-table__num">{{ index + 1 }}</td>
+                <td><span class="st-name">{{ row.name }}</span></td>
+                <td>{{ row.category }}</td>
+                <td>{{ row.form }}</td>
+                <td><span class="st-amount">{{ row.price }}</span></td>
+                <td><span class="st-amount">{{ row.purchasePrice }}</span></td>
+                <td><span class="st-amount">{{ row.profit }}</span></td>
+                <td>{{ row.minStock }}</td>
+                <td>
+                  <span class="st-badge" :class="`st-badge--${row.stockVariant}`">{{ row.stockLabel }}</span>
+                </td>
+                <td>
+                  <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                </td>
+                <td v-if="canManageCatalog" class="simple-table__actions">
+                  <StCatalogActions
+                    :id="row.id"
+                    :toggle-label="row.toggleLabel"
+                    :is-active="row.isActive"
+                    :can-delete="row.canDelete"
+                    :show-edit="row.showEdit"
+                    :show-toggle="row.showToggle"
+                    @action="onTableAction"
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </PageTableSection>
 
   <UiFormModal

@@ -191,15 +191,24 @@ export async function ensureLabPanelLinkedToExam(examId: string): Promise<{
 
 /**
  * Assure qu'un formulaire labo (saisie résultats) est un examen catalagué
- * proposable au médecin (prix 0 tant que l'admin ne l'a pas tarifé).
+ * proposable au médecin. `priceFcfa` (si fourni) est appliqué à la création
+ * ou à la mise à jour du tarif catalogue lié.
  */
-export async function ensureExamLinkedToLabPanel(panelId: string): Promise<{
+export async function ensureExamLinkedToLabPanel(
+  panelId: string,
+  options?: { priceFcfa?: number },
+): Promise<{
   panelId: string;
   examId: string | null;
   created: boolean;
   linked: boolean;
   synced: boolean;
 }> {
+  const priceFcfa =
+    options?.priceFcfa != null && Number.isFinite(options.priceFcfa) && options.priceFcfa >= 0
+      ? Math.trunc(options.priceFcfa)
+      : undefined;
+
   const panel = await prisma.labPanel.findUnique({
     where: { id: panelId },
     select: {
@@ -211,7 +220,7 @@ export async function ensureExamLinkedToLabPanel(panelId: string): Promise<{
       _count: { select: { fields: true } },
       examCatalogItems: {
         where: { kind: ExamCatalogKind.EXAMEN },
-        select: { id: true, label: true, active: true },
+        select: { id: true, label: true, active: true, priceFcfa: true },
         take: 1,
       },
     },
@@ -229,7 +238,10 @@ export async function ensureExamLinkedToLabPanel(panelId: string): Promise<{
     if (linkedExam?.active) {
       await prisma.examCatalogItem.update({
         where: { id: linkedExam.id },
-        data: { active: false },
+        data: {
+          active: false,
+          ...(priceFcfa != null ? { priceFcfa } : {}),
+        },
       });
       await refreshExamPriceCache();
       return {
@@ -238,6 +250,99 @@ export async function ensureExamLinkedToLabPanel(panelId: string): Promise<{
         created: false,
         linked: false,
         synced: true,
+      };
+    }
+    if (linkedExam && priceFcfa != null && linkedExam.priceFcfa !== priceFcfa) {
+      await prisma.examCatalogItem.update({
+        where: { id: linkedExam.id },
+        data: { priceFcfa },
+      });
+      await refreshExamPriceCache();
+      return {
+        panelId: panel.id,
+        examId: linkedExam.id,
+        created: false,
+        linked: false,
+        synced: true,
+      };
+    }
+    // Mémoriser le tarif même si les champs ne sont pas encore prêts.
+    if (!linkedExam && priceFcfa != null) {
+      const clinicServiceId = await resolveLaboratoireClinicServiceId();
+      const labelKey = normalizeExamFormLabelKey(panel.label);
+      const orphanExams = await prisma.examCatalogItem.findMany({
+        where: {
+          kind: ExamCatalogKind.EXAMEN,
+          labPanelId: null,
+          ...(clinicServiceId
+            ? {
+                OR: [{ clinicServiceId }, { clinicServiceId: null }],
+              }
+            : {}),
+        },
+        select: {
+          id: true,
+          label: true,
+          clinicServiceId: true,
+          clinicService: { select: { name: true } },
+        },
+        orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+      });
+      const matchedOrphan = orphanExams.find((exam) => {
+        if (normalizeExamFormLabelKey(exam.label) !== labelKey) return false;
+        return examNeedsLabResultForm({
+          kind: ExamCatalogKind.EXAMEN,
+          clinicServiceId: exam.clinicServiceId,
+          clinicServiceName: exam.clinicService?.name,
+        });
+      });
+      if (matchedOrphan) {
+        await prisma.examCatalogItem.update({
+          where: { id: matchedOrphan.id },
+          data: {
+            labPanelId: panel.id,
+            label: panel.label,
+            active: false,
+            priceFcfa,
+          },
+        });
+        await refreshExamPriceCache();
+        return {
+          panelId: panel.id,
+          examId: matchedOrphan.id,
+          created: false,
+          linked: true,
+          synced: false,
+        };
+      }
+      const codeBase = buildExamCatalogCodeFromPanel(panel.slug, panel.label);
+      const code = await makeUniqueExamCode(codeBase, clinicServiceId);
+      const maxOrder = await prisma.examCatalogItem.aggregate({
+        where: { kind: ExamCatalogKind.EXAMEN },
+        _max: { sortOrder: true },
+      });
+      const created = await prisma.examCatalogItem.create({
+        data: {
+          kind: ExamCatalogKind.EXAMEN,
+          code,
+          label: panel.label.trim(),
+          category: "Laboratoire",
+          priceFcfa,
+          clinicServiceId,
+          labPanelId: panel.id,
+          serviceScopeKey: examCatalogServiceScopeKey(clinicServiceId),
+          active: false,
+          sortOrder: (maxOrder._max.sortOrder ?? 0) + 1,
+        },
+        select: { id: true },
+      });
+      await refreshExamPriceCache();
+      return {
+        panelId: panel.id,
+        examId: created.id,
+        created: true,
+        linked: true,
+        synced: false,
       };
     }
     return {
@@ -252,13 +357,16 @@ export async function ensureExamLinkedToLabPanel(panelId: string): Promise<{
   // Formulaire prêt (actifs + champs) → examen prescritible (lier / créer / activer).
   if (linkedExam) {
     const needsSync =
-      linkedExam.label !== panel.label || linkedExam.active !== true;
+      linkedExam.label !== panel.label ||
+      linkedExam.active !== true ||
+      (priceFcfa != null && linkedExam.priceFcfa !== priceFcfa);
     if (needsSync) {
       await prisma.examCatalogItem.update({
         where: { id: linkedExam.id },
         data: {
           label: panel.label,
           active: true,
+          ...(priceFcfa != null ? { priceFcfa } : {}),
         },
       });
       await refreshExamPriceCache();
@@ -310,6 +418,7 @@ export async function ensureExamLinkedToLabPanel(panelId: string): Promise<{
         labPanelId: panel.id,
         label: panel.label,
         active: true,
+        ...(priceFcfa != null ? { priceFcfa } : {}),
       },
     });
     await refreshExamPriceCache();
@@ -336,7 +445,7 @@ export async function ensureExamLinkedToLabPanel(panelId: string): Promise<{
       code,
       label: panel.label.trim(),
       category: "Laboratoire",
-      priceFcfa: 0,
+      priceFcfa: priceFcfa ?? 0,
       clinicServiceId,
       labPanelId: panel.id,
       serviceScopeKey: examCatalogServiceScopeKey(clinicServiceId),

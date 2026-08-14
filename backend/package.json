@@ -17,12 +17,15 @@
     "db:split-routine-hormones": "tsx scripts/_split-routine-hormones-panel.ts",
     "db:seed:demo": "SEED_DEMO_RESET=1 npm run db:seed",
     "db:reset": "tsx scripts/reset-database.ts",
+    "db:purge-patients-expenses": "tsx scripts/purge-patients-and-expenses.ts",
     "db:setup": "npx prisma db push && npm run db:seed",
     "db:docker:up": "docker compose -f ../docker-compose.yml up -d postgres",
     "db:docker:down": "docker compose -f ../docker-compose.yml down",
     "db:docker:logs": "docker compose -f ../docker-compose.yml logs -f postgres",
     "db:docker:setup": "npm run db:docker:up && npx prisma db push && npm run db:seed",
-    "db:import-pharmacy": "tsx scripts/import-syntalsoft-pharmacy.ts"
+    "db:import-pharmacy": "tsx scripts/import-syntalsoft-pharmacy.ts",
+    "db:rename-pharmacy-categories": "tsx scripts/rename-pharmacy-categories.ts",
+    "db:migrate-pharmacy-categories-to-forms": "tsx scripts/migrate-pharmacy-categories-to-forms.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -10,16 +10,16 @@ import {
   syncEmployeeJobTitles,
   type EmployeeJobTitleRecord,
 } from '@/lib/employee-job-titles'
-import { catalogRowActionsHtml, statusBadge } from '@/lib/datatable-defaults'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
+import '@/assets/simple-table.css'
 
 const props = withDefaults(
   defineProps<{
@@ -84,42 +84,6 @@ const tableRows = computed(() => {
     }
   })
 })
-
-const columns = [
-  {
-    data: 'label',
-    title: 'Poste / fonction',
-    responsivePriority: 1,
-    render: (label: string) => `<span class="dt-name">${label}</span>`,
-  },
-  { data: 'sortOrder', title: 'Ordre', responsivePriority: 4 },
-  {
-    data: 'employeesLabel',
-    title: 'Employés liés',
-    responsivePriority: 2,
-    render: (label: string, _t: string, row: { employeeCount: number }) =>
-      row.employeeCount > 0 ? statusBadge(label, 'info') : `<span class="dt-muted">${label}</span>`,
-  },
-  {
-    data: 'statusLabel',
-    title: 'Statut',
-    responsivePriority: 3,
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: 'Actions',
-    orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog all',
-    responsivePriority: 1,
-    render: (
-      _d: unknown,
-      _t: string,
-      row: { id: string; toggleLabel: string; isActive: boolean; canDelete: boolean },
-    ) => catalogRowActionsHtml(row),
-  },
-]
 
 function apiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error) && typeof error.response?.data?.error === 'string') {
@@ -285,8 +249,7 @@ onMounted(loadItems)
 </script>
 
 <template>
-  <UiCard
-    title="Postes"
+  <UiCard direct title="Postes"
     class="ui-card--table-panel"
     :icon="Briefcase"
     icon-variant="teal"
@@ -303,17 +266,58 @@ onMounted(loadItems)
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
 
     <p v-if="!loading && !items.length" class="empty">Aucun poste enregistré</p>
-    <UiDataTable
-      v-else
-      fill
-      :table-key="tableKey"
-      compact
-      :data="tableRows"
-      :columns="columns"
-      :loading="loading"
-      loading-label="Chargement des postes…"
-      @action="onTableAction"
-    />
+    <div v-else class="simple-table-shell simple-table-shell--fill">
+      <div
+        v-if="loading"
+        class="simple-table-overlay" role="status"
+        aria-live="polite"
+      >
+        <span class="simple-table-spinner" aria-hidden="true" />
+        Chargement des postes…
+      </div>
+      <div class="simple-table-scroll">
+        <div class="simple-table-wrap">
+          <table class="simple-table">
+            <thead>
+              <tr>
+                <th class="simple-table__num">#</th>
+                <th>Poste / fonction</th>
+                <th>Ordre</th>
+                <th>Employés liés</th>
+                <th>Statut</th>
+                <th class="simple-table__actions-head">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in tableRows" :key="row.id">
+                <td class="simple-table__num">{{ index + 1 }}</td>
+                <td><span class="st-name">{{ row.label }}</span></td>
+                <td>{{ row.sortOrder }}</td>
+                <td>
+                  <span
+                    v-if="row.employeeCount > 0"
+                    class="st-badge st-badge--info"
+                  >{{ row.employeesLabel }}</span>
+                  <span v-else class="st-muted">{{ row.employeesLabel }}</span>
+                </td>
+                <td>
+                  <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                </td>
+                <td class="simple-table__actions">
+                  <StCatalogActions
+                    :id="row.id"
+                    :is-active="row.isActive"
+                    :toggle-label="row.toggleLabel"
+                    :can-delete="row.canDelete"
+                    @action="onTableAction"
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </UiCard>
 
   <UiFormModal

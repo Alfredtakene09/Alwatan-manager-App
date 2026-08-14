@@ -4,7 +4,6 @@ import axios from 'axios'
 import { Package, Plus, RefreshCw, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
-import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { LabStockCategoryRecord } from '@/components/laboratoire/LabStockCategoriesPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
@@ -14,7 +13,7 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -85,50 +84,6 @@ const tableRows = computed(() => {
     canDelete: true,
   }))
 })
-
-const columns = [
-  {
-    data: 'name',
-    title: 'Article',
-    responsivePriority: 1,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  { data: 'category', title: 'Catégorie', responsivePriority: 3 },
-  { data: 'unit', title: 'Unité', responsivePriority: 4 },
-  {
-    data: 'costSort',
-    title: 'Coût unit.',
-    responsivePriority: 4,
-    render: (_d: number, _t: string, row: { cost: string }) => `<span class="dt-amount">${row.cost}</span>`,
-  },
-  { data: 'minStock', title: 'Seuil', responsivePriority: 4 },
-  {
-    data: 'quantity',
-    title: 'Stock',
-    responsivePriority: 2,
-    render: (_d: number, _t: string, row: { stockLabel: string; stockVariant: string }) =>
-      statusBadge(row.stockLabel, row.stockVariant as 'success' | 'danger'),
-  },
-  {
-    data: 'statusLabel',
-    title: 'État',
-    responsivePriority: 4,
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: '',
-    orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog all',
-    responsivePriority: 1,
-    render: (
-      _d: unknown,
-      _t: string,
-      row: { id: string; toggleLabel: string; isActive: boolean; canDelete: boolean },
-    ) => catalogRowActionsHtml(row),
-  },
-]
 
 function apiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error) && typeof error.response?.data?.error === 'string') {
@@ -340,17 +295,56 @@ defineExpose({ reload: loadItems })
     <p v-if="!loading && !items.length" class="empty">
       {{ uiText('Aucun article — ajoutez réactifs et consommables du laboratoire.') }}
     </p>
-    <UiDataTable
-      v-else
-      fill
-      table-key="lab-stock-items"
-      compact
-      :data="tableRows"
-      :columns="columns"
-      :loading="loading"
-      loading-label="Chargement du stock…"
-      @action="onTableAction"
-    />
+    <div v-else class="simple-table-shell" :class="{ 'simple-table-shell--fill': true }">
+      <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+        <span class="simple-table-spinner" aria-hidden="true" />
+        Chargement du stock…
+      </div>
+      <div class="simple-table-scroll">
+        <div class="simple-table-wrap">
+          <table class="simple-table">
+            <thead>
+              <tr>
+                <th class="simple-table__num">#</th>
+                <th>Article</th>
+                <th>Catégorie</th>
+                <th>Unité</th>
+                <th>Coût unit.</th>
+                <th>Seuil</th>
+                <th>Stock</th>
+                <th>État</th>
+                <th class="simple-table__actions-head">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in tableRows" :key="row.id">
+                <td class="simple-table__num">{{ index + 1 }}</td>
+                <td><span class="st-name">{{ row.name }}</span></td>
+                <td>{{ row.category }}</td>
+                <td>{{ row.unit }}</td>
+                <td><span class="st-amount">{{ row.cost }}</span></td>
+                <td>{{ row.minStock }}</td>
+                <td>
+                  <span class="st-badge" :class="`st-badge--${row.stockVariant}`">{{ row.stockLabel }}</span>
+                </td>
+                <td>
+                  <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                </td>
+                <td class="simple-table__actions">
+                  <StCatalogActions
+                    :id="row.id"
+                    :toggle-label="row.toggleLabel"
+                    :is-active="row.isActive"
+                    :can-delete="row.canDelete"
+                    @action="onTableAction"
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </PageTableSection>
 
   <UiFormModal

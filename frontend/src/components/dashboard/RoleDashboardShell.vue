@@ -47,7 +47,11 @@ const errorText = computed(() => {
       <div v-for="n in 5" :key="n" class="dashboard-cards-skeleton__cell" />
     </div>
 
-    <div v-else class="dashboard-cards" :class="{ 'dashboard-cards--loading': loading }">
+    <div
+      v-if="stats.length"
+      class="dashboard-cards"
+      :class="{ 'dashboard-cards--loading': loading }"
+    >
       <UiStatCard
         v-for="card in stats"
         :key="card.id"

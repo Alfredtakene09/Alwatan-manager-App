@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Receipt, Plus, RefreshCw, Eye, Pencil, Save } from '@lucide/vue'
+import { Receipt, Plus, RefreshCw, Eye, Pencil, Save, Ban, Trash2 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
-import { DT_ICONS } from '@/lib/datatable-defaults'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -14,11 +13,11 @@ import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { ExpenseIndiceOption } from '@/lib/expense-indices'
 import { fetchExpenseIndices, toActiveIndiceOptions } from '@/lib/expense-indices'
+import '@/assets/simple-table.css'
 
 const props = withDefaults(
   defineProps<{
@@ -189,12 +188,6 @@ const removeActionLabel = computed(() =>
   props.deactivateMode ? uiText('Désactiver') : uiText('Supprimer'),
 )
 
-const removeActionIcon = computed(() => (props.deactivateMode ? DT_ICONS.ban : DT_ICONS.delete))
-
-const removeActionClass = computed(() =>
-  props.deactivateMode ? 'dt-btn--catalog-off' : 'dt-btn--catalog-delete',
-)
-
 function emitSummary() {
   if (!props.externalSummary) return
   emit('summary-update', {
@@ -238,65 +231,6 @@ const tableRows = computed(() =>
     amountSort: row.amountFcfa,
   })),
 )
-
-const tableColumns = computed(() => {
-  void localeCode.value
-  const viewLabel = uiText('Voir')
-  const editLabel = uiText('Modifier')
-  const removeLabel = removeActionLabel.value
-  return [
-  {
-    data: 'timeSort',
-    title: uiText('Heure'),
-    responsivePriority: 2,
-    className: 'dt-time-col',
-    render: (_value: number, _type: string, row: { time: string }) =>
-      `<span class="dt-time">${row.time}</span>`,
-  },
-  {
-    data: 'label',
-    title: uiText('Libellé'),
-    responsivePriority: 1,
-    render: (label: string) => `<span class="dt-name">${label}</span>`,
-  },
-  {
-    data: 'comment',
-    title: uiText('Commentaire'),
-    responsivePriority: 4,
-    render: (comment: string, _type: string, row: { hasComment: boolean }) =>
-      row.hasComment
-        ? `<span class="dt-comment">${comment}</span>`
-        : `<span class="dt-muted">${comment}</span>`,
-  },
-  {
-    data: 'amountSort',
-    title: uiText('Montant'),
-    responsivePriority: 3,
-    className: 'dt-amount-col',
-    render: (_value: number, _type: string, row: { amountLabel: string }) =>
-      `<strong class="dt-amount">${row.amountLabel}</strong>`,
-  },
-  {
-    data: null,
-    title: '',
-    orderable: false,
-    className: 'dt-actions-col all',
-    responsivePriority: 1,
-    render: (_data: unknown, _type: string, row: { id: string }) => `
-      <div class="dt-row-actions" data-id="${row.id}">
-        <button type="button" class="dt-btn dt-btn--icon dt-btn--icon-soft" data-action="view" title="${viewLabel}" aria-label="${viewLabel}">${DT_ICONS.view}</button>
-        <button type="button" class="dt-btn dt-btn--icon dt-btn--catalog-edit" data-action="edit" title="${editLabel}" aria-label="${editLabel}">${DT_ICONS.edit}</button>
-        <button type="button" class="dt-btn dt-btn--icon ${removeActionClass.value}" data-action="delete" title="${removeLabel}" aria-label="${removeLabel}">${removeActionIcon.value}</button>
-      </div>
-    `,
-  },
-]
-})
-
-const tableOptions = {
-  ordering: true,
-  order: [[0, 'desc']] as [number, 'asc' | 'desc'][],
-}
 
 type ExpenseExportRow = (typeof tableRows.value)[number]
 
@@ -551,8 +485,7 @@ onMounted(async () => {
       </div>
     </UiCard>
 
-    <UiCard
-      :title="expenseListTitle"
+    <UiCard direct :title="expenseListTitle"
       :description="expenseListDescription"
       class="ui-card--table-panel expense-table-card"
       :icon="Receipt"
@@ -573,17 +506,77 @@ onMounted(async () => {
       </p>
 
       <template v-else>
-        <UiDataTable
-          fill
-          compact
-          table-key="caisse-depenses-jour"
-          :data="tableRows"
-          :columns="tableColumns"
-          :options="tableOptions"
-          :loading="loading"
-          :loading-label="uiText('Chargement des dépenses…')"
-          @action="onTableAction"
-        />
+        <div class="simple-table-shell simple-table-shell--fill">
+          <div
+            v-if="loading"
+            class="simple-table-overlay" role="status"
+            aria-live="polite"
+          >
+            <span class="simple-table-spinner" aria-hidden="true" />
+            {{ uiText('Chargement des dépenses…') }}
+          </div>
+          <div class="simple-table-scroll">
+            <div class="simple-table-wrap">
+              <table class="simple-table">
+                <thead>
+                  <tr>
+                    <th class="simple-table__num">#</th>
+                    <th>{{ uiText('Heure') }}</th>
+                    <th>{{ uiText('Libellé') }}</th>
+                    <th>{{ uiText('Commentaire') }}</th>
+                    <th>{{ uiText('Montant') }}</th>
+                    <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in tableRows" :key="row.id">
+                    <td class="simple-table__num">{{ index + 1 }}</td>
+                    <td><span class="st-date">{{ row.time }}</span></td>
+                    <td><span class="st-name">{{ row.label }}</span></td>
+                    <td>
+                      <span v-if="row.hasComment">{{ row.comment }}</span>
+                      <span v-else class="st-muted">{{ row.comment }}</span>
+                    </td>
+                    <td><strong class="st-amount">{{ row.amountLabel }}</strong></td>
+                    <td class="simple-table__actions">
+                      <div class="st-actions">
+                        <button
+                          type="button"
+                          class="st-btn st-btn--soft"
+                          :title="uiText('Voir')"
+                          :aria-label="uiText('Voir')"
+                          @click="onTableAction({ action: 'view', id: row.id })"
+                        >
+                          <Eye :size="15" />
+                        </button>
+                        <button
+                          type="button"
+                          class="st-btn st-btn--edit"
+                          :title="uiText('Modifier')"
+                          :aria-label="uiText('Modifier')"
+                          @click="onTableAction({ action: 'edit', id: row.id })"
+                        >
+                          <Pencil :size="15" />
+                        </button>
+                        <button
+                          type="button"
+                          class="st-btn"
+                          :class="deactivateMode ? 'st-btn--catalog-off' : 'st-btn--delete'"
+                          :title="removeActionLabel"
+                          :aria-label="removeActionLabel"
+                          @click="onTableAction({ action: 'delete', id: row.id })"
+                        >
+                          <Ban v-if="deactivateMode" :size="15" />
+                          <Trash2 v-else :size="15" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </template>
     </UiCard>
 

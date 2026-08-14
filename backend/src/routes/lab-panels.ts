@@ -39,13 +39,22 @@ router.get("/", requireAnyModule("laboratoire", "consultation", "comptabilite", 
 /** Écriture réservée au module laboratoire. */
 router.use(requireModule("laboratoire"));
 
+const optionalFieldPrice = z.preprocess((value) => {
+  if (value === "" || value === undefined || value === null) return null;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) return null;
+  return n;
+}, z.number().int().min(1).nullable());
+
 const fieldSchema = z.object({
-  section: z.string().max(120).optional().nullable(),
-  key: z.string().max(80).optional(),
-  label: z.string().min(1).max(160),
-  unit: z.string().max(60).optional().nullable(),
-  reference: z.string().max(200).optional().nullable(),
-  defaultValue: z.string().max(500).optional().nullable(),
+  section: z.string().max(200).optional().nullable(),
+  key: z.string().max(120).optional(),
+  label: z.string().min(1).max(300),
+  unit: z.string().max(120).optional().nullable(),
+  reference: z.string().max(2000).optional().nullable(),
+  defaultValue: z.string().max(2000).optional().nullable(),
+  /** Tarif partiel (FCFA) — omis / null / 0 = pas de tarif unitaire. */
+  priceFcfa: optionalFieldPrice,
   hasComment: z.boolean().optional(),
   type: z.enum(["text", "textarea"]).optional(),
 });
@@ -56,6 +65,8 @@ const panelCreateSchema = z.object({
   isEntry: z.boolean().optional(),
   active: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
+  /** Tarif facturable (FCFA) — obligatoire à la création. */
+  priceFcfa: z.number().int().min(1, "Le tarif doit être supérieur à 0"),
   /** Vide autorisé : formulaire créé depuis un examen catalogue, champs à compléter plus tard. */
   fields: z.array(fieldSchema).default([]),
 });
@@ -65,6 +76,8 @@ const panelUpdateSchema = z.object({
   isEntry: z.boolean().optional(),
   active: z.boolean().optional(),
   sortOrder: z.number().int().min(0).optional(),
+  /** Si fourni (édition formulaire), synchronisé sur l’examen catalogue lié. */
+  priceFcfa: z.number().int().min(1, "Le tarif doit être supérieur à 0").optional(),
   fields: z.array(fieldSchema).optional(),
 });
 
@@ -107,6 +120,10 @@ function buildFieldRows(fields: z.infer<typeof fieldSchema>[]) {
       candidate = `${key}_${suffix}`;
     }
     used.add(candidate);
+    const priceFcfa =
+      field.priceFcfa != null && Number.isFinite(field.priceFcfa) && field.priceFcfa >= 1
+        ? field.priceFcfa
+        : null;
     return {
       section: field.section?.trim() || null,
       key: candidate,
@@ -114,11 +131,19 @@ function buildFieldRows(fields: z.infer<typeof fieldSchema>[]) {
       unit: field.unit?.trim() || null,
       reference: field.reference?.trim() || null,
       defaultValue: field.defaultValue?.trim() || null,
+      priceFcfa,
       hasComment: field.hasComment === true,
       type: field.type ?? "text",
       sortOrder: index,
     };
   });
+}
+
+function zodErrorMessage(error: z.ZodError) {
+  const issue = error.issues[0];
+  if (!issue) return "Données invalides";
+  const path = issue.path.filter((part) => part !== undefined && part !== "").join(" › ");
+  return path ? `${issue.message} (${path})` : issue.message;
 }
 
 router.post("/", async (req, res) => {
@@ -141,7 +166,7 @@ router.post("/", async (req, res) => {
       include: panelInclude,
     });
     await refreshLabPanelRegistry();
-    await ensureExamLinkedToLabPanel(panel.id);
+    await ensureExamLinkedToLabPanel(panel.id, { priceFcfa: body.priceFcfa });
     const linked = await prisma.labPanel.findUnique({
       where: { id: panel.id },
       include: panelInclude,
@@ -149,9 +174,12 @@ router.post("/", async (req, res) => {
     return res.status(201).json(linked ?? panel);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: error.issues[0]?.message ?? "Données invalides" });
+      return res.status(400).json({ error: zodErrorMessage(error) });
     }
-    return res.status(400).json({ error: "Création impossible" });
+    console.error("[lab-panels] create failed", error);
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : "Création impossible",
+    });
   }
 });
 
@@ -161,29 +189,37 @@ router.put("/:id", async (req, res) => {
     const existing = await prisma.labPanel.findUnique({ where: { id: String(req.params.id) } });
     if (!existing) return res.status(404).json({ error: "Formulaire introuvable" });
 
-    const panel = await prisma.$transaction(async (tx) => {
-      await tx.labPanel.update({
-        where: { id: existing.id },
-        data: {
-          label: body.label?.trim(),
-          isEntry: body.isEntry,
-          active: body.active,
-          sortOrder: body.sortOrder,
-        },
-      });
-
-      if (body.fields) {
-        await tx.labPanelField.deleteMany({ where: { panelId: existing.id } });
-        await tx.labPanelField.createMany({
-          data: buildFieldRows(body.fields).map((field) => ({ ...field, panelId: existing.id })),
+    const panel = await prisma.$transaction(
+      async (tx) => {
+        await tx.labPanel.update({
+          where: { id: existing.id },
+          data: {
+            label: body.label?.trim(),
+            isEntry: body.isEntry,
+            active: body.active,
+            sortOrder: body.sortOrder,
+          },
         });
-      }
 
-      return tx.labPanel.findUnique({ where: { id: existing.id }, include: panelInclude });
-    });
+        if (body.fields) {
+          await tx.labPanelField.deleteMany({ where: { panelId: existing.id } });
+          const rows = buildFieldRows(body.fields);
+          if (rows.length) {
+            await tx.labPanelField.createMany({
+              data: rows.map((field) => ({ ...field, panelId: existing.id })),
+            });
+          }
+        }
+
+        return tx.labPanel.findUnique({ where: { id: existing.id }, include: panelInclude });
+      },
+      { timeout: 120_000 },
+    );
 
     await refreshLabPanelRegistry();
-    await ensureExamLinkedToLabPanel(existing.id);
+    await ensureExamLinkedToLabPanel(existing.id, {
+      priceFcfa: body.priceFcfa,
+    });
     const linked = await prisma.labPanel.findUnique({
       where: { id: existing.id },
       include: panelInclude,
@@ -191,9 +227,12 @@ router.put("/:id", async (req, res) => {
     return res.json(linked ?? panel);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: error.issues[0]?.message ?? "Mise à jour impossible" });
+      return res.status(400).json({ error: zodErrorMessage(error) });
     }
-    return res.status(400).json({ error: "Mise à jour impossible" });
+    console.error("[lab-panels] update failed", error);
+    return res.status(400).json({
+      error: error instanceof Error ? error.message : "Mise à jour impossible",
+    });
   }
 });
 

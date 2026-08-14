@@ -254,6 +254,39 @@ function Test-AlwatanProductionApp {
     }
 }
 
+function Test-AlwatanApiReachable {
+    param(
+        [Parameter(Mandatory = $true)][string]$HostName,
+        [int]$Port = 4000,
+        [int]$TimeoutSec = 2
+    )
+    try {
+        $health = Invoke-WebRequest -Uri "http://${HostName}:${Port}/api/health" -UseBasicParsing -TimeoutSec $TimeoutSec
+        return ($health.StatusCode -ge 200 -and $health.StatusCode -lt 400)
+    } catch {
+        return $false
+    }
+}
+
+function Test-AlwatanQuickTcp {
+    param(
+        [string]$HostName = '127.0.0.1',
+        [int]$Port = 5432,
+        [int]$TimeoutMs = 400
+    )
+    try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $iar = $client.BeginConnect($HostName, $Port, $null, $null)
+        $ok = $iar.AsyncWaitHandle.WaitOne($TimeoutMs, $false)
+        if (-not $ok) { $client.Close(); return $false }
+        $client.EndConnect($iar)
+        $client.Close()
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Test-AlwatanServer {
     param(
         [Parameter(Mandatory = $true)][string]$HostName,
@@ -342,10 +375,10 @@ function Wait-AlwatanProductionUrl {
 
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
-        if (Test-AlwatanProductionApp -HostName $HostName -Port $Port -TimeoutSec 3) {
+        if (Test-AlwatanApiReachable -HostName $HostName -Port $Port -TimeoutSec 1) {
             return "http://${HostName}:${Port}/"
         }
-        Start-Sleep -Seconds 2
+        Start-Sleep -Milliseconds 400
     }
     return $null
 }
@@ -382,7 +415,16 @@ function Ensure-AlwatanProductionBuild {
     $beNeedsBuild = -not $beDistExists
     $feNeedsBuild = -not $feDistExists
 
+    # Detecter un dist bundlé CJS (require) incompatible avec ESM
     if ($beDistExists) {
+        $probe = Get-Content -LiteralPath $beDist -TotalCount 50 -ErrorAction SilentlyContinue | Out-String
+        if ($probe -match 'var import_config = require\(|require\(["'']dotenv') {
+            Write-Host 'Build backend invalide (CJS/require) - reconstruction forcee...' -ForegroundColor Yellow
+            $beNeedsBuild = $true
+        }
+    }
+
+    if ($beDistExists -and -not $beNeedsBuild) {
         $beSourceLatest = Get-LatestWriteUtc @(
             (Join-Path $Root 'backend\src'),
             (Join-Path $Root 'backend\prisma')
@@ -411,13 +453,25 @@ function Ensure-AlwatanProductionBuild {
     $fe = Join-Path $Root 'frontend'
 
     Push-Location $be
-    & "$NodeDir\npm.cmd" install 2>$null
+    $beNm = Join-Path $be 'node_modules'
+    $bePkg = Join-Path $be 'package.json'
+    if (-not (Test-Path $beNm) -or ((Get-Item $bePkg).LastWriteTimeUtc -gt (Get-Item $beNm).LastWriteTimeUtc)) {
+        & "$NodeDir\npm.cmd" install --prefer-offline --no-audit --no-fund 2>$null
+    }
     & "$NodeDir\npx.cmd" prisma generate 2>$null
     if ($beNeedsBuild) {
+        # Evite un dist corrompu (bundle CJS incompatible avec "type":"module")
+        if (Test-Path $beDist) {
+            $probe = Get-Content -LiteralPath $beDist -TotalCount 40 -ErrorAction SilentlyContinue | Out-String
+            if ($probe -match 'require\(["'']dotenv') {
+                Write-Host 'Build backend corrompu detecte - nettoyage dist...' -ForegroundColor Yellow
+                Remove-Item -LiteralPath (Join-Path $Root 'backend\dist') -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
         & "$NodeDir\npm.cmd" run build
         if ($LASTEXITCODE -ne 0) {
             if (Test-Path $beDist) {
-                Write-Host 'ATTENTION : compilation backend échouée — conservation du build précédent.' -ForegroundColor Yellow
+                Write-Host 'ATTENTION : compilation backend echouee — conservation du build precedent.' -ForegroundColor Yellow
             } else {
                 Pop-Location
                 return $false
@@ -427,7 +481,11 @@ function Ensure-AlwatanProductionBuild {
     Pop-Location
 
     Push-Location $fe
-    & "$NodeDir\npm.cmd" install 2>$null
+    $feNm = Join-Path $fe 'node_modules'
+    $fePkg = Join-Path $fe 'package.json'
+    if (-not (Test-Path $feNm) -or ((Get-Item $fePkg).LastWriteTimeUtc -gt (Get-Item $feNm).LastWriteTimeUtc)) {
+        & "$NodeDir\npm.cmd" install --prefer-offline --no-audit --no-fund 2>$null
+    }
     if ($feNeedsBuild) {
         & "$NodeDir\npm.cmd" run build
         if ($LASTEXITCODE -ne 0) { Pop-Location; return $false }
@@ -747,7 +805,7 @@ function Maximize-AlwatanAppWindow {
     #>
     param(
         $Bounds,
-        [int]$TimeoutMs = 20000
+        [int]$TimeoutMs = 3500
     )
     try {
         Ensure-AlwatanWin32Maximize
@@ -774,7 +832,7 @@ function Maximize-AlwatanAppWindow {
             }
             foreach ($hwnd in $hwnds) {
                 if ($hwnd -eq [IntPtr]::Zero) { continue }
-                # Restaurer puis placer sur le bon écran, puis maximiser
+                # Restaurer puis placer sur le bon ecran, puis maximiser
                 [AlwatanWin32Maximize]::ShowWindow($hwnd, [AlwatanWin32Maximize]::SW_RESTORE) | Out-Null
                 if ($Bounds) {
                     [AlwatanWin32Maximize]::MoveWindow(
@@ -785,55 +843,102 @@ function Maximize-AlwatanAppWindow {
                         [int]$Bounds.Height,
                         $true
                     ) | Out-Null
-                    Start-Sleep -Milliseconds 80
                 }
                 [AlwatanWin32Maximize]::ShowWindow($hwnd, [AlwatanWin32Maximize]::SW_SHOWMAXIMIZED) | Out-Null
                 [AlwatanWin32Maximize]::SetForegroundWindow($hwnd) | Out-Null
-                Write-AlwatanClientLaunchLog "Fenêtre maximisée (PID $($p.ProcessId))"
+                Write-AlwatanClientLaunchLog "Fenetre maximisee (PID $($p.ProcessId))"
                 return $true
             }
         }
-        Start-Sleep -Milliseconds 250
+        Start-Sleep -Milliseconds 150
     }
-    Write-AlwatanClientLaunchLog 'Impossible de maximiser la fenêtre appli (timeout)'
+    Write-AlwatanClientLaunchLog 'Maximise fenetre : timeout (non bloquant)'
     return $false
 }
 
 function Open-AlwatanBrowser {
-    param([Parameter(Mandatory = $true)][string]$Url)
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [switch]$Fast,
+        [switch]$ForceHardReload
+    )
 
     $appUrl = $Url.Trim()
     if ($appUrl -notmatch '/$') { $appUrl += '/' }
 
-    # Bust cache navigateur / PWA : ajoute le buildId serveur pour forcer la dernière version
     try {
         $base = $appUrl.TrimEnd('/')
-        $ver = Invoke-RestMethod -Uri ("{0}/api/app-version?_={1}" -f $base, [guid]::NewGuid().ToString('N')) -TimeoutSec 3
+        $ver = Invoke-RestMethod -Uri ("{0}/api/app-version?_={1}" -f $base, [guid]::NewGuid().ToString('N')) -TimeoutSec 2
         if ($ver -and $ver.buildId) {
             $q = [uri]::EscapeDataString([string]$ver.buildId)
             $appUrl = "{0}?v={1}" -f $appUrl, $q
         }
     } catch { }
+    if ($ForceHardReload) {
+        $sep = if ($appUrl.Contains('?')) { '&' } else { '?' }
+        $appUrl = "{0}{1}hardReloadTs={2}" -f $appUrl, $sep, ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+    }
 
     $profileDir = Ensure-AlwatanAppBrowserProfile
-
-    # Fermer les anciennes fenêtres --app de ce profil pour recharger les prefs d'impression
-    try {
-        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object {
-                ($_.Name -match '^(msedge|chrome)\.exe$') -and
-                $_.CommandLine -and
-                ($_.CommandLine -like '*CliniqueAlwatan\app-browser*' -or $_.CommandLine -like '*CliniqueAlwatan/app-browser*')
-            } |
-            ForEach-Object {
-                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-            }
-        Start-Sleep -Milliseconds 500
-    } catch { }
-
-    # Écran où le raccourci est lancé (curseur), sinon écran principal
     $bounds = Get-AlwatanLaunchScreenBounds
-    Set-AlwatanAppWindowPlacementPrefs -ProfileRoot $profileDir -Bounds $bounds
+
+    if ($Fast) {
+        try {
+            Ensure-AlwatanWin32Maximize
+            $existing = @(
+                Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                    Where-Object {
+                        ($_.Name -match '^(msedge|chrome)\.exe$') -and
+                        $_.CommandLine -and
+                        ($_.CommandLine -like '*CliniqueAlwatan*app-browser*')
+                    }
+            )
+            foreach ($p in $existing) {
+                $hwnds = [AlwatanWin32Maximize]::FindVisibleWindowsForPid([int]$p.ProcessId)
+                foreach ($hwnd in $hwnds) {
+                    if ($hwnd -eq [IntPtr]::Zero) { continue }
+                    [AlwatanWin32Maximize]::ShowWindow($hwnd, [AlwatanWin32Maximize]::SW_SHOWMAXIMIZED) | Out-Null
+                    [AlwatanWin32Maximize]::SetForegroundWindow($hwnd) | Out-Null
+                    Write-AlwatanClientLaunchLog "Fenetre appli deja ouverte - focus (PID $($p.ProcessId))"
+                    return
+                }
+            }
+        } catch { }
+    }
+
+    if (-not $Fast) {
+        try {
+            Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+                Where-Object {
+                    ($_.Name -match '^(msedge|chrome)\.exe$') -and
+                    $_.CommandLine -and
+                    ($_.CommandLine -like '*CliniqueAlwatan*app-browser*')
+                } |
+                ForEach-Object {
+                    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+                }
+            Start-Sleep -Milliseconds 300
+        } catch { }
+        Set-AlwatanAppWindowPlacementPrefs -ProfileRoot $profileDir -Bounds $bounds
+    }
+    if ($ForceHardReload) {
+        try {
+            $cacheTargets = @(
+                (Join-Path $profileDir 'Default\Cache'),
+                (Join-Path $profileDir 'Default\Code Cache'),
+                (Join-Path $profileDir 'Default\Service Worker\CacheStorage'),
+                (Join-Path $profileDir 'Default\Service Worker\Database')
+            )
+            foreach ($target in $cacheTargets) {
+                if (Test-Path -LiteralPath $target) {
+                    Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+            Write-AlwatanClientLaunchLog 'Rechargement agressif : caches navigateur purges'
+        } catch {
+            Write-AlwatanClientLaunchLog "Rechargement agressif : purge cache impossible ($($_.Exception.Message))"
+        }
+    }
 
     $browserArgs = @(
         "--user-data-dir=$profileDir",
@@ -858,18 +963,15 @@ function Open-AlwatanBrowser {
         "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
     )
 
+    $maxWait = if ($Fast) { 0 } else { 4000 }
+
     foreach ($browser in $browserCandidates) {
         if (Test-Path $browser) {
             try {
                 Start-Process -FilePath $browser -ArgumentList $browserArgs
-                $screenInfo = if ($bounds) { "écran $($bounds.Width)x$($bounds.Height)@$($bounds.X),$($bounds.Y)" } else { 'maximisé' }
-                Write-AlwatanClientLaunchLog "Navigateur appli : $browser ($screenInfo)"
-                # Force maximize après ouverture (Edge/Chrome --app ignore souvent --start-maximized)
-                $ok = Maximize-AlwatanAppWindow -Bounds $bounds -TimeoutMs 20000
-                if ($ok) {
-                    # Certaines builds Edge redimensionnent juste après le 1er affichage
-                    Start-Sleep -Milliseconds 800
-                    $null = Maximize-AlwatanAppWindow -Bounds $bounds -TimeoutMs 4000
+                Write-AlwatanClientLaunchLog "Navigateur appli : $browser"
+                if ($maxWait -gt 0) {
+                    $null = Maximize-AlwatanAppWindow -Bounds $bounds -TimeoutMs $maxWait
                 }
                 return
             } catch { }
@@ -879,7 +981,6 @@ function Open-AlwatanBrowser {
     try {
         Start-Process $appUrl
     } catch {
-        # Dernier recours : commande start Windows
         cmd.exe /c start "" "$appUrl" | Out-Null
     }
 }

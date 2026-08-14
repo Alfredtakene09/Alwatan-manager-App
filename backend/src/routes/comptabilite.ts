@@ -58,19 +58,18 @@ import {
   ReclamationRefundError,
 } from "../lib/exam-reclamation-refund.js";
 import { assertRoomAvailableForAdmission } from "../lib/hospitalization-rooms.js";
-import { shouldCreateImmediateInvoice, comptabilitePatientWhere } from "../lib/patient-billing.js";
+import { shouldCreateImmediateInvoice, comptabilitePatientWhere, comptabiliteInvoicePatientWhere } from "../lib/patient-billing.js";
 import {
   aggregateCollectedToday,
   buildRevenueLast7Days,
 } from "../lib/revenue-stats.js";
 import { applyExamKindPayment } from "../lib/patient-invoice-payments.js";
-import { canAccessModule, type AppUserRole } from "../lib/roles.js";
 import { requireAuth, requireAnyModule } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
 
-const cashierAccess = requireAnyModule("comptabilite", "reception");
+const cashierAccess = requireAnyModule("comptabilite");
 
 const surgeryPaymentSchema = z.object({
   surgeryCaseId: z.string(),
@@ -414,6 +413,7 @@ router.get("/stats", cashierAccess, async (_req, res) => {
     collectedToday,
     surgeriesPending,
     hospitalizationsForStats,
+    consultationsPending,
   ] = await Promise.all([
     prisma.consultation.findMany({
       where: labsPendingApprovalWhere(),
@@ -439,12 +439,25 @@ router.get("/stats", cashierAccess, async (_req, res) => {
       },
       select: { status: true, roomId: true, startDate: true },
     }),
+    prisma.invoice.findMany({
+      where: {
+        type: InvoiceType.CONSULTATION,
+        status: { in: [InvoiceStatus.PENDING, InvoiceStatus.PARTIALLY_PAID] },
+        ...comptabiliteInvoicePatientWhere(),
+      },
+      select: { amountFcfa: true, paidAmountFcfa: true },
+    }),
   ]);
 
   const hospitalizationsPending = hospitalizationsForStats.filter(isHospitalizationPendingAdmission).length;
 
   const labPendingGrossFcfa = labExamsPending.reduce(
     (sum, row) => sum + computeLabExamsGrossFcfa(row.clinicalNotes),
+    0,
+  );
+
+  const consultationsPendingFcfa = consultationsPending.reduce(
+    (sum, row) => sum + Math.max(0, row.amountFcfa - (row.paidAmountFcfa ?? 0)),
     0,
   );
 
@@ -455,6 +468,8 @@ router.get("/stats", cashierAccess, async (_req, res) => {
     labPaidTodayNetFcfa: collectedToday.examsFcfa,
     consultationsTodayCount: collectedToday.consultationsCount,
     consultationsTodayNetFcfa: collectedToday.consultationsFcfa,
+    consultationsPendingCount: consultationsPending.length,
+    consultationsPendingFcfa,
     surgeryPaidTodayCount: collectedToday.surgeryCount,
     surgeryPaidTodayNetFcfa: collectedToday.surgeryFcfa,
     hospitalizationPaidTodayCount: collectedToday.hospitalizationCount,
@@ -609,15 +624,124 @@ router.get("/paid-exams", cashierAccess, async (_req, res) => {
 router.post("/", cashierAccess, async (req, res) => {
   const user = req.user!;
   const action = req.body.action as string;
-  const isReceptionOnly =
-    canAccessModule(user.role as AppUserRole, "reception") &&
-    !canAccessModule(user.role as AppUserRole, "comptabilite");
-
-  if (isReceptionOnly && action !== "pay_lab_exams") {
-    return res.status(403).json({ error: "Accès refusé" });
-  }
 
   try {
+    if (action === "pay_consultation") {
+      const data = z
+        .object({
+          invoiceId: z.string().min(1),
+          amountFcfa: z.coerce.number().int().positive().optional(),
+          reductionFcfa: z.coerce.number().int().min(0).optional(),
+        })
+        .parse(req.body);
+
+      const invoice = await prisma.invoice.findUnique({
+        where: { id: data.invoiceId },
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          amountFcfa: true,
+          paidAmountFcfa: true,
+          visitId: true,
+          patient: { select: { category: true } },
+          visit: {
+            select: {
+              id: true,
+              consultationFeeFcfa: true,
+              reductionFcfa: true,
+            },
+          },
+        },
+      });
+
+      if (!invoice || invoice.type !== InvoiceType.CONSULTATION) {
+        return res.status(404).json({ error: "Facture de consultation introuvable." });
+      }
+      if (
+        invoice.status === InvoiceStatus.PAID ||
+        invoice.status === InvoiceStatus.CANCELLED
+      ) {
+        return res.status(409).json({ error: "Cette consultation est déjà encaissée." });
+      }
+      if (invoice.paidAmountFcfa > 0 && data.reductionFcfa != null) {
+        return res.status(409).json({
+          error: "Impossible d'appliquer une réduction : un acompte a déjà été encaissé.",
+        });
+      }
+
+      const grossFcfa = Math.max(
+        0,
+        invoice.visit?.consultationFeeFcfa ?? invoice.amountFcfa + (invoice.visit?.reductionFcfa ?? 0),
+      );
+      const reductionFcfa = Math.min(
+        grossFcfa,
+        Math.max(0, data.reductionFcfa ?? invoice.visit?.reductionFcfa ?? 0),
+      );
+      const netFcfa = Math.max(0, grossFcfa - reductionFcfa);
+
+      if (netFcfa <= 0) {
+        return res.status(400).json({ error: "Le montant net à encaisser doit être supérieur à 0." });
+      }
+
+      const { recordInvoiceInstallment } = await import("../lib/patient-invoice-payments.js");
+      const result = await prisma.$transaction(async (tx) => {
+        if (invoice.visitId) {
+          await tx.visit.update({
+            where: { id: invoice.visitId },
+            data: {
+              consultationFeeFcfa: grossFcfa,
+              reductionFcfa,
+            },
+          });
+        }
+
+        const updatedInvoice = await tx.invoice.update({
+          where: { id: invoice.id },
+          data: {
+            amountFcfa: netFcfa,
+            // Pas encore payé — on aligne le montant net avant encaissement.
+          },
+          select: {
+            id: true,
+            amountFcfa: true,
+            paidAmountFcfa: true,
+            invoiceNumber: true,
+            status: true,
+          },
+        });
+
+        const remainingFcfa = Math.max(0, updatedInvoice.amountFcfa - updatedInvoice.paidAmountFcfa);
+        const amountFcfa = data.amountFcfa ?? remainingFcfa;
+        if (amountFcfa <= 0 || amountFcfa > remainingFcfa) {
+          throw new Error("INVALID_PAYMENT_AMOUNT");
+        }
+
+        return recordInvoiceInstallment(tx, {
+          invoiceId: updatedInvoice.id,
+          amountFcfa,
+          recordedById: user.id,
+          note:
+            reductionFcfa > 0
+              ? `Encaissement consultation (réduction ${reductionFcfa} FCFA)`
+              : "Encaissement consultation",
+        });
+      });
+
+      return res.json({
+        success: true,
+        invoiceId: result.invoice.id,
+        invoiceNumber: result.invoice.invoiceNumber,
+        amountFcfa: result.payment.amountFcfa,
+        reductionFcfa,
+        grossFcfa,
+        netFcfa,
+        status: result.invoice.status,
+        isFullyPaid: result.isFullyPaid,
+        remainingFcfa: result.remainingFcfa,
+      });
+    }
+
     if (action === "pay_surgery") {
       const data = surgeryPaymentSchema.parse(req.body);
       const intervention = await prisma.interventionType.findUniqueOrThrow({
@@ -1135,7 +1259,7 @@ router.post("/", cashierAccess, async (req, res) => {
       if (error.message === "INVALID_HOSPITALIZATION") {
         return res.status(400).json({ error: "Hospitalisation invalide" });
       }
-      if (error.message === "INVALID_INSTALLMENT_AMOUNT") {
+      if (error.message === "INVALID_INSTALLMENT_AMOUNT" || error.message === "INVALID_PAYMENT_AMOUNT") {
         return res.status(400).json({
           error: "Montant de tranche invalide (doit être positif et ne pas dépasser le solde restant).",
         });

@@ -13,6 +13,8 @@ import {
   ArrowRightLeft,
   Coffee,
   CircleDollarSign,
+  PillBottle,
+  PenLine,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
@@ -35,7 +37,10 @@ import { emptyExamsByKind, emptyExamCommentsByKind, countExamsByKind, filterInvo
 import {
   CLINICAL_CONSULTATION_EXAM_LABEL,
   hasClinicalConsultationSelected,
+  hasLabResults,
   isDirectClinicalConsultationPrescription,
+  isPharmacyCatalogLine,
+  parsePharmacyOrdonnanceLines,
   type PharmacyOrdonnanceLine,
 } from '@/lib/lab-notes'
 import ConsultationQueueDataTable, {
@@ -63,6 +68,8 @@ const availabilityKnown = ref(false)
 const availabilitySaving = ref(false)
 const recentHistory = ref<MedicalHistoryEntry[]>([])
 const loadingHistory = ref(false)
+/** Onglets du modal : Examens | Pharmacie | Hors pharmacie | Notes */
+const consultModalTab = ref<'exams' | 'pharmacy' | 'external' | 'notes'>('exams')
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -75,6 +82,12 @@ const latestVitals = computed(() => modalVisit.value?.vitalSigns?.[0] ?? null)
 const showConsultationPanel = computed(() =>
   hasClinicalConsultationSelected(selectedExamsByKind.value),
 )
+
+const isLabLockedVisit = computed(() => {
+  const consultation = modalVisit.value?.consultation
+  const notes = consultation?.clinicalNotes
+  return Boolean(consultation?.labSentToLabAt) || hasLabResults(notes)
+})
 
 const hasOperationSelected = computed(
   () => (selectedExamsByKind.value.operation?.length ?? 0) > 0,
@@ -103,11 +116,6 @@ const vitalsLine = computed(() => {
   return parts.join(' · ')
 })
 
-const finalCommentLabel = computed(() => {
-  if (hasOperationSelected.value) return uiText('Commentaire final (opération)')
-  return uiText('Commentaire final')
-})
-
 const finalCommentHint = computed(() => {
   if (showConsultationPanel.value) {
     return uiText('Notes cliniques et conduite — enregistrées dans le dossier.')
@@ -131,6 +139,14 @@ const transferDoctorOptions = computed(() => {
 const statsRefreshKey = ref(0)
 const showReceivableModal = ref(false)
 const selectedExamsCount = computed(() => countExamsByKind(selectedExamsByKind.value))
+
+const pharmacyCatalogCount = computed(
+  () => pharmacyOrdonnance.value.filter((line) => isPharmacyCatalogLine(line)).length,
+)
+
+const pharmacyExternalCount = computed(
+  () => pharmacyOrdonnance.value.filter((line) => !isPharmacyCatalogLine(line)).length,
+)
 const hospitalisationPrescribed = computed(
   () => (selectedExamsByKind.value.hospitalisation?.length ?? 0) > 0,
 )
@@ -220,7 +236,9 @@ async function loadVisits(opts?: { silent?: boolean }) {
     }
   } finally {
     if (!opts?.silent) loading.value = false
-    if (!opts?.silent) statsRefreshKey.value += 1
+    // Aussi en silent poll : sinon la carte KPI « Consultation » reste figée
+    // alors que la file (visits) est déjà à jour.
+    statsRefreshKey.value += 1
   }
 }
 
@@ -249,6 +267,7 @@ function resetExamForm() {
   doctorComment.value = ''
   pharmacyOrdonnance.value = []
   operationAmountFcfa.value = null
+  consultModalTab.value = 'exams'
 }
 
 /** Clic « Consulter » = consultation déjà engagée (diagnostic, pharmacie, enregistrement). */
@@ -284,6 +303,14 @@ async function openConsultModal(id: string) {
 
   const visit = visits.value.find((v) => v.id === id)
   void loadRecentHistory(visit?.patient?.id)
+
+  // Reprise d’un dossier déjà au labo : garder pharmacie / notes déjà enregistrées.
+  const notes = visit?.consultation?.clinicalNotes
+  if (visit?.consultation?.labSentToLabAt || hasLabResults(notes)) {
+    pharmacyOrdonnance.value = parsePharmacyOrdonnanceLines(notes)
+    doctorComment.value = visit?.consultation?.doctorComment?.trim() ?? ''
+    consultModalTab.value = 'pharmacy'
+  }
 
   if (visit?.status === 'WAITING_CONSULTATION') {
     try {
@@ -369,22 +396,29 @@ async function submitExams() {
       visitId: modalVisitId.value,
       doctorComment: doctorComment.value.trim() || undefined,
     }
-    if (selectedExamsCount.value > 0) {
-      payload.examsByKind = selectedExamsByKind.value
-      payload.examCommentsByKind = filterInvoiceExamComments(examCommentsByKind.value)
-      if (hospitalisationPrescribed.value && hospitalisationDays.value && hospitalisationDays.value >= 1) {
-        payload.hospitalisationDays = hospitalisationDays.value
-      }
-      if (
-        (selectedExamsByKind.value.operation?.length ?? 0) > 0 &&
-        operationAmountFcfa.value != null
-      ) {
-        payload.operationAmountFcfa = operationAmountFcfa.value
-      }
-    }
-    if (showConsultationPanel.value && pharmacyOrdonnance.value.length > 0) {
+
+    // Dossier déjà au labo : n’envoyer que pharmacie / notes (pas les examens).
+    if (isLabLockedVisit.value) {
       payload.pharmacyOrdonnance = pharmacyOrdonnance.value
+    } else {
+      if (selectedExamsCount.value > 0) {
+        payload.examsByKind = selectedExamsByKind.value
+        payload.examCommentsByKind = filterInvoiceExamComments(examCommentsByKind.value)
+        if (hospitalisationPrescribed.value && hospitalisationDays.value && hospitalisationDays.value >= 1) {
+          payload.hospitalisationDays = hospitalisationDays.value
+        }
+        if (
+          (selectedExamsByKind.value.operation?.length ?? 0) > 0 &&
+          operationAmountFcfa.value != null
+        ) {
+          payload.operationAmountFcfa = operationAmountFcfa.value
+        }
+      }
+      if (showConsultationPanel.value && pharmacyOrdonnance.value.length > 0) {
+        payload.pharmacyOrdonnance = pharmacyOrdonnance.value
+      }
     }
+
     const ordonnanceToPrint = [...pharmacyOrdonnance.value]
     const patientForPrint = modalVisit.value?.patient
     const doctorForPrint = modalVisit.value?.assignedDoctor
@@ -404,15 +438,17 @@ async function submitExams() {
     const hasComment = !!doctorComment.value.trim()
     const consultationOnly = isDirectClinicalConsultationPrescription(selectedExamsByKind.value)
     message.value = uiText(
-      ordonnanceToPrint.length
-        ? 'Consultation enregistrée — ordonnance imprimée.'
-        : consultationOnly
-          ? 'Consultation enregistrée — paiement déjà effectué à la réception, aucun passage labo.'
-          : selectedExamsCount.value && hasComment
-            ? 'Examens prescrits — commentaire enregistré pour les résultats de labos.'
-            : selectedExamsCount.value
-              ? 'Examens prescrits — en attente de paiement à la réception.'
-              : 'Commentaire enregistré pour les résultats de labos.',
+      isLabLockedVisit.value && ordonnanceToPrint.length
+        ? 'Ordonnance enregistrée — ordonnance imprimée.'
+        : ordonnanceToPrint.length
+          ? 'Consultation enregistrée — ordonnance imprimée.'
+          : consultationOnly
+            ? 'Consultation enregistrée — aucun examen prescrit.'
+            : selectedExamsCount.value && hasComment
+              ? 'Examens prescrits — commentaire enregistré pour les résultats de labos.'
+              : selectedExamsCount.value
+                ? 'Examens prescrits — en attente de paiement (gestionnaire / admin).'
+                : 'Commentaire enregistré pour les résultats de labos.',
     )
     messageType.value = 'success'
     closeModal()
@@ -489,8 +525,7 @@ onMounted(async () => {
     </section>
 
     <section class="page-with-table__body">
-      <UiCard
-        :title="isAdminSupervision ? 'Patients en file d\'attente' : 'Patients à consulter'"
+      <UiCard direct :title="isAdminSupervision ? 'Patients en file d\'attente' : 'Patients à consulter'"
         :description="
           isAdminSupervision
             ? uiText('Supervision — lecture seule')
@@ -569,11 +604,72 @@ onMounted(async () => {
               />
             </section>
 
-            <section class="info-section">
-              <h3>
+            <div class="consult-tabs" role="tablist" :aria-label="uiText('Sections consultation')">
+              <button
+                type="button"
+                class="consult-tabs__btn"
+                :class="{ 'consult-tabs__btn--active': consultModalTab === 'exams' }"
+                role="tab"
+                :aria-selected="consultModalTab === 'exams'"
+                @click="consultModalTab = 'exams'"
+              >
                 <FlaskConical :size="15" />
-                {{ uiText('Prescrire') }}
-              </h3>
+                {{ uiText('Examens') }}
+                <span v-if="selectedExamsCount" class="consult-tabs__badge">{{ selectedExamsCount }}</span>
+              </button>
+              <button
+                v-if="showConsultationPanel"
+                type="button"
+                class="consult-tabs__btn"
+                :class="{ 'consult-tabs__btn--active': consultModalTab === 'pharmacy' }"
+                role="tab"
+                :aria-selected="consultModalTab === 'pharmacy'"
+                @click="consultModalTab = 'pharmacy'"
+              >
+                <PillBottle :size="15" />
+                <span class="consult-tabs__label">
+                  {{ uiText('Pharmacie') }}
+                  <small>{{ uiText('facultatif') }}</small>
+                </span>
+                <span v-if="pharmacyCatalogCount" class="consult-tabs__badge">
+                  {{ pharmacyCatalogCount }}
+                </span>
+              </button>
+              <button
+                v-if="showConsultationPanel"
+                type="button"
+                class="consult-tabs__btn"
+                :class="{ 'consult-tabs__btn--active': consultModalTab === 'external' }"
+                role="tab"
+                :aria-selected="consultModalTab === 'external'"
+                @click="consultModalTab = 'external'"
+              >
+                <PenLine :size="15" />
+                <span class="consult-tabs__label">
+                  {{ uiText('Hors pharmacie') }}
+                  <small>{{ uiText('facultatif') }}</small>
+                </span>
+                <span v-if="pharmacyExternalCount" class="consult-tabs__badge">
+                  {{ pharmacyExternalCount }}
+                </span>
+              </button>
+              <button
+                type="button"
+                class="consult-tabs__btn"
+                :class="{ 'consult-tabs__btn--active': consultModalTab === 'notes' }"
+                role="tab"
+                :aria-selected="consultModalTab === 'notes'"
+                @click="consultModalTab = 'notes'"
+              >
+                <ClipboardList :size="15" />
+                <span class="consult-tabs__label">
+                  {{ uiText('Notes') }}
+                  <small>{{ uiText('facultatif') }}</small>
+                </span>
+              </button>
+            </div>
+
+            <section v-show="consultModalTab === 'exams'" class="info-section info-section--exams">
               <MultiExamPrescriptionPicker
                 v-model="selectedExamsByKind"
                 v-model:comments="examCommentsByKind"
@@ -584,9 +680,18 @@ onMounted(async () => {
               />
             </section>
 
-            <section class="info-section info-section--comment">
-              <h3>{{ finalCommentLabel }}</h3>
-              <p class="comment-hint">{{ finalCommentHint }}</p>
+            <section
+              v-show="consultModalTab === 'notes'"
+              class="info-section info-section--comment"
+            >
+              <h3>
+                {{ uiText('Notes cliniques / diagnostic') }}
+                <span class="optional-tag">{{ uiText('facultatif') }}</span>
+              </h3>
+              <p class="comment-hint">
+                {{ uiText('La première ligne des notes est enregistrée comme diagnostic.') }}
+                {{ finalCommentHint }}
+              </p>
               <textarea
                 v-model="doctorComment"
                 class="doctor-comment"
@@ -597,9 +702,16 @@ onMounted(async () => {
                     : uiText('Motif, examen clinique, diagnostic…')
                 "
               />
+            </section>
+
+            <section
+              v-if="showConsultationPanel"
+              v-show="consultModalTab === 'pharmacy' || consultModalTab === 'external'"
+              class="info-section info-section--pharmacy"
+            >
               <DoctorPharmacyOrdonnancePicker
-                v-if="showConsultationPanel"
                 v-model="pharmacyOrdonnance"
+                :mode="consultModalTab === 'external' ? 'external' : 'catalog'"
                 :patient="modalVisit?.patient"
                 :doctor-name="
                   modalVisit?.assignedDoctor
@@ -853,8 +965,124 @@ onMounted(async () => {
   border-radius: var(--radius-sm);
 }
 
+.consult-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.3rem;
+  border-radius: 10px;
+  background: var(--surface-muted, #f1f5f9);
+  border: 1px solid var(--border);
+}
+
+.consult-tabs__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1 1 auto;
+  justify-content: center;
+  min-height: 2.4rem;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.consult-tabs__label {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.05rem;
+  line-height: 1.15;
+  text-align: left;
+}
+
+.consult-tabs__label small {
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--text-light);
+  text-transform: lowercase;
+}
+
+.consult-tabs__btn--active .consult-tabs__label small {
+  color: var(--primary-600);
+}
+
+.optional-tag {
+  margin-left: 0.35rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: var(--surface-muted, #f1f5f9);
+  color: var(--text-muted);
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: lowercase;
+  vertical-align: middle;
+}
+
+.consult-tabs__btn--active {
+  background: #fff;
+  border-color: var(--primary-200);
+  color: var(--primary-800);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.consult-tabs__badge {
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--primary-600);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.section-hint {
+  margin: -0.35rem 0 0.65rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.info-section__count {
+  margin-left: 0.15rem;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--surface-muted, #f1f5f9);
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .info-section--comment {
-  padding-top: 0.25rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+.info-section--pharmacy {
+  padding: 0.15rem 0;
+}
+
+.info-section--pharmacy :deep(.ordo-picker__head h4) {
+  margin: 0;
+  font-size: 0.9rem;
 }
 
 .comment-hint {
@@ -871,7 +1099,7 @@ onMounted(async () => {
   border-radius: var(--radius-sm);
   font: inherit;
   resize: vertical;
-  min-height: 5.5rem;
+  min-height: 4.5rem;
   background: #fff;
   color: var(--text);
 }

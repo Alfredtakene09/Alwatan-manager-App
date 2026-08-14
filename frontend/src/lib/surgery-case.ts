@@ -44,10 +44,20 @@ export type SurgeryCaseRow = {
       phone?: string | null
     }
     consultation?: {
+      id?: string
       doctorComment?: string | null
       diagnosis?: string | null
     } | null
   }
+  invoice?: {
+    id?: string
+    status: string
+    amountFcfa: number
+    paidAmountFcfa: number
+    paidAt?: string | null
+    type?: string
+    billingExamKind?: string | null
+  } | null
 }
 
 export const SURGERY_STATUS_LABELS: Record<string, string> = {

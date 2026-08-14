@@ -12,7 +12,7 @@ import {
   sumExpensesForCashierOnDate,
 } from "../lib/cashier-personal-stats.js";
 import { CASH_COLLECTOR_ROLES } from "../lib/cash-shift.js";
-import { resolveConsultationBilling, shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
+import { resolveConsultationBilling } from "../lib/patient-billing.js";
 import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
 import {
   consultationInvoiceCreateData,
@@ -34,13 +34,19 @@ import {
 } from "../lib/duplicate-detection.js";
 import { isUsablePatientPhone } from "../lib/merge-patients.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
-import { selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
+import { selectableDoctorByIdWhere, resolveDoctorConsultationAmount } from "../lib/doctor-compensation.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
+import { EXTERNAL_PATIENT_VISIT_NOTE } from "../lib/visit-external.js";
 
-/** Réceptionniste : uniquement ses dossiers. Direction / gestionnaire / admin : tout. */
-function receptionistOwnPatientsWhere(user: { id: string; role: UserRole }): Prisma.PatientWhereInput {
-  if (user.role !== UserRole.RECEPTIONNISTE) return {};
-  return { createdById: user.id };
+/** Réceptionniste : uniquement ses dossiers. Direction / gestionnaire / admin : tout, ou un réceptionniste choisi. */
+function receptionistOwnPatientsWhere(
+  user: { id: string; role: UserRole },
+  createdById?: string,
+): Prisma.PatientWhereInput {
+  if (user.role === UserRole.RECEPTIONNISTE) return { createdById: user.id };
+  const id = createdById?.trim();
+  if (id) return { createdById: id };
+  return {};
 }
 
 const router = Router();
@@ -199,10 +205,21 @@ async function syncWaitingVisit(
   const patient = await tx.patient.findUnique({ where: { id: patientId } });
   if (!patient) return;
 
+  let resolvedAmount = consultationAmountFcfa;
+  if (doctorId) {
+    const doctor = await tx.user.findFirst({
+      where: selectableDoctorByIdWhere(doctorId),
+      include: { employee: true },
+    });
+    if (doctor) {
+      resolvedAmount = resolveDoctorConsultationAmount(doctor, consultationAmountFcfa);
+    }
+  }
+
   const billing = resolveConsultationBilling(
     patient.category,
-    consultationAmountFcfa,
-    reductionFcfa,
+    resolvedAmount,
+    0,
   );
 
   let visit = await tx.visit.findFirst({
@@ -229,11 +246,10 @@ async function syncWaitingVisit(
       where: { id: visit.id },
       data: {
         assignedDoctorId: doctorId ?? visit.assignedDoctorId,
-        consultationFeeFcfa:
-          consultationAmountFcfa !== undefined
-            ? billing.consultationAmountFcfa
-            : visit.consultationFeeFcfa,
-        ...(reductionFcfa !== undefined ? { reductionFcfa: billing.reductionFcfa } : {}),
+        consultationFeeFcfa: doctorId || consultationAmountFcfa !== undefined
+          ? billing.consultationAmountFcfa || null
+          : visit.consultationFeeFcfa,
+        reductionFcfa: 0,
       },
     });
   }
@@ -288,8 +304,9 @@ router.get("/", async (req, res) => {
   const category = req.query.category as string | undefined;
   const fromParam = String(req.query.from ?? req.query.date ?? "").trim();
   const toParam = String(req.query.to ?? "").trim();
+  const createdById = String(req.query.createdById ?? "").trim();
   const terms = q.split(/\s+/).filter(Boolean);
-  const ownScope = receptionistOwnPatientsWhere(user);
+  const ownScope = receptionistOwnPatientsWhere(user, createdById);
 
   function parseDayStart(value: string): Date | null {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -331,7 +348,10 @@ router.get("/", async (req, res) => {
           }
         : {}),
     },
-    include: { treatingDoctor: { select: treatingDoctorSelect } },
+    include: {
+      treatingDoctor: { select: treatingDoctorSelect },
+      createdBy: { select: { id: true, firstName: true, lastName: true } },
+    },
     orderBy: [{ createdAt: "desc" }, { code: "desc" }],
     take: createdAtFilter ? 500 : 50,
   });
@@ -345,20 +365,43 @@ router.get("/", async (req, res) => {
   );
 });
 
+router.get("/receptionists", requireModule("reception"), async (req, res) => {
+  const user = req.user!;
+  if (user.role === UserRole.RECEPTIONNISTE) {
+    return res.json([]);
+  }
+
+  const users = await prisma.user.findMany({
+    where: { role: UserRole.RECEPTIONNISTE, active: true },
+    select: { id: true, firstName: true, lastName: true },
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+  });
+
+  return res.json(
+    users.map((item) => ({
+      id: item.id,
+      name: `${item.firstName} ${item.lastName}`.trim(),
+    })),
+  );
+});
+
 router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   const user = req.user!;
+  const createdById = String(req.query.createdById ?? "").trim();
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
   const tomorrowStart = new Date(startOfToday);
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-  const ownScope = receptionistOwnPatientsWhere(user);
+  const ownScope = receptionistOwnPatientsWhere(user, createdById);
   const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
+  const scopedReceptionistId = isReceptionist ? user.id : createdById || null;
 
   const [
     registeredToday,
     femalePatients,
     malePatients,
     visitsToday,
+    externalPatientsToday,
     collectedToday,
     myExpensesToday,
   ] = await Promise.all([
@@ -367,21 +410,28 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     }),
     prisma.patient.count({ where: { ...ownScope, gender: "F" } }),
     prisma.patient.count({ where: { ...ownScope, gender: "M" } }),
-    isReceptionist
+    scopedReceptionistId
       ? prisma.visit.count({
           where: {
             createdAt: { gte: startOfToday },
             OR: [
-              { patient: { createdById: user.id } },
+              { patient: { createdById: scopedReceptionistId } },
               {
                 invoices: {
-                  some: { type: InvoiceType.CONSULTATION, issuedById: user.id },
+                  some: { type: InvoiceType.CONSULTATION, issuedById: scopedReceptionistId },
                 },
               },
             ],
           },
         })
       : prisma.visit.count({ where: { createdAt: { gte: startOfToday } } }),
+    prisma.visit.count({
+      where: {
+        createdAt: { gte: startOfToday },
+        notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE },
+        ...(Object.keys(ownScope).length ? { patient: ownScope } : {}),
+      },
+    }),
     CASH_COLLECTOR_ROLES.includes(user.role)
       ? aggregateCollectedForCashier(user.id, startOfToday, tomorrowStart)
       : aggregateCollectedToday(),
@@ -397,6 +447,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     femalePatients,
     malePatients,
     visitsToday,
+    externalPatientsToday,
     revenueTodayFcfa: collectedToday.totalFcfa,
     expensesTodayFcfa: myExpensesToday.totalFcfa,
     netTodayFcfa,
@@ -431,6 +482,7 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
 
     const doctor = await prisma.user.findFirst({
       where: selectableDoctorByIdWhere(body.doctorId),
+      include: { employee: true },
     });
     if (!doctor) return res.status(400).json({ error: "Médecin invalide" });
 
@@ -442,18 +494,8 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
     }
 
     const category = resolvePatientCategory(body.category);
-    const billing = resolveConsultationBilling(
-      category,
-      body.consultationAmountFcfa,
-      body.reductionFcfa,
-    );
-
-    if (
-      body.consultationAmountFcfa !== undefined &&
-      (body.reductionFcfa ?? 0) > body.consultationAmountFcfa
-    ) {
-      return res.status(400).json({ error: "La réduction ne peut pas dépasser le montant." });
-    }
+    const resolvedAmount = resolveDoctorConsultationAmount(doctor, null);
+    const billing = resolveConsultationBilling(category, resolvedAmount, 0);
 
     // Option A : toujours créer un nouveau dossier (doublons acceptés).
     // Fusion ultérieure médecin/facture si même nom + même numéro.
@@ -508,7 +550,7 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
         visit,
         invoiceNumber,
         totalFcfa: billing.billableAmountFcfa,
-        billingDeferred: !shouldCreateImmediateInvoice(category),
+        billingDeferred: true,
         linkedExistingDossier: false as const,
       };
     });

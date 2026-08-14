@@ -2,8 +2,9 @@ import {
   ClinicExpenseCategory,
   ClinicExpenseStatus,
   HospitalizationStatus,
+  InvoiceStatus,
+  InvoiceType,
   PayrollStatus,
-  SurgeryStatus,
   VisitStatus,
 } from "@prisma/client";
 import { prisma } from "./db.js";
@@ -15,6 +16,7 @@ import {
   collectedInvoicesWhere,
   startOfDay,
 } from "./revenue-stats.js";
+import { comptabiliteInvoicePatientWhere } from "./patient-billing.js";
 import {
   currentPayrollPeriod,
   ensurePayrollForMonth,
@@ -35,23 +37,68 @@ async function buildOperationsByService(
   from: Date,
   to: Date,
 ): Promise<OperationsByServiceRow[]> {
-  const [services, cases] = await Promise.all([
+  const [services, payments, legacyInvoices] = await Promise.all([
     prisma.clinicService.findMany({
       where: { active: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       select: { id: true, name: true },
     }),
-    prisma.surgeryCase.findMany({
+    prisma.invoicePayment.findMany({
       where: {
-        status: { not: SurgeryStatus.CANCELLED },
-        createdAt: { gte: from, lt: to },
+        paidAt: { gte: from, lt: to },
+        invoice: {
+          status: { not: InvoiceStatus.CANCELLED },
+          ...comptabiliteInvoicePatientWhere(),
+          OR: [
+            { type: InvoiceType.SURGERY },
+            { billingExamKind: "operation" },
+            { surgeryCaseId: { not: null } },
+          ],
+        },
       },
       select: {
-        totalCostFcfa: true,
-        interventionType: {
+        amountFcfa: true,
+        invoice: {
           select: {
-            clinicServiceId: true,
-            clinicService: { select: { id: true, name: true } },
+            id: true,
+            surgeryCaseId: true,
+            surgeryCase: {
+              select: {
+                interventionType: {
+                  select: {
+                    clinicServiceId: true,
+                    clinicService: { select: { id: true, name: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+    prisma.invoice.findMany({
+      where: {
+        ...collectedInvoicesWhere(from, to),
+        payments: { none: {} },
+        OR: [
+          { type: InvoiceType.SURGERY },
+          { billingExamKind: "operation" },
+          { surgeryCaseId: { not: null } },
+        ],
+      },
+      select: {
+        id: true,
+        amountFcfa: true,
+        paidAmountFcfa: true,
+        surgeryCaseId: true,
+        surgeryCase: {
+          select: {
+            interventionType: {
+              select: {
+                clinicServiceId: true,
+                clinicService: { select: { id: true, name: true } },
+              },
+            },
           },
         },
       },
@@ -74,18 +121,44 @@ async function buildOperationsByService(
     amountFcfa: 0,
   });
 
-  for (const row of cases) {
-    const serviceId = row.interventionType.clinicServiceId;
-    const key = serviceId ?? null;
+  const countedIds = new Set<string>();
+
+  function addAmount(
+    invoice: {
+      id: string;
+      surgeryCaseId: string | null;
+      surgeryCase: {
+        interventionType: {
+          clinicServiceId: string | null;
+          clinicService: { id: string; name: string } | null;
+        };
+      } | null;
+    },
+    amountFcfa: number,
+  ) {
+    if (amountFcfa <= 0) return;
+    const serviceId = invoice.surgeryCase?.interventionType.clinicServiceId ?? null;
+    const key = serviceId;
     const current = byService.get(key) ?? {
       serviceId: key,
-      serviceName: row.interventionType.clinicService?.name ?? "Sans service",
+      serviceName: invoice.surgeryCase?.interventionType.clinicService?.name ?? "Sans service",
       count: 0,
       amountFcfa: 0,
     };
-    current.count += 1;
-    current.amountFcfa += row.totalCostFcfa;
+    const distinctId = invoice.surgeryCaseId ?? invoice.id;
+    if (!countedIds.has(distinctId)) {
+      countedIds.add(distinctId);
+      current.count += 1;
+    }
+    current.amountFcfa += amountFcfa;
     byService.set(key, current);
+  }
+
+  for (const payment of payments) {
+    addAmount(payment.invoice, payment.amountFcfa);
+  }
+  for (const invoice of legacyInvoices) {
+    addAmount(invoice, invoice.paidAmountFcfa > 0 ? invoice.paidAmountFcfa : invoice.amountFcfa);
   }
 
   const rows = [...byService.values()].filter(
@@ -324,7 +397,6 @@ export async function buildAdminDashboardOverview() {
     prevPayrollPaid,
     currentPayrollGross,
     prevPayrollGross,
-    monthInvoices,
     pharmacyMonth,
     recentExpenses,
     employees,
@@ -345,17 +417,6 @@ export async function buildAdminDashboardOverview() {
     sumPayrollPaidBetween(prevBounds.start, prevBounds.end),
     sumPayrollMonthGross(year, month),
     sumPayrollMonthGross(prev.year, prev.month),
-    prisma.invoice.findMany({
-      where: collectedInvoicesWhere(currentBounds.start, currentBounds.end),
-      select: {
-        type: true,
-        status: true,
-        amountFcfa: true,
-        paidAmountFcfa: true,
-        paidAt: true,
-        createdAt: true,
-      },
-    }),
     aggregatePharmacyBetween(currentBounds.start, currentBounds.end),
     prisma.clinicExpense.findMany({
       orderBy: { createdAt: "desc" },
@@ -430,7 +491,6 @@ export async function buildAdminDashboardOverview() {
   const currentNet = currentRevenue.totalFcfa - currentExpensesTotal;
   const prevNet = prevRevenue.totalFcfa - prevExpensesTotal;
 
-  const monthBreakdown = sumCollectedBreakdown(monthInvoices);
   const expenseBreakdown = mapExpenseBreakdown(currentExpenses.rows, currentPayrollPaid);
   const operationsByService = await buildOperationsByService(
     currentBounds.start,
@@ -498,7 +558,7 @@ export async function buildAdminDashboardOverview() {
       payrollChangePercent: percentChange(currentPayrollGross, prevPayrollGross),
     },
     monthlyTrend,
-    revenueBreakdown: mapRevenueBreakdown(monthBreakdown, pharmacyMonth.totalFcfa),
+    revenueBreakdown: mapRevenueBreakdown(currentRevenue, pharmacyMonth.totalFcfa),
     expenseBreakdown,
     operationsByService,
     recentExpenses: recentExpenses.map((row) => ({

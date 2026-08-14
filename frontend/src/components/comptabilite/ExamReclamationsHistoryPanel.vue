@@ -111,8 +111,7 @@ watch(() => props.refreshKey, () => {
 </script>
 
 <template>
-  <UiCard
-    title="Historique des réclamations"
+  <UiCard direct title="Historique des réclamations"
     description="Remboursements appliqués immédiatement à la validation — montants déduits des factures examens"
     class="ui-card--table-panel"
     :icon="ClipboardList"

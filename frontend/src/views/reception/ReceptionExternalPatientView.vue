@@ -3,23 +3,18 @@ import { computed, onMounted, ref, watch } from 'vue'
 import {
   UserRound,
   FlaskConical,
-  CreditCard,
   Search,
   X,
   RotateCcw,
-  Percent,
   UserPlus,
-  Printer,
   Pencil,
+  CheckCircle2,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa, fullName } from '@/lib/roles'
-import { parsePatientAge, splitPatientFullName, formatPatientAge } from '@/lib/patient-name'
+import { parsePatientAge, splitPatientFullName } from '@/lib/patient-name'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
-import { computeGrossFcfaFromExamsByKind, getLabExamPriceFcfa } from '@/lib/lab-exams'
-import { CLINIC } from '@/lib/clinic'
-import { buildClinicPrintHeader, buildLabExamThermalReceiptHtml, openPrintDocument } from '@/lib/print-document'
 import MultiExamPrescriptionPicker from '@/components/MultiExamPrescriptionPicker.vue'
 import {
   emptyExamsByKind,
@@ -36,7 +31,6 @@ import {
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
-import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
@@ -95,7 +89,7 @@ type DraftNewPatient = {
   gender: string
 }
 
-const { uiText, dateTimeText, localeCode } = useAppI18n()
+const { uiText, localeCode } = useAppI18n()
 
 const search = ref('')
 const searchResults = ref<PatientRow[]>([])
@@ -125,10 +119,6 @@ const editForm = ref({
 })
 
 const examsByKind = ref<ExamsByKind>(emptyExamsByKind())
-const reductionFcfa = ref(0)
-/** Montant net facturé (éditable) — défaut = tarif catalogue. */
-const amountFcfa = ref('')
-const amountManuallyEdited = ref(false)
 /** Montant opération personnalisé (depuis le sélecteur). */
 const operationAmountFcfa = ref<number | null>(null)
 const submitting = ref(false)
@@ -232,55 +222,6 @@ const parsedAge = computed(() => parsePatientAge(patientForm.value.age, patientF
 const editParsedName = computed(() => splitPatientFullName(editForm.value.fullName))
 const editParsedAge = computed(() => parsePatientAge(editForm.value.age, editForm.value.ageUnit))
 
-const grossFcfa = computed(() => {
-  const base = computeGrossFcfaFromExamsByKind(examsByKind.value)
-  const opLabels = examsByKind.value.operation ?? []
-  if (!opLabels.length || operationAmountFcfa.value == null) return base
-  const catalogOp = opLabels.reduce((sum, label) => sum + getLabExamPriceFcfa(label), 0)
-  return Math.max(0, base - catalogOp + operationAmountFcfa.value)
-})
-const netFcfa = computed(() => {
-  const typed = Number(amountFcfa.value)
-  if (Number.isFinite(typed) && amountFcfa.value !== '') return Math.max(0, Math.floor(typed))
-  return Math.max(0, grossFcfa.value - (Number(reductionFcfa.value) || 0))
-})
-
-watch(grossFcfa, (gross) => {
-  if (amountManuallyEdited.value) {
-    const amount = Number(amountFcfa.value)
-    if (Number.isFinite(amount) && amountFcfa.value !== '' && amount <= gross) {
-      reductionFcfa.value = Math.max(0, gross - Math.floor(amount))
-    }
-    return
-  }
-  amountFcfa.value = gross > 0 ? String(gross) : ''
-  reductionFcfa.value = 0
-})
-
-function onAmountInput(value: string | number) {
-  amountManuallyEdited.value = true
-  const raw = String(value ?? '').trim()
-  amountFcfa.value = raw
-  const amount = Number(raw)
-  if (!Number.isFinite(amount) || raw === '') {
-    reductionFcfa.value = 0
-    return
-  }
-  const rounded = Math.max(0, Math.floor(amount))
-  if (rounded <= grossFcfa.value) {
-    reductionFcfa.value = Math.max(0, grossFcfa.value - rounded)
-  } else {
-    reductionFcfa.value = 0
-  }
-}
-
-function onReductionInput(value: string | number) {
-  amountManuallyEdited.value = true
-  const reduction = Math.max(0, Math.floor(Number(value) || 0))
-  reductionFcfa.value = Math.min(reduction, grossFcfa.value)
-  amountFcfa.value = String(Math.max(0, grossFcfa.value - reductionFcfa.value))
-}
-
 const newPatientExamCount = computed(() => countExamsByKind(examsByKind.value))
 
 const canConfirmNewPatient = computed(() => {
@@ -288,12 +229,11 @@ const canConfirmNewPatient = computed(() => {
   return firstName.length >= 2 && lastName.length >= 2 && parsedAge.value !== null
 })
 
-/** Enregistrement + prescription directe (paiement) en une étape. */
+/** Enregistrement + prescription directe en une étape (sans encaissement). */
 const canConfirmNewPatientWithExams = computed(
   () =>
     canConfirmNewPatient.value &&
     newPatientExamCount.value > 0 &&
-    netFcfa.value > 0 &&
     (!doctorSelectRequired.value || !!selectedDoctorId.value),
 )
 
@@ -306,7 +246,6 @@ const canSubmitExams = computed(
   () =>
     !!activeRow.value &&
     countExamsByKind(examsByKind.value) > 0 &&
-    netFcfa.value > 0 &&
     (!doctorSelectRequired.value || !!selectedDoctorId.value),
 )
 
@@ -373,19 +312,13 @@ const formLabels = computed(() => {
   void localeCode.value
   return {
     prescription: uiText('Prescrire des examens'),
-    netDue: uiText('Net à payer'),
     registering: uiText('Enregistrement…'),
     savePending: uiText('Enregistrer sans examen'),
-    saveAndSend: uiText('Valider et envoyer au service'),
+    saveAndSend: uiText('Enregistrer la prescription'),
     save: uiText('Enregistrer'),
-    validating: uiText('Validation…'),
-    validate: uiText('Valider et envoyer au service'),
+    validating: uiText('Enregistrement…'),
+    validate: uiText('Enregistrer la prescription'),
   }
-})
-
-const subtotalLabel = computed(() => {
-  void localeCode.value
-  return translateTemplate('Sous-total {amount}', { amount: formatFcfa(grossFcfa.value) })
 })
 
 function resetPatientForm() {
@@ -411,18 +344,13 @@ function closeNewPatientModal() {
 
 function resetExamsForm() {
   examsByKind.value = emptyExamsByKind()
-  reductionFcfa.value = 0
-  amountFcfa.value = ''
-  amountManuallyEdited.value = false
   selectedDoctorId.value = ''
   operationAmountFcfa.value = null
 }
 
-function billingPayload() {
+function examsPayload() {
   return {
     examsByKind: examsByKind.value,
-    reductionFcfa: Number(reductionFcfa.value) || 0,
-    amountFcfa: netFcfa.value,
     ...(
       (examsByKind.value.operation?.length ?? 0) > 0 && operationAmountFcfa.value != null
         ? { operationAmountFcfa: operationAmountFcfa.value }
@@ -485,7 +413,6 @@ function externalRowActions(row: ExternalQueueRow): QueueRowAction[] {
       disabledReason: row.hasExams ? uiText('Examens déjà prescrits') : undefined,
     },
     { key: 'edit', label: uiText('Modifier'), icon: Pencil },
-    { key: 'print', label: uiText('Imprimer'), icon: Printer },
   ]
 }
 
@@ -507,60 +434,6 @@ function serviceDisplayLabel(service: string | null | undefined) {
 function onExternalRowAction(key: string, row: ExternalQueueRow) {
   if (key === 'exams') openExamsModal(row)
   if (key === 'edit') openEditModal(row)
-  if (key === 'print') printRow(row)
-}
-
-function examLabelsFromRow(row: ExternalQueueRow) {
-  if (!row.hasExams) return []
-  return row.examsSummary.split(', ').filter(Boolean)
-}
-
-function printRow(row: ExternalQueueRow) {
-  const patient = row.patient
-  const patientName = fullName(patient.firstName, patient.lastName)
-
-  if (!row.hasExams) {
-    openPrintDocument(
-      `Fiche patient ${patient.code}`,
-      `
-${buildClinicPrintHeader(uiText('Fiche patient externe'))}
-  <div class="row"><span>${uiText('Date')}</span><strong>${dateTimeText(row.updatedAt)}</strong></div>
-  <div class="row"><span>${uiText('Patient')}</span><strong>${patientName}</strong></div>
-  <div class="row"><span>${uiText('Matricule')}</span><strong>${patient.code}</strong></div>
-  ${patient.phone ? `<div class="row"><span>${uiText('Téléphone')}</span><strong>${patient.phone}</strong></div>` : ''}
-  ${patient.age != null ? `<div class="row"><span>${uiText('Âge')}</span><strong>${formatPatientAge(patient.age, normalizePatientAgeUnit(patient.ageUnit))}</strong></div>` : ''}
-  <p style="margin-top:1rem;color:#64748b;font-size:0.875rem;">${uiText('Dossier enregistré — examens en attente de prescription.')}</p>
-  <div class="footer">${CLINIC.fullAddress}<br>${CLINIC.phoneLabel} — ${CLINIC.email}</div>
-`,
-    )
-    return
-  }
-
-  const labels = examLabelsFromRow(row)
-  const reduction = Math.max(0, row.grossFcfa - row.netFcfa)
-
-  openPrintDocument(
-    `Facture examens ${patient.code}`,
-    buildLabExamThermalReceiptHtml({
-      patientCode: patient.code,
-      patientName,
-      prescribedBy: uiText('Patient externe — réception'),
-      examLines: labels.map((label) => ({
-        label,
-        amountFcfa: getLabExamPriceFcfa(label),
-      })),
-      grossFcfa: row.grossFcfa,
-      reductionFcfa: reduction,
-      totalFcfa: row.netFcfa,
-      invoiceNumber: row.invoiceNumber ?? undefined,
-      date: row.updatedAt,
-      age: patient.age,
-      ageUnit: normalizePatientAgeUnit(patient.ageUnit),
-      gender: patient.gender,
-      phone: patient.phone ?? undefined,
-    }),
-    { pageSize: '80mm' },
-  )
 }
 
 async function loadQueue() {
@@ -634,17 +507,17 @@ async function confirmNewPatient() {
       const { data } = await api.post('/visits/external-lab-order', {
         ...basePayload,
         service: serviceFromExams(examsByKind.value),
-        ...billingPayload(),
+        ...examsPayload(),
         doctorId: selectedDoctorId.value || undefined,
       })
       const destination = destinationServicesLabel(examsByKind.value)
       message.value = data.invoice
         ? translateTemplate(
-            'Paiement validé — {invoice}. Patient envoyé vers {destination} (sans consultation médecin).',
+            'Enregistré — {invoice}. Paiement à faire par le gestionnaire / admin. Patient envoyé vers {destination}.',
             { invoice: data.invoice.invoiceNumber, destination },
           )
         : translateTemplate(
-            'Examens enregistrés. Patient envoyé vers {destination} (sans consultation médecin).',
+            'Examens enregistrés — en attente de paiement (gestionnaire / admin). Patient envoyé vers {destination}.',
             { destination },
           )
       messageType.value = 'success'
@@ -687,17 +560,17 @@ async function submitExams() {
   try {
     const { data } = await api.post('/visits/external-lab-order', {
       patientId: activeRow.value.patientId,
-      ...billingPayload(),
+      ...examsPayload(),
       service: serviceFromExams(examsByKind.value) ?? activeRow.value.service ?? undefined,
       doctorId: selectedDoctorId.value || undefined,
     })
     message.value = data.invoice
       ? translateTemplate(
-          'Paiement validé — {invoice}. Patient envoyé vers {destination} (sans consultation médecin).',
+          'Enregistré — {invoice}. Paiement à faire par le gestionnaire / admin. Patient envoyé vers {destination}.',
           { invoice: data.invoice.invoiceNumber, destination },
         )
       : translateTemplate(
-          'Examens enregistrés. Patient envoyé vers {destination} (sans consultation médecin).',
+          'Examens enregistrés — en attente de paiement (gestionnaire / admin). Patient envoyé vers {destination}.',
           { destination },
         )
     messageType.value = 'success'
@@ -923,29 +796,6 @@ onMounted(() => {
               </option>
             </UiSelect>
           </div>
-          <div class="form-grid-2">
-            <UiInput
-              :model-value="reductionFcfa"
-              :label="uiText('Réduction (FCFA)')"
-              type="number"
-              min="0"
-              :max="grossFcfa"
-              placeholder="0"
-              :icon="Percent"
-              @update:model-value="onReductionInput"
-            />
-            <div class="total-preview total-preview--editable">
-              <UiInput
-                :model-value="amountFcfa"
-                :label="formLabels.netDue"
-                type="number"
-                min="0"
-                placeholder="0"
-                @update:model-value="onAmountInput"
-              />
-              <small>{{ subtotalLabel }}</small>
-            </div>
-          </div>
         </section>
       </form>
 
@@ -969,7 +819,7 @@ onMounted(() => {
           type="submit"
           form="external-new-patient-form"
           variant="success"
-          :icon="CreditCard"
+          :icon="CheckCircle2"
           :disabled="!canConfirmNewPatientWithExams || registering"
         >
           {{ registering ? formLabels.validating : formLabels.saveAndSend }}
@@ -1060,37 +910,13 @@ onMounted(() => {
             </option>
           </UiSelect>
         </div>
-
-        <div class="form-grid-2">
-          <UiInput
-            :model-value="reductionFcfa"
-            :label="uiText('Réduction (FCFA)')"
-            type="number"
-            min="0"
-            :max="grossFcfa"
-            placeholder="0"
-            :icon="Percent"
-            @update:model-value="onReductionInput"
-          />
-          <div class="total-preview total-preview--editable">
-            <UiInput
-              :model-value="amountFcfa"
-              :label="formLabels.netDue"
-              type="number"
-              min="0"
-              placeholder="0"
-              @update:model-value="onAmountInput"
-            />
-            <small>{{ subtotalLabel }}</small>
-          </div>
-        </div>
       </section>
 
       <template #footer>
         <UiButton type="button" variant="ghost" @click="closeExamsModal">{{ uiText('Annuler') }}</UiButton>
         <UiButton
           variant="success"
-          :icon="CreditCard"
+          :icon="CheckCircle2"
           :disabled="submitting || !canSubmitExams"
           @click="submitExams"
         >

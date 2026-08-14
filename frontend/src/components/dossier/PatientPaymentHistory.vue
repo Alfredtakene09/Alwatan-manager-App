@@ -61,6 +61,25 @@ function statusLabel(status: string) {
   return status
 }
 
+/** Une ligne compacte sans redondance Total/Payé/montant du paiement. */
+function compactGroupLine(group: PaymentGroup): string {
+  void localeCode.value
+  const latest = group.payments[0]
+  const amount =
+    group.status === 'PAID'
+      ? group.paidFcfa || group.totalFcfa
+      : group.remainingFcfa > 0 && group.paidFcfa > 0
+        ? group.paidFcfa
+        : group.totalFcfa
+  // Titre court (ex. « Examens ») — évite « Examens — 7 août » + date de paiement.
+  const title = (group.label || group.groupTitle.split('—')[0] || group.groupTitle).trim()
+  const parts = [title, group.invoiceNumber, statusLabel(group.status), formatFcfa(amount)]
+  if (latest) {
+    parts.push(`${formatDate(latest.paidAt)} — ${latest.recordedByName}`)
+  }
+  return parts.filter(Boolean).join(' · ')
+}
+
 async function load() {
   if (!props.patientId) {
     groups.value = []
@@ -107,41 +126,53 @@ defineExpose({ reload: load })
         </div>
       </div>
 
-      <article v-for="group in groups" :key="group.id" class="payment-history__group">
-        <header class="payment-history__group-head">
-          <div>
-            <h4>{{ group.groupTitle }}</h4>
-            <p>{{ group.invoiceNumber }}</p>
-          </div>
-          <span
-            class="payment-history__status"
-            :class="{
-              'payment-history__status--partial': group.status === 'PARTIALLY_PAID',
-              'payment-history__status--paid': group.status === 'PAID',
-            }"
-          >
-            {{ statusLabel(group.status) }}
+      <!-- Mode compact (modal encaissement) : une ligne par facture -->
+      <ul v-if="compact" class="payment-history__compact-list">
+        <li v-for="group in groups" :key="group.id" class="payment-history__compact-row">
+          <Banknote :size="13" aria-hidden="true" />
+          <span class="payment-history__compact-text" :title="compactGroupLine(group)">
+            {{ compactGroupLine(group) }}
           </span>
-        </header>
+        </li>
+      </ul>
 
-        <div class="payment-history__amounts">
-          <span>{{ translateTemplate('Total {amount}', { amount: formatFcfa(group.totalFcfa) }) }}</span>
-          <span>{{ translateTemplate('Payé {amount}', { amount: formatFcfa(group.paidFcfa) }) }}</span>
-          <span v-if="group.remainingFcfa > 0">
-            {{ translateTemplate('Reste {amount}', { amount: formatFcfa(group.remainingFcfa) }) }}
-          </span>
-        </div>
-
-        <ul class="payment-history__payments">
-          <li v-for="payment in group.payments" :key="payment.id">
-            <Banknote :size="14" />
+      <template v-else>
+        <article v-for="group in groups" :key="group.id" class="payment-history__group">
+          <header class="payment-history__group-head">
             <div>
-              <strong>{{ formatFcfa(payment.amountFcfa) }}</strong>
-              <span>{{ formatDate(payment.paidAt) }} — {{ payment.recordedByName }}</span>
+              <h4>{{ group.groupTitle }}</h4>
+              <p>{{ group.invoiceNumber }}</p>
             </div>
-          </li>
-        </ul>
-      </article>
+            <span
+              class="payment-history__status"
+              :class="{
+                'payment-history__status--partial': group.status === 'PARTIALLY_PAID',
+                'payment-history__status--paid': group.status === 'PAID',
+              }"
+            >
+              {{ statusLabel(group.status) }}
+            </span>
+          </header>
+
+          <div class="payment-history__amounts">
+            <span>{{ translateTemplate('Total {amount}', { amount: formatFcfa(group.totalFcfa) }) }}</span>
+            <span>{{ translateTemplate('Payé {amount}', { amount: formatFcfa(group.paidFcfa) }) }}</span>
+            <span v-if="group.remainingFcfa > 0">
+              {{ translateTemplate('Reste {amount}', { amount: formatFcfa(group.remainingFcfa) }) }}
+            </span>
+          </div>
+
+          <ul class="payment-history__payments">
+            <li v-for="payment in group.payments" :key="payment.id">
+              <Banknote :size="14" />
+              <div>
+                <strong>{{ formatFcfa(payment.amountFcfa) }}</strong>
+                <span>{{ formatDate(payment.paidAt) }} — {{ payment.recordedByName }}</span>
+              </div>
+            </li>
+          </ul>
+        </article>
+      </template>
     </template>
   </div>
 </template>
@@ -229,6 +260,11 @@ defineExpose({ reload: load })
   color: #166534;
 }
 
+.payment-history__status--inline {
+  flex-shrink: 0;
+  padding: 0.1rem 0.4rem;
+}
+
 .payment-history__amounts {
   display: flex;
   flex-wrap: wrap;
@@ -263,13 +299,54 @@ defineExpose({ reload: load })
   color: var(--text-muted);
 }
 
-.payment-history--compact .payment-history__group {
-  padding: 0.6rem;
+.payment-history--compact {
+  gap: 0.35rem;
+}
+
+.payment-history__compact-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.payment-history__compact-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 0.75rem;
+  line-height: 1.25;
+}
+
+.payment-history__compact-row svg {
+  flex-shrink: 0;
+  color: var(--primary-700);
+}
+
+.payment-history__compact-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 500;
 }
 
 @media (max-width: 700px) {
   .payment-history__totals {
     grid-template-columns: 1fr;
+  }
+
+  .payment-history__compact-text {
+    white-space: normal;
   }
 }
 </style>

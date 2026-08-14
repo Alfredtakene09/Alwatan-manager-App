@@ -1,4 +1,5 @@
 import type { LabFormPanel, LabFormSection } from '@/lib/lab-form-panels'
+import { translateUi } from '@/i18n/translate'
 
 const UNTITLED_SECTION_LABEL = 'Formulaire principal'
 
@@ -68,6 +69,8 @@ export type LabPrescriptionCheckItem = {
   key: string
   /** Libellé affiché / stocké entre parenthèses. */
   label: string
+  /** true si un tarif unitaire (> 0) est défini sur le champ. */
+  hasUnitPrice: boolean
 }
 
 export type LabPrescriptionCheckGroup = {
@@ -96,6 +99,7 @@ export function getPrescriptionCheckGroups(panel: LabFormPanel): LabPrescription
         fields: section.fields.map((field) => ({
           key: `field:${field.key}`,
           label: field.label.trim() || field.key,
+          hasUnitPrice: field.priceFcfa != null && field.priceFcfa > 0,
         })),
       }
     })
@@ -127,7 +131,7 @@ export function isPanelLabelExcluded(excludeLabels: string[] | undefined, panelL
   )
 }
 
-/** Une ligne facturable par section : « Panel (Section: champ1 · champ2) ». */
+/** Une ligne facturable pour un champ : « Panel (Section: champ) ». */
 export function encodePanelSectionLine(
   panelLabel: string,
   sectionHeading: string,
@@ -139,9 +143,178 @@ export function encodePanelSectionLine(
   return encodePanelFormSelection(panelLabel, [`${section}: ${fields.join(' · ')}`])
 }
 
+/** Champs individuels dans « Panel (Section: A · B) » ou « Panel (champ) ». */
+export function extractPrescribedFieldLabels(prescribed: string): string[] {
+  const forms = extractSelectedFormLabels(prescribed)
+  if (forms === null || !forms.length) return []
+  const fields: string[] = []
+  for (const form of forms) {
+    const colon = form.indexOf(':')
+    if (colon >= 0) {
+      const rest = form.slice(colon + 1).trim()
+      if (!rest) continue
+      fields.push(
+        ...rest
+          .split(/\s*·\s*/)
+          .map((part) => part.trim())
+          .filter(Boolean),
+      )
+    } else {
+      fields.push(form)
+    }
+  }
+  return fields
+}
+
 /**
- * Construit les lignes panier (1 prix = 1 section touchée).
- * Plusieurs champs d’une même section → une seule ligne.
+ * Nombre d’unités tarifaires dans un libellé prescrit.
+ * - « Panel » seul → 1
+ * - « Panel (Section: A · B) » → 2 (legacy multi-champs)
+ * - « Panel (champ) » ou « Panel (Section: champ) » → 1
+ */
+export function countPrescribedFieldUnits(prescribed: string): number {
+  const fields = extractPrescribedFieldLabels(prescribed)
+  if (!fields.length) return 1
+  return Math.max(1, fields.length)
+}
+
+/**
+ * Libellé court pour un chip / détail UI :
+ * - « Panel (Section: champ) » → nom de la section
+ * - « Panel (Formulaire) » → nom du formulaire
+ * - « Panel » seul → libellé panel
+ */
+export function formatPrescribedChipLabel(prescribed: string): string {
+  const forms = extractSelectedFormLabels(prescribed)
+  if (!forms?.length) return extractBasePanelLabel(prescribed).trim() || prescribed.trim()
+  const parts: string[] = []
+  for (const form of forms) {
+    const colon = form.indexOf(':')
+    if (colon >= 0) {
+      const section = form.slice(0, colon).trim()
+      if (section) {
+        parts.push(section)
+        continue
+      }
+      const rest = form.slice(colon + 1).trim()
+      if (rest) {
+        parts.push(
+          ...rest
+            .split(/\s*·\s*/)
+            .map((part) => part.trim())
+            .filter(Boolean),
+        )
+      }
+      continue
+    }
+    parts.push(form)
+  }
+  // Une ligne panier peut contenir plusieurs champs de la même section → une seule entrée.
+  return [...new Set(parts)].join(' · ') || extractBasePanelLabel(prescribed)
+}
+
+export type PrescribedPanelChipGroup = {
+  panel: string
+  items: { raw: string; chip: string }[]
+}
+
+/** Regroupe les lignes panier par formulaire parent pour l’affichage résumé. */
+export function groupPrescribedByPanel(labels: string[]): PrescribedPanelChipGroup[] {
+  const order: string[] = []
+  const map = new Map<string, { raw: string; chip: string }[]>()
+  for (const raw of labels) {
+    const panel = extractBasePanelLabel(raw).trim() || raw.trim()
+    if (!map.has(panel)) {
+      map.set(panel, [])
+      order.push(panel)
+    }
+    map.get(panel)!.push({ raw, chip: formatPrescribedChipLabel(raw) })
+  }
+  return order.map((panel) => ({ panel, items: map.get(panel)! }))
+}
+
+/** Affichage résumé : « Biochimie (3) ». */
+export function formatPanelGroupSummaryLabel(
+  group: PrescribedPanelChipGroup,
+  t: (label: string) => string = translateUi,
+): string {
+  return `${t(group.panel)} (${group.items.length})`
+}
+
+/** Noms des formulaires / sections sélectionnés (détail / tooltip), sans doublons. */
+export function formatPanelGroupDetails(
+  group: PrescribedPanelChipGroup,
+  t: (label: string) => string = translateUi,
+): string {
+  const names = group.items.map((item) => item.chip.trim()).filter(Boolean)
+  const meaningful = names.filter((name) => {
+    const key = normalizeLabLabelKey(name)
+    if (!key) return false
+    // Ne pas répéter le nom du panel ni le libellé générique « Formulaire principal ».
+    if (key === normalizeLabLabelKey(group.panel)) return false
+    if (key === normalizeLabLabelKey(UNTITLED_SECTION_LABEL)) return false
+    return true
+  })
+  const unique: string[] = []
+  const seen = new Set<string>()
+  for (const name of meaningful) {
+    const key = normalizeLabLabelKey(name)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    unique.push(t(name))
+  }
+  return unique.join(' · ')
+}
+
+/** Liste compacte : « Biochimie (2) », « NFS (1) ». */
+export function formatGroupedPrescribedLabels(
+  labels: string[],
+  t: (label: string) => string = translateUi,
+): string[] {
+  return groupPrescribedByPanel(labels).map((group) => formatPanelGroupSummaryLabel(group, t))
+}
+
+export function formatGroupedPrescribedSummary(
+  labels: string[],
+  t: (label: string) => string = translateUi,
+): string {
+  const parts = formatGroupedPrescribedLabels(labels, t)
+  return parts.length ? parts.join(', ') : '—'
+}
+
+/**
+ * Détail pour tooltip :
+ * « Biochimie (2): Enzymes · NFS (1) ».
+ */
+export function formatGroupedPrescribedDetails(
+  labels: string[],
+  t: (label: string) => string = translateUi,
+): string {
+  const groups = groupPrescribedByPanel(labels)
+  if (!groups.length) return '—'
+  return groups
+    .map((group) => {
+      const details = formatPanelGroupDetails(group, t)
+      const head = formatPanelGroupSummaryLabel(group, t)
+      if (
+        !details ||
+        normalizeLabLabelKey(details) === normalizeLabLabelKey(group.panel)
+      ) {
+        return head
+      }
+      return `${head}: ${details}`
+    })
+    .join(' · ')
+}
+
+export function countGroupedPrescribedPanels(labels: string[]): number {
+  return groupPrescribedByPanel(labels).length
+}
+
+/**
+ * Construit les lignes panier.
+ * - Tous les champs cochés → une ligne « Panel » (tarif général de l’examen).
+ * - Sélection partielle → une ligne facturable par champ (prix du champ si défini).
  */
 export function buildCartEntriesForSelectedFields(
   panelLabel: string,
@@ -150,18 +323,28 @@ export function buildCartEntriesForSelectedFields(
 ): string[] {
   const selected = new Set(fieldLabels.map((label) => label.trim()).filter(Boolean))
   if (!selected.size) return []
+
+  const allKnown = groups.flatMap((group) => group.fields.map((field) => field.label.trim()))
+  const knownSet = new Set(allKnown)
+  const allFormFieldsSelected =
+    allKnown.length > 0 &&
+    allKnown.every((label) => selected.has(label)) &&
+    [...selected].every((label) => knownSet.has(label))
+
+  if (allFormFieldsSelected) {
+    return [panelLabel.trim()]
+  }
+
   const lines: string[] = []
   for (const group of groups) {
-    const picked = group.fields
-      .map((field) => field.label)
-      .filter((label) => selected.has(label))
-    if (!picked.length) continue
-    lines.push(encodePanelSectionLine(panelLabel, group.title, picked))
+    for (const field of group.fields) {
+      if (!selected.has(field.label)) continue
+      lines.push(encodePanelSectionLine(panelLabel, group.title, [field.label]))
+    }
   }
-  const known = new Set(groups.flatMap((group) => group.fields.map((field) => field.label)))
-  const orphans = [...selected].filter((label) => !known.has(label))
-  if (orphans.length) {
-    lines.push(encodePanelFormSelection(panelLabel, orphans))
+  for (const label of selected) {
+    if (knownSet.has(label)) continue
+    lines.push(encodePanelFormSelection(panelLabel, [label]))
   }
   return lines
 }

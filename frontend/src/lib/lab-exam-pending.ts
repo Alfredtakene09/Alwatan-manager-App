@@ -4,6 +4,11 @@ import { inferExamKindFromLabel } from '@/lib/exam-catalog/infer-kind'
 import type { PatientAgeUnit } from '@/lib/patient-age'
 import type { ExamReductionsByKind, ExamsByKindBlocks } from '@/lib/exam-billing'
 import { examsByKindFromLines } from '@/lib/exam-billing'
+import { translateUi } from '@/i18n/translate'
+import {
+  formatGroupedPrescribedSummary,
+  countGroupedPrescribedPanels,
+} from '@/lib/lab-prescribed-panels'
 
 export type LabExamLine = {
   label: string
@@ -126,7 +131,11 @@ export function formatExamLinesSummary(lines: LabExamLine[]): string {
   const parts = EXAM_KIND_ORDER.flatMap((kind) => {
     const blockLines = blocks[kind]?.lines ?? []
     if (!blockLines.length) return []
-    return [`${EXAM_KIND_LABELS[kind]}: ${blockLines.map((line) => line.label).join(', ')}`]
+    // Réception / caisse : résumé compact « Laboratoire: Biochimie (1), NFS (1) »
+    // — sans détail « Formulaire principal ».
+    const summary = formatGroupedPrescribedSummary(blockLines.map((line) => line.label))
+    if (summary === '—') return []
+    return [`${translateUi(EXAM_KIND_LABELS[kind])}: ${summary}`]
   })
   if (!parts.length) return '—'
   return parts.join(' · ')
@@ -142,18 +151,21 @@ export function formatExamLinesSummaryShort(
   lines: LabExamLine[],
   options?: { maxLabelChars?: number; maxTotalChars?: number },
 ): { short: string; full: string; examCount: number } {
-  const maxLabelChars = options?.maxLabelChars ?? 16
+  const maxLabelChars = options?.maxLabelChars ?? 22
   const maxTotalChars = options?.maxTotalChars ?? 58
   const full = formatExamLinesSummary(lines)
   const normalized = normalizeLabExamLines(lines)
   const blocks = examsByKindFromLines(normalized)
-  const examCount = normalized.length
+  const examCount = countGroupedPrescribedPanels(normalized.map((line) => line.label))
 
   const parts = EXAM_KIND_ORDER.flatMap((kind) => {
     const blockLines = blocks[kind]?.lines ?? []
     if (!blockLines.length) return []
-    const labels = blockLines.map((line) => truncateExamText(line.label, maxLabelChars))
-    return [`${EXAM_KIND_LABELS[kind]}: ${labels.join(', ')}`]
+    const summary = formatGroupedPrescribedSummary(blockLines.map((line) => line.label))
+    if (summary === '—') return []
+    return [
+      `${translateUi(EXAM_KIND_LABELS[kind])}: ${truncateExamText(summary, maxLabelChars * 2)}`,
+    ]
   })
 
   if (!parts.length) {

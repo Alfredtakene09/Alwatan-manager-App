@@ -10,6 +10,7 @@ import {
   FlaskConical,
   Stethoscope,
   Scissors,
+  Printer,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
@@ -22,12 +23,11 @@ import {
   yesterdayDateKey,
   type DateFilterMode,
 } from '@/lib/date-filters'
-import { DT_ICONS } from '@/lib/datatable-defaults'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import '@/assets/simple-table.css'
 
 const props = withDefaults(
   defineProps<{
@@ -135,51 +135,6 @@ const tableData = computed(() =>
   })),
 )
 
-const columns = [
-  {
-    data: 'invoiceNumber',
-    title: 'N° Facture',
-    responsivePriority: 1,
-    render: (n: string) => `<strong class="dt-name">${n}</strong>`,
-  },
-  {
-    data: 'patientName',
-    title: 'Patient',
-    responsivePriority: 2,
-    render: (name: string, _t: string, row: { patientCode: string; patientService: string }) =>
-      `<span class="dt-name">${name}</span><span class="dt-sub">${row.patientCode}</span><span class="dt-sub">${row.patientService}</span>`,
-  },
-  { data: 'typeLabel', title: 'Type', responsivePriority: 2 },
-  { data: 'doctorName', title: 'Médecin', responsivePriority: 5 },
-  {
-    data: 'amountSort',
-    title: 'Montant',
-    responsivePriority: 1,
-    render: (_d: number, _t: string, row: { amount: string }) =>
-      `<strong class="dt-amount">${row.amount}</strong>`,
-  },
-  {
-    data: 'dateSort',
-    title: 'Encaissé le',
-    responsivePriority: 3,
-    render: (_d: number, _t: string, row: { date: string; time: string }) =>
-      `<span class="dt-date">${row.date}</span><span class="dt-sub">${row.time}</span>`,
-  },
-  {
-    data: null,
-    title: '',
-    orderable: false,
-    className: 'dt-actions-col',
-    responsivePriority: 1,
-    render: (_d: unknown, _t: string, row: { id: string }) =>
-      `<div class="dt-row-actions" data-id="${row.id}">
-        <button type="button" class="dt-btn dt-btn--text" data-action="pdf" title="Imprimer" aria-label="PDF">
-          ${DT_ICONS.download} PDF
-        </button>
-      </div>`,
-  },
-]
-
 function setToday() {
   filterDay.value = todayDateKey()
 }
@@ -205,10 +160,6 @@ async function load() {
 
 function downloadPdf(id: string) {
   window.open(`/api/factures/${id}/pdf`, '_blank')
-}
-
-function onAction({ action, id }: { action: string; id: string }) {
-  if (action === 'pdf') downloadPdf(id)
 }
 
 onMounted(load)
@@ -299,21 +250,72 @@ onMounted(load)
     </section>
 
     <section class="page-with-table__body">
-      <UiCard title="Journal des encaissements" class="ui-card--table-panel" :icon="Wallet" icon-variant="teal">
+      <UiCard direct title="Journal des encaissements" class="ui-card--table-panel" :icon="Wallet" icon-variant="teal">
         <template #actions>
           <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">
             Actualiser
           </UiButton>
         </template>
-        <UiDataTable
-          :table-key="tableKey"
-          fill
-          compact
-          :data="tableData"
-          :columns="columns"
-          :loading="loading"
-          @action="onAction"
-        />
+        <div class="simple-table-shell simple-table-shell--fill">
+          <div
+            v-if="loading"
+            class="simple-table-overlay" role="status"
+            aria-live="polite"
+          >
+            <span class="simple-table-spinner" aria-hidden="true" />
+            Chargement…
+          </div>
+          <div class="simple-table-scroll">
+            <div class="simple-table-wrap">
+              <table class="simple-table">
+                <thead>
+                  <tr>
+                    <th class="simple-table__num">#</th>
+                    <th>N° Facture</th>
+                    <th>Patient</th>
+                    <th>Type</th>
+                    <th>Médecin</th>
+                    <th>Montant</th>
+                    <th>Encaissé le</th>
+                    <th class="simple-table__actions-head">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in tableData" :key="row.id">
+                    <td class="simple-table__num">{{ index + 1 }}</td>
+                    <td><strong class="st-name">{{ row.invoiceNumber }}</strong></td>
+                    <td>
+                      <span class="st-name">{{ row.patientName }}</span>
+                      <span class="st-sub">{{ row.patientCode }}</span>
+                      <span class="st-sub">{{ row.patientService }}</span>
+                    </td>
+                    <td>{{ row.typeLabel }}</td>
+                    <td>{{ row.doctorName }}</td>
+                    <td><strong class="st-amount">{{ row.amount }}</strong></td>
+                    <td>
+                      <span class="st-date">{{ row.date }}</span>
+                      <span class="st-sub">{{ row.time }}</span>
+                    </td>
+                    <td class="simple-table__actions">
+                      <div class="st-actions">
+                        <button
+                          type="button"
+                          class="st-btn st-btn--text"
+                          title="Imprimer"
+                          aria-label="PDF"
+                          @click="downloadPdf(row.id)"
+                        >
+                          <Printer :size="15" />
+                          PDF
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </UiCard>
     </section>
   </div>

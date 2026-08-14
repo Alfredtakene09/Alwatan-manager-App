@@ -32,7 +32,6 @@ import {
 import { employeeJobTitleOptions, loadEmployeeJobTitleLabels } from '@/lib/employee-job-titles'
 import { employeeNeedsAppAccount, isHiddenPlatformAdminEmployee, isHiddenPlatformAdminJobTitle } from '@/lib/employee-app-account'
 import { inferIsMedecinFromJobTitle } from '@/lib/doctor-job-title'
-import { catalogRowActionsHtml, statusBadge } from '@/lib/datatable-defaults'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -43,11 +42,12 @@ import UiButton from '@/components/ui/UiButton.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import EmployeeJobTitlesPanel from '@/components/admin/EmployeeJobTitlesPanel.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
+import '@/assets/simple-table.css'
 
 type EmployeeUser = {
   id: string
@@ -123,9 +123,6 @@ const { uiText, localeCode } = useAppI18n()
 const isGestionnaireRegistry = computed(() => route.meta.employeeRegistry === 'gestionnaire')
 const apiBase = computed(() => (isGestionnaireRegistry.value ? '/gestionnaire' : '/admin'))
 const showPayrollSection = computed(() => isGestionnaireRegistry.value)
-const employeesTableKey = computed(() =>
-  isGestionnaireRegistry.value ? 'gestionnaire-employees' : 'admin-employees',
-)
 const jobTitlesTableKey = computed(() =>
   isGestionnaireRegistry.value ? 'gestionnaire-job-titles' : 'admin-job-titles',
 )
@@ -414,54 +411,6 @@ const tableRows = computed(() => {
     statusVariant: employee.active ? 'success' : 'danger',
   }))
 })
-
-const columns = [
-  {
-    data: 'name',
-    title: 'Nom',
-    responsivePriority: 1,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  { data: 'profileLabel', title: 'Profil', responsivePriority: 3 },
-  { data: 'jobTitle', title: 'Poste', responsivePriority: 4 },
-  {
-    data: 'specialty',
-    title: 'Spécialité',
-    responsivePriority: 5,
-    render: (label: string) =>
-      label === '—' ? '<span class="dt-muted">—</span>' : `<span class="dt-date">${label}</span>`,
-  },
-  {
-    data: 'servicesLabel',
-    title: 'Services',
-    responsivePriority: 5,
-    render: (label: string) =>
-      label === '—' ? '<span class="dt-muted">—</span>' : `<span class="dt-date">${label}</span>`,
-  },
-  {
-    data: 'compensationLabel',
-    title: 'Rémunération',
-    responsivePriority: 6,
-    render: (label: string) =>
-      label === '—' ? '<span class="dt-muted">—</span>' : `<span class="dt-date">${label}</span>`,
-  },
-  {
-    data: 'statusLabel',
-    title: 'Statut',
-    responsivePriority: 2,
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: 'Actions',
-    orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog all',
-    responsivePriority: 1,
-    render: (_d: unknown, _t: string, row: { id: string }) =>
-      catalogRowActionsHtml({ id: row.id, showToggle: false, canDelete: true }),
-  },
-]
 
 type EmployeeExportRow = (typeof tableRows.value)[number]
 
@@ -1064,8 +1013,7 @@ onMounted(async () => {
         />
       </div>
 
-      <UiCard
-        title="Employés"
+      <UiCard direct title="Employés"
         class="ui-card--table-panel"
         :icon="UserRound"
         icon-variant="violet"
@@ -1084,17 +1032,66 @@ onMounted(async () => {
         <p v-else-if="!loading && employees.length && !tableRows.length" class="empty">
           Aucun employé ne correspond aux critères
         </p>
-        <UiDataTable
-          v-else
-          fill
-          :table-key="employeesTableKey"
-          compact
-          :data="tableRows"
-          :columns="columns"
-          :loading="loading"
-          loading-label="Chargement…"
-          @action="onTableAction"
-        />
+        <div v-else class="simple-table-shell simple-table-shell--fill">
+          <div
+            v-if="loading"
+            class="simple-table-overlay" role="status"
+            aria-live="polite"
+          >
+            <span class="simple-table-spinner" aria-hidden="true" />
+            Chargement…
+          </div>
+          <div class="simple-table-scroll">
+            <div class="simple-table-wrap">
+              <table class="simple-table">
+                <thead>
+                  <tr>
+                    <th class="simple-table__num">#</th>
+                    <th>Nom</th>
+                    <th>Profil</th>
+                    <th>Poste</th>
+                    <th>Spécialité</th>
+                    <th>Services</th>
+                    <th>Rémunération</th>
+                    <th>Statut</th>
+                    <th class="simple-table__actions-head">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in tableRows" :key="row.id">
+                    <td class="simple-table__num">{{ index + 1 }}</td>
+                    <td><span class="st-name">{{ row.name }}</span></td>
+                    <td>{{ row.profileLabel }}</td>
+                    <td>{{ row.jobTitle }}</td>
+                    <td>
+                      <span v-if="row.specialty === '—'" class="st-muted">—</span>
+                      <span v-else class="st-date">{{ row.specialty }}</span>
+                    </td>
+                    <td>
+                      <span v-if="row.servicesLabel === '—'" class="st-muted">—</span>
+                      <span v-else class="st-date">{{ row.servicesLabel }}</span>
+                    </td>
+                    <td>
+                      <span v-if="row.compensationLabel === '—'" class="st-muted">—</span>
+                      <span v-else class="st-date">{{ row.compensationLabel }}</span>
+                    </td>
+                    <td>
+                      <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                    </td>
+                    <td class="simple-table__actions">
+                      <StCatalogActions
+                        :id="row.id"
+                        :show-toggle="false"
+                        :can-delete="true"
+                        @action="onTableAction"
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </UiCard>
     </section>
 
@@ -1409,7 +1406,7 @@ onMounted(async () => {
               label="Part (%)"
               type="number"
               min="1"
-              max="99"
+              max="100"
               placeholder="60"
             />
             <UiInput

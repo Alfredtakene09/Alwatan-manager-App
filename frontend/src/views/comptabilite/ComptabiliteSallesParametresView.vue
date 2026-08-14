@@ -4,7 +4,6 @@ import { Building2, Plus, RefreshCw, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
-import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -14,8 +13,9 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import '@/assets/comptabilite-section.css'
+import '@/assets/simple-table.css'
 
 type RoomRow = {
   id: string
@@ -87,42 +87,6 @@ const tableRows = computed(() => {
     }
   })
 })
-
-const columns = [
-  { data: 'name', title: 'Salle', render: (v: string) => `<span class="dt-name">${v}</span>` },
-  {
-    data: 'typeLabel',
-    title: 'Type',
-    render: (label: string, _t: string, row: { typeVariant: string }) =>
-      statusBadge(label, row.typeVariant as 'primary' | 'info'),
-  },
-  {
-    data: 'rateSort',
-    title: 'Tarif / nuit',
-    render: (_d: number, _t: string, row: { rate: string }) => `<span class="dt-amount">${row.rate}</span>`,
-  },
-  {
-    data: 'availabilityLabel',
-    title: 'Capacité',
-    render: (label: string, _t: string, row: { availabilityVariant: string }) =>
-      statusBadge(label, row.availabilityVariant as 'success' | 'danger'),
-  },
-  { data: 'occupancyLabel', title: 'Occupation' },
-  {
-    data: 'statusLabel',
-    title: 'Statut',
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: 'Actions',
-    orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog',
-    render: (_d: unknown, _t: string, row: { id: string; toggleLabel: string; canDelete: boolean }) =>
-      catalogRowActionsHtml(row),
-  },
-]
 
 function resetMessages() {
   message.value = ''
@@ -346,15 +310,60 @@ onMounted(load)
       </template>
 
       <div class="table-panel-scroll">
-        <UiDataTable
-          table-key="compta-salles"
-          compact
-          :data="tableRows"
-          :columns="columns"
-          :loading="loading"
-          loading-label="Chargement des salles…"
-          @action="onTableAction"
-        />
+        <div class="simple-table-shell">
+          <div
+            v-if="loading"
+            class="simple-table-overlay" role="status"
+            aria-live="polite"
+          >
+            <span class="simple-table-spinner" aria-hidden="true" />
+            Chargement des salles…
+          </div>
+          <div class="simple-table-scroll">
+            <div class="simple-table-wrap">
+              <table class="simple-table">
+                <thead>
+                  <tr>
+                    <th class="simple-table__num">#</th>
+                    <th>Salle</th>
+                    <th>Type</th>
+                    <th>Tarif / nuit</th>
+                    <th>Capacité</th>
+                    <th>Occupation</th>
+                    <th>Statut</th>
+                    <th class="simple-table__actions-head">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in tableRows" :key="row.id">
+                    <td class="simple-table__num">{{ index + 1 }}</td>
+                    <td><span class="st-name">{{ row.name }}</span></td>
+                    <td>
+                      <span class="st-badge" :class="`st-badge--${row.typeVariant}`">{{ row.typeLabel }}</span>
+                    </td>
+                    <td><span class="st-amount">{{ row.rate }}</span></td>
+                    <td>
+                      <span class="st-badge" :class="`st-badge--${row.availabilityVariant}`">{{ row.availabilityLabel }}</span>
+                    </td>
+                    <td>{{ row.occupancyLabel }}</td>
+                    <td>
+                      <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                    </td>
+                    <td class="simple-table__actions">
+                      <StCatalogActions
+                        :id="row.id"
+                        :is-active="row.isActive"
+                        :toggle-label="row.toggleLabel"
+                        :can-delete="row.canDelete"
+                        @action="onTableAction"
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
     </UiCard>
 

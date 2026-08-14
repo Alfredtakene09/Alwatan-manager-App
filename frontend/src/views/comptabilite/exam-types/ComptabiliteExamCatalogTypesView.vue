@@ -4,7 +4,6 @@ import { Plus, RefreshCw, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
-import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import {
   EXAM_CATALOG_KIND_CONFIG,
   EXAM_CATALOG_ADD_LABELS,
@@ -24,7 +23,8 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
+import '@/assets/simple-table.css'
 
 type CatalogItem = {
   id: string
@@ -121,7 +121,7 @@ const pageSubtitle = computed(() =>
     ? translateTemplate('Nomenclature et tarifs — {service}', {
         service: activeServiceTabName.value,
       })
-    : config.value.subtitle,
+    : uiText(config.value.subtitle),
 )
 const addButtonLabel = computed(() =>
   isServiceContext.value
@@ -170,16 +170,16 @@ const tableRows = computed(() => {
   localeCode.value
   return filteredItems.value.map((item) => ({
     id: item.id,
-    label: item.label,
+    label: uiText(item.label),
     code: item.code,
-    category: item.category || '—',
-    service: item.clinicService?.name || uiText('Tous les services'),
+    category: uiText(item.category || '—'),
+    service: uiText(item.clinicService?.name || 'Tous les services'),
     formLabel: (() => {
       if (props.kind !== 'examen') return '—'
       if (!item.labPanelId) return uiText('À créer')
       const fieldCount = item.labPanel?._count?.fields ?? 0
       if (fieldCount <= 0) return uiText('Formulaire à compléter au labo')
-      return item.labPanel?.label || uiText('Lié')
+      return uiText(item.labPanel?.label || 'Lié')
     })(),
     formLinked: Boolean(item.labPanelId),
     formNeedsLabFields:
@@ -199,55 +199,6 @@ function resetListFilters() {
   searchQuery.value = ''
   selectedCategory.value = ''
 }
-
-const columns = computed(() => {
-  const base: Array<Record<string, unknown>> = [
-    { data: 'label', title: 'Libellé', render: (v: string) => `<span class="dt-name">${v}</span>` },
-    { data: 'code', title: 'Code' },
-    { data: 'category', title: 'Catégorie' },
-    { data: 'service', title: 'Service' },
-  ]
-  if (props.kind === 'examen') {
-    base.push({
-      data: 'formLabel',
-      title: 'Formulaire résultats',
-      render: (
-        v: string,
-        _t: string,
-        row: { formLinked: boolean; formNeedsLabFields?: boolean },
-      ) => {
-        const badgeClass = row.formNeedsLabFields
-          ? 'dt-badge dt-badge--warning'
-          : row.formLinked
-            ? 'dt-badge dt-badge--success'
-            : 'dt-badge dt-badge--muted'
-        return `<span class="${badgeClass}">${v}</span>`
-      },
-    })
-  }
-  base.push(
-    {
-      data: 'priceSort',
-      title: 'Tarif',
-      render: (_d: number, _t: string, row: { price: string }) => `<span class="dt-amount">${row.price}</span>`,
-    },
-    {
-      data: 'statusLabel',
-      title: 'Statut',
-      render: (label: string, _t: string, row: { statusVariant: string }) =>
-        statusBadge(label, row.statusVariant as 'success' | 'danger'),
-    },
-    {
-      data: null,
-      title: 'Actions',
-      orderable: false,
-      className: 'dt-actions-col dt-actions-col--catalog',
-      render: (_d: unknown, _t: string, row: { id: string; toggleLabel: string }) =>
-        catalogRowActionsHtml(row),
-    },
-  )
-  return base
-})
 
 function resetMessages() {
   message.value = ''
@@ -624,13 +575,13 @@ onMounted(async () => {
         }"
       >
         <button type="button" class="exam-kind-tab__label" @click="setActiveServiceTab(tab.id)">
-          {{ tab.name }}
+          {{ uiText(tab.name) }}
         </button>
         <button
           v-if="tab.examCount === 0"
           type="button"
           class="exam-kind-tab__remove"
-          :aria-label="`Retirer l'onglet ${tab.name}`"
+          :aria-label="translateTemplate(`Retirer l'onglet {name}`, { name: tab.name })"
           @click="removeServiceTab(tab.id)"
         >
           ×
@@ -639,26 +590,26 @@ onMounted(async () => {
     </nav>
 
     <div class="service-tabs-toolbar">
-      <UiSelect v-model="selectedServiceToAdd" label="Ajouter un onglet service">
+      <UiSelect v-model="selectedServiceToAdd" :label="uiText('Ajouter un onglet service')">
         <option value="" disabled>{{ uiText('Sélectionner un service') }}</option>
         <option
           v-for="service in clinicServices.filter((s) => !serviceTabIds.includes(s.id))"
           :key="service.id"
           :value="service.id"
         >
-          {{ service.name }}
+          {{ uiText(service.name) }}
         </option>
       </UiSelect>
       <UiButton variant="ghost" size="sm" :disabled="!selectedServiceToAdd" @click="addServiceTab">
-        Ajouter onglet
+        {{ uiText('Ajouter onglet') }}
       </UiButton>
     </div>
 
-    <UiAlert v-if="message" :type="messageType" :message="message" />
+    <UiAlert v-if="message" :type="messageType" :message="uiText(message)" />
 
     <UiCard
       :title="catalogCardTitle"
-      description="Tarifs utilisés pour la facturation des examens"
+      :description="uiText('Tarifs utilisés pour la facturation des examens')"
       :icon="config.icon"
       :icon-variant="config.iconVariant"
       class="section"
@@ -668,7 +619,7 @@ onMounted(async () => {
           {{ uiText(addButtonLabel) }}
         </UiButton>
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">
-          Actualiser
+          {{ uiText('Actualiser') }}
         </UiButton>
         <span class="list-count">{{ elementCountLabel }}</span>
       </template>
@@ -676,31 +627,84 @@ onMounted(async () => {
       <div class="catalog-filters">
         <UiInput
           v-model="searchQuery"
-          label="Rechercher"
-          placeholder="Libellé, code, catégorie…"
+          :label="uiText('Rechercher')"
+          :placeholder="uiText('Libellé, code, catégorie…')"
         />
         <UiSelect
           :key="`category-filter-${kind}-${activeServiceTabId}`"
           v-model="selectedCategory"
-          label="Catégorie"
+          :label="uiText('Catégorie')"
         >
           <option value="">{{ uiText('Toutes les catégories') }}</option>
           <option v-for="category in categoryOptions" :key="category" :value="category">
-            {{ category }}
+            {{ uiText(category) }}
           </option>
         </UiSelect>
       </div>
 
       <div class="table-panel-scroll">
-        <UiDataTable
-          :table-key="`exam-catalog-${kind}-${activeServiceTabId}-${searchQuery}-${selectedCategory}`"
-          compact
-          :data="tableRows"
-          :columns="columns"
-          :loading="loading"
-          loading-label="Chargement de la nomenclature…"
-          @action="onTableAction"
-        />
+        <div class="simple-table-shell">
+          <div
+            v-if="loading"
+            class="simple-table-overlay" role="status"
+            aria-live="polite"
+          >
+            <span class="simple-table-spinner" aria-hidden="true" />
+            {{ uiText('Chargement de la nomenclature…') }}
+          </div>
+          <div class="simple-table-scroll">
+            <div class="simple-table-wrap">
+              <table class="simple-table">
+                <thead>
+                  <tr>
+                    <th class="simple-table__num">#</th>
+                    <th>{{ uiText('Libellé') }}</th>
+                    <th>{{ uiText('Code') }}</th>
+                    <th>{{ uiText('Catégorie') }}</th>
+                    <th>{{ uiText('Service') }}</th>
+                    <th v-if="kind === 'examen'">{{ uiText('Formulaire résultats') }}</th>
+                    <th>{{ uiText('Tarif') }}</th>
+                    <th>{{ uiText('Statut') }}</th>
+                    <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in tableRows" :key="row.id">
+                    <td class="simple-table__num">{{ index + 1 }}</td>
+                    <td><span class="st-name">{{ row.label }}</span></td>
+                    <td>{{ row.code }}</td>
+                    <td>{{ row.category }}</td>
+                    <td>{{ row.service }}</td>
+                    <td v-if="kind === 'examen'">
+                      <span
+                        class="st-badge"
+                        :class="
+                          row.formNeedsLabFields
+                            ? 'st-badge--warning'
+                            : row.formLinked
+                              ? 'st-badge--success'
+                              : 'st-badge--default'
+                        "
+                      >{{ row.formLabel }}</span>
+                    </td>
+                    <td><span class="st-amount">{{ row.price }}</span></td>
+                    <td>
+                      <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                    </td>
+                    <td class="simple-table__actions">
+                      <StCatalogActions
+                        :id="row.id"
+                        :is-active="row.isActive"
+                        :toggle-label="row.toggleLabel"
+                        @action="onTableAction"
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
     </UiCard>
 
@@ -714,38 +718,64 @@ onMounted(async () => {
     >
       <section class="form-panel">
         <p class="form-panel__hint">
-          {{ uiText('Service actif') }}: <strong>{{ activeServiceTabName }}</strong>
+          {{ uiText('Service actif') }}: <strong>{{ uiText(activeServiceTabName) }}</strong>
         </p>
         <div class="form-grid-2">
-          <UiInput v-model="newItem.code" label="Code (optionnel)" :placeholder="formPlaceholders.code" />
-          <UiInput v-model="newItem.label" label="Libellé" :placeholder="formPlaceholders.label" />
-          <UiInput v-model="newItem.category" label="Catégorie (optionnel)" :placeholder="formPlaceholders.category" />
-          <UiInput v-model="newItem.priceFcfa" label="Tarif (FCFA)" type="number" min="0" />
+          <UiInput
+            v-model="newItem.code"
+            :label="uiText('Code (optionnel)')"
+            :placeholder="formPlaceholders.code"
+          />
+          <UiInput
+            v-model="newItem.label"
+            :label="uiText('Libellé')"
+            :placeholder="uiText(formPlaceholders.label)"
+          />
+          <UiInput
+            v-model="newItem.category"
+            :label="uiText('Catégorie (optionnel)')"
+            :placeholder="uiText(formPlaceholders.category)"
+          />
+          <UiInput
+            v-model="newItem.priceFcfa"
+            :label="uiText('Tarif (FCFA)')"
+            type="number"
+            min="0"
+          />
           <UiSelect
             v-if="isServiceContext"
             :key="`new-item-service-${activeServiceTabId}`"
             v-model="newItem.clinicServiceId"
-            label="Service"
+            :label="uiText('Service')"
             disabled
           >
             <option v-for="service in clinicServices" :key="service.id" :value="service.id">
-              {{ service.name }}
+              {{ uiText(service.name) }}
             </option>
           </UiSelect>
         </div>
         <p class="form-panel__hint">
           <template v-if="isServiceContext">
-            Cet examen sera enregistré pour le service {{ activeServiceTabName }}.
+            {{
+              translateTemplate('Cet examen sera enregistré pour le service {service}.', {
+                service: activeServiceTabName,
+              })
+            }}
           </template>
           <template v-else>
-            Cet examen sera ajouté à la nomenclature {{ uiText(config.label) }} (visible sur cet onglet).
+            {{
+              translateTemplate(
+                'Cet examen sera ajouté à la nomenclature {kind} (visible sur cet onglet).',
+                { kind: uiText(config.label) },
+              )
+            }}
           </template>
         </p>
       </section>
       <template #footer>
-        <UiButton variant="ghost" @click="closeAddModal">Annuler</UiButton>
+        <UiButton variant="ghost" @click="closeAddModal">{{ uiText('Annuler') }}</UiButton>
         <UiButton variant="primary" :icon="Plus" :disabled="saving" @click="addItem">
-          Enregistrer
+          {{ uiText('Enregistrer') }}
         </UiButton>
       </template>
     </UiFormModal>
@@ -753,33 +783,38 @@ onMounted(async () => {
     <UiFormModal
       v-if="editingId"
       title-id="edit-catalog-title"
-      title="Modifier l'élément"
-      subtitle="Mettre à jour le libellé, la catégorie ou le tarif"
+      :title="uiText(`Modifier l'élément`)"
+      :subtitle="uiText('Mettre à jour le libellé, la catégorie ou le tarif')"
       :icon="config.icon"
       @close="closeEditModal"
     >
       <section class="form-panel">
         <div class="form-grid-2">
-          <UiInput v-model="editForm.code" label="Code (optionnel)" />
-          <UiInput v-model="editForm.label" label="Libellé" />
-          <UiInput v-model="editForm.category" label="Catégorie (optionnel)" />
-          <UiInput v-model="editForm.priceFcfa" label="Tarif (FCFA)" type="number" min="0" />
+          <UiInput v-model="editForm.code" :label="uiText('Code (optionnel)')" />
+          <UiInput v-model="editForm.label" :label="uiText('Libellé')" />
+          <UiInput v-model="editForm.category" :label="uiText('Catégorie (optionnel)')" />
+          <UiInput
+            v-model="editForm.priceFcfa"
+            :label="uiText('Tarif (FCFA)')"
+            type="number"
+            min="0"
+          />
           <UiSelect
             v-if="isServiceContext"
             v-model="editForm.clinicServiceId"
-            label="Service"
+            :label="uiText('Service')"
             disabled
           >
             <option v-for="service in clinicServices" :key="service.id" :value="service.id">
-              {{ service.name }}
+              {{ uiText(service.name) }}
             </option>
           </UiSelect>
         </div>
       </section>
       <template #footer>
-        <UiButton variant="ghost" @click="closeEditModal">Annuler</UiButton>
+        <UiButton variant="ghost" @click="closeEditModal">{{ uiText('Annuler') }}</UiButton>
         <UiButton variant="primary" :icon="Save" :disabled="saving" @click="saveEdit">
-          Enregistrer
+          {{ uiText('Enregistrer') }}
         </UiButton>
       </template>
     </UiFormModal>

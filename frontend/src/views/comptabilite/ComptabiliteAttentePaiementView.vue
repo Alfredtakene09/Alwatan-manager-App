@@ -161,8 +161,7 @@ const { refresh: refreshQueue } = useSilentRefresh(
     </section>
 
     <section class="page-with-table__body">
-      <UiCard
-        title="En attente de paiement"
+      <UiCard direct title="En attente de paiement"
         description="Les types déjà payés disparaissent et suivent leur parcours (labo, opérations…)"
         class="ui-card--table-panel"
         :icon="FlaskConical"

@@ -35,6 +35,100 @@ export function extractBasePanelLabel(prescribed: string): string {
   return match[1].trim() || trimmed;
 }
 
+/** Formes / lignes cochées dans « Panel (A, B) », ou null si pas de parenthèses. */
+export function extractSelectedFormLabels(prescribed: string): string[] | null {
+  const trimmed = prescribed.trim();
+  const match = trimmed.match(/^(.*?)\s*\((.*)\)\s*$/);
+  if (!match) return null;
+  const inner = match[2].trim();
+  if (!inner) return [];
+  return splitPrescribedExamList(inner);
+}
+
+/** Regroupe les lignes prescrites par examen parent (« Biochimie », « NFS »…). */
+export function groupPrescribedLabelsByPanel(labels: string[]): Array<{ panel: string; count: number; details: string[] }> {
+  const order: string[] = [];
+  const map = new Map<string, string[]>();
+  for (const raw of labels) {
+    const panel = extractBasePanelLabel(raw).trim() || raw.trim();
+    if (!map.has(panel)) {
+      map.set(panel, []);
+      order.push(panel);
+    }
+    const forms = extractSelectedFormLabels(raw);
+    if (forms?.length) {
+      for (const form of forms) {
+        const colon = form.indexOf(":");
+        // Section présente → nom de section ; sinon nom du formulaire/champ.
+        const chip =
+          colon >= 0
+            ? form.slice(0, colon).trim() ||
+              form
+                .slice(colon + 1)
+                .trim()
+                .split(/\s*·\s*/)
+                .map((part) => part.trim())
+                .filter(Boolean)
+                .join(" · ")
+            : form.trim();
+        if (chip) map.get(panel)!.push(chip);
+      }
+    } else {
+      map.get(panel)!.push(panel);
+    }
+  }
+  return order.map((panel) => {
+    const details = [...new Set(map.get(panel) ?? [])];
+    const rawCount = labels.filter(
+      (raw) => (extractBasePanelLabel(raw).trim() || raw.trim()) === panel,
+    ).length;
+    return {
+      panel,
+      count: Math.max(rawCount, details.length || 1),
+      details,
+    };
+  });
+}
+
+export function formatGroupedPrescribedLabels(labels: string[]): string[] {
+  return groupPrescribedLabelsByPanel(labels).map((group) => `${group.panel} (${group.count})`);
+}
+
+export function countGroupedPrescribedPanels(labels: string[]): number {
+  return groupPrescribedLabelsByPanel(labels).length;
+}
+
+/**
+ * Nombre d’unités tarifaires dans un libellé prescrit.
+ * - « Panel » seul → 1
+ * - « Panel (Section: A · B) » → 2 (legacy multi-champs)
+ * - « Panel (champ) » → 1
+ */
+export function countPrescribedFieldUnits(prescribed: string): number {
+  const forms = extractSelectedFormLabels(prescribed);
+  if (forms === null) return 1;
+  if (!forms.length) return 1;
+  let count = 0;
+  for (const form of forms) {
+    const colon = form.indexOf(":");
+    if (colon >= 0) {
+      const rest = form.slice(colon + 1).trim();
+      if (!rest) {
+        count += 1;
+        continue;
+      }
+      const parts = rest
+        .split(/\s*·\s*/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+      count += Math.max(1, parts.length);
+    } else {
+      count += 1;
+    }
+  }
+  return Math.max(1, count);
+}
+
 export const EXAM_KIND_SECTION_LABELS = {
   specialty: "Spécialité",
   examen: "Laboratoire",

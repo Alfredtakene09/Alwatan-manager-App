@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   BookOpen,
   FileDown,
   FileSpreadsheet,
+  History,
   Printer,
   RefreshCw,
   Search,
@@ -18,6 +20,7 @@ import { formatFcfa } from '@/lib/roles'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import ClinicLetterhead from '@/components/ClinicLetterhead.vue'
+import GestionnaireCaisseView from '@/views/gestionnaire/GestionnaireCaisseView.vue'
 import '@/assets/gestionnaire-page.css'
 
 type JournalPreset = 'today' | 'week' | 'month' | 'year' | 'custom'
@@ -101,6 +104,19 @@ const loading = ref(false)
 const exportingPdf = ref(false)
 const journal = ref<JournalResponse | null>(null)
 const todayKey = todayDateKey()
+const route = useRoute()
+const router = useRouter()
+const pageTab = computed<'journal' | 'historique'>(() =>
+  route.query.tab === 'historique' ? 'historique' : 'journal',
+)
+
+function setPageTab(tab: 'journal' | 'historique') {
+  void router.replace({
+    path: route.path,
+    query: tab === 'journal' ? {} : { tab: 'historique' },
+  })
+}
+
 let searchDebounce: ReturnType<typeof setTimeout> | undefined
 
 const customRangeValid = computed(() => {
@@ -373,16 +389,50 @@ onMounted(loadJournal)
 
     <section class="page-with-table__head journal-page__head no-print">
       <UiPageHeader
-        title="Livre journal"
-        subtitle="Entrées et sorties — synthèse journalière"
+        title="Caisse & journal"
+        subtitle="Livre journal et historique des journées"
         :icon="BookOpen"
       >
         <template #actions>
-          <UiButton size="sm" variant="ghost" :icon="RefreshCw" :disabled="loading" @click="loadJournal">
+          <UiButton
+            v-if="pageTab === 'journal'"
+            size="sm"
+            variant="ghost"
+            :icon="RefreshCw"
+            :disabled="loading"
+            @click="loadJournal"
+          >
             Actualiser
           </UiButton>
         </template>
       </UiPageHeader>
+
+      <div class="journal-tabs" role="tablist" aria-label="Caisse et journal">
+        <button
+          type="button"
+          role="tab"
+          class="journal-tab"
+          :class="{ 'journal-tab--active': pageTab === 'journal' }"
+          :aria-selected="pageTab === 'journal'"
+          @click="setPageTab('journal')"
+        >
+          <BookOpen :size="15" />
+          Livre journal
+        </button>
+        <button
+          type="button"
+          role="tab"
+          class="journal-tab"
+          :class="{ 'journal-tab--active': pageTab === 'historique' }"
+          :aria-selected="pageTab === 'historique'"
+          @click="setPageTab('historique')"
+        >
+          <History :size="15" />
+          Historique
+        </button>
+      </div>
+
+      <template v-if="pageTab === 'journal'">
 
       <div class="journal-period-bar">
         <div class="period-pills" role="tablist" aria-label="Période">
@@ -528,9 +578,13 @@ onMounted(loadJournal)
           </UiButton>
         </div>
       </div>
+      </template>
     </section>
 
-    <section class="page-with-table__body journal-page__body journal-print-content">
+    <section
+      v-if="pageTab === 'journal'"
+      class="page-with-table__body journal-page__body journal-print-content"
+    >
       <div v-if="loading" class="journal-state">Chargement de la synthèse…</div>
       <div v-else-if="!journal?.dailyByMonth.length" class="journal-state journal-state--empty">
         <TrendingUp :size="32" />
@@ -659,6 +713,10 @@ onMounted(loadJournal)
         </article>
       </template>
     </section>
+
+    <section v-else class="page-with-table__body journal-page__body journal-page__body--history">
+      <GestionnaireCaisseView embedded />
+    </section>
   </div>
 </template>
 
@@ -681,6 +739,41 @@ onMounted(loadJournal)
   background: var(--bg-app, #f4f6ef);
   padding-bottom: 0.1rem;
   gap: 0.65rem;
+}
+
+.journal-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.2rem;
+  background: #f1f5f9;
+  border-radius: 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  width: fit-content;
+}
+
+.journal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.42rem 0.85rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted, #64748b);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.journal-tab--active {
+  background: #fff;
+  color: var(--text, #0f172a);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.journal-page__body--history {
+  overflow: auto;
 }
 
 .journal-page__body {

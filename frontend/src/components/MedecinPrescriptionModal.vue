@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { FlaskConical, HeartPulse, Save, Plus, X } from '@lucide/vue'
+import { FlaskConical, HeartPulse, Save, Plus, X, PillBottle, PenLine, Pencil } from '@lucide/vue'
 import api from '@/api/client'
 import { fullName } from '@/lib/roles'
 import { formatAppDateTime } from '@/i18n/locale-format'
 import {
   countNewExamsInAppend,
   hasClinicalConsultationSelected,
+  hasLabResults,
   parsePrescribedExamsByKind,
   parsePrescribedExamCommentsByKind,
   parsePrescribedHospitalisationDays,
   parsePharmacyOrdonnanceLines,
+  isPharmacyCatalogLine,
   type PharmacyOrdonnanceLine,
 } from '@/lib/lab-notes'
 import MultiExamPrescriptionPicker from '@/components/MultiExamPrescriptionPicker.vue'
@@ -54,14 +56,23 @@ export type PrescriptionVisit = {
   consultation?: {
     clinicalNotes?: string | null
     doctorComment?: string | null
+    diagnosis?: string | null
     updatedAt?: string
+    labSentToLabAt?: string | null
   } | null
 }
 
-const props = defineProps<{
-  visit: PrescriptionVisit | null
-  mode: 'edit' | 'append'
-}>()
+const props = withDefaults(
+  defineProps<{
+    visit: PrescriptionVisit | null
+    mode: 'edit' | 'append'
+    /** Affiche l’onglet résumé (comme l’ancien « Voir ») en premier. */
+    showResumeTab?: boolean
+  }>(),
+  {
+    showResumeTab: false,
+  },
+)
 
 const emit = defineEmits<{
   close: []
@@ -82,6 +93,9 @@ const hospitalisationDays = ref<number | null>(null)
 const doctorComment = ref('')
 const pharmacyOrdonnance = ref<PharmacyOrdonnanceLine[]>([])
 const operationAmountFcfa = ref<number | null>(null)
+const consultModalTab = ref<'resume' | 'exams' | 'pharmacy' | 'external' | 'notes'>('exams')
+/** Mode effectif (peut passer de edit → append depuis le résumé). */
+const workingMode = ref<'edit' | 'append'>(props.mode)
 
 const latestVitals = computed(() => sessionVisit.value?.vitalSigns?.[0] ?? null)
 
@@ -89,12 +103,27 @@ const showConsultationPanel = computed(() =>
   hasClinicalConsultationSelected(selectedExamsByKind.value),
 )
 
+/** Dossier déjà au labo ou avec résultats : on peut encore enregistrer pharmacie / notes. */
+const isLabLocked = computed(() => {
+  const notes = sessionVisit.value?.consultation?.clinicalNotes
+  return (
+    Boolean(sessionVisit.value?.consultation?.labSentToLabAt) || hasLabResults(notes)
+  )
+})
+
+const canSavePharmacyFollowUp = computed(
+  () =>
+    workingMode.value === 'edit' &&
+    isLabLocked.value &&
+    (pharmacyOrdonnance.value.length > 0 || doctorComment.value.trim().length >= 2),
+)
+
 const existingExamsByKind = computed(() =>
   parsePrescribedExamsByKind(sessionVisit.value?.consultation?.clinicalNotes),
 )
 
 const excludeByKind = computed(() =>
-  props.mode === 'append' ? existingExamsByKind.value : emptyExamsByKind(),
+  workingMode.value === 'append' ? existingExamsByKind.value : emptyExamsByKind(),
 )
 
 const existingCommentsByKind = computed(() =>
@@ -113,12 +142,20 @@ const existingExamSections = computed(() =>
 )
 
 const newExamsCount = computed(() =>
-  props.mode === 'append'
+  workingMode.value === 'append'
     ? countNewExamsInAppend(sessionVisit.value?.consultation?.clinicalNotes, selectedExamsByKind.value)
     : countExamsByKind(selectedExamsByKind.value),
 )
 
 const selectedInPickerCount = computed(() => countExamsByKind(selectedExamsByKind.value))
+
+const pharmacyCatalogCount = computed(
+  () => pharmacyOrdonnance.value.filter((line) => isPharmacyCatalogLine(line)).length,
+)
+
+const pharmacyExternalCount = computed(
+  () => pharmacyOrdonnance.value.filter((line) => !isPharmacyCatalogLine(line)).length,
+)
 
 const addsNewHospitalisation = computed(() => {
   const hadHosp = (existingExamsByKind.value.hospitalisation?.length ?? 0) > 0
@@ -127,24 +164,87 @@ const addsNewHospitalisation = computed(() => {
 })
 
 const canSubmit = computed(() => {
-  if (props.mode === 'append') {
+  if (workingMode.value === 'append') {
     if (newExamsCount.value > 0) return true
     return addsNewHospitalisation.value && (hospitalisationDays.value ?? 0) >= 1
   }
+  if (canSavePharmacyFollowUp.value) return true
+  if (isLabLocked.value) return false
   return selectedInPickerCount.value > 0
 })
 
 const duplicateSelectionHint = computed(() => {
-  if (props.mode !== 'append' || !selectedInPickerCount.value || newExamsCount.value > 0) return ''
+  if (workingMode.value !== 'append' || !selectedInPickerCount.value || newExamsCount.value > 0) return ''
   return 'Les examens sélectionnés sont déjà prescrits sur ce dossier. Choisissez d\'autres examens.'
 })
 
-const modalTitle = computed(() =>
-  props.mode === 'append' ? uiText('Ajouter des examens') : uiText('Prescription'),
+const labLockedHint = computed(() => {
+  if (workingMode.value !== 'edit' || !isLabLocked.value) return ''
+  if (consultModalTab.value === 'exams') {
+    return 'Ce dossier est déjà au laboratoire. Pour ajouter des examens, utilisez « Ajouter des examens ». Vous pouvez enregistrer une ordonnance pharmacie ici.'
+  }
+  return ''
+})
+
+const modalTitle = computed(() => {
+  if (props.showResumeTab && consultModalTab.value === 'resume') return uiText('Dossier consulté')
+  if (workingMode.value === 'append') return uiText('Ajouter des examens')
+  if (isLabLocked.value) return uiText('Ordonnance / notes')
+  return uiText('Prescription')
+})
+
+const submitLabel = computed(() => {
+  if (workingMode.value === 'append') return uiText('Envoyer au labo')
+  if (isLabLocked.value) return uiText('Enregistrer l’ordonnance')
+  return uiText('Enregistrer et envoyer')
+})
+
+const resumeExamSections = computed(() => {
+  const source =
+    workingMode.value === 'append' ? existingExamsByKind.value : selectedExamsByKind.value
+  const comments =
+    workingMode.value === 'append' ? existingCommentsByKind.value : examCommentsByKind.value
+  return EXAM_KIND_ORDER.map((kind) => ({
+    kind,
+    label: EXAM_KIND_LABELS[kind],
+    exams: source[kind] ?? [],
+    comment: comments[kind]?.trim() ?? '',
+  })).filter((section) => section.exams.length > 0 || section.comment)
+})
+
+const resumePharmacyCount = computed(() => resumePharmacyLines.value.length)
+
+const resumePharmacyLines = computed((): PharmacyOrdonnanceLine[] => {
+  if (workingMode.value === 'append') {
+    return parsePharmacyOrdonnanceLines(sessionVisit.value?.consultation?.clinicalNotes)
+  }
+  return pharmacyOrdonnance.value
+})
+
+const resumeDoctorComment = computed(() =>
+  workingMode.value === 'append'
+    ? sessionVisit.value?.consultation?.doctorComment?.trim() || ''
+    : doctorComment.value.trim(),
 )
 
-const submitLabel = computed(() =>
-  props.mode === 'append' ? uiText('Envoyer au labo') : uiText('Enregistrer et envoyer'),
+/** Diagnostic enregistré (champ dédié) ou 1ʳᵉ ligne des notes cliniques. */
+const resumeDiagnosis = computed(() => {
+  const comment = resumeDoctorComment.value
+  const fromComment =
+    comment
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) || ''
+  if (workingMode.value !== 'append' && fromComment) return fromComment
+  return sessionVisit.value?.consultation?.diagnosis?.trim() || fromComment
+})
+
+const catalogPharmacyLines = computed(() =>
+  pharmacyOrdonnance.value.filter((line) => isPharmacyCatalogLine(line)),
+)
+
+const externalPharmacyLines = computed(() =>
+  pharmacyOrdonnance.value.filter((line) => !isPharmacyCatalogLine(line)),
 )
 
 const patientMetaLine = computed(() => {
@@ -177,6 +277,8 @@ const existingExamsFlat = computed(() =>
 )
 
 function resetForm() {
+  workingMode.value = props.mode
+  consultModalTab.value = props.showResumeTab && props.mode === 'edit' ? 'resume' : 'exams'
   if (!sessionVisit.value) {
     selectedExamsByKind.value = emptyExamsByKind()
     examCommentsByKind.value = emptyExamCommentsByKind()
@@ -186,7 +288,7 @@ function resetForm() {
     operationAmountFcfa.value = null
     return
   }
-  if (props.mode === 'append') {
+  if (workingMode.value === 'append') {
     selectedExamsByKind.value = emptyExamsByKind()
     examCommentsByKind.value = emptyExamCommentsByKind()
     hospitalisationDays.value = null
@@ -202,6 +304,27 @@ function resetForm() {
     operationAmountFcfa.value = null
   }
   errorMessage.value = ''
+}
+
+function switchToEditFromResume() {
+  workingMode.value = 'edit'
+  selectedExamsByKind.value = parsePrescribedExamsByKind(sessionVisit.value?.consultation?.clinicalNotes)
+  examCommentsByKind.value = parsePrescribedExamCommentsByKind(sessionVisit.value?.consultation?.clinicalNotes)
+  hospitalisationDays.value = parsePrescribedHospitalisationDays(sessionVisit.value?.consultation?.clinicalNotes)
+  doctorComment.value = sessionVisit.value?.consultation?.doctorComment?.trim() ?? ''
+  pharmacyOrdonnance.value = parsePharmacyOrdonnanceLines(sessionVisit.value?.consultation?.clinicalNotes)
+  consultModalTab.value = isLabLocked.value ? 'pharmacy' : 'exams'
+}
+
+function switchToAppendFromResume() {
+  workingMode.value = 'append'
+  selectedExamsByKind.value = emptyExamsByKind()
+  examCommentsByKind.value = emptyExamCommentsByKind()
+  hospitalisationDays.value = null
+  doctorComment.value = ''
+  pharmacyOrdonnance.value = []
+  operationAmountFcfa.value = null
+  consultModalTab.value = 'exams'
 }
 
 watch(
@@ -222,11 +345,52 @@ watch(
 async function submit() {
   if (!sessionVisit.value || !canSubmit.value) return
 
-  if (props.mode === 'append' && newExamsCount.value === 0 && !addsNewHospitalisation.value) {
+  if (workingMode.value === 'append' && newExamsCount.value === 0 && !addsNewHospitalisation.value) {
     errorMessage.value = 'Sélectionnez au moins un nouvel examen à ajouter.'
     return
   }
-  if (props.mode === 'edit' && !selectedInPickerCount.value) {
+
+  // Après envoi labo : enregistrer seulement pharmacie / notes (sans réécrire les examens).
+  if (workingMode.value === 'edit' && isLabLocked.value) {
+    if (!canSavePharmacyFollowUp.value) {
+      errorMessage.value = uiText('Ajoutez au moins un produit ou une note clinique (2 caractères min.).')
+      return
+    }
+    submitting.value = true
+    errorMessage.value = ''
+    try {
+      await api.post('/consultations/prescribe-exams', {
+        visitId: sessionVisit.value.id,
+        pharmacyOrdonnance: pharmacyOrdonnance.value,
+        doctorComment: doctorComment.value.trim() || undefined,
+      })
+      if (pharmacyOrdonnance.value.length) {
+        const { printPharmacyOrdonnance } = await import('@/lib/pharmacy-ordonnance-print')
+        printPharmacyOrdonnance({
+          patient: sessionVisit.value.patient,
+          doctorName: sessionVisit.value.assignedDoctor
+            ? `Dr ${fullName(sessionVisit.value.assignedDoctor.firstName, sessionVisit.value.assignedDoctor.lastName)}`
+            : auth.user
+              ? `Dr ${fullName(auth.user.firstName, auth.user.lastName)}`
+              : null,
+          lines: pharmacyOrdonnance.value,
+        })
+      }
+      emit('saved')
+      emit('close')
+    } catch (error: unknown) {
+      const apiMessage =
+        error && typeof error === 'object' && 'response' in error
+          ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
+          : undefined
+      errorMessage.value = apiMessage ?? 'Erreur lors de l\'enregistrement de la prescription.'
+    } finally {
+      submitting.value = false
+    }
+    return
+  }
+
+  if (workingMode.value === 'edit' && !selectedInPickerCount.value) {
     errorMessage.value = 'Sélectionnez au moins un examen.'
     return
   }
@@ -245,15 +409,21 @@ async function submit() {
       examCommentsByKind: filterInvoiceExamComments(examCommentsByKind.value),
       hospitalisationDays: hospPrescribed ? hospitalisationDays.value ?? undefined : undefined,
       doctorComment: doctorComment.value.trim() || undefined,
-      pharmacyOrdonnance: showConsultationPanel.value ? pharmacyOrdonnance.value : undefined,
-      append: props.mode === 'append',
+      pharmacyOrdonnance:
+        showConsultationPanel.value || props.showResumeTab
+          ? pharmacyOrdonnance.value
+          : undefined,
+      append: workingMode.value === 'append',
       ...(
         (selectedExamsByKind.value.operation?.length ?? 0) > 0 && operationAmountFcfa.value != null
           ? { operationAmountFcfa: operationAmountFcfa.value }
           : {}
       ),
     })
-    if (showConsultationPanel.value && pharmacyOrdonnance.value.length) {
+    if (
+      (showConsultationPanel.value || props.showResumeTab) &&
+      pharmacyOrdonnance.value.length
+    ) {
       const { printPharmacyOrdonnance } = await import('@/lib/pharmacy-ordonnance-print')
       printPharmacyOrdonnance({
         patient: sessionVisit.value.patient,
@@ -302,9 +472,10 @@ async function submit() {
         <div class="modal__body">
           <p v-if="errorMessage" class="modal-error">{{ errorMessage }}</p>
           <p v-else-if="duplicateSelectionHint" class="modal-hint">{{ uiText(duplicateSelectionHint) }}</p>
+          <p v-else-if="labLockedHint" class="modal-hint">{{ uiText(labLockedHint) }}</p>
 
           <section
-            v-if="mode === 'append' && existingExamsFlat.length"
+            v-if="workingMode === 'append' && existingExamsFlat.length"
             class="info-section info-section--existing"
           >
             <h3>
@@ -313,22 +484,206 @@ async function submit() {
               <span class="info-section__count">{{ existingExamsFlat.length }}</span>
             </h3>
             <div class="existing-chips">
-              <span
+              <button
                 v-for="exam in existingExamsFlat"
                 :key="exam.key"
+                type="button"
                 class="existing-chip"
                 :title="uiText(exam.kindLabel)"
+                disabled
               >
                 {{ uiText(exam.label) }}
-              </span>
+              </button>
             </div>
           </section>
 
-          <section class="info-section info-section--picker">
+          <div
+            class="consult-tabs"
+            role="tablist"
+            :aria-label="uiText('Sections consultation')"
+          >
+            <button
+              v-if="showResumeTab"
+              type="button"
+              class="consult-tabs__btn"
+              :class="{ 'consult-tabs__btn--active': consultModalTab === 'resume' }"
+              role="tab"
+              :aria-selected="consultModalTab === 'resume'"
+              @click="consultModalTab = 'resume'"
+            >
+              {{ uiText('Résumé') }}
+            </button>
+            <button
+              type="button"
+              class="consult-tabs__btn"
+              :class="{ 'consult-tabs__btn--active': consultModalTab === 'exams' }"
+              role="tab"
+              :aria-selected="consultModalTab === 'exams'"
+              @click="consultModalTab = 'exams'"
+            >
+              <FlaskConical :size="15" />
+              {{ uiText('Examens') }}
+              <span v-if="selectedInPickerCount" class="consult-tabs__badge">{{ selectedInPickerCount }}</span>
+            </button>
+            <button
+              v-if="showConsultationPanel || showResumeTab"
+              type="button"
+              class="consult-tabs__btn"
+              :class="{ 'consult-tabs__btn--active': consultModalTab === 'pharmacy' }"
+              role="tab"
+              :aria-selected="consultModalTab === 'pharmacy'"
+              @click="consultModalTab = 'pharmacy'"
+            >
+              <PillBottle :size="15" />
+              <span class="consult-tabs__label">
+                {{ uiText('Pharmacie') }}
+                <small>{{ uiText('facultatif') }}</small>
+              </span>
+              <span v-if="pharmacyCatalogCount" class="consult-tabs__badge">
+                {{ pharmacyCatalogCount }}
+              </span>
+            </button>
+            <button
+              v-if="showConsultationPanel || showResumeTab"
+              type="button"
+              class="consult-tabs__btn"
+              :class="{ 'consult-tabs__btn--active': consultModalTab === 'external' }"
+              role="tab"
+              :aria-selected="consultModalTab === 'external'"
+              @click="consultModalTab = 'external'"
+            >
+              <PenLine :size="15" />
+              <span class="consult-tabs__label">
+                {{ uiText('Hors pharmacie') }}
+                <small>{{ uiText('facultatif') }}</small>
+              </span>
+              <span v-if="pharmacyExternalCount" class="consult-tabs__badge">
+                {{ pharmacyExternalCount }}
+              </span>
+            </button>
+            <button
+              v-if="showConsultationPanel || showResumeTab"
+              type="button"
+              class="consult-tabs__btn"
+              :class="{ 'consult-tabs__btn--active': consultModalTab === 'notes' }"
+              role="tab"
+              :aria-selected="consultModalTab === 'notes'"
+              @click="consultModalTab = 'notes'"
+            >
+              <span class="consult-tabs__label">
+                {{ uiText('Notes') }}
+                <small>{{ uiText('facultatif') }}</small>
+              </span>
+            </button>
+          </div>
+
+          <section v-show="consultModalTab === 'resume'" class="info-section info-section--resume">
+            <h3>{{ uiText('Informations patient') }}</h3>
+            <dl class="info-grid">
+              <div>
+                <dt>{{ uiText('Matricule') }}</dt>
+                <dd>{{ sessionVisit.patient.code }}</dd>
+              </div>
+              <div v-if="sessionVisit.patient.phone">
+                <dt>{{ uiText('Téléphone') }}</dt>
+                <dd>{{ sessionVisit.patient.phone }}</dd>
+              </div>
+              <div v-if="sessionVisit.assignedDoctor">
+                <dt>{{ uiText('Médecin assigné') }}</dt>
+                <dd>
+                  Dr
+                  {{
+                    fullName(
+                      sessionVisit.assignedDoctor.firstName,
+                      sessionVisit.assignedDoctor.lastName,
+                    )
+                  }}
+                </dd>
+              </div>
+              <div>
+                <dt>{{ uiText('Consulté le') }}</dt>
+                <dd>
+                  {{
+                    formatAppDateTime(
+                      sessionVisit.consultation?.updatedAt ?? sessionVisit.updatedAt,
+                    )
+                  }}
+                </dd>
+              </div>
+            </dl>
+
+            <div v-if="latestVitals" class="resume-vitals">
+              <h4>
+                <HeartPulse :size="14" />
+                {{ uiText('Constantes (réception)') }}
+              </h4>
+              <p>{{ vitalsLine }}</p>
+            </div>
+
             <h3>
               <FlaskConical :size="15" />
-              {{ mode === 'append' ? uiText('Nouveaux examens') : uiText('Choisir les examens') }}
+              {{ uiText('Examens prescrits') }}
+              <span v-if="resumeExamSections.length" class="info-section__count">
+                {{
+                  resumeExamSections.reduce((sum, section) => sum + section.exams.length, 0)
+                }}
+              </span>
             </h3>
+            <p v-if="!resumeExamSections.length" class="section-hint">
+              {{ uiText('Aucun examen prescrit pour cette consultation.') }}
+            </p>
+            <div v-else class="resume-exam-sections">
+              <div v-for="section in resumeExamSections" :key="section.kind" class="resume-exam-section">
+                <h4>{{ uiText(section.label) }}</h4>
+                <ul v-if="section.exams.length">
+                  <li v-for="exam in section.exams" :key="`${section.kind}-${exam}`">
+                    {{ uiText(exam) }}
+                  </li>
+                </ul>
+                <p v-if="section.comment" class="resume-comment">{{ section.comment }}</p>
+              </div>
+            </div>
+
+            <div class="resume-block">
+              <h3>{{ uiText('Diagnostic') }}</h3>
+              <p v-if="resumeDiagnosis" class="resume-block__text">{{ resumeDiagnosis }}</p>
+              <p v-else class="section-hint">{{ uiText('Aucun diagnostic enregistré.') }}</p>
+            </div>
+
+            <div class="resume-block">
+              <h3>{{ uiText('Notes cliniques') }}</h3>
+              <p v-if="resumeDoctorComment" class="resume-block__text resume-block__text--pre">
+                {{ resumeDoctorComment }}
+              </p>
+              <p v-else class="section-hint">{{ uiText('Aucune note clinique.') }}</p>
+            </div>
+
+            <div class="resume-block">
+              <h3>
+                {{ uiText('Prescriptions') }}
+                <span v-if="resumePharmacyCount" class="info-section__count">
+                  {{ resumePharmacyCount }}
+                </span>
+              </h3>
+              <p v-if="!resumePharmacyCount" class="section-hint">
+                {{ uiText('Aucune prescription pharmacie.') }}
+              </p>
+              <ul v-else class="resume-rx-list">
+                <li v-for="(line, index) in resumePharmacyLines" :key="`${line.name}-${index}`">
+                  <strong>{{ line.name }}</strong>
+                  <span v-if="line.dosage" class="resume-rx-meta">{{ line.dosage }}</span>
+                  <span class="resume-rx-meta">× {{ line.quantity }}</span>
+                  <span
+                    v-if="!isPharmacyCatalogLine(line)"
+                    class="resume-rx-badge"
+                  >{{ uiText('Hors stock') }}</span>
+                  <em v-if="line.instructions">{{ line.instructions }}</em>
+                </li>
+              </ul>
+            </div>
+          </section>
+
+          <section v-show="consultModalTab === 'exams'" class="info-section info-section--picker">
             <MultiExamPrescriptionPicker
               v-model="selectedExamsByKind"
               v-model:comments="examCommentsByKind"
@@ -339,19 +694,62 @@ async function submit() {
             />
           </section>
 
-          <section v-if="showConsultationPanel" class="info-section info-section--consultation">
-            <h3>{{ uiText('Consultation clinique') }}</h3>
-            <p class="section-hint">
-              {{ uiText('Notes cliniques et ordonnance pharmacie (sans nouvel envoi labo).') }}
-            </p>
+          <section
+            v-if="showConsultationPanel || showResumeTab"
+            v-show="consultModalTab === 'notes'"
+            class="info-section info-section--consultation"
+          >
+            <div v-if="resumeDiagnosis" class="current-diag">
+              <strong>{{ uiText('Diagnostic enregistré') }}</strong>
+              <p>{{ resumeDiagnosis }}</p>
+            </div>
             <UiTextarea
               v-model="doctorComment"
-              :label="uiText('Informations cliniques')"
+              :label="uiText('Notes cliniques / diagnostic')"
               :rows="4"
               :placeholder="uiText('Motif, examen clinique, diagnostic…')"
             />
+            <p class="section-hint">
+              {{ uiText('La première ligne des notes est enregistrée comme diagnostic.') }}
+            </p>
+          </section>
+
+          <section
+            v-if="showConsultationPanel || showResumeTab"
+            v-show="consultModalTab === 'pharmacy' || consultModalTab === 'external'"
+            class="info-section info-section--pharmacy"
+          >
+            <div
+              v-if="
+                (consultModalTab === 'pharmacy' && catalogPharmacyLines.length) ||
+                (consultModalTab === 'external' && externalPharmacyLines.length)
+              "
+              class="current-rx"
+            >
+              <strong>
+                {{
+                  consultModalTab === 'external'
+                    ? uiText('Prescriptions hors pharmacie')
+                    : uiText('Prescriptions en stock')
+                }}
+              </strong>
+              <ul class="resume-rx-list">
+                <li
+                  v-for="(line, index) in consultModalTab === 'external'
+                    ? externalPharmacyLines
+                    : catalogPharmacyLines"
+                  :key="`tab-${line.name}-${index}`"
+                >
+                  <strong>{{ line.name }}</strong>
+                  <span v-if="line.dosage" class="resume-rx-meta">{{ line.dosage }}</span>
+                  <span class="resume-rx-meta">× {{ line.quantity }}</span>
+                  <em v-if="line.instructions">{{ line.instructions }}</em>
+                </li>
+              </ul>
+            </div>
             <DoctorPharmacyOrdonnancePicker
               v-model="pharmacyOrdonnance"
+              :mode="consultModalTab === 'external' ? 'external' : 'catalog'"
               :patient="sessionVisit.patient"
               :doctor-name="
                 sessionVisit.assignedDoctor
@@ -365,15 +763,26 @@ async function submit() {
         </div>
 
         <footer class="modal__footer">
-          <UiButton variant="ghost" @click="emit('close')">{{ uiText('Annuler') }}</UiButton>
+          <UiButton variant="ghost" @click="emit('close')">
+            {{ consultModalTab === 'resume' ? uiText('Fermer') : uiText('Annuler') }}
+          </UiButton>
+          <template v-if="consultModalTab === 'resume' && showResumeTab">
+            <UiButton variant="primary" :icon="Plus" @click="switchToAppendFromResume">
+              {{ uiText('Ajouter des examens') }}
+            </UiButton>
+            <UiButton variant="secondary" :icon="Pencil" @click="switchToEditFromResume">
+              {{ isLabLocked ? uiText('Ordonnance pharmacie') : uiText('Modifier') }}
+            </UiButton>
+          </template>
           <UiButton
+            v-else
             variant="primary"
-            :icon="mode === 'append' ? Plus : Save"
+            :icon="workingMode === 'append' ? Plus : Save"
             :disabled="submitting || !canSubmit"
             @click="submit"
           >
             {{ submitting ? uiText('Enregistrement…') : submitLabel }}
-            <span v-if="mode === 'append' && newExamsCount > 0" class="submit-badge">
+            <span v-if="workingMode === 'append' && newExamsCount > 0" class="submit-badge">
               +{{ newExamsCount }}
             </span>
           </UiButton>
@@ -414,10 +823,247 @@ async function submit() {
 }
 
 .info-section--consultation {
-  border: 1px solid var(--primary-200);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0.75rem 0.9rem;
-  background: linear-gradient(180deg, var(--primary-50), #fff);
+  background: #fff;
+}
+
+.info-section--pharmacy {
+  padding: 0.15rem 0;
+}
+
+.info-section--resume .info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.55rem 1rem;
+  margin: 0 0 0.85rem;
+}
+
+.info-section--resume dt {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-light);
+  margin-bottom: 0.1rem;
+}
+
+.info-section--resume dd {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.resume-vitals {
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: #f8fafc;
+  border: 1px solid var(--border);
+}
+
+.resume-vitals h4 {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0 0.3rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--primary-800);
+}
+
+.resume-vitals p {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.resume-exam-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.resume-exam-section h4 {
+  margin: 0 0 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-light);
+}
+
+.resume-exam-section ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.8125rem;
+}
+
+.resume-comment,
+.resume-note {
+  margin: 0.35rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.resume-block {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.resume-block h3 {
+  margin-bottom: 0.45rem;
+}
+
+.resume-block__text {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.resume-block__text--pre {
+  white-space: pre-wrap;
+  font-weight: 500;
+}
+
+.resume-rx-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.resume-rx-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.55rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-size: 0.8125rem;
+}
+
+.resume-rx-list em {
+  flex-basis: 100%;
+  font-style: normal;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.resume-rx-meta {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.resume-rx-badge {
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  font-size: 0.625rem;
+  font-weight: 700;
+}
+
+.current-diag,
+.current-rx {
+  margin-bottom: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--primary-100);
+  background: var(--primary-50, #eff6ff);
+}
+
+.current-diag strong,
+.current-rx strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--primary-800);
+}
+
+.current-diag p {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.consult-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.3rem;
+  border-radius: 10px;
+  background: var(--surface-muted, #f1f5f9);
+  border: 1px solid var(--border);
+}
+
+.consult-tabs__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1 1 auto;
+  justify-content: center;
+  min-height: 2.4rem;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.consult-tabs__label {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.05rem;
+  line-height: 1.15;
+  text-align: left;
+}
+
+.consult-tabs__label small {
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: var(--text-light);
+  text-transform: lowercase;
+}
+
+.consult-tabs__btn--active .consult-tabs__label small {
+  color: var(--primary-600);
+}
+
+.consult-tabs__btn--active {
+  background: #fff;
+  border-color: var(--primary-200);
+  color: var(--primary-800);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.consult-tabs__badge {
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--primary-600);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .modal__header {
@@ -546,13 +1192,15 @@ async function submit() {
 .existing-chip {
   display: inline-flex;
   align-items: center;
-  padding: 0.25rem 0.55rem;
+  padding: 0.4rem 0.7rem;
   border-radius: 999px;
   background: #fff;
   border: 1px solid var(--border);
+  font: inherit;
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 650;
   color: var(--text-muted);
+  cursor: default;
 }
 
 .modal__footer {

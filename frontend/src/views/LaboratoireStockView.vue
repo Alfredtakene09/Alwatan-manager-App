@@ -6,7 +6,6 @@ import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import LabStockItemsPanel from '@/components/laboratoire/LabStockItemsPanel.vue'
 import LabStockCategoriesPanel from '@/components/laboratoire/LabStockCategoriesPanel.vue'
-import '@/assets/datatable-theme.css'
 
 type TabId = 'articles' | 'categories'
 

@@ -5,6 +5,8 @@ import { prisma } from "../lib/db.js";
 import { comptabilitePatientWhere } from "../lib/patient-billing.js";
 import {
   AWAITING_PERFORMANCE_STATUSES,
+  COMPLETABLE_STATUSES,
+  appendSurgeryFinalComment,
   completeSurgeryCase,
   parseOperationDateInput,
   promoteDueSurgeries,
@@ -24,7 +26,7 @@ const surgeryInclude = {
   visit: {
     include: {
       patient: true,
-      consultation: { select: { doctorComment: true, diagnosis: true } },
+      consultation: { select: { id: true, doctorComment: true, diagnosis: true } },
     },
   },
   interventionType: {
@@ -33,6 +35,17 @@ const surgeryInclude = {
     },
   },
   surgeon: { select: { id: true, firstName: true, lastName: true } },
+  invoice: {
+    select: {
+      id: true,
+      status: true,
+      amountFcfa: true,
+      paidAmountFcfa: true,
+      paidAt: true,
+      type: true,
+      billingExamKind: true,
+    },
+  },
 } as const;
 
 const DOCTOR_VISIBLE_STATUSES: SurgeryStatus[] = [
@@ -118,7 +131,11 @@ router.get("/mine", requireAuth, requireModule("consultation"), async (req, res)
 });
 
 /** Médecin (chirurgien / assistant) : marquer son opération comme effectuée. */
-router.post("/mine/:id/complete", async (req, res) => {
+router.post(
+  "/mine/:id/complete",
+  requireAuth,
+  requireModule("consultation"),
+  async (req, res) => {
   try {
     const surgeryId = String(req.params.id);
     const userId = req.user!.id;
@@ -144,16 +161,22 @@ router.post("/mine/:id/complete", async (req, res) => {
       });
     }
 
-    if (!AWAITING_PERFORMANCE_STATUSES.includes(surgery.status)) {
+    if (!COMPLETABLE_STATUSES.includes(surgery.status)) {
       return res.status(409).json({
         error:
           surgery.status === SurgeryStatus.COMPLETED
             ? "Cette opération est déjà marquée comme effectuée."
-            : "L’opération doit d’abord être payée par le patient avant d’être clôturée.",
+            : "Cette opération ne peut pas être clôturée.",
       });
     }
 
-    await completeSurgeryCase(surgery.id, new Date(), note || null);
+    if (!note || note.length < 2) {
+      return res.status(400).json({
+        error: "Le commentaire est requis pour enregistrer le dossier.",
+      });
+    }
+
+    await completeSurgeryCase(surgery.id, new Date(), note);
 
     const updated = await prisma.surgeryCase.findUniqueOrThrow({
       where: { id: surgery.id },
@@ -167,6 +190,63 @@ router.post("/mine/:id/complete", async (req, res) => {
     return res.status(500).json({ error: "Impossible de clôturer l’opération." });
   }
 });
+
+/** Médecin : ajouter un commentaire final après clôture. */
+router.post(
+  "/mine/:id/final-comment",
+  requireAuth,
+  requireModule("consultation"),
+  async (req, res) => {
+    try {
+      const surgeryId = String(req.params.id);
+      const userId = req.user!.id;
+      const note =
+        typeof req.body?.notes === "string"
+          ? req.body.notes.trim()
+          : typeof req.body?.comment === "string"
+            ? req.body.comment.trim()
+            : "";
+
+      if (!note) {
+        return res.status(400).json({ error: "Le commentaire final est requis." });
+      }
+
+      const surgery = await prisma.surgeryCase.findUnique({
+        where: { id: surgeryId },
+        include: surgeryInclude,
+      });
+
+      if (!surgery) {
+        return res.status(404).json({ error: "Opération introuvable." });
+      }
+
+      if (!resolveMyShareKind(surgery, userId)) {
+        return res.status(403).json({
+          error: "Vous n’êtes pas rattaché à cette opération.",
+        });
+      }
+
+      if (surgery.status !== SurgeryStatus.COMPLETED) {
+        return res.status(409).json({
+          error: "Le commentaire final ne peut être ajouté que sur une opération effectuée.",
+        });
+      }
+
+      await appendSurgeryFinalComment(surgery.id, note);
+
+      const updated = await prisma.surgeryCase.findUniqueOrThrow({
+        where: { id: surgery.id },
+        include: surgeryInclude,
+      });
+
+      const myShareKind = resolveMyShareKind(updated, userId);
+      return res.json({ ...updated, myShareKind });
+    } catch (error) {
+      console.error("POST /surgeries/mine/:id/final-comment failed:", error);
+      return res.status(500).json({ error: "Impossible d’enregistrer le commentaire final." });
+    }
+  },
+);
 
 router.use(requireAuth, requireAnyModule("reception", "comptabilite", "bloc-salles"));
 
@@ -195,8 +275,14 @@ router.get("/", async (req, res) => {
     if (scope === "completed") {
       const surgeries = await prisma.surgeryCase.findMany({
         where: {
-          status: SurgeryStatus.COMPLETED,
           visit: { patient: comptabilitePatientWhere() },
+          OR: [
+            { status: SurgeryStatus.COMPLETED },
+            {
+              status: { in: [SurgeryStatus.NOTIFIED, SurgeryStatus.QUOTED] },
+              invoice: { paidAmountFcfa: { gt: 0 } },
+            },
+          ],
         },
         include: surgeryInclude,
         orderBy: [{ completedAt: "desc" }, { updatedAt: "desc" }],
@@ -268,9 +354,12 @@ router.post("/:id/complete", async (req, res) => {
     return res.status(404).json({ error: "Opération introuvable." });
   }
 
-  if (!AWAITING_PERFORMANCE_STATUSES.includes(surgery.status)) {
+  if (!COMPLETABLE_STATUSES.includes(surgery.status)) {
     return res.status(409).json({
-      error: "Cette opération ne peut pas être clôturée.",
+      error:
+        surgery.status === SurgeryStatus.COMPLETED
+          ? "Cette opération est déjà marquée comme effectuée."
+          : "Cette opération ne peut pas être clôturée.",
     });
   }
 

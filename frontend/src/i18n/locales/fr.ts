@@ -8,6 +8,7 @@ export default {
     language: 'Langue',
     refresh: 'Actualiser',
     myAccount: 'Mon compte',
+    continueConsultation: 'Continuer la consultation',
   },
   ui: {
     Actualiser: 'Actualiser',
@@ -15,6 +16,12 @@ export default {
     Fermer: 'Fermer',
     OK: 'OK',
     Continuer: 'Continuer',
+    'Continuer la consultation': 'Continuer la consultation',
+    Reconsulter: 'Reconsulter',
+    'Ce dossier est déjà au laboratoire ou validé — utilisez « Ajouter des examens » pour compléter la prescription.':
+      'Ce dossier est déjà au laboratoire ou validé — utilisez « Ajouter des examens » pour compléter la prescription.',
+    'Ordonnance enregistrée — ordonnance imprimée.': 'Ordonnance enregistrée — ordonnance imprimée.',
+    'Consultation enregistrée — ordonnance imprimée.': 'Consultation enregistrée — ordonnance imprimée.',
     Compris: 'Compris',
     Valider: 'Valider',
     Imprimer: 'Imprimer',
@@ -132,6 +139,12 @@ export default {
     '(hors pharmacie)': '(hors pharmacie)',
     'Informations cliniques': 'Informations cliniques',
     'Ordonnance pharmacie': 'Ordonnance pharmacie',
+    'Ordonnance / notes': 'Ordonnance / notes',
+    'Enregistrer l’ordonnance': 'Enregistrer l’ordonnance',
+    'Ajoutez au moins un produit ou une note clinique (2 caractères min.).':
+      'Ajoutez au moins un produit ou une note clinique (2 caractères min.).',
+    'Ce dossier est déjà au laboratoire. Pour ajouter des examens, utilisez « Ajouter des examens ». Vous pouvez enregistrer une ordonnance pharmacie ici.':
+      'Ce dossier est déjà au laboratoire. Pour ajouter des examens, utilisez « Ajouter des examens ». Vous pouvez enregistrer une ordonnance pharmacie ici.',
     'Examens prescrits': 'Examens prescrits',
     'Résultats laboratoire': 'Résultats laboratoire',
     'Ouvrir en détail': 'Ouvrir en détail',
@@ -173,8 +186,18 @@ export default {
       'Sélectionnez au moins un examen ou saisissez un commentaire (2 caractères min.).',
     'Examens prescrits — commentaire enregistré pour les résultats de labos.':
       'Examens prescrits — commentaire enregistré pour les résultats de labos.',
-    'Examens prescrits — en attente de paiement à la réception.':
-      'Examens prescrits — en attente de paiement à la réception.',
+    'Examens prescrits — en attente de paiement (gestionnaire / admin).':
+      'Examens prescrits — en attente de paiement (gestionnaire / admin).',
+    'Consultation enregistrée — aucun examen prescrit.':
+      'Consultation enregistrée — aucun examen prescrit.',
+    'Encaissement réservé au gestionnaire / admin.':
+      'Encaissement réservé au gestionnaire / admin.',
+    'Montant consultation': 'Montant consultation',
+    'Montant (encaissement gestionnaire)': 'Montant (encaissement gestionnaire)',
+    'Examens enregistrés — en attente de paiement (gestionnaire / admin). Patient envoyé vers {destination}.':
+      'Examens enregistrés — en attente de paiement (gestionnaire / admin). Patient envoyé vers {destination}.',
+    'Enregistré — {invoice}. Paiement à faire par le gestionnaire / admin. Patient envoyé vers {destination}.':
+      'Enregistré — {invoice}. Paiement à faire par le gestionnaire / admin. Patient envoyé vers {destination}.',
     'Commentaire enregistré pour les résultats de labos.':
       'Commentaire enregistré pour les résultats de labos.',
     "Erreur lors de l'enregistrement de la consultation.":
@@ -406,6 +429,8 @@ export default {
     Féminin: 'Féminin',
     Masculin: 'Masculin',
     "Inscrits aujourd'hui": "Inscrits aujourd'hui",
+    'Patients externes': 'Patients externes',
+    'Examens sans consultation — aujourd’hui': 'Examens sans consultation — aujourd’hui',
     'Dossiers patients': 'Dossiers patients',
     'Recettes du jour': 'Recettes du jour',
     'Mes encaissements (jour)': 'Mes encaissements (jour)',
@@ -491,6 +516,10 @@ export default {
     'Voir les dépenses': 'Voir les dépenses',
     'Stock pharmacie bas': 'Stock pharmacie bas',
     'Voir la pharmacie': 'Voir la pharmacie',
+    'Nouvelle hospitalisation': 'Nouvelle hospitalisation',
+    'Admettre le patient': 'Admettre le patient',
+    'Tout est à jour — aucune clôture, dépense, paie ni hospitalisation en attente.':
+      'Tout est à jour — aucune clôture, dépense, paie ni hospitalisation en attente.',
     'Tout est à jour — aucune action urgente sur la caisse comptable, les dépenses ni la paie.':
       'Tout est à jour — aucune action urgente sur la caisse comptable, les dépenses ni la paie.',
     'Aucune donnée disponible': 'Aucune donnée disponible',
@@ -591,6 +620,44 @@ export default {
     et: 'et',
     laboratoire: 'laboratoire',
     'Panier global': 'Panier global',
+    'Examens sélectionnés': 'Examens sélectionnés',
+    Diagnostic: 'Diagnostic',
+    'Notes cliniques': 'Notes cliniques',
+    Prescriptions: 'Prescriptions',
+    'Aucun diagnostic enregistré.': 'Aucun diagnostic enregistré.',
+    'Aucune note clinique.': 'Aucune note clinique.',
+    'Aucune prescription pharmacie.': 'Aucune prescription pharmacie.',
+    'Diagnostic enregistré': 'Diagnostic enregistré',
+    'Notes cliniques / diagnostic': 'Notes cliniques / diagnostic',
+    'La première ligne des notes est enregistrée comme diagnostic.': 'La première ligne des notes est enregistrée comme diagnostic.',
+    'Prescriptions hors pharmacie': 'Prescriptions hors pharmacie',
+    'Prescriptions en stock': 'Prescriptions en stock',
+    'Dossier consulté': 'Dossier consulté',
+    'Consulté le': 'Consulté le',
+    'Constantes (réception)': 'Constantes (réception)',
+    'Aucun examen prescrit pour cette consultation.': 'Aucun examen prescrit pour cette consultation.',
+    'médicament(s)': 'médicament(s)',
+    Ordonnance: 'Ordonnance',
+    'Sections consultation': 'Sections consultation',
+    'facultatif': 'facultatif',
+    'Hors pharmacie': 'Hors pharmacie',
+    'Prescription hors pharmacie': 'Prescription hors pharmacie',
+    'Médicaments hors pharmacie': 'Médicaments hors pharmacie',
+    'Médicaments en stock': 'Médicaments en stock',
+    'Produits du catalogue clinique — sans débit automatique.':
+      'Produits du catalogue clinique — sans débit automatique.',
+    'Saisissez le médicament à se procurer en officine — imprimé sur l’ordonnance, sans débit stock.':
+      'Saisissez le médicament à se procurer en officine — imprimé sur l’ordonnance, sans débit stock.',
+    'Aucun examen pour l’instant — choisissez une catégorie ci-dessous.':
+      'Aucun examen pour l’instant — choisissez une catégorie ci-dessous.',
+    'Examens & actes': 'Examens & actes',
+    'Sélection visible en boutons en haut — choisissez par catégorie ci-dessous.':
+      'Sélection visible en boutons en haut — choisissez par catégorie ci-dessous.',
+    'Consultation en cours': 'Consultation en cours',
+    'Médicaments en stock ou hors stock — séparé des examens prescrits.':
+      'Médicaments en stock ou hors stock — séparé des examens prescrits.',
+    'Motif, examen clinique, diagnostic — sans nouvel envoi labo.':
+      'Motif, examen clinique, diagnostic — sans nouvel envoi labo.',
     'Commentaire final': 'Commentaire final',
     'Commentaire final (opération)': 'Commentaire final (opération)',
     'Notes cliniques et conduite — enregistrées dans le dossier.':
@@ -614,6 +681,19 @@ export default {
     'Interventions, clôture et parts à percevoir': 'Interventions, clôture et parts à percevoir',
     'Résultats / note finale à la clôture — parts dans À percevoir':
       'Résultats / note finale à la clôture — parts dans À percevoir',
+    'Clôture indépendante du paiement — le règlement reste visible à part':
+      'Clôture indépendante du paiement — le règlement reste visible à part',
+    'À l’effectuation : commenter et enregistrer le dossier — le paiement reste à part':
+      'À l’effectuation : commenter et enregistrer le dossier — le paiement reste à part',
+    'Effectuer l’opération': 'Effectuer l’opération',
+    'Rédigez le compte rendu puis enregistrez le dossier patient.':
+      'Rédigez le compte rendu puis enregistrez le dossier patient.',
+    'Saisissez le commentaire pour enregistrer le dossier.':
+      'Saisissez le commentaire pour enregistrer le dossier.',
+    'Dossier enregistré — opération marquée comme effectuée.':
+      'Dossier enregistré — opération marquée comme effectuée.',
+    'Impossible de marquer l’opération comme effectuée.':
+      'Impossible de marquer l’opération comme effectuée.',
     'Clôturer l’opération': 'Clôturer l’opération',
     'Note opératoire enregistrée dans le dossier patient.':
       'Note opératoire enregistrée dans le dossier patient.',
@@ -621,7 +701,24 @@ export default {
     'Enregistrer et clôturer': 'Enregistrer et clôturer',
     'Opération enregistrée — note ajoutée au dossier patient.':
       'Opération enregistrée — note ajoutée au dossier patient.',
+    'Commentaire final ajouté au dossier patient.':
+      'Commentaire final ajouté au dossier patient.',
+    'Impossible d’enregistrer le commentaire final.':
+      'Impossible d’enregistrer le commentaire final.',
+    'Voir détails': 'Voir détails',
+    'Détails de l’opération': 'Détails de l’opération',
+    'Commentaire actuel': 'Commentaire actuel',
+    'Nouveau commentaire': 'Nouveau commentaire',
+    'Aucun commentaire final.': 'Aucun commentaire final.',
+    Intervention: 'Intervention',
+    'Votre rôle': 'Votre rôle',
+    Évolution: 'Évolution',
+    'Ma part': 'Ma part',
+    'Date prévue': 'Date prévue',
+    'Effectuée le': 'Effectuée le',
+    Effectuée: 'Effectuée',
     'Payée — à clôturer': 'Payée — à clôturer',
+    'À clôturer': 'À clôturer',
     'En attente paiement': 'En attente paiement',
     'Supervision — lecture seule': 'Supervision — lecture seule',
     "Types d'examens": "Types d'examens",
@@ -651,7 +748,11 @@ export default {
     'Tout retirer': 'Tout retirer',
     'Cliquez un examen pour ouvrir ses formulaires, puis cochez ce qu’il faut envoyer au labo.':
       'Cliquez un examen pour ouvrir ses formulaires, puis cochez ce qu’il faut envoyer au labo.',
+    'Cochez un formulaire (ex. Routine) pour tout prendre, ou déroulez pour cocher champ par champ.':
+      'Cochez un formulaire (ex. Routine) pour tout prendre, ou déroulez pour cocher champ par champ.',
+    'Tout sélectionner / tout retirer': 'Tout sélectionner / tout retirer',
     '1 examen sélectionné': '1 examen sélectionné',
+    '{n} champs sélectionnés': '{n} champs sélectionnés',
     '{n} examens sélectionnés': '{n} examens sélectionnés',
     'Aucun examen laboratoire disponible.': 'Aucun examen laboratoire disponible.',
     'Aucun examen {kind} disponible.': 'Aucun examen {kind} disponible.',
@@ -676,27 +777,6 @@ export default {
     'Sous-total {amount}': 'Sous-total {amount}',
     'Validation…': 'Validation…',
     'Nom et prénom': 'Nom et prénom',
-    'Champs incomplets': 'Champs incomplets',
-    'Veuillez corriger les points suivants :': 'Veuillez corriger les points suivants :',
-    'Indiquez le nom et le prénom du patient.': 'Indiquez le nom et le prénom du patient.',
-    'Le prénom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).':
-      'Le prénom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).',
-    'Le nom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).':
-      'Le nom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).',
-    'Le téléphone est obligatoire (au moins 6 chiffres).':
-      'Le téléphone est obligatoire (au moins 6 chiffres).',
-    'Le téléphone doit contenir au moins 6 chiffres.':
-      'Le téléphone doit contenir au moins 6 chiffres.',
-    'Au moins 6 chiffres requis pour valider.': 'Au moins 6 chiffres requis pour valider.',
-    'Indiquez un âge valide.': 'Indiquez un âge valide.',
-    'Sélectionnez un service.': 'Sélectionnez un service.',
-    'Sélectionnez un médecin.': 'Sélectionnez un médecin.',
-    'Indiquez un montant de consultation supérieur à 0.':
-      'Indiquez un montant de consultation supérieur à 0.',
-    'La réduction ne peut pas dépasser le montant de la consultation.':
-      'La réduction ne peut pas dépasser le montant de la consultation.',
-    'Le total à payer doit être supérieur à 0.': 'Le total à payer doit être supérieur à 0.',
-    'Indiquez un montant de consultation valide.': 'Indiquez un montant de consultation valide.',
     "Unité d'âge": "Unité d'âge",
     Ans: 'Ans',
     Mois: 'Mois',
@@ -827,6 +907,8 @@ export default {
     'Examens concernés': 'Examens concernés',
     'Tout désélectionner': 'Tout désélectionner',
     'Tout sélectionner': 'Tout sélectionner',
+    'Ce champ n’a pas de tarif individuel. Cochez le formulaire entier (« Tout sélectionner ») pour appliquer le tarif général.':
+      'Ce champ n’a pas de tarif individuel. Cochez le formulaire entier (« Tout sélectionner ») pour appliquer le tarif général.',
     'Aucun examen payé disponible.': 'Aucun examen payé disponible.',
     'Montant unitaire': 'Montant unitaire',
     'Total sélectionné ({n} examen)': 'Total sélectionné ({n} examen)',
@@ -1014,6 +1096,30 @@ export default {
     'Mettre à jour le libellé, la catégorie ou le tarif':
       'Mettre à jour le libellé, la catégorie ou le tarif',
     'Tarif (FCFA)': 'Tarif (FCFA)',
+    'Code (optionnel)': 'Code (optionnel)',
+    'Catégorie (optionnel)': 'Catégorie (optionnel)',
+    'Libellé, code, catégorie…': 'Libellé, code, catégorie…',
+    'Tous les services': 'Tous les services',
+    'Ajouter onglet': 'Ajouter onglet',
+    'Ajouter un onglet service': 'Ajouter un onglet service',
+    'Formulaire résultats': 'Formulaire résultats',
+    'Service actif': 'Service actif',
+    'Cet examen sera enregistré pour le service {service}.':
+      'Cet examen sera enregistré pour le service {service}.',
+    'Cet examen sera ajouté à la nomenclature {kind} (visible sur cet onglet).':
+      'Cet examen sera ajouté à la nomenclature {kind} (visible sur cet onglet).',
+    "Retirer l'onglet {name}": "Retirer l'onglet {name}",
+    'ex: consultation': 'ex: consultation',
+    "Libellé de l'examen": "Libellé de l'examen",
+    Optionnel: 'Optionnel',
+    'Libellé et tarif sont obligatoires (0 = à tarifer plus tard).':
+      'Libellé et tarif sont obligatoires (0 = à tarifer plus tard).',
+    'Libellé et tarif sont obligatoires.': 'Libellé et tarif sont obligatoires.',
+    'Nomenclature et tarifs — {service}': 'Nomenclature et tarifs — {service}',
+    'À créer': 'À créer',
+    'Formulaire à compléter au labo': 'Formulaire à compléter au labo',
+    Lié: 'Lié',
+    'Service inconnu': 'Service inconnu',
     "Types d'examen": "Types d'examen",
     'Nomenclature des chambres et tarifs de nuitée':
       'Nomenclature des chambres et tarifs de nuitée',
@@ -1373,6 +1479,8 @@ export default {
     'Saisie (proposé au laboratoire)': 'Saisie (proposé au laboratoire)',
     'Consultation seule': 'Consultation seule',
     'Champs du formulaire': 'Champs du formulaire',
+    'Prix par champ : utilisé si le médecin coche seulement certains labels ; sinon le tarif général de l’examen s’applique.':
+      'Prix par champ : obligatoire pour cocher le champ seul. Sans prix, le médecin doit tout sélectionner (tarif général).',
     'Aucun champ — ajoutez-en au moins un.': 'Aucun champ — ajoutez-en au moins un.',
     'Activer le commentaire (textarea) pour ce champ': 'Activer le commentaire (textarea) pour ce champ',
     'Supprimer le champ': 'Supprimer le champ',
@@ -1383,6 +1491,8 @@ export default {
     'Un formulaire doit conserver au moins un champ.': 'Un formulaire doit conserver au moins un champ.',
     'Champs mis à jour.': 'Champs mis à jour.',
     'Le nom du formulaire est obligatoire.': 'Le nom du formulaire est obligatoire.',
+    'Le tarif est obligatoire et doit être supérieur à 0.':
+      'Le tarif est obligatoire et doit être supérieur à 0.',
     'Ajoutez au moins un champ avec un libellé.': 'Ajoutez au moins un champ avec un libellé.',
     'Formulaire mis à jour.': 'Formulaire mis à jour.',
     'Formulaire créé.': 'Formulaire créé.',
@@ -1395,6 +1505,7 @@ export default {
     'Routine Investigation': 'Routine Investigation',
     Hormones: 'Hormones',
     Biochimie: 'Biochimie',
+    NFS: 'NFS',
     Hématologie: 'Hématologie',
     Urinaire: 'Urinaire',
     Sérologie: 'Sérologie',
@@ -1441,8 +1552,8 @@ export default {
     'TCA (temps de cephaline active)': 'TCA (temps de cephaline active)',
     'TP (Taux de prothrombine)': 'TP (Taux de prothrombine)',
     'Orientation hospitalisation': 'Orientation hospitalisation',
-    "Le médecin oriente le patient vers l'hospitalisation. Le choix de la salle, la disponibilité des salles et le paiement se font à la réception.":
-      "Le médecin oriente le patient vers l'hospitalisation. Le choix de la salle, la disponibilité des salles et le paiement se font à la réception.",
+    "Le médecin oriente le patient vers l'hospitalisation. Le choix de la salle, la disponibilité des salles et le paiement se font auprès du gestionnaire.":
+      "Le médecin oriente le patient vers l'hospitalisation. Le choix de la salle, la disponibilité des salles et le paiement se font auprès du gestionnaire.",
     'Hospitalisation prescrite': 'Hospitalisation prescrite',
     'Prescrire une hospitalisation': 'Prescrire une hospitalisation',
     'ABG + Electrolytes': 'ABG + Electrolytes',
@@ -1547,6 +1658,7 @@ export default {
     'Impossible d\'imprimer les résultats.': 'Impossible d\'imprimer les résultats.',
     'Prescrit par': 'Prescrit par',
     'Validé par': 'Validé par',
+    'Imprimé le': 'Imprimé le',
     Test: 'Test',
     Result: 'Result',
     'Stock laboratoire': 'Stock laboratoire',
@@ -1558,6 +1670,11 @@ export default {
     'Unité (optionnel)': 'Unité (optionnel)',
     'Valeur de référence (optionnel)': 'Valeur de référence (optionnel)',
     'Texte par défaut (optionnel)': 'Texte par défaut (optionnel)',
+    'Texte par défaut (placeholder à la saisie)': 'Texte par défaut (prérempli à la saisie)',
+    'Texte par défaut (prérempli à la saisie)': 'Texte par défaut (prérempli à la saisie)',
+    'Prix (optionnel)': 'Prix (optionnel)',
+    'Le prix d’un champ doit être un entier supérieur à 0 (ou laisser vide).':
+      'Le prix d’un champ doit être un entier supérieur à 0 (ou laisser vide).',
     'Ajouter un champ': 'Ajouter un champ',
     'Ex. Bilan rénal': 'Ex. Bilan rénal',
     'Ex. Créatinine': 'Ex. Créatinine',
@@ -1605,7 +1722,6 @@ export default {
     'Supprimer « {name} » ?': 'Supprimer « {name} » ?',
     'Article supprimé.': 'Article supprimé.',
     'Ex. Réactif glucose': 'Ex. Réactif glucose',
-    Optionnel: 'Optionnel',
     Référence: 'Référence',
     'Sans catégorie': 'Sans catégorie',
     'Quantité en stock': 'Quantité en stock',
@@ -1777,6 +1893,51 @@ export default {
     Règlement: 'Règlement',
     Produit: 'Produit',
     'Sous-total': 'Sous-total',
+    'Facture — Examens laboratoire': 'Facture — Examens laboratoire',
+    'Facture — Radiologie': 'Facture — Radiologie',
+    'Facture — Échographie': 'Facture — Échographie',
+    'Facture — Odontologie': 'Facture — Odontologie',
+    'Facture — Opération': 'Facture — Opération',
+    'Facture — Hospitalisation': 'Facture — Hospitalisation',
+    'Facture — Examens médicaux': 'Facture — Examens médicaux',
+    'Facture — Examens spécialité': 'Facture — Examens spécialité',
+    'Encaissement des examens': 'Encaissement des examens',
+    'Encaissez type par type, ou validez tout en une fois en bas de la fenêtre':
+      'Encaissez type par type, ou validez tout en une fois en bas de la fenêtre',
+    'Faites défiler pour voir tous les examens et saisir les réductions par type':
+      'Faites défiler pour voir tous les examens et saisir les réductions par type',
+    'Tél.': 'Tél.',
+    "L'hospitalisation est gérée via le bouton dédié dans la liste (attribution de salle et admission).":
+      "L'hospitalisation est gérée via le bouton dédié dans la liste (attribution de salle et admission).",
+    'Aucun examen facturable trouvé pour ce dossier.':
+      'Aucun examen facturable trouvé pour ce dossier.',
+    'Déjà payé': 'Déjà payé',
+    'Déjà réglé': 'Déjà réglé',
+    'Montant réglé': 'Montant réglé',
+    'Commentaire — {kind} :': 'Commentaire — {kind} :',
+    'Paiement en tranche': 'Paiement en tranche',
+    'Tranche (FCFA)': 'Tranche (FCFA)',
+    'Ex. 50 000': 'Ex. 50 000',
+    'Encaisser {kind}': 'Encaisser {kind}',
+    'Encaisser une tranche': 'Encaisser une tranche',
+    'Encaisser une tranche ({amount})': 'Encaisser une tranche ({amount})',
+    'Réduction : - {amount}': 'Réduction : - {amount}',
+    'Historique des paiements du patient': 'Historique des paiements du patient',
+    'Résumé du paiement': 'Résumé du paiement',
+    Types: 'Types',
+    Brut: 'Brut',
+    'Réduc.': 'Réduc.',
+    'Validation en cours…': 'Validation en cours…',
+    'Valider tout ({n} type — {amount})': 'Valider tout ({n} type — {amount})',
+    'Valider tout ({n} types — {amount})': 'Valider tout ({n} types — {amount})',
+    'Réduction Spécialité (FCFA)': 'Réduction Spécialité (FCFA)',
+    'Réduction Laboratoire (FCFA)': 'Réduction Laboratoire (FCFA)',
+    'Réduction Radio (FCFA)': 'Réduction Radio (FCFA)',
+    'Réduction Écho (FCFA)': 'Réduction Écho (FCFA)',
+    'Réduction Odonto (FCFA)': 'Réduction Odonto (FCFA)',
+    'Réduction Opération (FCFA)': 'Réduction Opération (FCFA)',
+    'Réduction Hospitalisation (FCFA)': 'Réduction Hospitalisation (FCFA)',
+    'Opérations en attente': 'Opérations en attente',
     'Total payé': 'Total payé',
     'Notes:': 'Notes:',
     'Merci de votre confiance': 'Merci de votre confiance',
@@ -1916,6 +2077,10 @@ export default {
     'Ventes : {amount}': 'Ventes : {amount}',
     'Indiquez le nom du médicament (hors catalogue).': 'Indiquez le nom du médicament (hors catalogue).',
     'Rechercher un produit en stock': 'Rechercher un produit en stock',
+    '{n} produit trouvé': '{n} produit trouvé',
+    '{n} produits trouvés': '{n} produits trouvés',
+    '{n} produit du catalogue': '{n} produit du catalogue',
+    '{n} produits du catalogue': '{n} produits du catalogue',
     'Nom, dosage, code-barres…': 'Nom, dosage, code-barres…',
     'Aucun produit trouvé dans le catalogue.': 'Aucun produit trouvé dans le catalogue.',
     'Médicament hors pharmacie': 'Médicament hors pharmacie',
@@ -2179,6 +2344,27 @@ export default {
       'Le nom français doit contenir au moins 2 caractères.',
     'Le nom arabe est obligatoire.': 'Le nom arabe est obligatoire.',
     'Le téléphone est obligatoire.': 'Le téléphone est obligatoire.',
+    'Le téléphone est obligatoire (au moins 6 chiffres).':
+      'Le téléphone est obligatoire (au moins 6 chiffres).',
+    'Le téléphone doit contenir au moins 6 chiffres.':
+      'Le téléphone doit contenir au moins 6 chiffres.',
+    'Au moins 6 chiffres requis pour valider.': 'Au moins 6 chiffres requis pour valider.',
+    'Champs incomplets': 'Champs incomplets',
+    'Veuillez corriger les points suivants :': 'Veuillez corriger les points suivants :',
+    'Indiquez le nom et le prénom du patient.': 'Indiquez le nom et le prénom du patient.',
+    'Le prénom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).':
+      'Le prénom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).',
+    'Le nom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).':
+      'Le nom doit contenir au moins 2 lettres (séparez nom et prénom par un espace).',
+    'Indiquez un âge valide.': 'Indiquez un âge valide.',
+    'Sélectionnez un service.': 'Sélectionnez un service.',
+    'Sélectionnez un médecin.': 'Sélectionnez un médecin.',
+    'Indiquez un montant de consultation supérieur à 0.':
+      'Indiquez un montant de consultation supérieur à 0.',
+    'La réduction ne peut pas dépasser le montant de la consultation.':
+      'La réduction ne peut pas dépasser le montant de la consultation.',
+    'Le total à payer doit être supérieur à 0.': 'Le total à payer doit être supérieur à 0.',
+    'Indiquez un montant de consultation valide.': 'Indiquez un montant de consultation valide.',
     'Adresse e-mail invalide.': 'Adresse e-mail invalide.',
     Identité: 'Identité',
     'Nom (français)': 'Nom (français)',
@@ -2254,7 +2440,9 @@ export default {
     'Stock laboratoire': 'Stock laboratoire',
     Trésorerie: 'Trésorerie',
     'Caisse & décaissement': 'Caisse & décaissement',
+    'Caisse & journal': 'Caisse & journal',
     'Livre journal': 'Livre journal',
+    'Livre journal et historique des journées': 'Livre journal et historique des journées',
     Charges: 'Charges',
     Personnel: 'Personnel',
     'Registre du personnel': 'Registre du personnel',
@@ -2267,6 +2455,15 @@ export default {
     Ophtalmologie: 'Ophtalmologie',
     Tromatologie: 'Tromatologie',
     Traumatologie: 'Traumatologie',
+    Urgences: 'Urgences',
+    Maternité: 'Maternité',
+    Pédiatrie: 'Pédiatrie',
+    'Bloc opératoire': 'Bloc opératoire',
+    'Accueil / Réception': 'Accueil / Réception',
+    'Chirurgie Générale': 'Chirurgie Générale',
+    'Chirurgie generale': 'Chirurgie generale',
+    Gynécologie: 'Gynécologie',
+    Gynecologie: 'Gynecologie',
     Echographie: 'Echographie',
     Odontologie: 'Odontologie',
     'Chirurgie majeure': 'Chirurgie majeure',

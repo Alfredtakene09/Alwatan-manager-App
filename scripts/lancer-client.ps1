@@ -1,104 +1,110 @@
-# Ouvre Alwatan sur un poste client (sans PowerShell compliqué).
-# Essaie Wi-Fi / Ethernet puis Tailscale (les deux adresses sont dans alwatan-server.txt).
+# Open Alwatan from a client workstation.
+# Strict order: Wi-Fi/Ethernet first, Tailscale only as fallback.
+param(
+    [switch]$ForceHardReload
+)
+
 . "$PSScriptRoot\_alwatan-common.ps1"
 
 $ErrorActionPreference = 'Continue'
 $configuredIp = Read-AlwatanServerIp
 $tailscaleIp = Read-AlwatanTailscaleIp
-Write-AlwatanClientLaunchLog "Lancement client — SERVER_IP=$configuredIp TAILSCALE_IP=$tailscaleIp — dir=$PSScriptRoot"
+
+$wifiIp = $null
+$tsIp = $null
+if ($configuredIp -and -not (Test-AlwatanTailscaleIpv4 $configuredIp)) {
+    $wifiIp = $configuredIp
+} elseif ($configuredIp -and (Test-AlwatanTailscaleIpv4 $configuredIp)) {
+    $tsIp = $configuredIp
+    Write-AlwatanClientLaunchLog "WARN: SERVER_IP points to Tailscale ($configuredIp); missing Wi-Fi primary"
+}
+if ($tailscaleIp -and (Test-AlwatanTailscaleIpv4 $tailscaleIp)) {
+    $tsIp = $tailscaleIp
+} elseif ($tailscaleIp -and -not $wifiIp) {
+    $wifiIp = $tailscaleIp
+}
+
+Write-AlwatanClientLaunchLog "Client launch WIFI=$wifiIp TS=$tsIp FORCE_HARD_RELOAD=$ForceHardReload dir=$PSScriptRoot"
 
 function Open-ConfiguredServer {
     param(
         [Parameter(Mandatory = $true)][string]$Ip,
-        [string]$Label = 'serveur'
+        [string]$Label = 'server'
     )
 
-    # 1) Production cabinet (port 4000)
-    if (Test-AlwatanProductionApp -HostName $Ip -Port 4000 -TimeoutSec 3) {
+    if (Test-AlwatanApiReachable -HostName $Ip -Port 4000 -TimeoutSec 3) {
         $url = "http://${Ip}:4000/"
-        Write-AlwatanClientLaunchLog "OK production ($Label) : $url"
-        Open-AlwatanBrowser -Url $url
+        Write-AlwatanClientLaunchLog "OK production ($Label): $url"
+        Open-AlwatanBrowser -Url $url -ForceHardReload:$ForceHardReload
         return $true
     }
 
-    # 2) Mode développement (Vite 5173) si le serveur tourne en Dev
     if (Test-AlwatanFrontend -HostName $Ip -FrontendPort 5173 -TimeoutSec 2) {
         $url = "http://${Ip}:5173/"
-        Write-AlwatanClientLaunchLog "OK vite ($Label) : $url"
-        Open-AlwatanBrowser -Url $url
+        Write-AlwatanClientLaunchLog "OK vite ($Label): $url"
+        Open-AlwatanBrowser -Url $url -ForceHardReload:$ForceHardReload
         return $true
     }
 
     return $false
 }
 
-$orderedIps = [System.Collections.Generic.List[string]]::new()
-$seenIp = @{}
-function Add-TryIp([string]$Value) {
-    if (-not $Value) { return }
-    if ($seenIp.ContainsKey($Value)) { return }
-    $seenIp[$Value] = $true
-    [void]$orderedIps.Add($Value)
+if ($wifiIp) {
+    if (Open-ConfiguredServer -Ip $wifiIp -Label 'Wi-Fi') { exit 0 }
+    Write-AlwatanClientLaunchLog "Wi-Fi unavailable ($wifiIp); trying Tailscale fallback"
 }
 
-Add-TryIp $configuredIp
-Add-TryIp $tailscaleIp
-
-foreach ($ip in $orderedIps) {
-    $label = if (Test-AlwatanTailscaleIpv4 $ip) { 'Tailscale' } else { 'Wi-Fi' }
-    if (Open-ConfiguredServer -Ip $ip -Label $label) {
-        exit 0
-    }
+if ($tsIp -and $tsIp -ne $wifiIp) {
+    if (Open-ConfiguredServer -Ip $tsIp -Label 'Tailscale') { exit 0 }
 }
 
-# Aucune IP joignable : ouvrir quand même la première (évite « rien ne se passe »)
-if ($configuredIp) {
-    $url = "http://${configuredIp}:4000/"
-    Write-AlwatanClientLaunchLog "Serveur non joignable — ouverture forcée Wi-Fi : $url"
-    Open-AlwatanBrowser -Url $url
-    $tsHint = if ($tailscaleIp) { "`nTailscale (secours) : http://${tailscaleIp}:4000/" } else { '' }
+if ($wifiIp) {
+    $url = "http://${wifiIp}:4000/"
+    Write-AlwatanClientLaunchLog "Forced Wi-Fi open: $url"
+    Open-AlwatanBrowser -Url $url -ForceHardReload:$ForceHardReload
+    $tsHint = if ($tsIp) { "`nTailscale fallback: http://${tsIp}:4000/" } else { '' }
     Show-AlwatanMessage -Title 'Alwatan Manager' -Message @"
-Le navigateur s'ouvre sur :
+Le navigateur s'ouvre sur le Wi-Fi :
 $url$tsHint
 
 Si la page ne charge pas :
-1) Vérifiez que le PC serveur est allumé
-2) Même Wi-Fi / Ethernet que le serveur
-   OU Tailscale connecté sur les deux postes
-3) Sur le serveur, lancez « Alwatan Manager (Serveur) » en mode cabinet (port 4000)
+1) PC serveur allume + Alwatan Manager (Serveur) lance
+2) Meme Wi-Fi / Ethernet que le serveur
+3) Verifiez l'IP Wi-Fi du serveur : $wifiIp
 
 Journal : %LOCALAPPDATA%\CliniqueAlwatan\last-launch.log
 "@ -Type Warning
     exit 0
 }
 
-if ($tailscaleIp) {
-    $url = "http://${tailscaleIp}:4000/"
-    Write-AlwatanClientLaunchLog "Ouverture forcée Tailscale : $url"
-    Open-AlwatanBrowser -Url $url
+if ($tsIp) {
+    $url = "http://${tsIp}:4000/"
+    Write-AlwatanClientLaunchLog "Forced Tailscale open (no Wi-Fi IP): $url"
+    Open-AlwatanBrowser -Url $url -ForceHardReload:$ForceHardReload
+    Show-AlwatanMessage -Title 'Alwatan Manager' -Message @"
+Aucune IP Wi-Fi configuree.
+Ouverture Tailscale : $url
+"@ -Type Warning
     exit 0
 }
 
-# Pas d'IP configurée : essais locaux / hotspot
-$urls = @(
-    'http://192.168.137.1:4000/'
-)
+$urls = @('http://192.168.137.1:4000/')
 $seen = @{}
 foreach ($url in $urls) {
     $hostName = ([Uri]$url).Host
     if ($seen.ContainsKey($hostName)) { continue }
     $seen[$hostName] = $true
-    if (Test-AlwatanProductionApp -HostName $hostName -Port 4000 -TimeoutSec 2) {
-        Write-AlwatanClientLaunchLog "OK hotspot : $url"
-        Open-AlwatanBrowser -Url $url
+    if (Test-AlwatanApiReachable -HostName $hostName -Port 4000 -TimeoutSec 2) {
+        Write-AlwatanClientLaunchLog "OK hotspot: $url"
+        Open-AlwatanBrowser -Url $url -ForceHardReload:$ForceHardReload
         exit 0
     }
 }
 
 $server = Find-AlwatanServer
 if ($server) {
-    Write-AlwatanClientLaunchLog "OK auto : $($server.Url)"
-    Open-AlwatanBrowser -Url $server.Url
+    Write-AlwatanClientLaunchLog "OK auto: $($server.Url)"
+    Open-AlwatanBrowser -Url $server.Url -ForceHardReload:$ForceHardReload
     exit 0
 }
 
@@ -107,16 +113,13 @@ if (Test-Path (Join-Path (Get-AlwatanRoot) 'backend\package.json')) {
     exit $LASTEXITCODE
 }
 
-Write-AlwatanClientLaunchLog 'ECHEC : aucune IP serveur'
+Write-AlwatanClientLaunchLog 'ERROR: no server IP'
 Show-AlwatanMessage -Title 'Alwatan Manager' -Message @"
-Connexion impossible — aucune adresse serveur.
+Connexion impossible - aucune adresse serveur.
 
-1) Réinstallez avec INSTALLER.bat (dossier acces-client)
-2) Ou créez le fichier alwatan-server.txt avec :
+1) Reinstallez avec INSTALLER.bat
+2) Ou creez alwatan-server.txt :
    SERVER_IP=192.168.88.161
    TAILSCALE_IP=100.x.x.x
-   (remplacez par les IP du serveur)
-
-3) Même Wi-Fi / Ethernet OU Tailscale connecté
 "@ -Type Warning
 exit 1

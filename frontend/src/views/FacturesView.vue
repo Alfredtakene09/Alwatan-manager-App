@@ -1,16 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { FileText, Filter } from '@lucide/vue'
+import { Eye, FileText, Filter } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
-import { DT_ICONS } from '@/lib/datatable-defaults'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
+import '@/assets/simple-table.css'
 
 type Invoice = {
   id: string
@@ -107,49 +106,6 @@ const selectedGroup = computed(
   () => patientGroups.value.find((group) => group.id === selectedGroupKey.value) ?? null,
 )
 
-const columns = [
-  {
-    data: 'patientName',
-    title: 'Patient',
-    responsivePriority: 1,
-    render: (name: string, _t: string, row: { patientCode: string }) =>
-      `<span class="dt-name">${name}</span><span class="dt-sub">${row.patientCode}</span>`,
-  },
-  {
-    data: 'invoiceCountLabel',
-    title: 'Factures',
-    responsivePriority: 3,
-  },
-  {
-    data: 'totalAmountSort',
-    title: 'Montant total',
-    responsivePriority: 2,
-    render: (_d: number, _t: string, row: { totalAmount: string }) =>
-      `<span class="dt-amount">${row.totalAmount}</span>`,
-  },
-  {
-    data: 'lastDateSort',
-    title: 'Dernière facture',
-    responsivePriority: 4,
-    render: (_d: number, _t: string, row: { lastDate: string }) =>
-      `<span class="dt-date">${row.lastDate}</span>`,
-  },
-  {
-    data: null,
-    title: '',
-    orderable: false,
-    className: 'dt-actions-col',
-    responsivePriority: 1,
-    render: (_d: unknown, _t: string, row: { id: string }) => `
-      <div class="dt-row-actions" data-id="${row.id}">
-        <button type="button" class="dt-btn dt-btn--text" data-action="details" title="Voir les détails" aria-label="Voir les détails">
-          ${DT_ICONS.view} Détails
-        </button>
-      </div>
-    `,
-  },
-]
-
 async function load() {
   loading.value = true
   try {
@@ -170,8 +126,8 @@ function downloadPdf(id: string) {
   window.open(`/api/factures/${id}/pdf`, '_blank')
 }
 
-function onAction({ action, id }: { action: string; id: string }) {
-  if (action === 'details') selectedGroupKey.value = id
+function openDetails(id: string) {
+  selectedGroupKey.value = id
 }
 
 function closeDetails() {
@@ -212,16 +168,59 @@ onMounted(load)
     </section>
 
     <section class="page-with-table__body">
-      <UiCard title="Factures par patient" class="ui-card--table-panel" :icon="FileText" icon-variant="teal">
-        <UiDataTable
-          table-key="factures-by-patient"
-          fill
-          compact
-          :data="tableData"
-          :columns="columns"
-          :loading="loading"
-          @action="onAction"
-        />
+      <UiCard direct title="Factures par patient" class="ui-card--table-panel" :icon="FileText" icon-variant="teal">
+        <div class="simple-table-shell simple-table-shell--fill">
+          <div
+            v-if="loading"
+            class="simple-table-overlay" role="status"
+            aria-live="polite"
+          >
+            <span class="simple-table-spinner" aria-hidden="true" />
+            Chargement…
+          </div>
+          <div class="simple-table-scroll">
+            <div class="simple-table-wrap">
+              <table class="simple-table">
+                <thead>
+                  <tr>
+                    <th class="simple-table__num">#</th>
+                    <th>Patient</th>
+                    <th>Factures</th>
+                    <th>Montant total</th>
+                    <th>Dernière facture</th>
+                    <th class="simple-table__actions-head">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in tableData" :key="row.id">
+                    <td class="simple-table__num">{{ index + 1 }}</td>
+                    <td>
+                      <span class="st-name">{{ row.patientName }}</span>
+                      <span class="st-sub">{{ row.patientCode }}</span>
+                    </td>
+                    <td>{{ row.invoiceCountLabel }}</td>
+                    <td><span class="st-amount">{{ row.totalAmount }}</span></td>
+                    <td><span class="st-date">{{ row.lastDate }}</span></td>
+                    <td class="simple-table__actions">
+                      <div class="st-actions">
+                        <button
+                          type="button"
+                          class="st-btn st-btn--text"
+                          title="Voir les détails"
+                          aria-label="Voir les détails"
+                          @click="openDetails(row.id)"
+                        >
+                          <Eye :size="15" />
+                          Détails
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </UiCard>
     </section>
 

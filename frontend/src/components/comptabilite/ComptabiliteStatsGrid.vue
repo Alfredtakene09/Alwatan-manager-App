@@ -31,6 +31,8 @@ export type ComptabiliteStats = {
   labPaidTodayNetFcfa: number
   consultationsTodayCount: number
   consultationsTodayNetFcfa: number
+  consultationsPendingCount?: number
+  consultationsPendingFcfa?: number
   surgeryPaidTodayCount?: number
   surgeryPaidTodayNetFcfa?: number
   hospitalizationPaidTodayCount?: number

@@ -17,6 +17,7 @@ export type LabPanelFieldDto = {
   unit: string | null
   reference: string | null
   defaultValue: string | null
+  priceFcfa: number | null
   hasComment: boolean
   type: string
   sortOrder: number
@@ -58,6 +59,8 @@ export function panelDtoToFormPanel(dto: LabPanelDto): LabFormPanel {
       unit: field.unit ?? undefined,
       reference: field.reference ?? undefined,
       defaultValue: field.defaultValue ?? undefined,
+      priceFcfa:
+        field.priceFcfa != null && field.priceFcfa > 0 ? field.priceFcfa : undefined,
       hasComment: field.hasComment === true,
       type: 'text',
     })

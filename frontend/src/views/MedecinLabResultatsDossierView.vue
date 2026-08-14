@@ -308,25 +308,25 @@ onMounted(async () => {
     <p v-if="loading" class="hint">Chargement des résultats…</p>
 
     <template v-else-if="visit">
-      <UiCard title="Informations patient" icon-variant="blue">
-        <dl class="info-grid">
-          <div>
+      <UiCard title="Informations patient" icon-variant="blue" class="lab-dossier__card lab-dossier__card--info">
+        <dl class="info-row">
+          <div class="info-row__item">
             <dt>Matricule</dt>
             <dd>{{ visit.patient.code }}</dd>
           </div>
-          <div>
+          <div class="info-row__item">
             <dt>Catégorie</dt>
             <dd>{{ patientCategoryLabel((visit.patient.category ?? 'STANDARD') as PatientCategory) }}</dd>
           </div>
-          <div>
+          <div class="info-row__item">
             <dt>Prescripteur</dt>
             <dd>{{ doctorLabel }}</dd>
           </div>
-          <div>
+          <div class="info-row__item info-row__item--exams">
             <dt>Examens laboratoire</dt>
             <dd class="prescribed-exams-text" :title="prescribedExamsFull">{{ prescribedExamsPreview }}</dd>
           </div>
-          <div v-if="doctorComment" class="info-grid__full">
+          <div v-if="doctorComment" class="info-row__item info-row__item--full">
             <dt>Commentaire à la prescription</dt>
             <dd class="doctor-comment-preview">{{ doctorComment }}</dd>
           </div>
@@ -335,9 +335,10 @@ onMounted(async () => {
 
       <UiCard
         title="Résultats disponibles"
-        :description="`${panelFiles.length} formulaire(s) — cliquez sur un fichier pour consulter`"
+        :description="`${panelFiles.length} formulaire(s) — cliquez pour consulter`"
         icon-variant="teal"
         :icon="ClipboardList"
+        class="lab-dossier__card lab-dossier__card--files"
       >
         <p v-if="!panelFiles.length" class="hint">Aucun formulaire enregistré pour ce dossier.</p>
 
@@ -351,14 +352,13 @@ onMounted(async () => {
             @click="selectPanel(file.slug)"
           >
             <span class="panel-file__icon" aria-hidden="true">
-              <FileText :size="28" stroke-width="1.5" />
+              <FileText :size="18" stroke-width="1.75" />
             </span>
-            <span class="panel-file__label">{{ file.label }}</span>
-            <span class="panel-file__meta">
-              <span>{{ file.dateLabel }}</span>
-              <span>{{ file.timeLabel }}</span>
+            <span class="panel-file__body">
+              <span class="panel-file__label">{{ file.label }}</span>
+              <span class="panel-file__meta">{{ file.dateLabel }} · {{ file.timeLabel }}</span>
             </span>
-            <span v-if="panelHasDoctorComment(file.slug)" class="panel-file__note">Avis médecin</span>
+            <span v-if="panelHasDoctorComment(file.slug)" class="panel-file__note">Avis</span>
           </button>
         </div>
       </UiCard>
@@ -438,87 +438,128 @@ onMounted(async () => {
 .lab-dossier {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.65rem;
+}
+
+.lab-dossier__card :deep(.ui-card__body) {
+  padding-top: 0.65rem;
+  padding-bottom: 0.65rem;
+}
+
+.lab-dossier__card--info :deep(.ui-card__header),
+.lab-dossier__card--files :deep(.ui-card__header) {
+  padding-bottom: 0.35rem;
 }
 
 .hint {
   margin: 0;
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
-.info-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem 1rem;
+.info-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 1.25rem;
   margin: 0;
 }
 
-.info-grid dt {
-  margin: 0 0 0.15rem;
-  font-size: 0.75rem;
+.info-row__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.info-row__item dt {
+  margin: 0;
+  font-size: 0.6875rem;
+  font-weight: 600;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
-.info-grid dd {
+.info-row__item dt::after {
+  content: ' :';
+}
+
+.info-row__item dd {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.info-row__item--exams {
+  flex: 1 1 12rem;
+  min-width: min(100%, 12rem);
+}
+
+.info-row__item--full {
+  flex: 1 1 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--border);
 }
 
 .prescribed-exams-text {
   color: var(--brand-red-700, #b71c1c);
   font-weight: 800;
-}
-
-.info-grid__full {
-  grid-column: 1 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .doctor-comment-preview {
   white-space: pre-wrap;
-  line-height: 1.45;
+  line-height: 1.4;
+  font-weight: 500;
 }
 
 .panel-files {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
-  gap: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
 }
 
 .panel-file {
-  display: flex;
-  flex-direction: column;
+  display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 1rem 0.75rem 0.85rem;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.4rem 0.65rem;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 8px;
   background: #fff;
   cursor: pointer;
-  text-align: center;
+  text-align: left;
   font-family: inherit;
-  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, transform 0.12s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
 .panel-file:hover {
   border-color: #99f6e4;
   background: #f0fdfa;
-  box-shadow: 0 4px 14px rgba(15, 118, 110, 0.08);
 }
 
 .panel-file--active {
   border-color: var(--primary-500, #6b7c3e);
   background: var(--primary-50, #f4f6ef);
-  box-shadow: 0 4px 16px rgba(61, 79, 37, 0.12);
+  box-shadow: 0 1px 6px rgba(61, 79, 37, 0.1);
 }
 
 .panel-file__icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 3.25rem;
-  height: 3.25rem;
-  border-radius: 10px;
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 6px;
   background: #ecfdf5;
   color: #0f766e;
 }
@@ -528,52 +569,64 @@ onMounted(async () => {
   color: #047857;
 }
 
+.panel-file__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+}
+
 .panel-file__label {
   font-size: 0.8125rem;
   font-weight: 700;
   color: var(--text);
-  line-height: 1.3;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .panel-file__meta {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
   font-size: 0.6875rem;
   font-weight: 600;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .panel-file__note {
-  margin-top: 0.15rem;
+  flex-shrink: 0;
+  margin-left: 0.15rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
   font-size: 0.625rem;
   font-weight: 700;
   color: #0f766e;
+  background: #ecfdf5;
 }
 
 .results-section + .results-section {
-  margin-top: 1.25rem;
-  padding-top: 1.25rem;
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
   border-top: 1px solid var(--border);
 }
 
 .results-section__title {
-  margin: 0 0 0.75rem;
-  font-size: 0.875rem;
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
   color: var(--primary-700);
 }
 
 .results-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.65rem 0.75rem;
+  gap: 0.45rem 0.55rem;
   margin: 0;
 }
 
 .result-item {
   margin: 0;
-  padding: 0.65rem 0.75rem;
+  padding: 0.45rem 0.55rem;
   border-radius: var(--radius-sm);
   background: #f8fafc;
   border: 1px solid var(--border);
@@ -584,8 +637,8 @@ onMounted(async () => {
 }
 
 .result-item dt {
-  margin: 0 0 0.25rem;
-  font-size: 0.6875rem;
+  margin: 0 0 0.15rem;
+  font-size: 0.625rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -594,8 +647,8 @@ onMounted(async () => {
 
 .result-item__ref {
   display: block;
-  margin-top: 0.1rem;
-  font-size: 0.625rem;
+  margin-top: 0.05rem;
+  font-size: 0.5625rem;
   font-weight: 500;
   text-transform: none;
   letter-spacing: normal;
@@ -604,17 +657,17 @@ onMounted(async () => {
 
 .result-item dd {
   margin: 0;
-  font-size: 0.9375rem;
+  font-size: 0.875rem;
   font-weight: 700;
   color: var(--text);
-  line-height: 1.35;
+  line-height: 1.3;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .result-item__unit {
   margin-left: 0.2rem;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-muted);
 }
@@ -625,22 +678,22 @@ onMounted(async () => {
 }
 
 .result-item__comment {
-  margin: 0.35rem 0 0;
-  font-size: 0.8125rem;
+  margin: 0.25rem 0 0;
+  font-size: 0.75rem;
   font-weight: 500;
   color: var(--text-muted);
   white-space: pre-wrap;
-  line-height: 1.35;
+  line-height: 1.3;
 }
 
 .doctor-comment-block {
-  margin-top: 1.25rem;
-  padding-top: 1.25rem;
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
   border-top: 1px solid var(--border);
 }
 
 .doctor-comment-block__meta {
-  margin: -0.5rem 0 0;
+  margin: -0.35rem 0 0;
   font-size: 0.75rem;
   color: var(--text-muted);
 }
@@ -649,7 +702,7 @@ onMounted(async () => {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
-  margin-top: 1.25rem;
+  margin-top: 0.9rem;
 }
 
 @media (max-width: 1024px) {
@@ -659,19 +712,26 @@ onMounted(async () => {
 }
 
 @media (max-width: 768px) {
-  .info-grid,
+  .info-row {
+    gap: 0.45rem 0.85rem;
+  }
+
+  .info-row__item--exams {
+    flex-basis: 100%;
+  }
+
   .results-grid {
     grid-template-columns: 1fr;
   }
 
-  .panel-files {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .panel-file {
+    flex: 1 1 calc(50% - 0.45rem);
   }
 }
 
 @media (max-width: 480px) {
-  .panel-files {
-    grid-template-columns: 1fr;
+  .panel-file {
+    flex: 1 1 100%;
   }
 }
 </style>

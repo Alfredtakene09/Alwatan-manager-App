@@ -30,7 +30,7 @@ async function loadVisits(opts?: { silent?: boolean }) {
     visits.value = data
   } finally {
     if (!opts?.silent) loading.value = false
-    if (!opts?.silent) statsRefreshKey.value += 1
+    statsRefreshKey.value += 1
   }
 }
 
@@ -80,8 +80,7 @@ onMounted(() => {
     </section>
 
     <section class="page-with-table__body">
-      <UiCard
-        title="Analyses en cours"
+      <UiCard direct title="Analyses en cours"
         description="Patients en attente de résultats — visibles après validation par la comptabilité"
         class="ui-card--table-panel"
         :icon="FlaskConical"

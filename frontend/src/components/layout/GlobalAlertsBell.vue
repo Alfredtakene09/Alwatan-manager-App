@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Bell, AlertTriangle, Clock } from '@lucide/vue'
+import { Bell, AlertTriangle, Clock, BedDouble } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
-import { canAccessModule, formatFcfa } from '@/lib/roles'
+import { canAccessModule, formatFcfa, fullName } from '@/lib/roles'
 import type { AdminDashboardOverview } from '@/lib/admin-dashboard'
 import type { GestionnaireDashboardOverview } from '@/lib/gestionnaire-dashboard'
 import {
@@ -21,13 +21,22 @@ const { localeCode } = useAppI18n()
 const showModal = ref(false)
 const overview = ref<AdminDashboardOverview | null>(null)
 const gestionnaireOverview = ref<GestionnaireDashboardOverview | null>(null)
+const pendingHospitalizations = ref<
+  Array<{
+    id: string
+    visitId: string
+    patientCode: string
+    patientName: string
+  }>
+>([])
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 
 const canSeeAlerts = computed(() => {
   if (!auth.user) return false
   return (
     canAccessModule(auth.user.role, 'admin') ||
-    canAccessModule(auth.user.role, 'gestionnaire')
+    canAccessModule(auth.user.role, 'gestionnaire') ||
+    canAccessModule(auth.user.role, 'hospitalisation')
   )
 })
 
@@ -46,27 +55,18 @@ const dashboardAlerts = computed(() => {
     message: string
     actionLabel?: string
     actionTo?: string
+    kind?: 'hospitalization' | 'default'
   }> = []
 
-  const pendingDayClosures =
-    gestionnaireOverview.value?.alerts.pendingDayClosures ??
-    overview.value?.alerts.pendingDayClosures ??
-    0
-  if (pendingDayClosures > 0) {
+  for (const hosp of pendingHospitalizations.value) {
     items.push({
-      id: 'day-closures',
+      id: `hosp-${hosp.id}`,
       severity: 'warning',
-      title: translateDashboardLabel('Clôtures de journée à valider'),
-      message:
-        pendingDayClosures > 1
-          ? translateTemplate('{n} clôtures réception en attente de validation.', {
-              n: pendingDayClosures,
-            })
-          : translateTemplate('{n} clôture réception en attente de validation.', {
-              n: pendingDayClosures,
-            }),
-      actionLabel: translateDashboardLabel('Ouvrir la caisse'),
-      actionTo: '/gestionnaire/caisse',
+      kind: 'hospitalization',
+      title: translateDashboardLabel('Nouvelle hospitalisation'),
+      message: `${hosp.patientCode} — ${hosp.patientName}`,
+      actionLabel: translateDashboardLabel('Admettre le patient'),
+      actionTo: `/hospitalisation?tab=queue&visitId=${encodeURIComponent(hosp.visitId)}`,
     })
   }
 
@@ -93,7 +93,7 @@ const dashboardAlerts = computed(() => {
       actionLabel: cash.overdue
         ? translateDashboardLabel('Récupérer la tirelire')
         : translateDashboardLabel('Voir la caisse comptable'),
-      actionTo: '/gestionnaire/caisse',
+      actionTo: '/gestionnaire/livre-journal?tab=historique',
     })
   }
 
@@ -183,10 +183,50 @@ const alertsModalSubtitle = computed(() => {
     : translateTemplate('{n} alerte à traiter', { n: alertsCount.value })
 })
 
+async function loadHospitalizationAlerts() {
+  if (!auth.user || !canAccessModule(auth.user.role, 'hospitalisation')) {
+    pendingHospitalizations.value = []
+    return
+  }
+
+  type HospRow = {
+    id: string
+    status: string
+    startDate?: string | null
+    createdAt?: string
+    room?: { name?: string } | null
+    visit: {
+      id: string
+      patient: { code: string; firstName: string; lastName: string }
+    }
+  }
+
+  const { data } = await api.get<{ hospitalizations?: HospRow[] }>('/hospitalisation')
+  const rows = data.hospitalizations ?? []
+  pendingHospitalizations.value = rows
+    .filter((row) => {
+      if (row.status === 'DISCHARGED' || row.status === 'CANCELLED') return false
+      const admitted = row.status === 'ACTIVE' || (Boolean(row.room) && Boolean(row.startDate))
+      return !admitted
+    })
+    .sort((a, b) => {
+      const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0
+      const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0
+      return bTime - aTime
+    })
+    .map((row) => ({
+      id: row.id,
+      visitId: row.visit.id,
+      patientCode: row.visit.patient.code,
+      patientName: fullName(row.visit.patient.firstName, row.visit.patient.lastName),
+    }))
+}
+
 async function loadAlerts() {
   if (!canSeeAlerts.value || !auth.user) {
     overview.value = null
     gestionnaireOverview.value = null
+    pendingHospitalizations.value = []
     return
   }
 
@@ -210,6 +250,12 @@ async function loadAlerts() {
   } else {
     gestionnaireOverview.value = null
   }
+
+  tasks.push(
+    loadHospitalizationAlerts().catch(() => {
+      pendingHospitalizations.value = []
+    }),
+  )
 
   try {
     await Promise.all(tasks)
@@ -266,7 +312,8 @@ watch(
           :class="`alerts-list__item--${alert.severity}`"
         >
           <div class="alerts-list__content">
-            <AlertTriangle v-if="alert.severity === 'danger'" :size="18" />
+            <BedDouble v-if="alert.kind === 'hospitalization'" :size="18" />
+            <AlertTriangle v-else-if="alert.severity === 'danger'" :size="18" />
             <Clock v-else :size="18" />
             <div>
               <strong class="alerts-list__title">{{ alert.title }}</strong>
@@ -284,7 +331,11 @@ watch(
         </li>
       </ul>
       <p v-else class="alerts-list__item alerts-list__item--ok">
-        Tout est à jour — aucune clôture, dépense ni paie en attente.
+        {{
+          translateDashboardLabel(
+            'Tout est à jour — aucune clôture, dépense, paie ni hospitalisation en attente.',
+          )
+        }}
       </p>
     </UiFormModal>
   </template>
@@ -343,6 +394,8 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+  max-height: min(55vh, 28rem);
+  overflow: auto;
 }
 
 .alerts-list__item {

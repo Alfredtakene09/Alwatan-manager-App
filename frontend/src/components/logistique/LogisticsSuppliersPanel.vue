@@ -3,15 +3,15 @@ import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
 import { Building2, Plus, RefreshCw, Save } from '@lucide/vue'
 import api from '@/api/client'
-import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiTextarea from '@/components/ui/UiTextarea.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import { confirmAppModal } from '@/lib/api-modal-helper'
+import '@/assets/simple-table.css'
 
 export type LogisticsSupplierRecord = {
   id: string
@@ -55,36 +55,6 @@ const tableRows = computed(() =>
     canDelete: true,
   })),
 )
-
-const columns = [
-  {
-    data: 'name',
-    title: 'Fournisseur',
-    responsivePriority: 1,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  { data: 'contact', title: 'Contact', responsivePriority: 2 },
-  { data: 'phone', title: 'Tél.', responsivePriority: 2 },
-  {
-    data: 'statusLabel',
-    title: 'État',
-    responsivePriority: 3,
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: '',
-    orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog all',
-    responsivePriority: 1,
-    render: (
-      _d: unknown,
-      _t: string,
-      row: { id: string; toggleLabel: string; isActive: boolean; canDelete: boolean },
-    ) => catalogRowActionsHtml(row),
-  },
-]
 
 function apiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error) && typeof error.response?.data?.error === 'string') {
@@ -241,18 +211,51 @@ defineExpose({ reload: loadItems })
 
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
 
-    <p v-if="!loading && !items.length" class="empty">Aucun fournisseur enregistré</p>
-    <UiDataTable
-      v-else
-      fill
-      table-key="logistics-suppliers"
-      compact
-      :data="tableRows"
-      :columns="columns"
-      :loading="loading"
-      loading-label="Chargement des fournisseurs…"
-      @action="onTableAction"
-    />
+    <div class="simple-table-shell simple-table-shell--fill">
+      <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+        <span class="simple-table-spinner" aria-hidden="true" />
+        Chargement des fournisseurs…
+      </div>
+      <div class="simple-table-scroll">
+        <p v-if="!loading && !tableRows.length" class="simple-table__empty">
+          Aucun fournisseur enregistré
+        </p>
+        <div v-else class="simple-table-wrap">
+          <table class="simple-table">
+            <thead>
+              <tr>
+                <th class="simple-table__num">#</th>
+                <th>Fournisseur</th>
+                <th>Contact</th>
+                <th>Tél.</th>
+                <th>État</th>
+                <th class="simple-table__actions-head"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in tableRows" :key="row.id">
+                <td class="simple-table__num">{{ index + 1 }}</td>
+                <td><span class="st-name">{{ row.name }}</span></td>
+                <td><span class="st-muted">{{ row.contact }}</span></td>
+                <td><span class="st-muted">{{ row.phone }}</span></td>
+                <td>
+                  <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                </td>
+                <td class="simple-table__actions">
+                  <StCatalogActions
+                    :id="row.id"
+                    :toggle-label="row.toggleLabel"
+                    :is-active="row.isActive"
+                    :can-delete="row.canDelete"
+                    @action="onTableAction"
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </PageTableSection>
 
   <UiFormModal
@@ -285,13 +288,6 @@ defineExpose({ reload: loadItems })
 <style scoped>
 .panel-alert {
   margin-bottom: 1rem;
-}
-
-.empty {
-  text-align: center;
-  color: var(--text-light);
-  padding: 2rem 1rem;
-  font-size: 0.875rem;
 }
 
 .form-grid {

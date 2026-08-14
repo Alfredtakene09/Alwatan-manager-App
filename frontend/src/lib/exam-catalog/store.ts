@@ -86,7 +86,12 @@ type LabPanelApiRow = {
   isEntry: boolean
   active: boolean
   sortOrder?: number
-  fields?: Array<{ id?: string; key?: string }>
+  fields?: Array<{
+    id?: string
+    key?: string
+    label?: string
+    priceFcfa?: number | null
+  }>
   examCatalogItems?: Array<{
     id: string
     code: string
@@ -107,7 +112,41 @@ let catalogCache = new Map<CatalogCacheKey, GroupedExamCatalog>()
 let specialtyNameCache = new Map<CatalogCacheKey, string | null>()
 let specialtyServicesCache = new Map<CatalogCacheKey, SpecialtyServiceInfo[]>()
 let priceCache = new Map<string, number>()
+/** Clé : `panelLabel::fieldLabel` normalisée. */
+let fieldPriceCache = new Map<string, number>()
 let loadPromises = new Map<CatalogCacheKey, Promise<GroupedExamCatalog>>()
+
+function normalizePriceKey(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/\s+/g, ' ')
+}
+
+function fieldPriceLookupKey(panelLabel: string, fieldLabel: string) {
+  return `${normalizePriceKey(panelLabel)}::${normalizePriceKey(fieldLabel)}`
+}
+
+function rememberFieldPricesFromPanels(panels: LabPanelApiRow[]) {
+  fieldPriceCache = new Map()
+  for (const panel of panels) {
+    const panelLabels = new Set<string>([
+      panel.label,
+      ...(panel.examCatalogItems ?? []).map((item) => item.label),
+    ])
+    for (const field of panel.fields ?? []) {
+      const fieldLabel = String(field.label || '').trim()
+      const price = field.priceFcfa
+      if (!fieldLabel || price == null || price < 1) continue
+      for (const panelLabel of panelLabels) {
+        if (!String(panelLabel || '').trim()) continue
+        fieldPriceCache.set(fieldPriceLookupKey(panelLabel, fieldLabel), price)
+      }
+    }
+  }
+}
 
 
 
@@ -224,6 +263,7 @@ async function buildExamenFromLabPanels(): Promise<CatalogExam[] | null> {
   try {
     const { data } = await api.get<LabPanelApiRow[]>('/lab-panels')
     const panels = Array.isArray(data) ? data : []
+    rememberFieldPricesFromPanels(panels)
     const active = panels
       .filter(
         (panel) =>
@@ -423,9 +463,13 @@ export function getCatalogForKind(
 
 
 
-import { extractBasePanelLabel } from '@/lib/lab-prescribed-panels'
+import {
+  countPrescribedFieldUnits,
+  extractBasePanelLabel,
+  extractPrescribedFieldLabels,
+} from '@/lib/lab-prescribed-panels'
 
-export function getExamPriceFcfa(label: string): number {
+function resolveExamBasePrice(label: string): number {
   const direct = priceCache.get(label)
   if (direct != null) return direct
   const base = extractBasePanelLabel(label)
@@ -436,6 +480,30 @@ export function getExamPriceFcfa(label: string): number {
   return 3000
 }
 
+/**
+ * Prix d’une ligne prescrite :
+ * - examen entier → tarif catalogue ;
+ * - champs partiels → somme des prix champs (sinon tarif examen / champ).
+ */
+export function getExamPriceFcfa(label: string): number {
+  const trimmed = label.trim()
+  if (!trimmed) return 3000
+
+  const selectedFields = extractPrescribedFieldLabels(trimmed)
+  if (!selectedFields.length) {
+    return resolveExamBasePrice(trimmed) * countPrescribedFieldUnits(trimmed)
+  }
+
+  const base = extractBasePanelLabel(trimmed)
+  let sum = 0
+  for (const fieldLabel of selectedFields) {
+    const fieldPrice = fieldPriceCache.get(fieldPriceLookupKey(base, fieldLabel))
+    // Sans tarif unitaire : non facturable en sélection partielle (pas de repli examen).
+    if (fieldPrice != null && fieldPrice > 0) sum += fieldPrice
+  }
+  return sum
+}
+
 
 
 export function invalidateExamCatalogCache() {
@@ -443,6 +511,7 @@ export function invalidateExamCatalogCache() {
   specialtyNameCache = new Map()
   specialtyServicesCache = new Map()
   priceCache = new Map()
+  fieldPriceCache = new Map()
   loadPromises = new Map()
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('exam-catalog-invalidate'))

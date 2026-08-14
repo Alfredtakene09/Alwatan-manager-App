@@ -2,6 +2,7 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { registerSW } from 'virtual:pwa-register'
 
 const BUILD_KEY = 'alwatan-app-build-id'
+const AUTO_APPLIED_BUILD_KEY = 'alwatan-auto-applied-build-id'
 const needRefresh = ref(false)
 let updateServiceWorker: ((reloadPage?: boolean) => Promise<void>) | null = null
 let started = false
@@ -52,6 +53,63 @@ function hardReload(buildId?: string | null) {
   window.location.replace(url.toString())
 }
 
+function hasAlreadyAutoApplied(buildId: string) {
+  try {
+    return sessionStorage.getItem(AUTO_APPLIED_BUILD_KEY) === buildId
+  } catch {
+    return false
+  }
+}
+
+function markAutoApplied(buildId: string) {
+  try {
+    sessionStorage.setItem(AUTO_APPLIED_BUILD_KEY, buildId)
+  } catch {
+    /* ignore */
+  }
+}
+
+async function autoApplyUpdate(buildId: string) {
+  if (applying || hasAlreadyAutoApplied(buildId)) return
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return
+
+  markAutoApplied(buildId)
+  // Laisser un court délai pour éviter une coupure en pleine saisie
+  setTimeout(() => {
+    void applyUpdateInternal(buildId)
+  }, 3500)
+}
+
+async function applyUpdateInternal(knownBuildId?: string | null) {
+  if (applying) return
+  applying = true
+
+  const buildId = knownBuildId ?? (await fetchServerBuildId())
+  if (buildId) {
+    try {
+      localStorage.setItem(BUILD_KEY, buildId)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  try {
+    if (updateServiceWorker) {
+      await Promise.race([
+        updateServiceWorker(true),
+        new Promise((resolve) => setTimeout(resolve, 1500)),
+      ])
+    }
+  } catch {
+    /* continue vers hard reload */
+  }
+
+  await requestServiceWorkerUpdate()
+  await clearAppCaches()
+  hardReload(buildId)
+}
+
 async function checkServerBuild() {
   const buildId = await fetchServerBuildId()
   if (!buildId) return
@@ -73,9 +131,10 @@ async function checkServerBuild() {
   }
 
   if (stored !== buildId) {
-    // Afficher la bannière uniquement — pas de rechargement auto (évite les boucles PWA).
+    // Afficher la bannière + tentative d'application auto contrôlée (anti-boucle).
     needRefresh.value = true
     void requestServiceWorkerUpdate()
+    void autoApplyUpdate(buildId)
   }
 }
 
@@ -117,32 +176,7 @@ export function usePwaUpdate() {
   })
 
   async function applyUpdate() {
-    if (applying) return
-    applying = true
-
-    const buildId = await fetchServerBuildId()
-    if (buildId) {
-      try {
-        localStorage.setItem(BUILD_KEY, buildId)
-      } catch {
-        /* ignore */
-      }
-    }
-
-    try {
-      if (updateServiceWorker) {
-        await Promise.race([
-          updateServiceWorker(true),
-          new Promise((resolve) => setTimeout(resolve, 1500)),
-        ])
-      }
-    } catch {
-      /* continue vers hard reload */
-    }
-
-    await requestServiceWorkerUpdate()
-    await clearAppCaches()
-    hardReload(buildId)
+    await applyUpdateInternal()
   }
 
   // Démarrer même si le composant monté en retard

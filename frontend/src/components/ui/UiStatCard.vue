@@ -26,16 +26,29 @@ const labelText = computed(() => {
     :class="[`card-accent--${variant ?? 'green'}`, {
       'stat-card--compact': compact && !mini,
       'stat-card--mini': mini,
+      'stat-card--direct': compact || mini,
     }]"
   >
-    <div class="stat-card__top">
-      <span class="stat-card__label">{{ labelText }}</span>
-      <div class="stat-card__icon" :class="`stat-card__icon--${variant ?? 'green'}`">
-        <component :is="icon" :size="mini || compact ? 14 : 20" />
+    <template v-if="compact || mini">
+      <strong class="stat-card__value">{{ value }}</strong>
+      <div class="stat-card__top">
+        <span class="stat-card__label">{{ labelText }}</span>
+        <div class="stat-card__icon" :class="`stat-card__icon--${variant ?? 'green'}`">
+          <component :is="icon" :size="14" />
+        </div>
       </div>
-    </div>
-    <strong class="stat-card__value">{{ value }}</strong>
-    <span v-if="trend && !mini" class="stat-card__trend">{{ trend }}</span>
+      <span v-if="trend && !mini" class="stat-card__trend">{{ trend }}</span>
+    </template>
+    <template v-else>
+      <div class="stat-card__top">
+        <span class="stat-card__label">{{ labelText }}</span>
+        <div class="stat-card__icon" :class="`stat-card__icon--${variant ?? 'green'}`">
+          <component :is="icon" :size="20" />
+        </div>
+      </div>
+      <strong class="stat-card__value">{{ value }}</strong>
+      <span v-if="trend" class="stat-card__trend">{{ trend }}</span>
+    </template>
   </div>
 </template>
 
@@ -119,5 +132,31 @@ const labelText = computed(() => {
 .stat-card--compact .stat-card__value,
 .stat-card--mini .stat-card__value {
   font-size: 1.125rem;
+}
+
+.stat-card--direct {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.stat-card--direct .stat-card__value {
+  order: 0;
+  margin: 0;
+}
+
+.stat-card--direct .stat-card__top {
+  order: 1;
+  margin-bottom: 0;
+}
+
+.stat-card--direct .stat-card__trend {
+  order: 2;
+  margin-top: 0;
+  font-size: 0.65rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

@@ -5,7 +5,6 @@ import { ListChecks, Plus, RefreshCw, Save, Stethoscope } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
-import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -16,9 +15,9 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import MedecinOperationTypesPanel from '@/components/medecin/MedecinOperationTypesPanel.vue'
-import '@/assets/datatable-theme.css'
+import '@/assets/simple-table.css'
 
 type CatalogItem = {
   id: string
@@ -121,32 +120,6 @@ const tableRows = computed(() => {
     isActive: item.active,
   }))
 })
-
-const columns = [
-  { data: 'label', title: 'Libellé', render: (v: string) => `<span class="dt-name">${v}</span>` },
-  { data: 'code', title: 'Code' },
-  { data: 'category', title: 'Catégorie' },
-  {
-    data: 'priceSort',
-    title: 'Tarif',
-    render: (_d: number, _t: string, row: { price: string }) =>
-      `<span class="dt-amount">${row.price}</span>`,
-  },
-  {
-    data: 'statusLabel',
-    title: 'Statut',
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: 'Actions',
-    orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog',
-    render: (_d: unknown, _t: string, row: { id: string; toggleLabel: string }) =>
-      catalogRowActionsHtml(row),
-  },
-]
 
 function selectTab(tab: TabId) {
   activeTab.value = tab
@@ -387,7 +360,7 @@ watch(categoryOptions, (options) => {
 
       <UiCard
         :title="pageTitle"
-        description="Tarifs utilisés pour vos prescriptions et la facturation"
+        :description="uiText('Tarifs utilisés pour vos prescriptions et la facturation')"
         :icon="ListChecks"
         icon-variant="teal"
         class="section"
@@ -411,13 +384,13 @@ watch(categoryOptions, (options) => {
         <div class="catalog-filters">
           <UiInput
             v-model="searchQuery"
-            label="Rechercher"
-            placeholder="Libellé, code, catégorie…"
+            :label="uiText('Rechercher')"
+            :placeholder="uiText('Libellé, code, catégorie…')"
           />
           <UiSelect
             :key="`medecin-category-filter-${serviceInfo?.clinicServiceId || 'none'}`"
             v-model="selectedCategory"
-            label="Catégorie"
+            :label="uiText('Catégorie')"
           >
             <option value="">{{ uiText('Toutes les catégories') }}</option>
             <option v-for="category in categoryOptions" :key="category" :value="category">
@@ -427,15 +400,53 @@ watch(categoryOptions, (options) => {
         </div>
 
         <div class="table-panel-scroll">
-          <UiDataTable
-            :table-key="`medecin-exam-nomenclature-${searchQuery}-${selectedCategory}`"
-            compact
-            :data="tableRows"
-            :columns="columns"
-            :loading="loading"
-            loading-label="Chargement de votre nomenclature…"
-            @action="onTableAction"
-          />
+          <div class="simple-table-shell">
+            <div
+              v-if="loading"
+              class="simple-table-overlay" role="status"
+              aria-live="polite"
+            >
+              <span class="simple-table-spinner" aria-hidden="true" />
+              {{ uiText('Chargement de votre nomenclature…') }}
+            </div>
+            <div class="simple-table-scroll">
+              <div class="simple-table-wrap">
+                <table class="simple-table">
+                  <thead>
+                    <tr>
+                      <th class="simple-table__num">#</th>
+                      <th>{{ uiText('Libellé') }}</th>
+                      <th>{{ uiText('Code') }}</th>
+                      <th>{{ uiText('Catégorie') }}</th>
+                      <th>{{ uiText('Tarif') }}</th>
+                      <th>{{ uiText('Statut') }}</th>
+                      <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(row, index) in tableRows" :key="row.id">
+                      <td class="simple-table__num">{{ index + 1 }}</td>
+                      <td><span class="st-name">{{ row.label }}</span></td>
+                      <td>{{ row.code }}</td>
+                      <td>{{ row.category }}</td>
+                      <td><span class="st-amount">{{ row.price }}</span></td>
+                      <td>
+                        <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                      </td>
+                      <td class="simple-table__actions">
+                        <StCatalogActions
+                          :id="row.id"
+                          :is-active="row.isActive"
+                          :toggle-label="row.toggleLabel"
+                          @action="onTableAction"
+                        />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
       </UiCard>
 
@@ -449,13 +460,30 @@ watch(categoryOptions, (options) => {
       >
         <section class="form-panel">
           <p class="form-panel__hint">
-            {{ uiText('Service') }}: <strong>{{ serviceName }}</strong>
+            {{ uiText('Service') }}: <strong>{{ uiText(serviceName) }}</strong>
           </p>
           <div class="form-grid-2">
-            <UiInput v-model="newItem.code" label="Code (optionnel)" placeholder="ex: consultation" />
-            <UiInput v-model="newItem.label" label="Libellé" placeholder="Libellé de l'examen" />
-            <UiInput v-model="newItem.category" label="Catégorie (optionnel)" placeholder="Optionnel" />
-            <UiInput v-model="newItem.priceFcfa" label="Tarif (FCFA)" type="number" min="1" />
+            <UiInput
+              v-model="newItem.code"
+              :label="uiText('Code (optionnel)')"
+              :placeholder="uiText('ex: consultation')"
+            />
+            <UiInput
+              v-model="newItem.label"
+              :label="uiText('Libellé')"
+              :placeholder="uiText(`Libellé de l'examen`)"
+            />
+            <UiInput
+              v-model="newItem.category"
+              :label="uiText('Catégorie (optionnel)')"
+              :placeholder="uiText('Optionnel')"
+            />
+            <UiInput
+              v-model="newItem.priceFcfa"
+              :label="uiText('Tarif (FCFA)')"
+              type="number"
+              min="1"
+            />
           </div>
         </section>
         <template #footer>
@@ -469,17 +497,22 @@ watch(categoryOptions, (options) => {
       <UiFormModal
         v-if="editingId"
         title-id="medecin-edit-catalog-title"
-        title="Modifier l'élément"
-        subtitle="Mettre à jour le libellé, la catégorie ou le tarif"
+        :title="uiText(`Modifier l'élément`)"
+        :subtitle="uiText('Mettre à jour le libellé, la catégorie ou le tarif')"
         :icon="ListChecks"
         @close="closeEditModal"
       >
         <section class="form-panel">
           <div class="form-grid-2">
-            <UiInput v-model="editForm.code" label="Code (optionnel)" />
-            <UiInput v-model="editForm.label" label="Libellé" />
-            <UiInput v-model="editForm.category" label="Catégorie (optionnel)" />
-            <UiInput v-model="editForm.priceFcfa" label="Tarif (FCFA)" type="number" min="1" />
+            <UiInput v-model="editForm.code" :label="uiText('Code (optionnel)')" />
+            <UiInput v-model="editForm.label" :label="uiText('Libellé')" />
+            <UiInput v-model="editForm.category" :label="uiText('Catégorie (optionnel)')" />
+            <UiInput
+              v-model="editForm.priceFcfa"
+              :label="uiText('Tarif (FCFA)')"
+              type="number"
+              min="1"
+            />
           </div>
         </section>
         <template #footer>

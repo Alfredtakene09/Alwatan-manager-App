@@ -4,7 +4,8 @@ import App from './App.vue'
 import router from './router'
 import { i18n } from './i18n'
 import './style.css'
-import './assets/datatable-theme.css'
+import './assets/simple-table.css'
+import './assets/page-table-layout.css'
 import './assets/app-modal.css'
 
 const app = createApp(App)

@@ -11,6 +11,7 @@ import {
   BedDouble,
   Stethoscope,
   ClipboardList,
+  X,
 } from '@lucide/vue'
 import ExamPrescriptionPicker from '@/components/ExamPrescriptionPicker.vue'
 import UiTextarea from '@/components/ui/UiTextarea.vue'
@@ -43,6 +44,7 @@ import {
   CLINICAL_CONSULTATION_EXAM_LABEL,
   hasClinicalConsultationSelected,
 } from '@/lib/lab-notes'
+import { groupPrescribedByPanel, formatPanelGroupDetails } from '@/lib/lab-prescribed-panels'
 import { useLabPanelsStore } from '@/stores/lab-panels'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -234,11 +236,6 @@ async function refreshCatalogState() {
   }
 }
 
-const emptyCartHint = computed(() => {
-  void localeCode.value
-  return uiText('Sélectionnez Consultation ou un type d’examen.')
-})
-
 const activeKind = computed<ExamKindSlug>(() => {
   if (activePanel.value === 'consultation') return 'specialty'
   if (String(activePanel.value).startsWith('specialty:')) {
@@ -292,6 +289,14 @@ const prescribedHospitalisationDays = computed({
 
 const totalCount = computed(() => countExamsByKind(examsByKind.value))
 
+/** Kinds with a selection or comment — even if the tab is hidden (services specialty). */
+const summaryKinds = computed(() => {
+  const base = props.kinds ?? EXAM_KIND_ORDER
+  return base.filter(
+    (kind) => kindCount(kind) > 0 || (showCommentForKind(kind) && !!kindComment(kind)),
+  )
+})
+
 function showCommentForKind(kind: ExamKindSlug) {
   return props.showComments && props.commentKinds.includes(kind)
 }
@@ -319,7 +324,32 @@ function updateKind(kind: ExamKindSlug, items: string[]) {
 
 function kindCount(kind: ExamKindSlug) {
   if (kind === 'specialty') return specialtySummaryExams.value.length
-  return examsByKind.value[kind]?.length ?? 0
+  return kindSummaryGroups(kind).length
+}
+
+function kindSummaryExams(kind: ExamKindSlug): string[] {
+  if (kind === 'specialty') return specialtySummaryExams.value
+  return examsByKind.value[kind] ?? []
+}
+
+function kindSummaryGroups(kind: ExamKindSlug) {
+  return groupPrescribedByPanel(kindSummaryExams(kind))
+}
+
+/** Retire tout le formulaire / panel (toutes les lignes champs associées). */
+function removePanelGroup(kind: ExamKindSlug, rawLabels: string[]) {
+  const remove = new Set(rawLabels)
+  if (kind === 'specialty') {
+    updateKind(
+      'specialty',
+      (examsByKind.value.specialty ?? []).filter((label) => !remove.has(label)),
+    )
+    return
+  }
+  updateKind(
+    kind,
+    (examsByKind.value[kind] ?? []).filter((label) => !remove.has(label)),
+  )
 }
 
 function specialtyServiceCount(serviceId: string) {
@@ -756,6 +786,79 @@ watch(
 
 <template>
   <div class="multi-exam-picker">
+    <div class="multi-exam-picker__summary">
+      <div class="multi-exam-picker__summary-head">
+        <ShoppingBag :size="16" />
+        <span>{{ uiText('Examens sélectionnés') }}</span>
+        <strong>{{ totalCount }}</strong>
+      </div>
+
+      <p v-if="!totalCount && !showComments" class="multi-exam-picker__summary-empty">
+        {{ uiText('Aucun examen pour l’instant — choisissez une catégorie ci-dessous.') }}
+      </p>
+      <p
+        v-else-if="
+          !totalCount &&
+          showComments &&
+          !summaryKinds.length
+        "
+        class="multi-exam-picker__summary-empty"
+      >
+        {{ uiText('Aucun examen pour l’instant — choisissez une catégorie ci-dessous.') }}
+      </p>
+
+      <div v-else class="multi-exam-picker__sections">
+        <section v-if="consultationSelected" class="multi-exam-picker__section">
+          <h4>{{ uiText('Consultation') }}</h4>
+          <div class="multi-exam-picker__chips">
+            <button
+              type="button"
+              class="multi-exam-picker__chip"
+              :disabled="hideConsultationTab"
+              :title="
+                hideConsultationTab
+                  ? uiText('Consultation en cours')
+                  : uiText('Retirer')
+              "
+              @click="clearConsultation"
+            >
+              <span>{{ uiText(CLINICAL_CONSULTATION_EXAM_LABEL) }}</span>
+              <X v-if="!hideConsultationTab" :size="13" aria-hidden="true" />
+            </button>
+          </div>
+        </section>
+        <section
+          v-for="kind in summaryKinds"
+          :key="`summary-${kind}`"
+          class="multi-exam-picker__section"
+        >
+          <h4>{{ kindLabel(kind) }}</h4>
+          <div v-if="kindCount(kind)" class="multi-exam-picker__chips">
+            <button
+              v-for="group in kindSummaryGroups(kind)"
+              :key="`${kind}-${group.panel}`"
+              type="button"
+              class="multi-exam-picker__chip multi-exam-picker__chip--panel"
+              :title="
+                formatPanelGroupDetails(group) ||
+                (group.items.length > 1
+                  ? group.items.map((item) => item.chip).join(' · ')
+                  : uiText('Retirer'))
+              "
+              @click="removePanelGroup(kind, group.items.map((item) => item.raw))"
+            >
+              <span>{{ uiText(group.panel) }} ({{ group.items.length }})</span>
+              <X :size="13" aria-hidden="true" />
+            </button>
+          </div>
+          <p v-if="showCommentForKind(kind) && kindComment(kind)" class="multi-exam-picker__summary-comment">
+            <MessageSquare :size="13" />
+            {{ kindComment(kind) }}
+          </p>
+        </section>
+      </div>
+    </div>
+
     <div class="multi-exam-picker__tabs" role="tablist" :aria-label="uiText('Types d\'examens')">
       <button
         v-if="showConsultation && !hideConsultationTab"
@@ -1051,56 +1154,6 @@ watch(
         :placeholder="activeCommentPlaceholder"
       />
     </template>
-
-    <div class="multi-exam-picker__summary">
-      <div class="multi-exam-picker__summary-head">
-        <ShoppingBag :size="16" />
-        <span>{{ uiText('Panier global') }}</span>
-        <strong>{{ totalCount }}</strong>
-      </div>
-
-      <p v-if="!totalCount && !showComments" class="multi-exam-picker__summary-empty">
-        {{ emptyCartHint }}
-      </p>
-      <p
-        v-else-if="
-          !totalCount &&
-          showComments &&
-          !visibleKinds.some((kind) => showCommentForKind(kind) && kindComment(kind))
-        "
-        class="multi-exam-picker__summary-empty"
-      >
-        {{ emptyCartHint }}
-      </p>
-
-      <div v-else class="multi-exam-picker__sections">
-        <section v-if="consultationSelected">
-          <h4>{{ uiText('Consultation') }}</h4>
-          <ul>
-            <li>{{ uiText(CLINICAL_CONSULTATION_EXAM_LABEL) }}</li>
-          </ul>
-        </section>
-        <section
-          v-for="kind in visibleKinds"
-          :key="`summary-${kind}`"
-          v-show="kindCount(kind) || (showCommentForKind(kind) && kindComment(kind))"
-        >
-          <h4>{{ kindLabel(kind) }}</h4>
-          <ul v-if="kindCount(kind)">
-            <li
-              v-for="exam in kind === 'specialty' ? specialtySummaryExams : examsByKind[kind]"
-              :key="`${kind}-${exam}`"
-            >
-              {{ uiText(exam) }}
-            </li>
-          </ul>
-          <p v-if="showCommentForKind(kind) && kindComment(kind)" class="multi-exam-picker__summary-comment">
-            <MessageSquare :size="13" />
-            {{ kindComment(kind) }}
-          </p>
-        </section>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -1233,7 +1286,7 @@ watch(
   border: 1.5px solid var(--primary-200);
   border-radius: var(--radius-sm);
   background: linear-gradient(180deg, var(--primary-50), #fff);
-  padding: 0.85rem 1rem;
+  padding: 0.75rem 0.85rem;
   border-left: 3px solid var(--brand-red);
 }
 
@@ -1241,7 +1294,7 @@ watch(
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  margin-bottom: 0.65rem;
+  margin-bottom: 0.55rem;
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--primary-800);
@@ -1271,11 +1324,11 @@ watch(
 .multi-exam-picker__sections {
   display: flex;
   flex-direction: column;
-  gap: 0.65rem;
+  gap: 0.55rem;
 }
 
-.multi-exam-picker__sections h4 {
-  margin: 0 0 0.25rem;
+.multi-exam-picker__section h4 {
+  margin: 0 0 0.35rem;
   font-size: 0.6875rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -1283,15 +1336,72 @@ watch(
   color: var(--text-light);
 }
 
-.multi-exam-picker__sections ul {
-  margin: 0;
-  padding-left: 1.1rem;
-  font-size: 0.8125rem;
-  color: var(--text);
+.multi-exam-picker__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
 }
 
-.multi-exam-picker__sections li + li {
-  margin-top: 0.15rem;
+.multi-exam-picker__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  padding: 0.4rem 0.55rem 0.4rem 0.7rem;
+  border: 1px solid var(--primary-200);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--primary-800);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 650;
+  line-height: 1.25;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.multi-exam-picker__chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 14rem;
+}
+
+.multi-exam-picker__chip-qty {
+  flex-shrink: 0;
+  min-width: 1.2rem;
+  height: 1.2rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: var(--primary-600);
+  color: #fff;
+  font-style: normal;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.multi-exam-picker__chip svg {
+  flex-shrink: 0;
+  opacity: 0.65;
+}
+
+.multi-exam-picker__chip:hover:not(:disabled) {
+  background: var(--primary-100);
+  border-color: var(--primary-300);
+}
+
+.multi-exam-picker__chip:hover:not(:disabled) svg {
+  opacity: 1;
+  color: var(--danger, #b91c1c);
+}
+
+.multi-exam-picker__chip:disabled {
+  cursor: default;
+  padding-right: 0.7rem;
+  opacity: 0.9;
 }
 
 .multi-exam-picker__summary-comment {
@@ -1299,7 +1409,7 @@ watch(
   align-items: flex-start;
   gap: 0.35rem;
   margin: 0.35rem 0 0;
-  padding: 0.45rem 0.55rem;
+  padding: 0.4rem 0.5rem;
   border-radius: 6px;
   background: var(--accent-50);
   border: 1px solid var(--accent-100);

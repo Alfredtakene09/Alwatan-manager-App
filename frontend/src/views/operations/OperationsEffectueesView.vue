@@ -17,7 +17,7 @@ import {
 } from '@lucide/vue'
 import { isAxiosError } from 'axios'
 import api from '@/api/client'
-import { confirmAppModal } from '@/lib/api-modal-helper'
+import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { type SurgeryCaseRow, formatSurgeryDate, todayDateInputValue } from '@/lib/surgery-case'
 import {
@@ -42,6 +42,10 @@ import {
   yesterdayDateKey,
   type DateFilterMode,
 } from '@/lib/date-filters'
+import { EXAM_KIND_LABELS, type ExamKindSlug } from '@/lib/exam-catalog/types'
+import { remainingPayableExamKinds } from '@/lib/exam-billing'
+import { normalizeLabExamPendingItem } from '@/lib/lab-exam-pending'
+import { printLabExamPaymentReceipts } from '@/lib/lab-exam-invoice'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -51,6 +55,10 @@ import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import CompletedOperationsDataTable from '@/components/ui/CompletedOperationsDataTable.vue'
+import LabExamPaymentModal, {
+  type LabExamPaymentConfirmPayload,
+  type LabExamPaymentItem,
+} from '@/components/comptabilite/LabExamPaymentModal.vue'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 
 const DATE_MODES: { id: DateFilterMode; label: string; icon: typeof CalendarDays }[] = [
@@ -73,6 +81,9 @@ const postponeDate = ref(todayDateInputValue())
 const payModalOpen = ref(false)
 const payTargetId = ref<string | null>(null)
 const selectedShares = ref<OperationShareKind[]>([])
+const paymentItem = ref<LabExamPaymentItem | null>(null)
+const submittingPayment = ref(false)
+const submittingKind = ref<ExamKindSlug | null>(null)
 
 const dateFilterMode = ref<DateFilterMode>('month')
 const filterDay = ref(todayDateKey())
@@ -171,13 +182,16 @@ const periodLabel = computed(() =>
 
 function shareUnpaidAmount(kind: OperationShareKind) {
   return doctorFilteredSurgeries.value.reduce((sum, surgery) => {
+    if (surgery.status !== 'COMPLETED') return sum
     if (isSharePaid(surgery, kind)) return sum
     return sum + getShareAmountFcfa(surgery, kind)
   }, 0)
 }
 
 function shareUnpaidCount(kind: OperationShareKind) {
-  return doctorFilteredSurgeries.value.filter((surgery) => !isSharePaid(surgery, kind)).length
+  return doctorFilteredSurgeries.value.filter(
+    (surgery) => surgery.status === 'COMPLETED' && !isSharePaid(surgery, kind),
+  ).length
 }
 
 const stats = computed(() => {
@@ -197,14 +211,18 @@ const stats = computed(() => {
     clinicShareUnpaidFcfa: shareUnpaidAmount('clinic'),
     unpaidClinicCount: shareUnpaidCount('clinic'),
     assistantCount: withAssistant.length,
-    unpaidShareCount: countUnpaidShares(doctorFilteredSurgeries.value),
-    unpaidShareTotalFcfa: sumUnpaidShareAmounts(doctorFilteredSurgeries.value),
+    unpaidShareCount: countUnpaidShares(
+      doctorFilteredSurgeries.value.filter((surgery) => surgery.status === 'COMPLETED'),
+    ),
+    unpaidShareTotalFcfa: sumUnpaidShareAmounts(
+      doctorFilteredSurgeries.value.filter((surgery) => surgery.status === 'COMPLETED'),
+    ),
   }
 })
 
 const batchPaySurgeryIds = computed(() =>
   doctorFilteredSurgeries.value
-    .filter((surgery) => getUnpaidShareKinds(surgery).length > 0)
+    .filter((surgery) => surgery.status === 'COMPLETED' && getUnpaidShareKinds(surgery).length > 0)
     .map((surgery) => surgery.id),
 )
 
@@ -230,7 +248,7 @@ async function load() {
 
 function openPayModal(id: string) {
   const surgery = surgeries.value.find((row) => row.id === id)
-  if (!surgery) return
+  if (!surgery || surgery.status !== 'COMPLETED') return
 
   payTargetId.value = id
   selectedShares.value = getUnpaidShareKinds(surgery)
@@ -241,6 +259,106 @@ function closePayModal() {
   payModalOpen.value = false
   payTargetId.value = null
   selectedShares.value = []
+}
+
+async function openEncaisser(id: string) {
+  const surgery = surgeries.value.find((row) => row.id === id)
+  if (!surgery) return
+
+  actionId.value = id
+  message.value = ''
+  try {
+    const { data } = await api.get<{ labExamsPending?: LabExamPaymentItem[] }>('/comptabilite')
+    const pending = data.labExamsPending ?? []
+    const item =
+      pending.find((row) => row.visitId === surgery.visit.id) ??
+      pending.find((row) => row.id === surgery.visit.consultation?.id) ??
+      null
+    if (!item) {
+      message.value = 'Aucun solde patient à encaisser pour cette opération.'
+      messageType.value = 'error'
+      return
+    }
+    paymentItem.value = item
+  } catch (error) {
+    const shown = await showApiErrorModal(error, 'Impossible d’ouvrir l’encaissement.')
+    if (!shown) {
+      const apiMessage = isAxiosError(error)
+        ? (error.response?.data as { error?: string } | undefined)?.error
+        : undefined
+      message.value = apiMessage ?? 'Impossible d’ouvrir l’encaissement.'
+      messageType.value = 'error'
+    }
+  } finally {
+    actionId.value = null
+  }
+}
+
+function closeEncaisser() {
+  paymentItem.value = null
+  submittingKind.value = null
+}
+
+async function confirmEncaisser(payload: LabExamPaymentConfirmPayload) {
+  const paidItem = paymentItem.value
+  const normalizedPaid = paidItem ? normalizeLabExamPendingItem(paidItem) : null
+  const payingAll = payload.kinds.length > 1
+  submittingPayment.value = true
+  submittingKind.value = payingAll ? null : (payload.kinds[0] ?? null)
+  message.value = ''
+  try {
+    const { data: res } = await api.post('/comptabilite', {
+      action: 'pay_lab_exams',
+      consultationId: payload.consultationId,
+      kinds: payload.kinds,
+      reductionsByKind: payload.reductionsByKind,
+      reductionFcfa: payload.reductionFcfa,
+      installmentAmountFcfa: payload.installmentAmountFcfa,
+      installmentsByKind: payload.installmentsByKind,
+    })
+    const shouldClose =
+      res.allKindsPaid ||
+      remainingPayableExamKinds((res.remainingUnpaidKinds ?? []) as ExamKindSlug[]).length === 0
+    if (shouldClose) closeEncaisser()
+    if (normalizedPaid) {
+      printLabExamPaymentReceipts(
+        normalizedPaid,
+        {
+          kinds: payload.kinds,
+          reductionsByKind: payload.reductionsByKind,
+        },
+        res.invoicesByKind,
+      )
+    }
+    const kindLabel = payingAll
+      ? 'Tous les examens'
+      : payload.kinds[0]
+        ? EXAM_KIND_LABELS[payload.kinds[0]]
+        : 'Opération'
+    const installmentNote =
+      Array.isArray(res.installmentKinds) && res.installmentKinds.length > 0
+        ? ' Tranche enregistrée — solde restant à payer.'
+        : ''
+    const followUp = res.surgeryAuthorized
+      ? ' Opération ajoutée aux opérations en attente.'
+      : ''
+    message.value = `${kindLabel} encaissé.${installmentNote}${followUp}`
+    messageType.value = 'success'
+    await load()
+    if (!shouldClose) submittingKind.value = null
+  } catch (error: unknown) {
+    const shown = await showApiErrorModal(error, 'Erreur lors de l’encaissement.')
+    if (!shown) {
+      const apiMessage = isAxiosError(error)
+        ? (error.response?.data as { error?: string } | undefined)?.error
+        : undefined
+      message.value = apiMessage ?? 'Erreur lors de l’encaissement.'
+      messageType.value = 'error'
+    }
+    submittingKind.value = null
+  } finally {
+    submittingPayment.value = false
+  }
 }
 
 function toggleShare(kind: OperationShareKind) {
@@ -442,7 +560,7 @@ onMounted(load)
         subtitle="Compte rendu journalier — répartition médecin, assistant chirurgie et clinique"
         :icon="CheckCircle2"
       />
-      <UiAlert v-if="message && !postponeModalOpen && !payModalOpen" :type="messageType" :message="message" />
+      <UiAlert v-if="message && !postponeModalOpen && !payModalOpen && !paymentItem" :type="messageType" :message="message" />
 
       <div class="stats-grid">
         <UiStatCard
@@ -565,6 +683,7 @@ onMounted(load)
 
     <section class="page-with-table__body">
       <UiCard
+        direct
         title="Opérations effectuées"
         description="Paiement direct par part · Repousser ou retour en attente si aucun règlement"
         class="ui-card--table-panel ops-completed-table-card"
@@ -610,6 +729,7 @@ onMounted(load)
           @revert="revertToAwaiting"
           @postpone="openPostponeModal"
           @pay-shares="openPayModal"
+          @encaisser="openEncaisser"
         />
       </UiCard>
     </section>
@@ -680,6 +800,14 @@ onMounted(load)
         </UiButton>
       </template>
     </UiFormModal>
+
+    <LabExamPaymentModal
+      :item="paymentItem"
+      :submitting="submittingPayment"
+      :submitting-kind="submittingKind"
+      @close="closeEncaisser"
+      @confirm="confirmEncaisser"
+    />
   </div>
 </template>
 

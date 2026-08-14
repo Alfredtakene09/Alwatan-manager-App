@@ -22,6 +22,7 @@ const COMMON_FR: Record<string, string> = {
   language: 'Langue',
   refresh: 'Actualiser',
   myAccount: 'Mon compte',
+  continueConsultation: 'Continuer la consultation',
 }
 
 function normalizeKey(text: string): string {

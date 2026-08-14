@@ -35,27 +35,56 @@ export function endOfDay(date: Date) {
 /**
  * Date d'encaissement effective pour les totaux « jour » et réconciliation.
  * - PAID → paidAt
- * - CONSULTATION + PENDING (legacy réception) → createdAt (encaissée à l'accueil sans passage PAID)
+ * - PARTIALLY_PAID → lastPaidAt (dernier versement) ou createdAt
+ * Les consultations PENDING ne sont plus comptées comme encaissées
+ * (encaissement réservé au gestionnaire / direction).
  * Les créneaux matin/soir filtrent cette date dans getShiftWindow — voir cash-shift.ts.
- * Les factures PARTIALLY_PAID (tranches) ne comptent pas en recette tant qu'elles ne sont pas soldées.
+ * Les tranches (InvoicePayment) sont agrégées à la date de chaque versement — voir loadCollectedSlicesBetween.
  */
 export function invoiceCollectedAt(invoice: {
   type: InvoiceType;
   status: InvoiceStatus;
   paidAt: Date | null;
   createdAt: Date;
+  paidAmountFcfa?: number | null;
+  lastPaidAt?: Date | null;
 }): Date | null {
   if (invoice.status === InvoiceStatus.CANCELLED) return null;
   if (invoice.status === InvoiceStatus.PAID && invoice.paidAt) {
     return invoice.paidAt;
   }
   if (
-    invoice.type === InvoiceType.CONSULTATION &&
-    invoice.status === InvoiceStatus.PENDING
+    invoice.status === InvoiceStatus.PARTIALLY_PAID &&
+    Math.max(0, Number(invoice.paidAmountFcfa) || 0) > 0
   ) {
-    return invoice.createdAt;
+    return invoice.lastPaidAt ?? invoice.paidAt ?? invoice.createdAt;
   }
   return null;
+}
+
+export function isCollectedOperationInvoice(invoice: {
+  type: InvoiceType;
+  billingExamKind?: string | null;
+  surgeryCaseId?: string | null;
+}) {
+  return (
+    invoice.type === InvoiceType.SURGERY ||
+    invoice.billingExamKind === "operation" ||
+    Boolean(invoice.surgeryCaseId)
+  );
+}
+
+export function isCollectedHospitalizationInvoice(invoice: {
+  type: InvoiceType;
+  billingExamKind?: string | null;
+  hospitalizationId?: string | null;
+}) {
+  return (
+    invoice.type === InvoiceType.HOSPITALIZATION_DEPOSIT ||
+    invoice.type === InvoiceType.HOSPITALIZATION_FINAL ||
+    invoice.billingExamKind === "hospitalisation" ||
+    Boolean(invoice.hospitalizationId)
+  );
 }
 
 /**
@@ -89,19 +118,9 @@ export function collectedInvoicesWhere(from: Date, to?: Date): Prisma.InvoiceWhe
   const toDate = to ?? new Date(Date.now() + 86400000);
   return {
     type: { in: COLLECTED_INVOICE_TYPES },
-    status: { not: InvoiceStatus.CANCELLED },
     ...comptabiliteInvoicePatientWhere(),
-    OR: [
-      {
-        status: InvoiceStatus.PAID,
-        paidAt: { gte: from, lt: toDate },
-      },
-      {
-        type: InvoiceType.CONSULTATION,
-        status: InvoiceStatus.PENDING,
-        createdAt: { gte: from, lt: toDate },
-      },
-    ],
+    status: InvoiceStatus.PAID,
+    paidAt: { gte: from, lt: toDate },
   };
 }
 
@@ -133,14 +152,20 @@ function emptyBreakdown(): CollectedBreakdown {
   };
 }
 
-export function sumCollectedBreakdown(invoices: Array<{
+export type CollectedInvoiceFields = {
   type: InvoiceType;
   status: InvoiceStatus;
   amountFcfa: number;
   paidAmountFcfa?: number | null;
   paidAt: Date | null;
   createdAt: Date;
-}>): CollectedBreakdown {
+  billingExamKind?: string | null;
+  surgeryCaseId?: string | null;
+  hospitalizationId?: string | null;
+  lastPaidAt?: Date | null;
+};
+
+export function sumCollectedBreakdown(invoices: CollectedInvoiceFields[]): CollectedBreakdown {
   const result = emptyBreakdown();
 
   for (const invoice of invoices) {
@@ -151,44 +176,116 @@ export function sumCollectedBreakdown(invoices: Array<{
     result.totalCount += 1;
     result.totalFcfa += amount;
 
-    switch (invoice.type) {
-      case InvoiceType.CONSULTATION:
-        result.consultationsCount += 1;
-        result.consultationsFcfa += amount;
-        break;
-      case InvoiceType.LAB_EXAM:
-        result.examsCount += 1;
-        result.examsFcfa += amount;
-        break;
-      case InvoiceType.SURGERY:
-        result.surgeryCount += 1;
-        result.surgeryFcfa += amount;
-        break;
-      case InvoiceType.HOSPITALIZATION_DEPOSIT:
-      case InvoiceType.HOSPITALIZATION_FINAL:
-        result.hospitalizationCount += 1;
-        result.hospitalizationFcfa += amount;
-        break;
+    if (invoice.type === InvoiceType.CONSULTATION) {
+      result.consultationsCount += 1;
+      result.consultationsFcfa += amount;
+      continue;
+    }
+    if (isCollectedOperationInvoice(invoice)) {
+      result.surgeryCount += 1;
+      result.surgeryFcfa += amount;
+      continue;
+    }
+    if (isCollectedHospitalizationInvoice(invoice)) {
+      result.hospitalizationCount += 1;
+      result.hospitalizationFcfa += amount;
+      continue;
+    }
+    if (invoice.type === InvoiceType.LAB_EXAM) {
+      result.examsCount += 1;
+      result.examsFcfa += amount;
     }
   }
 
   return result;
 }
 
-export async function aggregateCollectedBetween(from: Date, to: Date) {
-  const invoices = await prisma.invoice.findMany({
-    where: collectedInvoicesWhere(from, to),
-    select: {
-      type: true,
-      status: true,
-      amountFcfa: true,
-      paidAmountFcfa: true,
-      paidAt: true,
-      createdAt: true,
-    },
-  });
+const collectedInvoiceSelect = {
+  type: true,
+  status: true,
+  amountFcfa: true,
+  paidAmountFcfa: true,
+  paidAt: true,
+  createdAt: true,
+  billingExamKind: true,
+  surgeryCaseId: true,
+  hospitalizationId: true,
+} as const;
 
-  return sumCollectedBreakdown(invoices);
+function collectedInvoiceParentWhere(): Prisma.InvoiceWhereInput {
+  return {
+    type: { in: COLLECTED_INVOICE_TYPES },
+    status: { not: InvoiceStatus.CANCELLED },
+    ...comptabiliteInvoicePatientWhere(),
+  };
+}
+
+export type CollectedSlice = CollectedInvoiceFields & {
+  issuedByRole?: string | null;
+  recordedById?: string | null;
+};
+
+/**
+ * Recettes d'une période [from, to) : chaque versement (InvoicePayment) à sa date,
+ * plus les factures PAID legacy sans ligne de paiement.
+ */
+export async function loadCollectedSlicesBetween(
+  from: Date,
+  to: Date,
+  options?: { cashierId?: string },
+): Promise<CollectedSlice[]> {
+  const invoiceWhere = collectedInvoiceParentWhere();
+  const [payments, legacyInvoices] = await Promise.all([
+    prisma.invoicePayment.findMany({
+      where: {
+        paidAt: { gte: from, lt: to },
+        ...(options?.cashierId ? { recordedById: options.cashierId } : {}),
+        invoice: invoiceWhere,
+      },
+      select: {
+        amountFcfa: true,
+        paidAt: true,
+        recordedById: true,
+        recordedBy: { select: { role: true } },
+        invoice: { select: collectedInvoiceSelect },
+      },
+    }),
+    prisma.invoice.findMany({
+      where: {
+        ...collectedInvoicesWhere(from, to),
+        payments: { none: {} },
+        ...(options?.cashierId ? { issuedById: options.cashierId } : {}),
+      },
+      select: {
+        ...collectedInvoiceSelect,
+        issuedBy: { select: { role: true } },
+      },
+    }),
+  ]);
+
+  const fromPayments: CollectedSlice[] = payments.map((payment) => ({
+    ...payment.invoice,
+    status: InvoiceStatus.PAID,
+    amountFcfa: payment.amountFcfa,
+    paidAmountFcfa: payment.amountFcfa,
+    paidAt: payment.paidAt,
+    createdAt: payment.paidAt,
+    lastPaidAt: payment.paidAt,
+    issuedByRole: payment.recordedBy.role,
+    recordedById: payment.recordedById,
+  }));
+
+  const fromLegacy: CollectedSlice[] = legacyInvoices.map((invoice) => ({
+    ...invoice,
+    issuedByRole: invoice.issuedBy.role,
+  }));
+
+  return [...fromPayments, ...fromLegacy];
+}
+
+export async function aggregateCollectedBetween(from: Date, to: Date) {
+  const slices = await loadCollectedSlicesBetween(from, to);
+  return sumCollectedBreakdown(slices);
 }
 
 /** Recettes pharmacie encaissées sur [from, to) — hors totaux caisse réception. */
@@ -217,24 +314,21 @@ export async function aggregateCollectedToday() {
 
 /** Totaux journaliers par rôle encaisseur — fenêtre 24 h, aligné sur « Recettes du jour ». */
 export async function aggregateDayRoleTotals(from: Date, to: Date) {
-  const invoices = await prisma.invoice.findMany({
-    where: collectedInvoicesWhere(from, to),
-    include: { issuedBy: { select: { role: true } } },
-  });
+  const slices = await loadCollectedSlicesBetween(from, to);
 
   let receptionFcfa = 0;
   let comptabiliteFcfa = 0;
-  for (const invoice of invoices) {
-    if (!invoiceCollectedAt(invoice)) continue;
-    const amount = collectedAmountFcfa(invoice);
-    if (invoice.issuedBy.role === "RECEPTIONNISTE") {
+  for (const slice of slices) {
+    if (!invoiceCollectedAt(slice)) continue;
+    const amount = collectedAmountFcfa(slice);
+    if (slice.issuedByRole === "RECEPTIONNISTE") {
       receptionFcfa += amount;
     } else {
       comptabiliteFcfa += amount;
     }
   }
 
-  const breakdown = sumCollectedBreakdown(invoices);
+  const breakdown = sumCollectedBreakdown(slices);
   return {
     receptionFcfa,
     comptabiliteFcfa,
@@ -264,28 +358,18 @@ export async function buildRevenueLast7Days(): Promise<RevenueDayRow[]> {
   const rangeEnd = new Date(dayStarts[dayStarts.length - 1]!);
   rangeEnd.setDate(rangeEnd.getDate() + 1);
 
-  const invoices = await prisma.invoice.findMany({
-    where: collectedInvoicesWhere(dayStarts[0]!, rangeEnd),
-    select: {
-      type: true,
-      status: true,
-      amountFcfa: true,
-      paidAmountFcfa: true,
-      paidAt: true,
-      createdAt: true,
-    },
-  });
+  const slices = await loadCollectedSlicesBetween(dayStarts[0]!, rangeEnd);
 
   return dayStarts.map((dayStart) => {
     const dayEnd = new Date(dayStart);
     dayEnd.setDate(dayEnd.getDate() + 1);
 
-    const dayInvoices = invoices.filter((invoice) => {
-      const collectedAt = invoiceCollectedAt(invoice);
+    const daySlices = slices.filter((slice) => {
+      const collectedAt = invoiceCollectedAt(slice);
       return collectedAt && collectedAt >= dayStart && collectedAt < dayEnd;
     });
 
-    const breakdown = sumCollectedBreakdown(dayInvoices);
+    const breakdown = sumCollectedBreakdown(daySlices);
 
     return {
       date: dayStart.toISOString().slice(0, 10),
@@ -303,30 +387,10 @@ export async function buildRevenueLast7Days(): Promise<RevenueDayRow[]> {
   });
 }
 
-/** Marque PAID les consultations legacy encore en PENDING (encaissées à la réception). */
+/**
+ * Ancienne migration : ne plus marquer les PENDING comme payées.
+ * Les consultations restent en attente d'encaissement gestionnaire.
+ */
 export async function backfillLegacyConsultationInvoices() {
-  const pending = await prisma.invoice.findMany({
-    where: {
-      type: InvoiceType.CONSULTATION,
-      status: InvoiceStatus.PENDING,
-      ...comptabiliteInvoicePatientWhere(),
-    },
-    select: { id: true, createdAt: true },
-  });
-
-  if (!pending.length) return 0;
-
-  await prisma.$transaction(
-    pending.map((invoice) =>
-      prisma.invoice.update({
-        where: { id: invoice.id },
-        data: {
-          status: InvoiceStatus.PAID,
-          paidAt: invoice.createdAt,
-        },
-      }),
-    ),
-  );
-
-  return pending.length;
+  return 0;
 }

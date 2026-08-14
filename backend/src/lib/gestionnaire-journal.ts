@@ -9,7 +9,10 @@ import { comptabiliteInvoicePatientWhere } from "./patient-billing.js";
 import {
   COLLECTED_INVOICE_TYPES,
   INVOICE_TYPE_LABELS,
+  collectedAmountFcfa,
   invoiceCollectedAt,
+  isCollectedHospitalizationInvoice,
+  isCollectedOperationInvoice,
   startOfDay,
 } from "./revenue-stats.js";
 
@@ -59,20 +62,39 @@ const CATEGORY_LABELS: Record<JournalCategory, string> = {
   AUTRE: "Autre",
 };
 
-function invoiceCategory(type: InvoiceType): JournalCategory {
+function invoiceCategory(
+  type: InvoiceType,
+  billingExamKind?: string | null,
+  surgeryCaseId?: string | null,
+  hospitalizationId?: string | null,
+): JournalCategory {
+  if (type === InvoiceType.CONSULTATION) return "CONSULTATION";
+  if (isCollectedOperationInvoice({ type, billingExamKind, surgeryCaseId })) {
+    return "OPERATION";
+  }
+  if (isCollectedHospitalizationInvoice({ type, billingExamKind, hospitalizationId })) {
+    return "HOSPITALISATION";
+  }
   switch (type) {
-    case InvoiceType.CONSULTATION:
-      return "CONSULTATION";
     case InvoiceType.LAB_EXAM:
       return "EXAMEN";
-    case InvoiceType.SURGERY:
-      return "OPERATION";
-    case InvoiceType.HOSPITALIZATION_DEPOSIT:
-    case InvoiceType.HOSPITALIZATION_FINAL:
-      return "HOSPITALISATION";
     default:
       return "AUTRE";
   }
+}
+
+function invoiceEntryLabel(
+  type: InvoiceType,
+  billingExamKind: string | null | undefined,
+  patientName: string | null,
+) {
+  const kindLabel =
+    billingExamKind === "operation"
+      ? "Opération"
+      : billingExamKind === "hospitalisation"
+        ? "Hospitalisation"
+        : INVOICE_TYPE_LABELS[type];
+  return patientName ? `${kindLabel} — ${patientName}` : `${kindLabel} — Client externe`;
 }
 
 function inPeriod(date: Date, from?: Date, to?: Date) {
@@ -286,12 +308,37 @@ export async function buildJournalEntries(filters: JournalFilters = {}) {
   const from = filters.from;
   const to = filters.to;
 
-  const [invoices, expenses, payrolls, disbursements] = await Promise.all([
+  const [payments, legacyInvoices, expenses, payrolls, disbursements] = await Promise.all([
+    prisma.invoicePayment.findMany({
+      where: {
+        invoice: {
+          type: { in: COLLECTED_INVOICE_TYPES },
+          status: { not: InvoiceStatus.CANCELLED },
+          ...comptabiliteInvoicePatientWhere(),
+        },
+      },
+      select: {
+        id: true,
+        amountFcfa: true,
+        paidAt: true,
+        invoice: {
+          select: {
+            invoiceNumber: true,
+            type: true,
+            billingExamKind: true,
+            surgeryCaseId: true,
+            hospitalizationId: true,
+            patient: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+    }),
     prisma.invoice.findMany({
       where: {
         type: { in: COLLECTED_INVOICE_TYPES },
         status: { not: InvoiceStatus.CANCELLED },
         ...comptabiliteInvoicePatientWhere(),
+        payments: { none: {} },
         OR: [
           { status: InvoiceStatus.PAID },
           { type: InvoiceType.CONSULTATION, status: InvoiceStatus.PENDING },
@@ -303,6 +350,10 @@ export async function buildJournalEntries(filters: JournalFilters = {}) {
         type: true,
         status: true,
         amountFcfa: true,
+        paidAmountFcfa: true,
+        billingExamKind: true,
+        surgeryCaseId: true,
+        hospitalizationId: true,
         paidAt: true,
         createdAt: true,
         patient: { select: { firstName: true, lastName: true } },
@@ -338,20 +389,53 @@ export async function buildJournalEntries(filters: JournalFilters = {}) {
 
   const raw: JournalEntry[] = [];
 
-  for (const invoice of invoices) {
-    const collectedAt = invoiceCollectedAt(invoice);
-    if (!collectedAt || !inPeriod(collectedAt, from, to)) continue;
-    const category = invoiceCategory(invoice.type);
+  for (const payment of payments) {
+    const collectedAt = payment.paidAt;
+    if (!inPeriod(collectedAt, from, to)) continue;
+    const invoice = payment.invoice;
+    const category = invoiceCategory(
+      invoice.type,
+      invoice.billingExamKind,
+      invoice.surgeryCaseId,
+      invoice.hospitalizationId,
+    );
+    const patientName = invoice.patient
+      ? `${invoice.patient.firstName} ${invoice.patient.lastName}`.trim()
+      : null;
     raw.push({
-      id: `inv-${invoice.id}`,
+      id: `pay-${payment.id}`,
       occurredAt: collectedAt.toISOString(),
-      label: invoice.patient
-        ? `${INVOICE_TYPE_LABELS[invoice.type]} — ${invoice.patient.firstName} ${invoice.patient.lastName}`.trim()
-        : `${INVOICE_TYPE_LABELS[invoice.type]} — Client externe`,
+      label: invoiceEntryLabel(invoice.type, invoice.billingExamKind, patientName),
       category,
       categoryLabel: CATEGORY_LABELS[category],
       type: "ENTREE",
-      inflowFcfa: invoice.amountFcfa,
+      inflowFcfa: payment.amountFcfa,
+      outflowFcfa: 0,
+      reference: invoice.invoiceNumber,
+      source: "Invoice",
+    });
+  }
+
+  for (const invoice of legacyInvoices) {
+    const collectedAt = invoiceCollectedAt(invoice);
+    if (!collectedAt || !inPeriod(collectedAt, from, to)) continue;
+    const category = invoiceCategory(
+      invoice.type,
+      invoice.billingExamKind,
+      invoice.surgeryCaseId,
+      invoice.hospitalizationId,
+    );
+    const patientName = invoice.patient
+      ? `${invoice.patient.firstName} ${invoice.patient.lastName}`.trim()
+      : null;
+    raw.push({
+      id: `inv-${invoice.id}`,
+      occurredAt: collectedAt.toISOString(),
+      label: invoiceEntryLabel(invoice.type, invoice.billingExamKind, patientName),
+      category,
+      categoryLabel: CATEGORY_LABELS[category],
+      type: "ENTREE",
+      inflowFcfa: collectedAmountFcfa(invoice),
       outflowFcfa: 0,
       reference: invoice.invoiceNumber,
       source: "Invoice",

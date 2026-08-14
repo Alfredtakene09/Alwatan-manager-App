@@ -3,10 +3,9 @@ import { computed } from 'vue'
 import { fullName } from '@/lib/roles'
 import { getVisitStatusMeta } from '@/lib/visit-status'
 import { sortVisitsByPatientNewestFirst } from '@/lib/patient-sort'
-import { statusBadge } from '@/lib/datatable-defaults'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
+import '@/assets/simple-table.css'
 
 type Patient = {
   id: string
@@ -41,7 +40,7 @@ function formatSince(iso: string) {
   return translateTemplate('{h} h {m} min', { h: hours, m: minutes % 60 })
 }
 
-const tableData = computed(() =>
+const rows = computed(() =>
   sortVisitsByPatientNewestFirst(props.visits).map((v) => {
     const meta = getVisitStatusMeta(v.status)
     return {
@@ -56,61 +55,53 @@ const tableData = computed(() =>
         ? fullName(v.assignedDoctor.firstName, v.assignedDoctor.lastName)
         : '—',
       duration: formatSince(v.updatedAt),
-      updatedSort: new Date(v.updatedAt).getTime(),
     }
   }),
 )
-
-const columns = [
-  {
-    data: 'code',
-    title: 'Matricule',
-    responsivePriority: 1,
-    render: (code: string) => `<span class="dt-badge">${code}</span>`,
-  },
-  {
-    data: 'patientName',
-    title: 'Patient',
-    responsivePriority: 2,
-    render: (name: string, _t: string, row: { patientPhone: string }) =>
-      row.patientPhone
-        ? `<span class="dt-name">${name}</span><span class="dt-sub">${row.patientPhone}</span>`
-        : `<span class="dt-name">${name}</span>`,
-  },
-  {
-    data: 'statusLabel',
-    title: 'État',
-    responsivePriority: 3,
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'info' | 'primary' | 'warning' | 'success' | 'default'),
-  },
-  { data: 'pole', title: 'Pôle', responsivePriority: 4 },
-  {
-    data: 'doctor',
-    title: 'Médecin',
-    responsivePriority: 5,
-    render: (doctor: string) =>
-      doctor === '—' ? '<span class="dt-muted">—</span>' : `<span class="dt-name">${doctor}</span>`,
-  },
-  {
-    data: 'updatedSort',
-    title: 'Durée',
-    responsivePriority: 6,
-    render: (_d: number, _t: string, row: { duration: string }) =>
-      `<span class="dt-date">${row.duration}</span>`,
-  },
-]
-
 </script>
 
 <template>
-  <UiDataTable
-    table-key="visits-etat"
-    compact
-    :fill="fill"
-    :data="tableData"
-    :columns="columns"
-    :loading="loading"
-    loading-label="Chargement…"
-  />
+  <div class="simple-table-shell" :class="{ 'simple-table-shell--fill': fill }">
+    <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+      <span class="simple-table-spinner" aria-hidden="true" />
+      Chargement…
+    </div>
+    <div class="simple-table-scroll">
+      <p v-if="!loading && !rows.length" class="simple-table__empty">Aucune visite</p>
+      <div v-else class="simple-table-wrap">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th class="simple-table__num">#</th>
+              <th>Matricule</th>
+              <th>Patient</th>
+              <th>État</th>
+              <th>Pôle</th>
+              <th>Médecin</th>
+              <th>Durée</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, index) in rows" :key="row.id">
+              <td class="simple-table__num">{{ index + 1 }}</td>
+              <td><span class="st-badge">{{ row.code }}</span></td>
+              <td>
+                <span class="st-name">{{ row.patientName }}</span>
+                <span v-if="row.patientPhone" class="st-sub">{{ row.patientPhone }}</span>
+              </td>
+              <td>
+                <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+              </td>
+              <td>{{ row.pole }}</td>
+              <td>
+                <span v-if="row.doctor !== '—'" class="st-name">{{ row.doctor }}</span>
+                <span v-else class="st-muted">—</span>
+              </td>
+              <td><span class="st-date">{{ row.duration }}</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </template>

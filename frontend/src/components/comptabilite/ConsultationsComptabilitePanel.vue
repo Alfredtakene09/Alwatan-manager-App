@@ -1,11 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { Component } from 'vue'
-import { Wallet, RefreshCw, CircleDollarSign, Percent, CalendarRange, CalendarDays, Calendar } from '@lucide/vue'
+import {
+  Wallet,
+  RefreshCw,
+  CircleDollarSign,
+  Percent,
+  CalendarRange,
+  CalendarDays,
+  Calendar,
+  Printer,
+  Banknote,
+} from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { computeConsultationAmounts } from '@/lib/consultation-amounts'
 import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
+import { buildConsultationReceiptHtml, openPrintDocument } from '@/lib/print-document'
+import { translateTemplate } from '@/lib/dashboard-i18n'
+import { useAuthStore } from '@/stores/auth'
 import {
   currentMonthKey,
   formatPeriodLabel,
@@ -14,12 +27,14 @@ import {
   yesterdayDateKey,
   type DateFilterMode,
 } from '@/lib/date-filters'
-import { DT_ICONS } from '@/lib/datatable-defaults'
+import { showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import UiFormModal from '@/components/ui/UiFormModal.vue'
+import UiInput from '@/components/ui/UiInput.vue'
+import '@/assets/simple-table.css'
 
 const props = withDefaults(
   defineProps<{
@@ -58,23 +73,77 @@ const DATE_MODES: { id: DateFilterMode; label: string; icon: typeof CalendarDays
 
 const rows = ref<ConsultationRow[]>([])
 const loading = ref(false)
+const payingId = ref<string | null>(null)
+const payModalRow = ref<ConsultationRow | null>(null)
+const payReductionFcfa = ref(0)
+const statusFilter = ref<'ALL' | 'PENDING' | 'PAID'>('PENDING')
 const dateFilterMode = ref<DateFilterMode>('day')
 const filterDay = ref(todayDateKey())
 const filterMonth = ref(currentMonthKey())
 const filterFrom = ref('')
 const filterTo = ref('')
+const auth = useAuthStore()
+
+function collectorName() {
+  return auth.user ? fullName(auth.user.firstName, auth.user.lastName) : undefined
+}
+
+function printConsultationReceipt(row: ConsultationRow, overrides?: { reductionFcfa?: number; netFcfa?: number }) {
+  const fee = Math.max(0, row.consultationFeeFcfa || row.totalFcfa + (row.reductionFcfa || 0))
+  const reduction = Math.max(0, overrides?.reductionFcfa ?? row.reductionFcfa ?? 0)
+  const net = Math.max(0, overrides?.netFcfa ?? row.totalFcfa ?? fee - reduction)
+  const doctorName = row.doctor
+    ? `Dr ${fullName(row.doctor.firstName, row.doctor.lastName)}`
+    : '—'
+  openPrintDocument(
+    translateTemplate('Reçu {code}', { code: row.patient.code }),
+    buildConsultationReceiptHtml({
+      patientCode: row.patient.code,
+      patientName: fullName(row.patient.firstName, row.patient.lastName),
+      doctorName,
+      amount: fee,
+      reduction,
+      total: net,
+      invoiceNumber: row.invoiceNumber ?? undefined,
+      date: new Date().toLocaleString('fr-FR'),
+      processedBy: collectorName(),
+    }),
+    { pageSize: '80mm', autoPrint: true },
+  )
+}
+
+const payModalAmounts = computed(() => {
+  const row = payModalRow.value
+  if (!row) return null
+  const fee = Math.max(0, row.consultationFeeFcfa || row.totalFcfa + (row.reductionFcfa || 0))
+  const reduction = Math.min(fee, Math.max(0, Math.floor(Number(payReductionFcfa.value) || 0)))
+  return {
+    fee,
+    reduction,
+    net: Math.max(0, fee - reduction),
+  }
+})
 
 const filteredRows = computed(() =>
-  rows.value.filter((row) =>
-    matchesDateFilter(
+  rows.value.filter((row) => {
+    if (!matchesDateFilter(
       row.createdAt,
       dateFilterMode.value,
       filterDay.value,
       filterMonth.value,
       filterFrom.value,
       filterTo.value,
-    ),
-  ),
+    )) {
+      return false
+    }
+    if (statusFilter.value === 'PENDING') {
+      return row.invoiceStatus === 'PENDING' || row.invoiceStatus === 'PARTIALLY_PAID'
+    }
+    if (statusFilter.value === 'PAID') {
+      return row.invoiceStatus === 'PAID'
+    }
+    return true
+  }),
 )
 
 const periodLabel = computed(() =>
@@ -90,11 +159,16 @@ const periodLabel = computed(() =>
 const stats = computed(() => {
   const data = filteredRows.value
   const withReduction = data.filter((r) => r.reductionFcfa > 0)
+  const pending = data.filter(
+    (r) => r.invoiceStatus === 'PENDING' || r.invoiceStatus === 'PARTIALLY_PAID',
+  )
   return {
     count: data.length,
     totalNet: data.reduce((sum, r) => sum + r.totalFcfa, 0),
     totalReduction: data.reduce((sum, r) => sum + r.reductionFcfa, 0),
     reductionCount: withReduction.length,
+    pendingCount: pending.length,
+    pendingFcfa: pending.reduce((sum, r) => sum + r.totalFcfa, 0),
   }
 })
 
@@ -105,10 +179,18 @@ const tableData = computed(() =>
       row.reductionFcfa,
       row.totalFcfa,
     )
+    const payable =
+      Boolean(row.invoiceId) &&
+      (row.invoiceStatus === 'PENDING' || row.invoiceStatus === 'PARTIALLY_PAID')
+    const paid = row.invoiceStatus === 'PAID' || row.invoiceStatus === 'PARTIALLY_PAID'
     return {
       id: row.invoiceId ?? row.visitId,
       invoiceId: row.invoiceId,
+      visitId: row.visitId,
       invoiceNumber: row.invoiceNumber ?? '—',
+      invoiceStatus: row.invoiceStatus,
+      payable,
+      paid,
       patientName: fullName(row.patient.firstName, row.patient.lastName),
       patientCode: row.patient.code,
       patientService: row.patient.service?.trim() || '—',
@@ -121,68 +203,17 @@ const tableData = computed(() =>
       totalSort: amounts.totalFcfa,
       date: new Date(row.createdAt).toLocaleDateString('fr-FR'),
       dateSort: new Date(row.createdAt).getTime(),
+      statusLabel:
+        row.invoiceStatus === 'PAID'
+          ? 'Payée'
+          : row.invoiceStatus === 'PARTIALLY_PAID'
+            ? 'Partielle'
+            : row.invoiceStatus === 'PENDING'
+              ? 'À encaisser'
+              : '—',
     }
   }),
 )
-
-const columns = [
-  {
-    data: 'invoiceNumber',
-    title: 'N° Facture',
-    responsivePriority: 1,
-    render: (n: string) => `<strong class="dt-name">${n}</strong>`,
-  },
-  {
-    data: 'patientName',
-    title: 'Patient',
-    responsivePriority: 2,
-    render: (name: string, _t: string, row: { patientCode: string; patientService: string }) =>
-      `<span class="dt-name">${name}</span><span class="dt-sub">${row.patientCode}</span><span class="dt-sub">${row.patientService}</span>`,
-  },
-  { data: 'doctorName', title: 'Médecin', responsivePriority: 5 },
-  {
-    data: 'feeSort',
-    title: 'Montant',
-    responsivePriority: 3,
-    render: (_d: number, _t: string, row: { fee: string }) =>
-      `<span class="dt-amount">${row.fee}</span>`,
-  },
-  {
-    data: 'reductionSort',
-    title: 'Réduction',
-    responsivePriority: 6,
-    render: (_d: number, _t: string, row: { reduction: string }) => row.reduction,
-  },
-  {
-    data: 'totalSort',
-    title: 'Net',
-    responsivePriority: 3,
-    render: (_d: number, _t: string, row: { total: string }) =>
-      `<strong class="dt-amount">${row.total}</strong>`,
-  },
-  {
-    data: 'dateSort',
-    title: 'Date',
-    responsivePriority: 6,
-    render: (_d: number, _t: string, row: { date: string }) =>
-      `<span class="dt-date">${row.date}</span>`,
-  },
-  {
-    data: null,
-    title: '',
-    orderable: false,
-    className: 'dt-actions-col',
-    responsivePriority: 1,
-    render: (_d: unknown, _t: string, row: { invoiceId: string | null; id: string }) =>
-      row.invoiceId
-        ? `<div class="dt-row-actions" data-id="${row.invoiceId}">
-            <button type="button" class="dt-btn dt-btn--text" data-action="pdf" title="Imprimer" aria-label="PDF">
-              ${DT_ICONS.download} PDF
-            </button>
-          </div>`
-        : '',
-  },
-]
 
 function setToday() {
   filterDay.value = todayDateKey()
@@ -207,12 +238,79 @@ async function load() {
   }
 }
 
-function downloadPdf(id: string) {
-  window.open(`/api/factures/${id}/pdf`, '_blank')
+function reprintConsultation(visitId: string) {
+  const row = rows.value.find((r) => r.visitId === visitId)
+  if (!row) return
+  printConsultationReceipt(row)
 }
 
-function onAction({ action, id }: { action: string; id: string }) {
-  if (action === 'pdf') downloadPdf(id)
+function openPayModal(invoiceId: string) {
+  const row = rows.value.find((r) => r.invoiceId === invoiceId)
+  if (!row?.invoiceId) return
+  if (row.invoiceStatus === 'PARTIALLY_PAID') {
+    void collectConsultation(row.invoiceId)
+    return
+  }
+  payModalRow.value = row
+  payReductionFcfa.value = Math.max(0, row.reductionFcfa || 0)
+}
+
+function closePayModal() {
+  if (payingId.value) return
+  payModalRow.value = null
+  payReductionFcfa.value = 0
+}
+
+async function collectConsultation(invoiceId: string, reductionFcfa?: number) {
+  if (payingId.value) return
+  payingId.value = invoiceId
+  try {
+    const payload: {
+      action: string
+      invoiceId: string
+      reductionFcfa?: number
+    } = {
+      action: 'pay_consultation',
+      invoiceId,
+    }
+    if (reductionFcfa != null) {
+      payload.reductionFcfa = Math.max(0, Math.floor(reductionFcfa))
+    }
+    const { data } = await api.post<{
+      amountFcfa: number
+      reductionFcfa?: number
+      invoiceNumber?: string
+    }>('/comptabilite', payload)
+    const sourceRow = rows.value.find((r) => r.invoiceId === invoiceId)
+    if (sourceRow) {
+      printConsultationReceipt(sourceRow, {
+        reductionFcfa: data.reductionFcfa ?? sourceRow.reductionFcfa,
+        netFcfa: data.amountFcfa,
+      })
+    }
+    const reductionNote =
+      data.reductionFcfa && data.reductionFcfa > 0
+        ? ` (réduction ${formatFcfa(data.reductionFcfa)})`
+        : ''
+    await showSuccessModal(
+      'Consultation encaissée',
+      `Montant : ${formatFcfa(data.amountFcfa)}${reductionNote}${data.invoiceNumber ? ` — ${data.invoiceNumber}` : ''}`,
+    )
+    payModalRow.value = null
+    payReductionFcfa.value = 0
+    await load()
+  } catch (error) {
+    await showApiErrorModal(error, "Impossible d'encaisser cette consultation.")
+  } finally {
+    payingId.value = null
+  }
+}
+
+async function confirmPayModal() {
+  const row = payModalRow.value
+  const amounts = payModalAmounts.value
+  if (!row?.invoiceId || !amounts || amounts.net <= 0) return
+  await collectConsultation(row.invoiceId, amounts.reduction)
 }
 
 onMounted(load)
@@ -225,10 +323,45 @@ onMounted(load)
 
       <div class="stats-grid">
         <UiStatCard mini label="Montant net" :value="formatFcfa(stats.totalNet)" :icon="CircleDollarSign" variant="teal" />
-        <UiStatCard mini label="Réduction" :value="formatFcfa(stats.totalReduction)" :icon="Percent" variant="amber" />
+        <UiStatCard mini label="À encaisser" :value="formatFcfa(stats.pendingFcfa)" :icon="Banknote" variant="amber" />
+        <UiStatCard mini label="Réduction" :value="formatFcfa(stats.totalReduction)" :icon="Percent" variant="blue" />
       </div>
 
       <div class="filter-bar" role="region" aria-label="Filtrer par date">
+        <div class="filter-bar__row">
+          <div class="filter-bar__modes" role="tablist" aria-label="Statut">
+            <button
+              type="button"
+              role="tab"
+              class="filter-bar__mode"
+              :class="{ 'filter-bar__mode--active': statusFilter === 'PENDING' }"
+              :aria-selected="statusFilter === 'PENDING'"
+              @click="statusFilter = 'PENDING'"
+            >
+              À encaisser
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class="filter-bar__mode"
+              :class="{ 'filter-bar__mode--active': statusFilter === 'PAID' }"
+              :aria-selected="statusFilter === 'PAID'"
+              @click="statusFilter = 'PAID'"
+            >
+              Payées
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class="filter-bar__mode"
+              :class="{ 'filter-bar__mode--active': statusFilter === 'ALL' }"
+              :aria-selected="statusFilter === 'ALL'"
+              @click="statusFilter = 'ALL'"
+            >
+              Toutes
+            </button>
+          </div>
+        </div>
         <div class="filter-bar__row">
           <div class="filter-bar__modes" role="tablist" aria-label="Période">
             <button
@@ -292,27 +425,180 @@ onMounted(load)
     </section>
 
     <section class="page-with-table__body">
-      <UiCard :title="cardTitle" class="ui-card--table-panel" :icon="icon" icon-variant="teal">
+      <UiCard direct :title="cardTitle" class="ui-card--table-panel" :icon="icon" icon-variant="teal">
         <template #actions>
           <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">
             Actualiser
           </UiButton>
         </template>
-        <UiDataTable
-          :table-key="tableKey"
-          fill
-          compact
-          :data="tableData"
-          :columns="columns"
-          :loading="loading"
-          @action="onAction"
-        />
+        <div class="simple-table-shell simple-table-shell--fill">
+          <div
+            v-if="loading"
+            class="simple-table-overlay"
+            role="status"
+            aria-live="polite"
+          >
+            <span class="simple-table-spinner" aria-hidden="true" />
+            Chargement…
+          </div>
+          <div class="simple-table-scroll">
+            <div class="simple-table-wrap">
+              <table class="simple-table">
+                <thead>
+                  <tr>
+                    <th class="simple-table__num">#</th>
+                    <th>N° Facture</th>
+                    <th>Patient</th>
+                    <th>Médecin</th>
+                    <th>Montant</th>
+                    <th>Réduction</th>
+                    <th>Net</th>
+                    <th>Statut</th>
+                    <th>Date</th>
+                    <th class="simple-table__actions-head">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, index) in tableData" :key="row.id">
+                    <td class="simple-table__num">{{ index + 1 }}</td>
+                    <td><strong class="st-name">{{ row.invoiceNumber }}</strong></td>
+                    <td>
+                      <span class="st-name">{{ row.patientName }}</span>
+                      <span class="st-sub">{{ row.patientCode }}</span>
+                      <span class="st-sub">{{ row.patientService }}</span>
+                    </td>
+                    <td>{{ row.doctorName }}</td>
+                    <td><span class="st-amount">{{ row.fee }}</span></td>
+                    <td>{{ row.reduction }}</td>
+                    <td><strong class="st-amount">{{ row.total }}</strong></td>
+                    <td>{{ row.statusLabel }}</td>
+                    <td><span class="st-date">{{ row.date }}</span></td>
+                    <td class="simple-table__actions">
+                      <div v-if="row.invoiceId" class="st-actions">
+                        <button
+                          v-if="row.payable"
+                          type="button"
+                          class="st-btn st-btn--text"
+                          title="Encaisser"
+                          :disabled="payingId === row.invoiceId"
+                          @click="openPayModal(row.invoiceId!)"
+                        >
+                          <Banknote :size="15" />
+                          {{ payingId === row.invoiceId ? '…' : 'Encaisser' }}
+                        </button>
+                        <button
+                          v-if="row.paid"
+                          type="button"
+                          class="st-btn st-btn--text"
+                          title="Imprimer le reçu"
+                          aria-label="Imprimer le reçu"
+                          @click="reprintConsultation(row.visitId)"
+                        >
+                          <Printer :size="15" />
+                          Reçu
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </UiCard>
     </section>
+
+    <UiFormModal
+      v-if="payModalRow"
+      title="Encaisser la consultation"
+      :subtitle="`${fullName(payModalRow.patient.firstName, payModalRow.patient.lastName)} — ${payModalRow.invoiceNumber ?? ''}`"
+      :icon="Banknote"
+      @close="closePayModal"
+    >
+      <div v-if="payModalAmounts" class="pay-modal">
+        <div class="pay-modal__summary">
+          <div class="pay-modal__line">
+            <span>Prix consultation</span>
+            <strong>{{ formatFcfa(payModalAmounts.fee) }}</strong>
+          </div>
+          <div class="pay-modal__line pay-modal__line--net">
+            <span>Net à encaisser</span>
+            <strong>{{ formatFcfa(payModalAmounts.net) }}</strong>
+          </div>
+        </div>
+        <UiInput
+          v-model="payReductionFcfa"
+          label="Réduction (FCFA)"
+          type="number"
+          placeholder="0"
+        />
+        <p class="pay-modal__hint">
+          Le gestionnaire peut appliquer une réduction avant l’encaissement.
+        </p>
+      </div>
+      <template #footer>
+        <UiButton variant="ghost" :disabled="Boolean(payingId)" @click="closePayModal">
+          Annuler
+        </UiButton>
+        <UiButton
+          variant="primary"
+          :icon="Banknote"
+          :disabled="Boolean(payingId) || !payModalAmounts || payModalAmounts.net <= 0"
+          @click="confirmPayModal"
+        >
+          {{ payingId ? 'Encaissement…' : 'Confirmer l’encaissement' }}
+        </UiButton>
+      </template>
+    </UiFormModal>
   </div>
 </template>
 
 <style scoped>
+.pay-modal {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.pay-modal__summary {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.pay-modal__line {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.pay-modal__line strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.pay-modal__line--net {
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--border);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.pay-modal__line--net strong {
+  color: var(--primary, #0f766e);
+  font-size: 1rem;
+}
+
+.pay-modal__hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
 .filter-bar {
   background: var(--bg-card);
   border: 1px solid var(--border);

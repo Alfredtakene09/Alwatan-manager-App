@@ -2,9 +2,8 @@ import type { Component } from 'vue'
 import {
   Stethoscope,
   LayoutDashboard,
-  Wallet,
-  BedDouble,
   PillBottle,
+  BedDouble,
   FileText,
   Settings,
   Users,
@@ -27,7 +26,6 @@ import {
   BellRing,
   Building2,
   Warehouse,
-  TrendingUp,
   Hospital,
 } from '@lucide/vue'
 import type { AppUserRole } from './roles'
@@ -232,27 +230,6 @@ const logistiqueNav: NavSection[] = [
   },
 ]
 
-const examensPaiementsNavChildren: NavChildItem[] = [
-  {
-    to: '/reception/en-attente-paiement',
-    label: 'En attente de paiement',
-    icon: Clock,
-    module: 'reception',
-  },
-  {
-    to: '/reception/examens-payes',
-    label: 'Examens payés',
-    icon: CheckCircle2,
-    module: 'reception',
-  },
-  {
-    to: '/reception/examens-payes/reclamations',
-    label: 'Réclamations',
-    icon: ClipboardList,
-    module: 'reception',
-  },
-]
-
 const receptionNav: NavSection[] = [
   {
     items: [
@@ -283,19 +260,6 @@ const receptionNav: NavSection[] = [
             description: 'Parcours gratuit — recommandé par le personnel',
           },
         ],
-      },
-      {
-        label: 'Examens & paiements',
-        icon: Wallet,
-        module: 'reception',
-        children: examensPaiementsNavChildren.map((item) => ({ ...item })),
-      },
-      {
-        to: '/reception/comptabilite',
-        label: 'Encaissements clinique',
-        icon: Wallet,
-        module: 'reception',
-        description: 'Consultations, examens, chirurgie et hospitalisation',
       },
     ],
   },
@@ -393,12 +357,6 @@ const directionOperationalNav: NavSection[] = [
         ],
       },
       {
-        label: 'Examens & paiements',
-        icon: Wallet,
-        module: 'reception',
-        children: examensPaiementsNavChildren.map((item) => ({ ...item })),
-      },
-      {
         label: 'Comptabilité',
         icon: Receipt,
         module: 'comptabilite',
@@ -408,14 +366,14 @@ const directionOperationalNav: NavSection[] = [
             label: 'Encaissements',
             icon: Banknote,
             module: 'comptabilite',
-            description: "Recettes et files d'attente",
+            description: "Vue d'ensemble, files à encaisser et historique",
           },
           {
-            to: '/reception/comptabilite',
-            label: 'Encaissements clinique',
-            icon: Wallet,
-            module: 'reception',
-            description: 'Consultations, examens, chirurgie et hospitalisation',
+            to: '/gestionnaire/livre-journal',
+            label: 'Caisse & journal',
+            icon: FileText,
+            module: 'comptabilite',
+            description: 'Livre journal et historique des journées',
           },
           {
             to: '/admin/depenses',
@@ -432,23 +390,22 @@ const directionOperationalNav: NavSection[] = [
             badgeKey: 'salaires',
           },
           {
-            to: '/comptabilite/journal-encaissements',
-            label: 'Journal encaissements',
-            icon: FileText,
-            module: 'comptabilite',
-          },
-          {
-            to: '/comptabilite/compte-rendu-caisse',
-            label: 'Compte rendu caisse',
-            icon: Banknote,
-            module: 'comptabilite',
-            description: 'Rapprochement des créneaux matin, soir et nuit',
-          },
-          {
             to: '/factures',
             label: 'Factures',
             icon: FileText,
             module: 'factures',
+          },
+          {
+            to: '/comptabilite/examens-payes',
+            label: 'Examens payés',
+            icon: CheckCircle2,
+            module: 'comptabilite',
+          },
+          {
+            to: '/comptabilite/examens-payes/reclamations',
+            label: 'Réclamations',
+            icon: ClipboardList,
+            module: 'comptabilite',
           },
         ],
       },
@@ -589,38 +546,9 @@ const directionAdminNav: NavSection[] = [
   },
 ]
 
-/** Trésorerie gestionnaire — partagée avec Direction. */
-const directionTresorerieNav: NavSection[] = [
-  {
-    label: 'Trésorerie',
-    items: [
-      {
-        to: '/gestionnaire/caisse',
-        label: 'Caisse & décaissement',
-        icon: Banknote,
-        module: 'gestionnaire',
-        badgeKey: 'caisse',
-      },
-      {
-        to: '/gestionnaire/livre-journal',
-        label: 'Livre journal',
-        icon: FileText,
-        module: 'gestionnaire',
-      },
-      {
-        to: '/gestionnaire/finances',
-        label: 'Finances',
-        icon: TrendingUp,
-        module: 'gestionnaire',
-      },
-    ],
-  },
-]
-
-/** Direction & Gestionnaire = opérationnel + trésorerie + modules admin. */
+/** Direction & Gestionnaire = opérationnel + modules admin. */
 const directionNav: NavSection[] = [
   ...directionOperationalNav,
-  ...directionTresorerieNav,
   ...directionAdminNav,
 ]
 
@@ -637,13 +565,22 @@ const pharmacienNav: NavSection[] = [
   {
     items: [
       {
+        to: '/pharmacie/caisse',
+        label: 'Caisse',
+        icon: ShoppingCart,
+        module: 'pharmacie',
+        description: 'Catalogue, panier et vente au comptoir',
+        primary: true,
+      },
+      {
         to: '/pharmacie/tableau-de-bord',
         label: 'Tableau de bord',
         icon: LayoutDashboard,
         module: 'pharmacie',
-        primary: true,
       },
-      ...pharmacyNavChildren.map((item) => ({ ...item })),
+      ...pharmacyNavChildren
+        .filter((item) => item.to !== '/pharmacie/caisse')
+        .map((item) => ({ ...item })),
     ],
   },
 ]

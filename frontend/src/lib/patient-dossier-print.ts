@@ -2,6 +2,7 @@ import { fullName } from '@/lib/roles'
 import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
 import { translateUi } from '@/i18n/translate'
 import type { PharmacyOrdonnanceLine } from '@/lib/lab-notes'
+import { formatGroupedPrescribedDetails } from '@/lib/lab-prescribed-panels'
 import type { MedicalHistoryEntry } from '@/components/dossier/PatientMedicalHistory.vue'
 
 function escapeHtml(value: string) {
@@ -69,7 +70,7 @@ function visitBlockHtml(entry: MedicalHistoryEntry, t: typeof translateUi) {
     ${
       entry.prescribedExams.length
         ? `<div class="dossier-print__block"><h3>${escapeHtml(t('Examens prescrits'))}</h3><p>${escapeHtml(
-            entry.prescribedExams.join(' · '),
+            formatGroupedPrescribedDetails(entry.prescribedExams, t),
           )}</p></div>`
         : ''
     }

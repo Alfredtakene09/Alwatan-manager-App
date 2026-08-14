@@ -4,7 +4,6 @@ import axios from 'axios'
 import { ArrowDownUp, Plus, RefreshCw, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
-import { statusBadge } from '@/lib/datatable-defaults'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { LabStockItemRecord } from '@/components/laboratoire/LabStockItemsPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
@@ -15,7 +14,6 @@ import UiTextarea from '@/components/ui/UiTextarea.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 
@@ -99,28 +97,6 @@ const tableRows = computed(() => {
     reference: m.reference || '—',
   }))
 })
-
-const columns = [
-  {
-    data: 'dateSort',
-    title: 'Date',
-    responsivePriority: 1,
-    render: (_d: string, _t: string, row: { date: string }) => row.date,
-  },
-  { data: 'item', title: 'Article', responsivePriority: 1 },
-  {
-    data: 'typeLabel',
-    title: 'Type',
-    responsivePriority: 2,
-    render: (label: string, _t: string, row: { typeVariant: string }) =>
-      statusBadge(label, row.typeVariant as 'success' | 'danger' | 'warning'),
-  },
-  { data: 'quantityLabel', title: 'Quantité', responsivePriority: 2 },
-  { data: 'stockAfter', title: 'Stock après', responsivePriority: 3 },
-  { data: 'cost', title: 'Coût', responsivePriority: 4 },
-  { data: 'user', title: 'Par', responsivePriority: 4 },
-  { data: 'reference', title: 'Réf.', responsivePriority: 4 },
-]
 
 function apiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error) && typeof error.response?.data?.error === 'string') {
@@ -276,16 +252,46 @@ defineExpose({ reload: loadMovements })
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
 
     <p v-if="!loading && !tableRows.length" class="empty">{{ uiText('Aucun mouvement enregistré.') }}</p>
-    <UiDataTable
-      v-else
-      fill
-      table-key="lab-stock-movements"
-      compact
-      :data="tableRows"
-      :columns="columns"
-      :loading="loading"
-      loading-label="Chargement des mouvements…"
-    />
+    <div v-else class="simple-table-shell" :class="{ 'simple-table-shell--fill': true }">
+      <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+        <span class="simple-table-spinner" aria-hidden="true" />
+        Chargement des mouvements…
+      </div>
+      <div class="simple-table-scroll">
+        <div class="simple-table-wrap">
+          <table class="simple-table">
+            <thead>
+              <tr>
+                <th class="simple-table__num">#</th>
+                <th>Date</th>
+                <th>Article</th>
+                <th>Type</th>
+                <th>Quantité</th>
+                <th>Stock après</th>
+                <th>Coût</th>
+                <th>Par</th>
+                <th>Réf.</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in tableRows" :key="row.id">
+                <td class="simple-table__num">{{ index + 1 }}</td>
+                <td><span class="st-date">{{ row.date }}</span></td>
+                <td><span class="st-name">{{ row.item }}</span></td>
+                <td>
+                  <span class="st-badge" :class="`st-badge--${row.typeVariant}`">{{ row.typeLabel }}</span>
+                </td>
+                <td>{{ row.quantityLabel }}</td>
+                <td>{{ row.stockAfter }}</td>
+                <td><span class="st-amount">{{ row.cost }}</span></td>
+                <td>{{ row.user }}</td>
+                <td>{{ row.reference }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </PageTableSection>
 
   <UiFormModal

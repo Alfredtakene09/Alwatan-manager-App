@@ -75,12 +75,6 @@ async function reload() {
   }
 }
 
-function resetToDefaults() {
-  form.value = { ...DEFAULT_CLINIC }
-  message.value = 'Valeurs d’usine rechargées dans le formulaire — enregistrez pour appliquer.'
-  messageType.value = 'success'
-}
-
 function openLogoPicker() {
   logoInputRef.value?.click()
 }
@@ -193,9 +187,6 @@ onMounted(() => {
         <UiButton variant="ghost" :disabled="loading || saving || uploadingLogo" @click="reload">
           <RefreshCw :size="16" />
           {{ uiText('Actualiser') }}
-        </UiButton>
-        <UiButton variant="ghost" :disabled="loading || saving || uploadingLogo" @click="resetToDefaults">
-          {{ uiText('Valeurs d’usine') }}
         </UiButton>
         <UiButton :disabled="loading || saving || uploadingLogo" @click="save">
           <Save :size="16" />

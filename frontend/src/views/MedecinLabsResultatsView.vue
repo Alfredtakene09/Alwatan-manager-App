@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ClipboardList, Eye, Plus, Printer, RefreshCw } from '@lucide/vue'
+import { ClipboardList, Eye, Plus, RefreshCw } from '@lucide/vue'
 import api from '@/api/client'
-import { useAuthStore } from '@/stores/auth'
-import { fetchAndPrintLabVisitResults } from '@/lib/lab-visit-print'
 import { fullName } from '@/lib/roles'
 import {
   countLabPrescribedExams,
@@ -26,7 +24,6 @@ import { useSilentRefresh } from '@/composables/useSilentRefresh'
 import '@/assets/lab-visit-table.css'
 
 const router = useRouter()
-const auth = useAuthStore()
 const { uiText, dateText, timeText, numberText } = useAppI18n()
 
 const visits = ref<LabsResultsVisitRow[]>([])
@@ -35,8 +32,6 @@ const loading = ref(false)
 const statsRefreshKey = ref(0)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
-const printError = ref('')
-const printingVisitId = ref<string | null>(null)
 
 const rows = computed(() =>
   visits.value
@@ -69,7 +64,7 @@ async function loadVisits(opts?: { silent?: boolean }) {
     visits.value = data
   } finally {
     if (!opts?.silent) loading.value = false
-    if (!opts?.silent) statsRefreshKey.value += 1
+    statsRefreshKey.value += 1
   }
 }
 
@@ -82,17 +77,6 @@ function openAppendModal(id: string) {
 
 function viewResults(visitId: string) {
   router.push({ name: 'medecin-labs-resultats-dossier', params: { visitId } })
-}
-
-async function printResults(visitId: string) {
-  const visit = visits.value.find((v) => v.id === visitId)
-  if (!visit) return
-
-  printError.value = ''
-  printingVisitId.value = visitId
-  const result = await fetchAndPrintLabVisitResults(visit, auth.user, 'medecin')
-  if (!result.ok) printError.value = result.error
-  printingVisitId.value = null
 }
 
 function closePrescriptionModal() {
@@ -129,15 +113,13 @@ onMounted(() => {
       />
 
       <UiAlert v-if="message" :type="messageType" :message="message" />
-      <UiAlert v-if="printError" type="error" :message="printError" />
 
       <MedecinStatsGrid :refresh-key="statsRefreshKey" />
     </section>
 
     <section class="page-with-table__body">
-      <UiCard
-        title="Résultats disponibles"
-        description="Œil : consulter · Imprimer : dossier complet · Bouton Ajouter : examens complémentaires"
+      <UiCard direct title="Résultats disponibles"
+        description="Œil : consulter · Bouton Ajouter : examens complémentaires"
         class="ui-card--table-panel"
         :icon="ClipboardList"
         icon-variant="teal"
@@ -197,15 +179,6 @@ onMounted(() => {
                       @click="viewResults(row.id)"
                     >
                       <Eye :size="15" />
-                    </button>
-                    <button
-                      type="button"
-                      class="lab-visit-act lab-visit-act--icon"
-                      :title="uiText('Imprimer les résultats')"
-                      :disabled="printingVisitId === row.id"
-                      @click="printResults(row.id)"
-                    >
-                      <Printer :size="15" />
                     </button>
                     <button
                       type="button"

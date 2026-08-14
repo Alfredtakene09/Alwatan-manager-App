@@ -1,0 +1,530 @@
+/* Tableaux HTML légers — affichage rapide des listes (sans DataTables) */
+
+.simple-table-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 6rem;
+  max-height: min(58dvh, 680px);
+  overflow: hidden;
+}
+
+.simple-table-shell--fill {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  height: 100%;
+}
+
+.simple-table-shell--static {
+  min-height: auto;
+  max-height: none;
+  overflow: visible;
+}
+
+.simple-table-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.simple-table-shell--static .simple-table-scroll {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+}
+
+.simple-table-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(1px);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+}
+
+/* Données déjà à l'écran : indicateur discret, pas de voile plein */
+.simple-table-shell:has(tbody tr) .simple-table-overlay {
+  inset: auto;
+  top: 0.35rem;
+  right: 0.5rem;
+  left: auto;
+  bottom: auto;
+  flex-direction: row;
+  gap: 0.4rem;
+  padding: 0.3rem 0.55rem;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  backdrop-filter: none;
+  font-size: 0.75rem;
+}
+
+.simple-table-shell:has(tbody tr) .simple-table-overlay .simple-table-spinner {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-width: 2px;
+}
+
+.simple-table-overlay--soft {
+  inset: auto;
+  top: 0.35rem;
+  right: 0.5rem;
+  left: auto;
+  bottom: auto;
+  flex-direction: row;
+  gap: 0.4rem;
+  padding: 0.3rem 0.55rem;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  backdrop-filter: none;
+  font-size: 0.75rem;
+}
+
+.simple-table-overlay--soft .simple-table-spinner {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-width: 2px;
+}
+
+.simple-table-spinner {
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 2px solid var(--accent-200, #bfdbfe);
+  border-top-color: var(--accent-600, #2563eb);
+  border-radius: 50%;
+  animation: simple-table-spin 0.7s linear infinite;
+}
+
+@keyframes simple-table-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.simple-table-wrap {
+  min-height: 0;
+  overflow-x: auto;
+  padding: 0.15rem 0.35rem 0.5rem;
+}
+
+.simple-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font);
+  font-size: 0.875rem;
+  color: var(--text);
+}
+
+.simple-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: var(--bg-card, #fff);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.simple-table tbody td {
+  padding: 0.42rem 0.65rem;
+  border-bottom: 1px solid var(--border-soft, #eef1f5);
+  vertical-align: middle;
+}
+
+.simple-table tbody tr:hover {
+  background: var(--surface-soft, #f6f8fb);
+}
+
+.simple-table__num {
+  width: 2.5rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.simple-table__actions-head,
+.simple-table__actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.simple-table__empty {
+  margin: 0;
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+}
+
+.st-badge {
+  display: inline-block;
+  padding: 0.22rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: var(--accent-50, #eff6ff);
+  color: var(--accent-700, #1d4ed8);
+  border: 1px solid var(--accent-200, #bfdbfe);
+  white-space: nowrap;
+}
+
+.st-name {
+  display: block;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.st-name--focus {
+  color: #5b21b6;
+  font-weight: 700;
+}
+
+.st-sub,
+.st-muted,
+.st-date {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.st-date {
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.st-phone {
+  color: var(--accent-700, #1d4ed8);
+  text-decoration: none;
+}
+
+.st-phone:hover {
+  text-decoration: underline;
+}
+
+.st-pill {
+  display: inline-block;
+  padding: 0.18rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.st-pill--f {
+  background: #fdf2f8;
+  color: #9d174d;
+  border: 1px solid #fbcfe8;
+}
+
+.st-pill--m {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.st-pill--na {
+  background: #f8fafc;
+  color: var(--text-muted);
+}
+
+.st-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.st-actions--wrap {
+  flex-wrap: wrap;
+}
+
+.st-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: var(--radius-sm, 10px);
+  border: 1px solid var(--border);
+  background: var(--bg-card, #fff);
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.st-btn:hover:not(:disabled) {
+  border-color: var(--accent-500, #3b82f6);
+  color: var(--accent-700, #1d4ed8);
+  background: var(--accent-50, #eff6ff);
+}
+
+.st-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.st-btn--edit:hover:not(:disabled) {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.st-btn--accent:hover:not(:disabled) {
+  border-color: var(--primary, #2563eb);
+  color: var(--primary, #2563eb);
+}
+
+.st-btn--soft:hover:not(:disabled) {
+  background: var(--surface-soft, #f0f4f9);
+  color: var(--text);
+}
+
+.st-btn--delete:hover:not(:disabled) {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.st-btn--pay {
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+  color: #047857;
+}
+
+.st-btn--pay:hover:not(:disabled) {
+  background: #d1fae5;
+  border-color: #34d399;
+  color: #065f46;
+}
+
+.st-btn--hosp:hover:not(:disabled) {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #c2410c;
+}
+
+.st-sep {
+  display: inline-block;
+  width: 1px;
+  height: 1.35rem;
+  margin: 0 0.1rem;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.st-exam-full {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  max-width: 28rem;
+}
+
+.st-exam-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--teal-soft, #d9f2ee);
+  color: var(--teal-strong, #0f766e);
+  font-size: 0.72rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.st-exam-full__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.st-exam-line {
+  font-size: 0.8125rem;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.st-amount-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  align-items: flex-start;
+}
+
+.st-amount {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.st-amount--due {
+  color: #b45309;
+}
+
+.st-amount-collected,
+.st-amount-remaining {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.st-amount-col {
+  white-space: nowrap;
+  min-width: 7rem;
+}
+
+.simple-table tbody tr.st-row--selected {
+  background: var(--accent-50, #eff6ff);
+}
+
+.st-badge--success {
+  background: var(--success-bg, #ecfdf5);
+  color: var(--success, #047857);
+  border-color: #a7f3d0;
+}
+
+.st-badge--warning {
+  background: var(--warning-bg, #fffbeb);
+  color: var(--warning, #b45309);
+  border-color: #fde68a;
+}
+
+.st-badge--danger {
+  background: var(--danger-bg, #fef2f2);
+  color: var(--danger, #b91c1c);
+  border-color: #fecaca;
+}
+
+.st-badge--primary,
+.st-badge--info {
+  background: var(--accent-50, #eff6ff);
+  color: var(--accent-700, #1d4ed8);
+  border-color: var(--accent-200, #bfdbfe);
+}
+
+.st-badge--default {
+  background: #f1f5f9;
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.st-exam-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  max-width: 100%;
+}
+
+.st-exam-preview .st-sub--truncate {
+  margin-top: 0;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.st-btn--text {
+  width: auto;
+  min-width: 0;
+  height: 2rem;
+  padding: 0 0.65rem;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.st-btn--labeled {
+  width: auto;
+  min-width: 0;
+  height: 2rem;
+  padding: 0 0.65rem;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: var(--primary, #2563eb);
+  border-color: var(--primary, #2563eb);
+  color: #fff;
+}
+
+.st-btn--labeled:hover:not(:disabled) {
+  background: var(--primary-dark, #1d4ed8);
+  border-color: var(--primary-dark, #1d4ed8);
+  color: #fff;
+}
+
+.st-btn--catalog-on {
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+  color: #047857;
+}
+
+.st-btn--catalog-on:hover:not(:disabled) {
+  background: #d1fae5;
+  border-color: #34d399;
+  color: #065f46;
+}
+
+.st-btn--catalog-off:hover:not(:disabled) {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #c2410c;
+}
+
+.st-btn--paid {
+  opacity: 0.85;
+  pointer-events: none;
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+  color: #047857;
+}
+
+.st-share-breakdown {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  max-width: 16rem;
+}
+
+.st-team-sub {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.st-btn--accent.st-btn--text {
+  background: var(--action, var(--accent-600, #2563eb));
+  border-color: var(--action, var(--accent-600, #2563eb));
+  color: #fff;
+}
+
+.st-btn--accent.st-btn--text:hover:not(:disabled) {
+  filter: brightness(0.95);
+  color: #fff;
+}

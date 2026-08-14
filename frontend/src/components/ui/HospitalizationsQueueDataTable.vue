@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { Config } from 'datatables.net'
+import { Eye, Pencil, BedDouble, Calendar } from '@lucide/vue'
 import { formatFcfa, fullName } from '@/lib/roles'
-import { DT_ICONS, statusBadge } from '@/lib/datatable-defaults'
 import { HOSPITALIZATION_STATUS_LABELS } from '@/lib/hospitalization-admission'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import '@/assets/simple-table.css'
 
 export type HospitalizationQueueItem = {
   id: string
@@ -65,7 +64,7 @@ function roomTypeLabel(item: HospitalizationQueueItem) {
   return '—'
 }
 
-const tableData = computed(() =>
+const rows = computed(() =>
   [...props.items]
     .sort((a, b) => {
       const order = { ACTIVE: 0, RESERVED: 1, DISCHARGED: 2, REQUESTED: 3 }
@@ -103,6 +102,7 @@ const tableData = computed(() =>
         roomLabel: roomLabel(item),
         roomTypeLabel: roomTypeLabel(item),
         status: item.status,
+        statusTone: statusTone(item.status),
         statusLabel: HOSPITALIZATION_STATUS_LABELS[item.status] ?? item.status,
         startLabel,
         endLabel,
@@ -115,137 +115,124 @@ const tableData = computed(() =>
       }
     }),
 )
-
-const columns = [
-  {
-    data: 'code',
-    title: 'Matricule',
-    responsivePriority: 3,
-    render: (code: string) => `<span class="dt-badge">${code}</span>`,
-  },
-  {
-    data: 'patientName',
-    title: 'Patient',
-    responsivePriority: 1,
-    render: (name: string, _t: string, row: { patientPhone: string; patientService: string; focused: boolean }) =>
-      `<span class="dt-name${row.focused ? ' dt-name--focus' : ''}">${name}</span><span class="dt-sub">${row.patientService}</span>${
-        row.patientPhone ? `<span class="dt-sub">${row.patientPhone}</span>` : ''
-      }`,
-  },
-  {
-    data: 'doctorName',
-    title: 'Médecin',
-    responsivePriority: 5,
-    render: (name: string) => `<span class="dt-sub">${name}</span>`,
-  },
-  {
-    data: 'roomTypeLabel',
-    title: 'Chambre',
-    responsivePriority: 4,
-    render: (label: string) => `<span class="dt-badge dt-badge--muted">${label}</span>`,
-  },
-  {
-    data: 'roomLabel',
-    title: 'Salle',
-    responsivePriority: 4,
-    render: (label: string) => `<span class="dt-sub">${label}</span>`,
-  },
-  {
-    data: 'statusLabel',
-    title: 'Statut',
-    orderable: false,
-    responsivePriority: 3,
-    render: (_label: string, _t: string, row: { status: string; statusLabel: string }) =>
-      statusBadge(row.statusLabel, statusTone(row.status)),
-  },
-  {
-    data: 'startLabel',
-    title: 'Entrée',
-    responsivePriority: 6,
-    render: (date: string) => `<span class="dt-date">${date}</span>`,
-  },
-  {
-    data: 'endLabel',
-    title: 'Sortie',
-    responsivePriority: 6,
-    render: (date: string) => `<span class="dt-date">${date}</span>`,
-  },
-  {
-    data: 'amountLabel',
-    title: 'Montant',
-    responsivePriority: 5,
-    render: (amount: string, _t: string, row: { nightsLabel: string }) =>
-      `<span class="dt-name">${amount}</span><span class="dt-sub">${row.nightsLabel}</span>`,
-  },
-  {
-    data: null,
-    title: '',
-    orderable: false,
-    className: 'dt-actions-col all',
-    responsivePriority: 1,
-    render: (
-      _d: unknown,
-      _t: string,
-      row: {
-        id: string
-        visitId: string
-        needsAdmission: boolean
-        canView: boolean
-        canEdit: boolean
-        canDischarge: boolean
-      },
-    ) => {
-      const viewBtn = row.canView
-        ? `<button type="button" class="dt-btn dt-btn--icon" data-action="view" title="Voir le profil" aria-label="Voir">
-          ${DT_ICONS.view}
-        </button>`
-        : ''
-      const editBtn = row.canEdit
-        ? `<button type="button" class="dt-btn dt-btn--icon" data-action="edit" title="Modifier le séjour" aria-label="Modifier">
-          ${DT_ICONS.edit}
-        </button>`
-        : ''
-      const admitBtn = row.needsAdmission
-        ? `<button type="button" class="dt-btn dt-btn--icon dt-btn--hosp" data-action="admit" title="Programmer l'admission" aria-label="Programmer">
-          ${DT_ICONS.bed}
-        </button>`
-        : ''
-      const dischargeBtn = row.canDischarge
-        ? `<button type="button" class="dt-btn dt-btn--icon dt-btn--accent" data-action="discharge" title="Clôturer la sortie" aria-label="Clôturer">
-          ${DT_ICONS.calendar}
-        </button>`
-        : ''
-      return `
-      <div class="dt-row-actions" data-id="${row.id}" data-visit-id="${row.visitId}">
-        ${viewBtn}
-        ${editBtn}
-        ${admitBtn}
-        ${dischargeBtn}
-      </div>`
-    },
-  },
-]
-
-const options = computed<Config>(() => ({}))
-
-function onAction({ action, id }: { action: string; id: string }) {
-  if (action === 'admit') emit('admit', id)
-  if (action === 'view') emit('view', id)
-  if (action === 'edit') emit('edit', id)
-  if (action === 'discharge') emit('discharge', id)
-}
 </script>
 
 <template>
-  <UiDataTable
-    table-key="hospitalizations-queue"
-    compact
-    :fill="fill"
-    :data="tableData"
-    :columns="columns"
-    :options="options"
-    :loading="loading"
-    loading-label="Chargement des hospitalisations…"
-    @action="onAction"
-  />
+  <div
+    class="simple-table-shell"
+    :class="{ 'simple-table-shell--fill': fill }"
+  >
+    <div
+      v-if="loading"
+      class="simple-table-overlay" role="status"
+      aria-live="polite"
+    >
+      <span class="simple-table-spinner" aria-hidden="true" />
+      Chargement des hospitalisations…
+    </div>
+
+    <div class="simple-table-scroll">
+      <p v-if="!loading && !rows.length" class="simple-table__empty">
+        Aucune hospitalisation à afficher
+      </p>
+      <div v-else class="simple-table-wrap">
+        <table class="simple-table">
+          <thead>
+            <tr>
+              <th class="simple-table__num">#</th>
+              <th>Matricule</th>
+              <th>Patient</th>
+              <th>Médecin</th>
+              <th>Chambre</th>
+              <th>Salle</th>
+              <th>Statut</th>
+              <th>Entrée</th>
+              <th>Sortie</th>
+              <th>Montant</th>
+              <th class="simple-table__actions-head">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, index) in rows" :key="row.id">
+              <td class="simple-table__num">{{ index + 1 }}</td>
+              <td>
+                <span class="st-badge">{{ row.code }}</span>
+              </td>
+              <td>
+                <span class="st-name" :class="{ 'st-name--focus': row.focused }">{{ row.patientName }}</span>
+                <span class="st-sub">{{ row.patientService }}</span>
+                <span v-if="row.patientPhone" class="st-sub">{{ row.patientPhone }}</span>
+              </td>
+              <td>
+                <span class="st-sub">{{ row.doctorName }}</span>
+              </td>
+              <td>
+                <span class="st-badge st-badge--default">{{ row.roomTypeLabel }}</span>
+              </td>
+              <td>
+                <span class="st-sub">{{ row.roomLabel }}</span>
+              </td>
+              <td>
+                <span class="st-badge" :class="`st-badge--${row.statusTone}`">{{ row.statusLabel }}</span>
+              </td>
+              <td>
+                <span class="st-date">{{ row.startLabel }}</span>
+              </td>
+              <td>
+                <span class="st-date">{{ row.endLabel }}</span>
+              </td>
+              <td>
+                <span class="st-name">{{ row.amountLabel }}</span>
+                <span class="st-sub">{{ row.nightsLabel }}</span>
+              </td>
+              <td class="simple-table__actions">
+                <div class="st-actions">
+                  <button
+                    v-if="row.canView"
+                    type="button"
+                    class="st-btn"
+                    title="Voir le profil"
+                    aria-label="Voir"
+                    @click="emit('view', row.id)"
+                  >
+                    <Eye :size="15" />
+                  </button>
+                  <button
+                    v-if="row.canEdit"
+                    type="button"
+                    class="st-btn st-btn--edit"
+                    title="Modifier le séjour"
+                    aria-label="Modifier"
+                    @click="emit('edit', row.id)"
+                  >
+                    <Pencil :size="15" />
+                  </button>
+                  <button
+                    v-if="row.needsAdmission"
+                    type="button"
+                    class="st-btn st-btn--hosp"
+                    title="Programmer l'admission"
+                    aria-label="Programmer"
+                    @click="emit('admit', row.id)"
+                  >
+                    <BedDouble :size="15" />
+                  </button>
+                  <button
+                    v-if="row.canDischarge"
+                    type="button"
+                    class="st-btn st-btn--accent"
+                    title="Clôturer la sortie"
+                    aria-label="Clôturer"
+                    @click="emit('discharge', row.id)"
+                  >
+                    <Calendar :size="15" />
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </template>

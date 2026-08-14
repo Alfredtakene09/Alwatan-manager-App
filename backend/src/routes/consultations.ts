@@ -474,7 +474,7 @@ router.patch("/labs-resultats/:visitId/panels/:panelSlug/comment", async (req, r
 
 router.get("/pharmacy-products", async (_req, res) => {
   const items = await prisma.product.findMany({
-    where: { active: true, quantity: { gt: 0 } },
+    where: { active: true },
     orderBy: { name: "asc" },
     select: {
       id: true,
@@ -523,18 +523,12 @@ router.post("/prescribe-exams", async (req, res) => {
       }
 
       const existingNotes = visit.consultation?.clinicalNotes;
-
-      if (
-        !body.append &&
-        existingNotes &&
-        hasExamsPrescribed(existingNotes) &&
-        (visit.consultation?.labSentToLabAt || hasLabResults(existingNotes))
-      ) {
-        throw new Error("ALREADY_SENT_TO_LAB");
-      }
+      const labLocked =
+        !!visit.consultation?.labSentToLabAt || hasLabResults(existingNotes);
 
       let examsByKind = body.examsByKind;
       let examCommentsByKind = body.examCommentsByKind;
+      let legacyExams = body.exams;
 
       if (body.append && body.examsByKind) {
         const existingByKind = parsePrescribedExamsByKind(existingNotes);
@@ -566,11 +560,35 @@ router.post("/prescribe-exams", async (req, res) => {
       if (hasHospitalisation && body.hospitalisationDays != null && body.hospitalisationDays < 1) {
         throw new Error("INVALID_HOSPITALISATION_DAYS");
       }
-      const hasExams = examsByKind
+
+      let hasExams = examsByKind
         ? flattenPrescribedExams(examsByKind).length > 0
-        : (body.exams?.length ?? 0) > 0;
+        : (legacyExams?.length ?? 0) > 0;
+
+      // Dossier déjà au labo / avec résultats :
+      // - réécriture d’examens interdite hors « Ajouter des examens »
+      // - ordonnance / notes autorisées même si le client renvoie encore les examens
+      const wantsPharmacyOrNotes =
+        body.pharmacyOrdonnance !== undefined || (doctorComment?.length ?? 0) >= 2;
+      if (
+        !body.append &&
+        labLocked &&
+        existingNotes &&
+        hasExamsPrescribed(existingNotes) &&
+        hasExams
+      ) {
+        if (wantsPharmacyOrNotes) {
+          examsByKind = undefined;
+          examCommentsByKind = undefined;
+          legacyExams = undefined;
+          hasExams = false;
+        } else {
+          throw new Error("ALREADY_SENT_TO_LAB");
+        }
+      }
+
       const requiresLabWork = prescriptionRequiresLabWork(
-        examsByKind ?? (body.exams?.length ? { examen: body.exams } : null),
+        examsByKind ?? (legacyExams?.length ? { examen: legacyExams } : null),
       );
 
       let notes = hasExams
@@ -581,7 +599,7 @@ router.post("/prescribe-exams", async (req, res) => {
               body.notes,
               examCommentsByKind,
             )
-          : buildPrescribedExamsNotes(body.exams ?? [], existingNotes, body.notes)
+          : buildPrescribedExamsNotes(legacyExams ?? [], existingNotes, body.notes)
         : existingNotes;
 
       const pharmacyLines: PharmacyOrdonnanceLine[] = body.pharmacyOrdonnance?.length
@@ -646,6 +664,26 @@ router.post("/prescribe-exams", async (req, res) => {
 
       const directClinical =
         !!examsByKind && isDirectClinicalConsultationPrescription(examsByKind);
+
+      // Ordonnance / notes après envoi labo : mettre à jour sans clôturer le dossier.
+      if (
+        !hasExams &&
+        (doctorComment || pharmacyLines.length || body.pharmacyOrdonnance) &&
+        (labLocked || hasExamsPrescribed(existingNotes))
+      ) {
+        return tx.consultation.update({
+          where: { id: consultation.id },
+          data: {
+            ...(body.pharmacyOrdonnance ? { clinicalNotes } : {}),
+            ...(doctorComment
+              ? {
+                  doctorComment,
+                  ...(diagnosisFromComment ? { diagnosis: diagnosisFromComment } : {}),
+                }
+              : {}),
+          },
+        });
+      }
 
       if ((!hasExams && (doctorComment || pharmacyLines.length)) || directClinical) {
         const completed = await tx.consultation.update({
@@ -719,7 +757,8 @@ router.post("/prescribe-exams", async (req, res) => {
     }
     if (error instanceof Error && error.message === "ALREADY_SENT_TO_LAB") {
       return res.status(409).json({
-        error: "Ce dossier est déjà au laboratoire ou validé — utilisez « Ajouter des examens » pour compléter la prescription.",
+        error:
+          "Ce dossier est déjà au laboratoire ou validé — utilisez « Ajouter des examens » pour compléter la prescription.",
       });
     }
     if (error instanceof Error && error.message === "INVALID_HOSPITALISATION_DAYS") {

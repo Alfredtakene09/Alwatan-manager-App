@@ -113,7 +113,7 @@ const employeeCompensationSchema = z.object({
   doctorCompensationType: z.nativeEnum(DoctorCompensationType).optional(),
   consultationTotalFcfa: z.number().int().min(0).optional(),
   consultationQuotaMode: z.nativeEnum(ConsultationQuotaMode).optional(),
-  consultationQuotaPercent: z.number().int().min(1).max(99).optional(),
+  consultationQuotaPercent: z.number().int().min(1).max(100).optional(),
   consultationQuotaFcfa: z.number().int().min(0).optional(),
   consultationValidityDays: z.number().int().min(1).max(365).optional(),
   consultationRenewalPolicy: z.nativeEnum(ConsultationRenewalPolicy).optional(),

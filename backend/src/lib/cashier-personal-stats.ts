@@ -1,6 +1,6 @@
 import { prisma } from "./db.js";
 import {
-  collectedInvoicesWhere,
+  loadCollectedSlicesBetween,
   sumCollectedBreakdown,
   type CollectedBreakdown,
 } from "./revenue-stats.js";
@@ -25,21 +25,8 @@ export async function aggregateCollectedForCashier(
   from: Date,
   to: Date,
 ): Promise<CollectedBreakdown> {
-  const invoices = await prisma.invoice.findMany({
-    where: {
-      ...collectedInvoicesWhere(from, to),
-      issuedById: cashierId,
-    },
-    select: {
-      type: true,
-      status: true,
-      amountFcfa: true,
-      paidAmountFcfa: true,
-      paidAt: true,
-      createdAt: true,
-    },
-  });
-  return sumCollectedBreakdown(invoices);
+  const slices = await loadCollectedSlicesBetween(from, to, { cashierId });
+  return sumCollectedBreakdown(slices);
 }
 
 export async function sumExpensesForCashierOnDate(cashierId: string, businessDate: Date) {

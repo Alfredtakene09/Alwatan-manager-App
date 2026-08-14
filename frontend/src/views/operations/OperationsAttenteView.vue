@@ -227,8 +227,7 @@ const { refresh: refreshList } = useSilentRefresh(
     </section>
 
     <section class="page-with-table__body">
-      <UiCard
-        title="File des opérations payées"
+      <UiCard direct title="File des opérations payées"
         class="ui-card--table-panel"
         :icon="Scissors"
         icon-variant="amber"

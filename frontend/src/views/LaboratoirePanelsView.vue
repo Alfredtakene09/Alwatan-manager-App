@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Eye, FlaskConical, Plus, RefreshCw, Save, Trash2 } from '@lucide/vue'
+import { Eye, FlaskConical, Plus, RefreshCw, Save, Search, Trash2 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal } from '@/lib/api-modal-helper'
-import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
 import { formatFcfa } from '@/lib/roles'
-import { labFieldCommentKey, type LabFormPanel } from '@/lib/lab-form-panels'
+import { type LabFormPanel } from '@/lib/lab-form-panels'
 import {
   useLabPanelsStore,
   panelDtoToFormPanel,
@@ -21,7 +20,9 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import LabQueueBell from '@/components/layout/LabQueueBell.vue'
+import '@/assets/simple-table.css'
 
 type FieldForm = {
   /** Identifiant local stable pour le v-for (évite de perdre la saisie section/libellé). */
@@ -32,12 +33,15 @@ type FieldForm = {
   unit: string
   reference: string
   defaultValue: string
+  /** Tarif partiel optionnel (chaîne pour input number). */
+  priceFcfa: string
   hasComment: boolean
 }
 
 const labPanels = useLabPanelsStore()
 const { uiText, numberText } = useAppI18n()
 const panels = ref<LabPanelDto[]>([])
+const listSearch = ref('')
 const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
@@ -48,8 +52,6 @@ const editingId = ref<string | null>(null)
 const showPreviewModal = ref(false)
 const previewSource = ref<LabPanelDto | null>(null)
 const previewFields = ref<LabPanelFieldDto[]>([])
-const previewDirty = ref(false)
-const previewSaving = ref(false)
 const previewValues = reactive<Record<string, string>>({})
 
 const previewPanel = computed<LabFormPanel | null>(() => {
@@ -57,10 +59,11 @@ const previewPanel = computed<LabFormPanel | null>(() => {
   return panelDtoToFormPanel({ ...previewSource.value, fields: previewFields.value })
 })
 
-const form = ref<{ label: string; isEntry: boolean; active: boolean; fields: FieldForm[] }>({
+const form = ref<{ label: string; isEntry: boolean; active: boolean; priceFcfa: string; fields: FieldForm[] }>({
   label: '',
   isEntry: true,
   active: true,
+  priceFcfa: '',
   fields: [],
 })
 
@@ -98,16 +101,45 @@ const tableRows = computed(() =>
       toggleLabel: panel.active ? 'Désactiver' : 'Activer',
       isActive: panel.active,
       showView: true,
+      showEdit: true,
+      showToggle: true,
+      canDelete: true,
     }
   }),
 )
 
-function onTableClick(event: MouseEvent) {
-  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-action]')
-  if (!button?.dataset.action) return
-  const row = button.closest<HTMLElement>('[data-id]')
-  if (!row?.dataset.id) return
-  onTableAction({ action: button.dataset.action, id: row.dataset.id })
+const hasActiveSearch = computed(() => listSearch.value.trim().length > 0)
+
+const filteredTableRows = computed(() => {
+  const query = listSearch.value.trim().toLocaleLowerCase()
+  if (!query) return tableRows.value
+  return tableRows.value.filter((row) => {
+    const panel = panelsById.value.get(row.id)
+    const haystack = [
+      row.label,
+      row.slug,
+      panel?.label,
+      ...(panel?.fields.map((field) => field.label) ?? []),
+      ...(panel?.fields.map((field) => field.key) ?? []),
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLocaleLowerCase()
+    return haystack.includes(query)
+  })
+})
+
+const listCountLabel = computed(() => {
+  if (hasActiveSearch.value) {
+    return uiText('{shown} / {total} formulaire(s)')
+      .replace('{shown}', numberText(filteredTableRows.value.length))
+      .replace('{total}', numberText(panels.value.length))
+  }
+  return uiText('{n} formulaire(s)').replace('{n}', numberText(panels.value.length))
+})
+
+function resetSearch() {
+  listSearch.value = ''
 }
 
 function resetMessages() {
@@ -145,9 +177,19 @@ function emptyField(partial?: Partial<Omit<FieldForm, 'uid'>>): FieldForm {
     unit: '',
     reference: '',
     defaultValue: '',
+    priceFcfa: '',
     hasComment: false,
     ...partial,
   }
+}
+
+function parseOptionalFieldPrice(raw: string): number | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  const value = Number(trimmed)
+  // Vide / 0 / invalide → pas de tarif unitaire (jamais bloquant à l’enregistrement).
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1) return null
+  return value
 }
 
 /** Insère un nouveau champ juste après la ligne `index` (fin de liste si index omis). */
@@ -173,7 +215,7 @@ function removeField(index: number) {
 
 function openCreate() {
   editingId.value = null
-  form.value = { label: '', isEntry: true, active: true, fields: [emptyField()] }
+  form.value = { label: '', isEntry: true, active: true, priceFcfa: '', fields: [emptyField()] }
   showModal.value = true
 }
 
@@ -181,10 +223,12 @@ function openEdit(id: string) {
   const panel = panelsById.value.get(id)
   if (!panel) return
   editingId.value = id
+  const linkedPrice = panel.examCatalogItems?.[0]?.priceFcfa
   form.value = {
     label: panel.label,
     isEntry: panel.isEntry,
     active: panel.active,
+    priceFcfa: linkedPrice != null && linkedPrice > 0 ? String(linkedPrice) : '',
     fields: [...panel.fields]
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((field) =>
@@ -195,6 +239,8 @@ function openEdit(id: string) {
           unit: field.unit ?? '',
           reference: field.reference ?? '',
           defaultValue: field.defaultValue ?? '',
+          priceFcfa:
+            field.priceFcfa != null && field.priceFcfa > 0 ? String(field.priceFcfa) : '',
           hasComment: field.hasComment === true,
         }),
       ),
@@ -213,70 +259,22 @@ function openPreview(id: string) {
   if (!panel) return
   previewSource.value = panel
   previewFields.value = [...panel.fields].sort((a, b) => a.sortOrder - b.sortOrder)
-  previewDirty.value = false
   Object.keys(previewValues).forEach((key) => delete previewValues[key])
   for (const field of previewFields.value) {
-    previewValues[field.key] = field.defaultValue ?? ''
-    if (field.hasComment) {
-      previewValues[labFieldCommentKey(field.key)] = ''
-    }
+    previewValues[field.key] = field.defaultValue?.trim() ?? ''
   }
   showPreviewModal.value = true
-}
-
-function removePreviewField(key: string) {
-  previewFields.value = previewFields.value.filter((field) => field.key !== key)
-  delete previewValues[key]
-  delete previewValues[labFieldCommentKey(key)]
-  previewDirty.value = true
-}
-
-async function savePreview() {
-  if (!previewSource.value || !previewDirty.value) return
-
-  previewSaving.value = true
-  resetMessages()
-  try {
-    await api.put(`/lab-panels/${previewSource.value.id}`, {
-      label: previewSource.value.label,
-      isEntry: previewSource.value.isEntry,
-      active: previewSource.value.active,
-      fields: previewFields.value.map((field) => ({
-        key: field.key,
-        section: field.section?.trim() ? field.section.trim() : null,
-        label: field.label,
-        unit: field.unit ?? null,
-        reference: field.reference ?? null,
-        defaultValue: field.defaultValue ?? null,
-        hasComment: field.hasComment === true,
-        type: 'text',
-      })),
-    })
-    message.value = previewFields.value.length
-      ? 'Champs mis à jour.'
-      : 'Formulaire vidé — ajoutez des champs plus tard.'
-    messageType.value = 'success'
-    previewDirty.value = false
-    closePreview()
-    await loadPanels()
-    await labPanels.fetchPanels(true)
-  } catch {
-    message.value = 'Enregistrement impossible.'
-    messageType.value = 'error'
-  } finally {
-    previewSaving.value = false
-  }
 }
 
 function closePreview() {
   showPreviewModal.value = false
   previewSource.value = null
   previewFields.value = []
-  previewDirty.value = false
 }
 
 async function save() {
   const label = form.value.label.trim()
+  const priceFcfa = Number(form.value.priceFcfa)
   const fields = form.value.fields
     .filter((field) => field.label.trim())
     .map((field) => ({
@@ -287,12 +285,19 @@ async function save() {
       unit: field.unit.trim() || null,
       reference: field.reference.trim() || null,
       defaultValue: field.defaultValue.trim() || null,
-      hasComment: field.hasComment === true,
+      priceFcfa: parseOptionalFieldPrice(field.priceFcfa),
+      hasComment: false,
       type: 'text',
     }))
 
   if (label.length < 2) {
-    message.value = 'Le nom du formulaire est obligatoire.'
+    message.value = uiText('Le nom du formulaire est obligatoire.')
+    messageType.value = 'error'
+    return
+  }
+
+  if (!Number.isFinite(priceFcfa) || !Number.isInteger(priceFcfa) || priceFcfa < 1) {
+    message.value = uiText('Le tarif est obligatoire et doit être supérieur à 0.')
     messageType.value = 'error'
     return
   }
@@ -305,6 +310,7 @@ async function save() {
         label,
         isEntry: form.value.isEntry,
         active: form.value.active,
+        priceFcfa,
         fields,
       })
       message.value = fields.length
@@ -314,6 +320,7 @@ async function save() {
       await api.post('/lab-panels', {
         label,
         isEntry: form.value.isEntry,
+        priceFcfa,
         fields,
       })
       message.value = fields.length
@@ -325,8 +332,20 @@ async function save() {
     closeModal()
     await loadPanels()
     await labPanels.fetchPanels(true)
-  } catch {
-    message.value = 'Enregistrement impossible. Vérifiez les champs.'
+  } catch (error: unknown) {
+    const apiError =
+      error &&
+      typeof error === 'object' &&
+      'response' in error &&
+      error.response &&
+      typeof error.response === 'object' &&
+      'data' in error.response &&
+      error.response.data &&
+      typeof error.response.data === 'object' &&
+      'error' in error.response.data
+        ? String((error.response.data as { error?: unknown }).error ?? '')
+        : ''
+    message.value = apiError.trim() || 'Enregistrement impossible. Vérifiez les champs.'
     messageType.value = 'error'
   } finally {
     saving.value = false
@@ -397,74 +416,92 @@ onMounted(loadPanels)
 
     <UiCard
       title="Formulaires de résultats"
-      description="Chaque formulaire devient un examen prescrit par le médecin. Complétez les champs ici ; l’admin fixe le tarif dans Types d’examen."
       :icon="FlaskConical"
       icon-variant="teal"
       class="section"
     >
       <template #actions>
-        <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreate">
-          Nouveau formulaire
-        </UiButton>
-        <LabQueueBell />
-        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadPanels">
-          Actualiser
-        </UiButton>
-        <span class="list-count">{{
-          uiText('{n} formulaire(s)').replace('{n}', numberText(panels.length))
-        }}</span>
+        <div class="panels-toolbar">
+          <label class="panels-toolbar__search">
+            <Search :size="16" aria-hidden="true" />
+            <input
+              v-model="listSearch"
+              type="search"
+              :placeholder="uiText('Rechercher un formulaire…')"
+              :aria-label="uiText('Rechercher un formulaire')"
+            />
+          </label>
+          <UiButton v-if="hasActiveSearch" variant="ghost" size="sm" @click="resetSearch">
+            Effacer
+          </UiButton>
+          <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreate">
+            Nouveau formulaire
+          </UiButton>
+          <LabQueueBell />
+          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadPanels">
+            Actualiser
+          </UiButton>
+          <span class="list-count">{{ listCountLabel }}</span>
+        </div>
       </template>
 
-      <div class="panels-table-wrap">
-        <div class="ui-dt-shell ui-dt-shell--static">
-          <div class="ui-dt-scroll">
-            <div class="ui-dt ui-dt--compact" @click="onTableClick">
-              <div v-if="loading" class="ui-dt__overlay" role="status" aria-live="polite">
-                <span class="ui-dt__spinner" />
-                {{ uiText('Chargement des formulaires…') }}
-              </div>
-
-              <table class="dataTable stripe hover row-border ui-dt__table panels-table">
-                <thead>
-                  <tr>
-                    <th class="dt-num-col">#</th>
-                    <th>{{ uiText('Formulaire') }}</th>
-                    <th>{{ uiText('Identifiant') }}</th>
-                    <th>{{ uiText('Champs') }}</th>
-                    <th>{{ uiText('Tarif') }}</th>
-                    <th>{{ uiText('Statut') }}</th>
-                    <th class="dt-actions-col dt-actions-col--catalog">{{ uiText('Actions') }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-if="!loading && !tableRows.length">
-                    <td colspan="7" class="panels-table-empty">{{ uiText('Aucun formulaire enregistré.') }}</td>
-                  </tr>
-                  <tr
-                    v-for="(row, index) in tableRows"
-                    v-else
-                    :key="row.id"
-                    :class="index % 2 === 0 ? 'odd' : 'even'"
-                  >
-                    <td class="dt-num-col">{{ numberText(index + 1) }}</td>
-                    <td><span class="dt-name">{{ row.label }}</span></td>
-                    <td><code class="panels-table-slug">{{ row.slug }}</code></td>
-                    <td><span class="dt-amount">{{ numberText(row.fieldCount) }}</span></td>
-                    <td>
-                      <span
-                        class="dt-amount"
-                        :class="{ 'panels-table-tariff--pending': row.tariffPending }"
-                      >{{ row.tariffLabel }}</span>
-                    </td>
-                    <td v-html="statusBadge(row.statusLabel, row.statusVariant as 'success' | 'danger')" />
-                    <td
-                      class="dt-actions-col dt-actions-col--catalog"
-                      v-html="catalogRowActionsHtml(row)"
+      <div class="simple-table-shell simple-table-shell--static">
+        <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+          <span class="simple-table-spinner" aria-hidden="true" />
+          {{ uiText('Chargement des formulaires…') }}
+        </div>
+        <div class="simple-table-scroll">
+          <div class="simple-table-wrap">
+            <table class="simple-table panels-table">
+              <thead>
+                <tr>
+                  <th class="simple-table__num">#</th>
+                  <th>{{ uiText('Formulaire') }}</th>
+                  <th>{{ uiText('Identifiant') }}</th>
+                  <th>{{ uiText('Champs') }}</th>
+                  <th>{{ uiText('Tarif') }}</th>
+                  <th>{{ uiText('Statut') }}</th>
+                  <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="!loading && !tableRows.length">
+                  <td colspan="7" class="panels-table-empty">{{ uiText('Aucun formulaire enregistré.') }}</td>
+                </tr>
+                <tr v-else-if="!loading && !filteredTableRows.length">
+                  <td colspan="7" class="panels-table-empty">
+                    {{ uiText('Aucun formulaire ne correspond à la recherche.') }}
+                  </td>
+                </tr>
+                <tr v-for="(row, index) in filteredTableRows" v-else :key="row.id">
+                  <td class="simple-table__num">{{ numberText(index + 1) }}</td>
+                  <td><span class="st-name">{{ row.label }}</span></td>
+                  <td><code class="panels-table-slug">{{ row.slug }}</code></td>
+                  <td><span class="st-amount">{{ numberText(row.fieldCount) }}</span></td>
+                  <td>
+                    <span
+                      class="st-amount"
+                      :class="{ 'panels-table-tariff--pending': row.tariffPending }"
+                    >{{ row.tariffLabel }}</span>
+                  </td>
+                  <td>
+                    <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                  </td>
+                  <td class="simple-table__actions">
+                    <StCatalogActions
+                      :id="row.id"
+                      :is-active="row.isActive"
+                      :toggle-label="row.toggleLabel"
+                      :can-delete="row.canDelete"
+                      :show-edit="row.showEdit"
+                      :show-view="row.showView"
+                      :show-toggle="row.showToggle"
+                      @action="onTableAction"
                     />
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -482,6 +519,13 @@ onMounted(loadPanels)
       <section class="form-panel">
         <div class="form-grid-2">
           <UiInput v-model="form.label" label="Nom du formulaire" placeholder="Ex. Bilan rénal" />
+          <UiInput
+            v-model="form.priceFcfa"
+            label="Tarif (FCFA)"
+            type="number"
+            placeholder="Ex. 5000"
+            required
+          />
           <UiSelect v-model="isEntryModel" label="Usage">
             <option value="entry">{{ uiText('Saisie (proposé au laboratoire)') }}</option>
             <option value="consult">{{ uiText('Consultation seule') }}</option>
@@ -494,6 +538,13 @@ onMounted(loadPanels)
             Ajouter un champ
           </UiButton>
         </div>
+        <p class="fields-hint">
+          {{
+            uiText(
+              'Prix par champ : utilisé si le médecin coche seulement certains labels ; sinon le tarif général de l’examen s’applique.',
+            )
+          }}
+        </p>
 
         <p v-if="!form.fields.length" class="fields-empty">{{ uiText('Aucun champ pour l’instant — vous pouvez en ajouter maintenant ou plus tard.') }}</p>
 
@@ -504,11 +555,18 @@ onMounted(loadPanels)
               <UiInput v-model="field.section" label="Section (optionnel)" placeholder="Ex. Électrolytes" />
               <UiInput v-model="field.unit" label="Unité (optionnel)" placeholder="Ex. mg/dl" />
               <UiInput v-model="field.reference" label="Valeur de référence (optionnel)" placeholder="Ex. 0.6 - 1.1 mg/dl" />
-              <UiInput v-model="field.defaultValue" label="Texte par défaut (optionnel)" placeholder="Ex. Normal" />
-              <label class="field-comment-toggle">
-                <input v-model="field.hasComment" type="checkbox" />
-                <span>{{ uiText('Activer le commentaire (textarea) pour ce champ') }}</span>
-              </label>
+              <UiInput
+                v-model="field.priceFcfa"
+                :label="uiText('Prix (optionnel)')"
+                type="number"
+                placeholder="Ex. 1500"
+                :required="false"
+              />
+              <UiInput
+                v-model="field.defaultValue"
+                :label="uiText('Texte par défaut (prérempli à la saisie)')"
+                placeholder="Ex. Negative(-ve)"
+              />
             </div>
             <button
               type="button"
@@ -552,12 +610,12 @@ onMounted(loadPanels)
     >
       <section class="preview-panel">
         <p class="preview-hint">
-          Aperçu de la mise en page — le commentaire n'apparaît que pour les champs où il est activé.
-          Survolez un champ et cliquez sur la corbeille pour le retirer.
+          Aperçu de la mise en page telle qu’affichée lors de la saisie des résultats.
+          Pour modifier des champs, utilisez « Modifier ».
         </p>
 
         <p v-if="!previewFields.length" class="fields-empty">
-          Tous les champs ont été retirés — ajoutez-en via « Modifier ».
+          Aucun champ — ajoutez-en via « Modifier ».
         </p>
 
         <div
@@ -586,24 +644,6 @@ onMounted(loadPanels)
                   "
                   readonly
                 />
-                <label v-if="field.hasComment" class="field-comment">
-                  <span class="field-comment__label">{{ uiText('Commentaire') }}</span>
-                  <textarea
-                    v-model="previewValues[labFieldCommentKey(field.key)]"
-                    rows="2"
-                    :placeholder="uiText('Commentaire sur cette ligne…')"
-                    readonly
-                  />
-                </label>
-                <button
-                  type="button"
-                  class="preview-field__remove"
-                  :title="uiText('Retirer ce champ')"
-                  :aria-label="uiText('Retirer ce champ')"
-                  @click="removePreviewField(field.key)"
-                >
-                  <Trash2 :size="14" />
-                </button>
               </div>
             </template>
           </div>
@@ -612,14 +652,6 @@ onMounted(loadPanels)
 
       <template #footer>
         <UiButton variant="ghost" @click="closePreview">Fermer</UiButton>
-        <UiButton
-          variant="primary"
-          :icon="Save"
-          :disabled="!previewDirty || previewSaving"
-          @click="savePreview"
-        >
-          {{ previewSaving ? 'Enregistrement…' : 'Enregistrer les modifications' }}
-        </UiButton>
       </template>
     </UiFormModal>
   </div>
@@ -630,11 +662,62 @@ onMounted(loadPanels)
   margin-top: 1rem;
 }
 
+.panels-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.panels-toolbar__search {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: min(100%, 16rem);
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--text-muted);
+}
+
+.panels-toolbar__search:focus-within {
+  border-color: var(--accent-500);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.panels-toolbar__search input {
+  width: 100%;
+  min-width: 10rem;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.panels-toolbar__search input:focus {
+  outline: none;
+}
+
 .list-count {
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .panels-toolbar {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .panels-toolbar__search {
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 .panels-table-wrap {
@@ -687,6 +770,13 @@ onMounted(loadPanels)
   color: var(--primary-700);
 }
 
+.fields-hint {
+  margin: -0.35rem 0 0.85rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
 .fields-empty {
   margin: 0 0 0.75rem;
   font-size: 0.8125rem;
@@ -716,20 +806,6 @@ onMounted(loadPanels)
 
 .field-row__grid :deep(.ui-field) {
   margin-bottom: 0;
-}
-
-.field-comment-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin-top: 0.1rem;
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-}
-
-.field-comment-toggle input[type='checkbox'] {
-  width: 0.95rem;
-  height: 0.95rem;
 }
 
 .field-row__remove {
@@ -797,59 +873,6 @@ onMounted(loadPanels)
 
 .preview-field {
   position: relative;
-}
-
-.preview-field__remove {
-  position: absolute;
-  top: 0;
-  right: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.5rem;
-  height: 1.5rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: #fff;
-  color: #dc2626;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
-}
-
-.preview-field:hover .preview-field__remove,
-.preview-field__remove:focus-visible {
-  opacity: 1;
-}
-
-.preview-field__remove:hover {
-  background: #fef2f2;
-  border-color: #fca5a5;
-}
-
-.field-comment {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  margin-top: 0.45rem;
-}
-
-.field-comment__label {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.field-comment textarea {
-  width: 100%;
-  padding: 0.45rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font: inherit;
-  font-size: 0.8125rem;
-  resize: vertical;
-  background: #f8fafc;
-  color: var(--text-muted);
 }
 
 .form-section + .form-section {

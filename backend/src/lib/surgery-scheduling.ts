@@ -1,4 +1,4 @@
-import { SurgeryStatus, VisitStatus } from "@prisma/client";
+import { SurgeryStatus, VisitStatus, type Prisma } from "@prisma/client";
 import { prisma } from "./db.js";
 import {
   clearSharePaymentFields,
@@ -8,6 +8,13 @@ const AWAITING_PERFORMANCE_STATUSES: SurgeryStatus[] = [
   SurgeryStatus.PAID,
   SurgeryStatus.AUTHORIZED,
   SurgeryStatus.IN_PROGRESS,
+];
+
+/** Statuts pouvant être clôturés (paiement non requis). */
+const COMPLETABLE_STATUSES: SurgeryStatus[] = [
+  SurgeryStatus.NOTIFIED,
+  SurgeryStatus.QUOTED,
+  ...AWAITING_PERFORMANCE_STATUSES,
 ];
 
 /** Fin de journée locale pour une date YYYY-MM-DD */
@@ -73,7 +80,7 @@ export async function completeSurgeryCase(
     select: { id: true, visitId: true, status: true },
   });
 
-  if (!AWAITING_PERFORMANCE_STATUSES.includes(surgery.status)) {
+  if (!COMPLETABLE_STATUSES.includes(surgery.status)) {
     throw new Error("SURGERY_NOT_COMPLETABLE");
   }
 
@@ -93,23 +100,60 @@ export async function completeSurgeryCase(
     });
 
     if (note) {
-      const consultation = await tx.consultation.findUnique({
-        where: { visitId: surgery.visitId },
-        select: { id: true, doctorComment: true },
-      });
-      if (consultation) {
-        const existing = consultation.doctorComment?.trim() || "";
-        const next = existing
-          ? `${existing}\n\n[Opération] ${note}`
-          : `[Opération] ${note}`;
-        await tx.consultation.update({
-          where: { id: consultation.id },
-          data: { doctorComment: next },
-        });
-      }
+      await appendOperationNoteToConsultation(tx, surgery.visitId, note);
     }
 
     return updated;
+  });
+}
+
+type PrismaTx = Prisma.TransactionClient;
+
+async function appendOperationNoteToConsultation(
+  tx: PrismaTx,
+  visitId: string,
+  note: string,
+) {
+  const trimmed = note.trim();
+  if (!trimmed) return;
+
+  const consultation = await tx.consultation.findUnique({
+    where: { visitId },
+    select: { id: true, doctorComment: true },
+  });
+  if (!consultation) return;
+
+  const existing = consultation.doctorComment?.trim() || "";
+  const next = existing
+    ? `${existing}\n\n[Opération] ${trimmed}`
+    : `[Opération] ${trimmed}`;
+  await tx.consultation.update({
+    where: { id: consultation.id },
+    data: { doctorComment: next },
+  });
+}
+
+/** Ajoute un commentaire final sur une opération déjà effectuée. */
+export async function appendSurgeryFinalComment(
+  surgeryId: string,
+  note: string,
+) {
+  const trimmed = note.trim();
+  if (!trimmed) {
+    throw new Error("EMPTY_FINAL_COMMENT");
+  }
+
+  const surgery = await prisma.surgeryCase.findUniqueOrThrow({
+    where: { id: surgeryId },
+    select: { id: true, visitId: true, status: true },
+  });
+
+  if (surgery.status !== SurgeryStatus.COMPLETED) {
+    throw new Error("SURGERY_NOT_COMPLETED");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await appendOperationNoteToConsultation(tx, surgery.visitId, trimmed);
   });
 }
 
@@ -141,4 +185,4 @@ export async function revertSurgeryToAwaiting(surgeryId: string, operationDate?:
   });
 }
 
-export { AWAITING_PERFORMANCE_STATUSES };
+export { AWAITING_PERFORMANCE_STATUSES, COMPLETABLE_STATUSES };

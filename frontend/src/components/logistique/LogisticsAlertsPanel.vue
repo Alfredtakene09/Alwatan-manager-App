@@ -2,7 +2,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { RefreshCw } from '@lucide/vue'
 import api from '@/api/client'
-import { statusBadge } from '@/lib/datatable-defaults'
 import {
   buildClinicPrintHeader,
   openPrintDocument,
@@ -16,7 +15,7 @@ import {
 import UiButton from '@/components/ui/UiButton.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import '@/assets/simple-table.css'
 
 type StockAlertItem = {
   itemId: string
@@ -87,47 +86,6 @@ const expiryRows = computed(() =>
     levelVariant: item.level === 'expired' ? 'danger' : 'warning',
   })),
 )
-
-const stockColumns = [
-  {
-    data: 'name',
-    title: 'Article',
-    responsivePriority: 1,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  {
-    data: 'stockLabel',
-    title: 'Stock',
-    responsivePriority: 1,
-    render: (label: string, _t: string, row: { levelVariant: string }) =>
-      statusBadge(label, row.levelVariant as 'danger' | 'warning'),
-  },
-  {
-    data: 'levelLabel',
-    title: 'Alerte',
-    responsivePriority: 2,
-    render: (label: string, _t: string, row: { levelVariant: string }) =>
-      statusBadge(label, row.levelVariant as 'danger' | 'warning'),
-  },
-]
-
-const expiryColumns = [
-  {
-    data: 'name',
-    title: 'Article',
-    responsivePriority: 1,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  { data: 'expiryDate', title: 'Exp.', responsivePriority: 2 },
-  { data: 'daysLabel', title: 'Délai', responsivePriority: 2 },
-  {
-    data: 'levelLabel',
-    title: 'Alerte',
-    responsivePriority: 2,
-    render: (label: string, _t: string, row: { levelVariant: string }) =>
-      statusBadge(label, row.levelVariant as 'danger' | 'warning'),
-  },
-]
 
 async function loadAlerts() {
   loading.value = true
@@ -205,17 +163,39 @@ defineExpose({ reload: loadAlerts })
         <div class="summary-chip summary-chip--danger">{{ data.expired }} expiré(s)</div>
       </div>
 
-      <p v-if="!loading && !stockRows.length" class="empty">Aucune alerte stock.</p>
-      <UiDataTable
-        v-else
-        fill
-        table-key="logistics-alerts-stock"
-        compact
-        :data="stockRows"
-        :columns="stockColumns"
-        :loading="loading"
-        loading-label="Chargement…"
-      />
+      <div class="simple-table-shell simple-table-shell--fill">
+        <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+          <span class="simple-table-spinner" aria-hidden="true" />
+          Chargement…
+        </div>
+        <div class="simple-table-scroll">
+          <p v-if="!loading && !stockRows.length" class="simple-table__empty">Aucune alerte stock.</p>
+          <div v-else class="simple-table-wrap">
+            <table class="simple-table">
+              <thead>
+                <tr>
+                  <th class="simple-table__num">#</th>
+                  <th>Article</th>
+                  <th>Stock</th>
+                  <th>Alerte</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, index) in stockRows" :key="row.id">
+                  <td class="simple-table__num">{{ index + 1 }}</td>
+                  <td><span class="st-name">{{ row.name }}</span></td>
+                  <td>
+                    <span class="st-badge" :class="`st-badge--${row.levelVariant}`">{{ row.stockLabel }}</span>
+                  </td>
+                  <td>
+                    <span class="st-badge" :class="`st-badge--${row.levelVariant}`">{{ row.levelLabel }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="page-table-section">
@@ -223,17 +203,39 @@ defineExpose({ reload: loadAlerts })
         <strong class="panel-table-title">Alertes péremption</strong>
       </div>
 
-      <p v-if="!loading && !expiryRows.length" class="empty">Aucune alerte de péremption.</p>
-      <UiDataTable
-        v-else
-        fill
-        table-key="logistics-alerts-expiry"
-        compact
-        :data="expiryRows"
-        :columns="expiryColumns"
-        :loading="loading"
-        loading-label="Chargement…"
-      />
+      <div class="simple-table-shell simple-table-shell--fill">
+        <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+          <span class="simple-table-spinner" aria-hidden="true" />
+          Chargement…
+        </div>
+        <div class="simple-table-scroll">
+          <p v-if="!loading && !expiryRows.length" class="simple-table__empty">Aucune alerte de péremption.</p>
+          <div v-else class="simple-table-wrap">
+            <table class="simple-table">
+              <thead>
+                <tr>
+                  <th class="simple-table__num">#</th>
+                  <th>Article</th>
+                  <th>Exp.</th>
+                  <th>Délai</th>
+                  <th>Alerte</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, index) in expiryRows" :key="row.id">
+                  <td class="simple-table__num">{{ index + 1 }}</td>
+                  <td><span class="st-name">{{ row.name }}</span></td>
+                  <td><span class="st-date">{{ row.expiryDate }}</span></td>
+                  <td><span class="st-muted">{{ row.daysLabel }}</span></td>
+                  <td>
+                    <span class="st-badge" :class="`st-badge--${row.levelVariant}`">{{ row.levelLabel }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -273,12 +275,5 @@ defineExpose({ reload: loadAlerts })
 .summary-chip--warning {
   background: #fffbeb;
   color: #b45309;
-}
-
-.empty {
-  text-align: center;
-  color: var(--text-light);
-  padding: 2rem 1rem;
-  font-size: 0.875rem;
 }
 </style>

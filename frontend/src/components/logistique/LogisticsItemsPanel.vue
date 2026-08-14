@@ -16,7 +16,6 @@ import {
   packagingToUnits,
   unitsToPackaging,
 } from '@/lib/logistics-packaging'
-import { statusBadge, catalogRowActionsHtml } from '@/lib/datatable-defaults'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { LogisticsCategoryRecord } from '@/components/logistique/LogisticsCategoriesPanel.vue'
 import type { LogisticsSupplierRecord } from '@/components/logistique/LogisticsSuppliersPanel.vue'
@@ -27,8 +26,9 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiDataTable from '@/components/ui/UiDataTable.vue'
+import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import { confirmAppModal } from '@/lib/api-modal-helper'
+import '@/assets/simple-table.css'
 
 export type LogisticsItemRecord = {
   id: string
@@ -258,54 +258,6 @@ const tableRows = computed(() => {
     }
   })
 })
-
-const columns = [
-  {
-    data: 'name',
-    title: 'Article',
-    responsivePriority: 1,
-    render: (name: string) => `<span class="dt-name">${name}</span>`,
-  },
-  {
-    data: 'cartonsLabel',
-    title: 'Ctn',
-    responsivePriority: 2,
-    className: 'dt-center',
-  },
-  {
-    data: 'packagesLabel',
-    title: 'Pqt',
-    responsivePriority: 2,
-    className: 'dt-center',
-  },
-  {
-    data: 'quantity',
-    title: 'Unité',
-    responsivePriority: 1,
-    className: 'dt-center',
-    render: (_d: number, _t: string, row: { unitsLabel: string; stockVariant: string }) =>
-      statusBadge(row.unitsLabel, row.stockVariant as 'success' | 'danger'),
-  },
-  {
-    data: 'statusLabel',
-    title: 'État',
-    responsivePriority: 3,
-    render: (label: string, _t: string, row: { statusVariant: string }) =>
-      statusBadge(label, row.statusVariant as 'success' | 'danger'),
-  },
-  {
-    data: null,
-    title: '',
-    orderable: false,
-    className: 'dt-actions-col dt-actions-col--catalog all',
-    responsivePriority: 1,
-    render: (
-      _d: unknown,
-      _t: string,
-      row: { id: string; toggleLabel: string; isActive: boolean; canDelete: boolean },
-    ) => catalogRowActionsHtml({ ...row, showView: true, showToggle: false }),
-  },
-]
 
 function apiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error) && typeof error.response?.data?.error === 'string') {
@@ -581,20 +533,57 @@ defineExpose({ reload: loadItems })
 
     <UiAlert v-if="message && !modalOpen && !viewModalOpen" :type="messageType" :message="message" class="panel-alert" />
 
-    <UiDataTable
-      fill
-      table-key="logistics-items"
-      compact
-      :data="tableRows"
-      :columns="columns"
-      :loading="loading"
-      loading-label="Chargement des articles…"
-      @action="onTableAction"
-    />
-    <p v-if="!loading && !items.length" class="empty">Aucun article enregistré</p>
-    <p v-else-if="!loading && items.length && !tableRows.length" class="empty">
-      Aucun article ne correspond aux critères de recherche
-    </p>
+    <div class="simple-table-shell simple-table-shell--fill">
+      <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
+        <span class="simple-table-spinner" aria-hidden="true" />
+        Chargement des articles…
+      </div>
+      <div class="simple-table-scroll">
+        <p v-if="!loading && !items.length" class="simple-table__empty">Aucun article enregistré</p>
+        <p v-else-if="!loading && items.length && !tableRows.length" class="simple-table__empty">
+          Aucun article ne correspond aux critères de recherche
+        </p>
+        <div v-else class="simple-table-wrap">
+          <table class="simple-table">
+            <thead>
+              <tr>
+                <th class="simple-table__num">#</th>
+                <th>Article</th>
+                <th>Ctn</th>
+                <th>Pqt</th>
+                <th>Unité</th>
+                <th>État</th>
+                <th class="simple-table__actions-head"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in tableRows" :key="row.id">
+                <td class="simple-table__num">{{ index + 1 }}</td>
+                <td><span class="st-name">{{ row.name }}</span></td>
+                <td><span class="st-muted">{{ row.cartonsLabel }}</span></td>
+                <td><span class="st-muted">{{ row.packagesLabel }}</span></td>
+                <td>
+                  <span class="st-badge" :class="`st-badge--${row.stockVariant}`">{{ row.unitsLabel }}</span>
+                </td>
+                <td>
+                  <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
+                </td>
+                <td class="simple-table__actions">
+                  <StCatalogActions
+                    :id="row.id"
+                    :is-active="row.isActive"
+                    :can-delete="row.canDelete"
+                    :show-view="true"
+                    :show-toggle="false"
+                    @action="onTableAction"
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </PageTableSection>
 
   <UiFormModal
@@ -867,13 +856,6 @@ defineExpose({ reload: loadItems })
 .items-category:focus {
   outline: 2px solid rgba(27, 79, 156, 0.35);
   outline-offset: 1px;
-}
-
-.empty {
-  text-align: center;
-  color: var(--text-light);
-  padding: 1rem;
-  font-size: 0.875rem;
 }
 
 .item-detail {

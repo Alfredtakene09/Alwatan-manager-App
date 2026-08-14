@@ -5,6 +5,7 @@ import {
   formatLabPrescribedExamsPreview,
   parsePrescribedExamsByKind,
 } from '@/lib/lab-notes'
+import { formatGroupedPrescribedLabels } from '@/lib/lab-prescribed-panels'
 import { fullName } from '@/lib/roles'
 
 export type LabAlertItem = {
@@ -55,7 +56,7 @@ function buildItemsFromVisits(visits: QueueVisitLike[]): {
     const sentAt = sentRaw ? new Date(sentRaw) : null
     const recent = Boolean(sentAt && !Number.isNaN(sentAt.getTime()) && sentAt.getTime() >= recentCutoff)
     if (recent) recentExamCount += examCount
-    const exams = parsePrescribedExamsByKind(notes).examen
+    const exams = formatGroupedPrescribedLabels(parsePrescribedExamsByKind(notes).examen)
     items.push({
       visitId: visit.id,
       patientCode: visit.patient.code,

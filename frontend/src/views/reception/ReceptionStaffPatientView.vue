@@ -234,7 +234,7 @@ ${buildClinicPrintHeader(uiText('Fiche patient — Personnel (gratuit)'))}
   <div class="row"><span>${uiText('Date')}</span><strong>${dateTimeText(row.createdAt)}</strong></div>
   <div class="row"><span>${uiText('Patient')}</span><strong>${patientName}</strong></div>
   <div class="row"><span>${uiText('Matricule')}</span><strong>${row.code}</strong></div>
-  ${row.service ? `<div class="row"><span>${uiText('Service')}</span><strong>${row.service}</strong></div>` : ''}
+              ${row.service ? `<div class="row"><span>${uiText('Service')}</span><strong>${uiText(row.service)}</strong></div>` : ''}
   ${row.recommendedByName ? `<div class="row"><span>${uiText('Recommandé par')}</span><strong>${row.recommendedByName}</strong></div>` : ''}
   ${row.phone ? `<div class="row"><span>${uiText('Téléphone')}</span><strong>${row.phone}</strong></div>` : ''}
   ${row.age != null ? `<div class="row"><span>${uiText('Âge')}</span><strong>${formatPatientAge(row.age, normalizePatientAgeUnit(row.ageUnit))}</strong></div>` : ''}
@@ -297,7 +297,7 @@ onMounted(() => {
                 <strong>{{ fullName(row.firstName, row.lastName) }}</strong>
                 <span class="sub">{{ row.code }}</span>
               </td>
-              <td>{{ row.service || '—' }}</td>
+              <td>{{ row.service ? uiText(row.service) : '—' }}</td>
               <td>{{ row.recommendedByName || '—' }}</td>
               <td>{{ dateTimeText(row.createdAt) }}</td>
               <td class="col-actions">
@@ -342,7 +342,7 @@ onMounted(() => {
               }}
             </option>
             <option v-for="service in services" :key="service.id" :value="service.name">
-              {{ service.name }}
+              {{ uiText(service.name) }}
             </option>
           </UiSelect>
           <UiSelect v-model="form.doctorId" label="Médecin" required>

@@ -3,18 +3,15 @@ import { computed, onMounted, ref } from 'vue'
 import {
   Wallet,
   RefreshCw,
-  ArrowRight,
-  UserCheck,
   History,
   Banknote,
   Eye,
   FileCheck,
   Users,
-  CheckCircle2,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
-import { showSuccessModal, showApiErrorModal, confirmAppModal } from '@/lib/api-modal-helper'
+import { showApiErrorModal } from '@/lib/api-modal-helper'
 import {
   formatDateTimeFr,
 } from '@/lib/gestionnaire-dashboard'
@@ -34,6 +31,13 @@ import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import '@/assets/gestionnaire-page.css'
+
+const props = withDefaults(
+  defineProps<{
+    embedded?: boolean
+  }>(),
+  { embedded: false },
+)
 
 type DayClosureRow = {
   id: string
@@ -61,21 +65,6 @@ type HistoryRow = DisburseHistoryRow
 
 const { uiText, dateText, timeText } = useAppI18n()
 
-const WORKFLOW_STEPS = [
-  {
-    step: '1',
-    title: 'Réception',
-    text: 'Clôture de journée — recettes du jour',
-    icon: FileCheck,
-  },
-  {
-    step: '2',
-    title: 'Gestionnaire',
-    text: 'Valide → décaissement auto (historique)',
-    icon: UserCheck,
-  },
-] as const
-
 const historyRows = ref<HistoryRow[]>([])
 const historyLoading = ref(false)
 
@@ -94,9 +83,7 @@ const dayClosureLoading = ref(false)
 const dayClosureFilterUser = ref('')
 const dayClosureFrom = ref('')
 const dayClosureTo = ref('')
-const dayClosureStatus = ref<'all' | 'pending' | 'validated'>('pending')
-const dayClosurePendingCount = ref(0)
-const validatingClosureId = ref<string | null>(null)
+const dayClosureStatus = ref<'all' | 'pending' | 'validated'>('all')
 
 async function loadHistory() {
   historyLoading.value = true
@@ -129,7 +116,6 @@ async function loadDayClosures() {
     }>(`/gestionnaire/day-closures?${params.toString()}`)
     dayClosures.value = data.closures ?? []
     dayClosureReceptionists.value = data.receptionists ?? []
-    dayClosurePendingCount.value = data.pendingCount ?? 0
   } finally {
     dayClosureLoading.value = false
   }
@@ -142,45 +128,6 @@ const dayClosureTotalNet = computed(() =>
 const dayClosureTotalCollected = computed(() =>
   dayClosures.value.reduce((sum, c) => sum + c.collectedFcfa, 0),
 )
-
-async function validateDayClosure(row: DayClosureRow) {
-  const confirmed = await confirmAppModal({
-    type: 'CONFIRM',
-    title: 'Valider la clôture',
-    message: translateTemplate(
-      'Confirmer la validation ? Réceptionniste : {name} Date : {date} Recettes : {collected} Dépenses : {expenses} Net à décaisser : {net} Le décaissement sera enregistré automatiquement dans l’historique.',
-      {
-        name: row.receptionistName,
-        date: row.businessDate,
-        collected: formatFcfa(row.collectedFcfa),
-        expenses: formatFcfa(row.expensesFcfa),
-        net: formatFcfa(row.netFcfa),
-      },
-    ),
-    confirmLabel: 'Valider et décaisser',
-    cancelLabel: 'Annuler',
-  })
-  if (!confirmed) return
-
-  validatingClosureId.value = row.id
-  try {
-    const { data } = await api.post<{ message: string; closure: DayClosureRow; disbursedFcfa?: number }>(
-      `/gestionnaire/day-closures/${row.id}/validate`,
-    )
-    await showSuccessModal(
-      'Clôture validée',
-      translateTemplate('Décaissement automatique de {amount} enregistré — {name}', {
-        amount: formatFcfa(data.disbursedFcfa ?? row.netFcfa),
-        name: row.receptionistName,
-      }),
-    )
-    await Promise.all([loadDayClosures(), loadHistory()])
-  } catch (error) {
-    await showApiErrorModal(error, 'Impossible de valider la clôture.')
-  } finally {
-    validatingClosureId.value = null
-  }
-}
 
 async function refreshAll() {
   await Promise.all([loadHistory(), loadDayClosures()])
@@ -201,7 +148,7 @@ const dayClosureExportColumns: ExportColumn<DayClosureRow>[] = [
   { header: 'Réceptionniste', value: (r) => r.receptionistName },
   {
     header: 'Statut',
-    value: (r) => uiText(r.status === 'validated' ? 'Validée' : 'En attente'),
+    value: (r) => uiText(r.status === 'validated' ? 'Enregistrée' : 'Du jour'),
   },
   { header: 'Recettes', value: (r) => formatFcfa(r.collectedFcfa) },
   { header: 'Dépenses', value: (r) => formatFcfa(r.expensesFcfa) },
@@ -284,8 +231,9 @@ onMounted(refreshAll)
 <template>
   <div class="admin-page caisse-page">
     <UiPageHeader
-      title="Caisse & décaissement"
-      subtitle="Validez une clôture de journée : le décaissement est créé automatiquement dans l’historique"
+      v-if="!props.embedded"
+      title="Historique des journées"
+      subtitle="Stats enregistrées à la réception — consultation uniquement"
       :icon="Wallet"
     >
       <template #actions>
@@ -301,30 +249,6 @@ onMounted(refreshAll)
       </template>
     </UiPageHeader>
 
-    <section class="workflow-strip" :aria-label="uiText('Circuit de caisse')">
-      <article
-        v-for="(item, index) in WORKFLOW_STEPS"
-        :key="item.step"
-        class="workflow-step"
-        :class="{ 'workflow-step--active': item.step === '2' }"
-      >
-        <div class="workflow-step__icon">
-          <component :is="item.icon" :size="18" />
-        </div>
-        <div class="workflow-step__body">
-          <span class="workflow-step__num">{{ item.step }}</span>
-          <strong class="workflow-step__title">{{ uiText(item.title) }}</strong>
-          <p class="workflow-step__text">{{ uiText(item.text) }}</p>
-        </div>
-        <ArrowRight
-          v-if="index < WORKFLOW_STEPS.length - 1"
-          class="workflow-step__arrow"
-          :size="18"
-          aria-hidden="true"
-        />
-      </article>
-    </section>
-
     <div v-if="dayClosureLoading && !dayClosures.length && !historyRows.length" class="caisse-state">
       {{ uiText('Chargement…') }}
     </div>
@@ -333,23 +257,14 @@ onMounted(refreshAll)
       <section class="caisse-summary" :aria-label="uiText('Résumé')">
         <article class="summary-card summary-card--pending">
           <div class="summary-card__top">
-            <span class="summary-card__label">{{ uiText('Clôtures à valider') }}</span>
-            <span
-              class="summary-card__badge"
-              :class="dayClosurePendingCount > 0 ? 'summary-card__badge--info' : 'summary-card__badge--ok'"
-            >
-              {{ uiText(dayClosurePendingCount > 0 ? 'À faire' : 'À jour') }}
+            <span class="summary-card__label">{{ uiText('Journées enregistrées') }}</span>
+            <span class="summary-card__badge summary-card__badge--ok">
+              {{ uiText('Historique') }}
             </span>
           </div>
-          <p class="summary-card__value">{{ dayClosurePendingCount }}</p>
+          <p class="summary-card__value">{{ dayClosures.length }}</p>
           <p class="summary-card__hint">
-            {{
-              uiText(
-                dayClosurePendingCount > 0
-                  ? 'Validation = décaissement automatique'
-                  : 'Aucune clôture en attente',
-              )
-            }}
+            {{ uiText('Stats du jour — sans validation') }}
           </p>
         </article>
 
@@ -393,7 +308,7 @@ onMounted(refreshAll)
             <History :size="16" class="summary-card__icon" />
           </div>
           <p class="summary-card__value summary-card__value--muted">—</p>
-          <p class="summary-card__hint">{{ uiText('Validez une clôture pour créer le premier décaissement') }}</p>
+          <p class="summary-card__hint">{{ uiText('Aucun décaissement pour cette période') }}</p>
         </article>
       </section>
 
@@ -401,8 +316,8 @@ onMounted(refreshAll)
         <!-- ─── Clôtures de journée ─── -->
         <UiCard
           class="caisse-history caisse-board"
-          title="Clôtures de journée"
-          description="Validez → décaissement auto · filtre par utilisateur"
+          title="Journées enregistrées"
+          description="Stats du jour à la réception"
           :icon="FileCheck"
           icon-variant="green"
         >
@@ -413,9 +328,9 @@ onMounted(refreshAll)
                 <option v-for="r in dayClosureReceptionists" :key="r.id" :value="r.id">{{ r.name }}</option>
               </UiSelect>
               <UiSelect v-model="dayClosureStatus" label="Statut" class="caisse-history__field">
-                <option value="pending">{{ uiText('En attente') }}</option>
-                <option value="validated">{{ uiText('Validées') }}</option>
                 <option value="all">{{ uiText('Toutes') }}</option>
+                <option value="pending">{{ uiText('Du jour') }}</option>
+                <option value="validated">{{ uiText('Historique') }}</option>
               </UiSelect>
               <UiInput v-model="dayClosureFrom" label="Du" type="date" class="caisse-history__field" />
               <UiInput v-model="dayClosureTo" label="Au" type="date" class="caisse-history__field" />
@@ -442,7 +357,6 @@ onMounted(refreshAll)
                   <th>{{ uiText('Statut') }}</th>
                   <th class="col-amount">{{ uiText('Recettes') }}</th>
                   <th class="col-amount">{{ uiText('Net') }}</th>
-                  <th class="col-actions"><span class="sr-only">{{ uiText('Actions') }}</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -457,7 +371,7 @@ onMounted(refreshAll)
                       class="status-pill"
                       :class="row.status === 'validated' ? 'status-pill--ok' : 'status-pill--pending'"
                     >
-                      {{ uiText(row.status === 'validated' ? 'Validée' : 'En attente') }}
+                      {{ uiText(row.status === 'validated' ? 'Enregistrée' : 'Du jour') }}
                     </span>
                     <span v-if="row.validatedByName" class="caisse-history__time">
                       {{ row.validatedByName }}
@@ -465,21 +379,6 @@ onMounted(refreshAll)
                   </td>
                   <td class="col-amount">{{ formatFcfa(row.collectedFcfa) }}</td>
                   <td class="col-amount"><strong>{{ formatFcfa(row.netFcfa) }}</strong></td>
-                  <td class="col-actions actions">
-                    <GestionnaireRowActionGroup v-if="row.status === 'pending'">
-                      <GestionnaireRowAction
-                        :icon="CheckCircle2"
-                        label="Valider"
-                        variant="success"
-                        show-label
-                        :disabled="validatingClosureId === row.id"
-                        @click="validateDayClosure(row)"
-                      />
-                    </GestionnaireRowActionGroup>
-                    <span v-else class="validated-check" :title="uiText('Déjà validée')">
-                      <CheckCircle2 :size="16" />
-                    </span>
-                  </td>
                 </tr>
               </tbody>
               <tfoot>
@@ -489,7 +388,6 @@ onMounted(refreshAll)
                   </td>
                   <td class="col-amount"><strong>{{ formatFcfa(dayClosureTotalCollected) }}</strong></td>
                   <td class="col-amount"><strong>{{ formatFcfa(dayClosureTotalNet) }}</strong></td>
-                  <td />
                 </tr>
               </tfoot>
             </table>
@@ -499,7 +397,7 @@ onMounted(refreshAll)
         <UiCard
           class="caisse-history caisse-board"
           title="Historique des décaissements"
-          description="Créés auto à la validation — réceptionniste + gestionnaire"
+          description="Passages enregistrés"
           :icon="History"
           icon-variant="amber"
         >
@@ -521,7 +419,7 @@ onMounted(refreshAll)
           <div v-if="historyLoading" class="caisse-state caisse-state--compact">{{ uiText('Chargement…') }}</div>
           <div v-else-if="!historyRows.length" class="caisse-state caisse-state--empty">
             <History :size="28" />
-            <p>{{ uiText('Aucun décaissement — validez une clôture') }}</p>
+            <p>{{ uiText('Aucun décaissement pour cette période') }}</p>
           </div>
           <div v-else class="caisse-history__table-wrap">
             <table class="caisse-history__table">
