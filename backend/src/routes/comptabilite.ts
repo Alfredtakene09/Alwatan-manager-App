@@ -32,6 +32,7 @@ import {
   prescriptionRequiresLabWork,
   EXAMS_PRESCRIBED_PREFIX,
   LAB_BILLABLE_EXAM_KINDS,
+  summarizePrescribedExamFieldNames,
 } from "../lib/lab-notes.js";
 import {
   ensureHospitalizationFromReferral,
@@ -256,7 +257,7 @@ function mapLabExamPending(
     paidKinds,
     unpaidKinds,
     partialPaymentsByKind,
-    examsSummary: examLines.map((line) => line.label).join(", "),
+    examsSummary: summarizePrescribedExamFieldNames(examLines.map((line) => line.label)),
   };
 }
 
@@ -402,6 +403,90 @@ function mapLabExamPaid(consultation: {
     cashierName,
   };
 }
+
+router.get("/payment-alerts", cashierAccess, async (_req, res) => {
+  const [examRows, consultationInvoices] = await Promise.all([
+    prisma.consultation.findMany({
+      where: labsPendingApprovalWhere(),
+      select: {
+        id: true,
+        visitId: true,
+        clinicalNotes: true,
+        updatedAt: true,
+        visit: {
+          select: {
+            patient: { select: { code: true, firstName: true, lastName: true } },
+          },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 80,
+    }),
+    prisma.invoice.findMany({
+      where: {
+        type: InvoiceType.CONSULTATION,
+        status: { in: [InvoiceStatus.PENDING, InvoiceStatus.PARTIALLY_PAID] },
+        visitId: { not: null },
+        ...comptabiliteInvoicePatientWhere(),
+      },
+      select: {
+        id: true,
+        visitId: true,
+        amountFcfa: true,
+        paidAmountFcfa: true,
+        createdAt: true,
+        patient: { select: { code: true, firstName: true, lastName: true } },
+        visit: {
+          select: {
+            patient: { select: { code: true, firstName: true, lastName: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 80,
+    }),
+  ]);
+
+  const exams = examRows
+    .filter((row) => hasUnpaidCashierQueueExams(row.clinicalNotes))
+    .map((row) => {
+      const mapped = mapLabExamPending({
+        id: row.id,
+        visitId: row.visitId,
+        clinicalNotes: row.clinicalNotes,
+        updatedAt: row.updatedAt,
+        visit: { patient: row.visit.patient },
+        doctor: null,
+      });
+      return {
+        id: row.id,
+        visitId: row.visitId,
+        patientCode: row.visit.patient.code,
+        patientName: `${row.visit.patient.firstName} ${row.visit.patient.lastName}`.trim(),
+        examsSummary: mapped.examsSummary,
+        examCount: mapped.examLines.length,
+        amountFcfa: mapped.grossFcfa,
+        updatedAt: row.updatedAt.toISOString(),
+      };
+    });
+
+  const consultations = consultationInvoices.flatMap((invoice) => {
+    const patient = invoice.patient ?? invoice.visit?.patient;
+    if (!patient || !invoice.visitId) return [];
+    return [
+      {
+        id: invoice.id,
+        visitId: invoice.visitId,
+        patientCode: patient.code,
+        patientName: `${patient.firstName} ${patient.lastName}`.trim(),
+        amountFcfa: Math.max(0, invoice.amountFcfa - (invoice.paidAmountFcfa ?? 0)),
+        createdAt: invoice.createdAt.toISOString(),
+      },
+    ];
+  });
+
+  return res.json({ exams, consultations });
+});
 
 router.get("/stats", cashierAccess, async (_req, res) => {
   const patientWhere = comptabilitePatientWhere();

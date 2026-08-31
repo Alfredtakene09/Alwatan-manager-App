@@ -38,6 +38,17 @@ export function normalizeSpecialty(value: string | null | undefined, isMedecin: 
  * Infère le profil médecin depuis le libellé de poste
  * (import personnel / fiches créées en « Personnel » par erreur).
  */
+/** Poste « Assistant chirurgie » — part % sur les opérations. */
+export function isSurgeryAssistantJobTitle(jobTitle?: string | null): boolean {
+  const normalized =
+    jobTitle
+      ?.trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") ?? "";
+  return normalized.includes("assistant") && normalized.includes("chirurgie");
+}
+
 export function inferIsMedecinFromJobTitle(jobTitle?: string | null): boolean {
   const title = jobTitle?.trim().toLowerCase() ?? "";
   if (!title) return false;

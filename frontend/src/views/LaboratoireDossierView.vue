@@ -56,7 +56,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const labPanels = useLabPanelsStore()
-const { uiText, dateTimeText, numberText, roleLabel, localeCode } = useAppI18n()
+const { uiText, examNameText, dateTimeText, numberText, roleLabel, localeCode } = useAppI18n()
 
 const visit = ref<LabsWaitingVisitRow | null>(null)
 const panelResults = ref<DossierResponse['panelResults']>({})
@@ -152,7 +152,7 @@ const listedPanels = computed(() => {
       .filter((panel) => !isPanelFilled(panel.slug))
       .slice()
       .sort((a, b) =>
-        uiText(a.label).localeCompare(uiText(b.label), localeCode.value, { sensitivity: 'base' }),
+        examNameText(a.label).localeCompare(examNameText(b.label), localeCode.value, { sensitivity: 'base' }),
       )
   }
 
@@ -168,7 +168,7 @@ const listedPanels = computed(() => {
     const filledA = isPanelFilled(a.slug) ? 1 : 0
     const filledB = isPanelFilled(b.slug) ? 1 : 0
     if (filledA !== filledB) return filledA - filledB
-    return uiText(a.label).localeCompare(uiText(b.label), localeCode.value, { sensitivity: 'base' })
+    return examNameText(a.label).localeCompare(examNameText(b.label), localeCode.value, { sensitivity: 'base' })
   })
 })
 
@@ -221,7 +221,7 @@ const canFinalize = computed(() => {
 function panelOptionLabel(slug: LabPanelSlug) {
   void localeCode.value
   const apiItem = apiPrescribedPanels.value.find((item) => item.slug === slug)
-  const base = uiText(apiItem?.examLabel || getLabFormPanel(slug)?.label || slug)
+  const base = examNameText(apiItem?.examLabel || getLabFormPanel(slug)?.label || slug)
   if (isPanelFilled(slug)) {
     return `${base} (${uiText('Enregistré')})`
   }
@@ -229,7 +229,7 @@ function panelOptionLabel(slug: LabPanelSlug) {
 }
 
 function labFieldDisplayLabel(field: LabFormField) {
-  const label = uiText(field.label)
+  const label = examNameText(field.label)
   return field.reference ? `${label} (${field.reference})` : label
 }
 
@@ -537,6 +537,7 @@ onMounted(async () => {
           variant="outline"
           size="sm"
           :icon="Printer"
+          ui-action="export.print"
           @click="printAllSaved"
         >
           {{ uiText('Imprimer tout le dossier') }}
@@ -704,6 +705,7 @@ onMounted(async () => {
               v-if="isActivePanelReadOnly && !isEntryFlow"
               variant="outline"
               :icon="Printer"
+              ui-action="export.print"
               :disabled="!activePanel"
               @click="isConsultMode || dossierCompleted ? printAllSaved() : printPanel()"
             >

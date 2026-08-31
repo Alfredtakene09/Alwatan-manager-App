@@ -14,6 +14,7 @@ import LabsWaitingDataTable, {
   type LabsWaitingVisitRow,
 } from '@/components/ui/LabsWaitingDataTable.vue'
 import { useSilentRefresh } from '@/composables/useSilentRefresh'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 const visits = ref<LabsWaitingVisitRow[]>([])
 const prescriptionVisit = ref<PrescriptionVisit | null>(null)
@@ -21,6 +22,7 @@ const loading = ref(false)
 const statsRefreshKey = ref(0)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
+const { uiText } = useAppI18n()
 
 async function loadVisits(opts?: { silent?: boolean }) {
   if (prescriptionVisit.value) return
@@ -46,7 +48,9 @@ function closePrescriptionModal() {
 }
 
 function onPrescriptionSaved() {
-  message.value = 'Nouveaux examens ajoutés. Les examens supplémentaires suivront le circuit paiement / laboratoire.'
+  message.value = uiText(
+    'Nouveaux examens ajoutés. Les examens supplémentaires suivront le circuit paiement / laboratoire.',
+  )
   messageType.value = 'success'
   void loadVisits()
 }
@@ -93,7 +97,7 @@ onMounted(() => {
         </template>
 
         <p v-if="!loading && !visits.length" class="empty">
-          Aucun patient en attente de résultats laboratoire pour le moment.
+          {{ uiText('Aucun patient en attente de résultats laboratoire pour le moment.') }}
         </p>
         <LabsWaitingDataTable
           v-else

@@ -23,13 +23,16 @@ import {
 import {
   DOCTOR_SPECIALTY_SUGGESTIONS,
   DOCTOR_WEEKDAY_OPTIONS,
-  emptyWeekAvailability,
   parseDoctorAvailabilitySlots,
   toggleDayAvailability,
   updateDayTimes,
   type DoctorAvailabilitySlot,
 } from '@/lib/doctor-availability'
-import { employeeJobTitleOptions, loadEmployeeJobTitleLabels } from '@/lib/employee-job-titles'
+import {
+  employeeJobTitleOptions,
+  isSurgeryAssistantJobTitle,
+  loadEmployeeJobTitleLabels,
+} from '@/lib/employee-job-titles'
 import { employeeNeedsAppAccount, isHiddenPlatformAdminEmployee, isHiddenPlatformAdminJobTitle } from '@/lib/employee-app-account'
 import { inferIsMedecinFromJobTitle } from '@/lib/doctor-job-title'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
@@ -74,6 +77,7 @@ type Employee = {
   consultationQuotaFcfa?: number | null
   consultationValidityDays?: number | null
   consultationRenewalPolicy?: ConsultationRenewalPolicy
+  surgeryQuotaPercent?: number | null
   compensationLabel?: string | null
   fixedSalaryFcfa?: number | null
   bonusFcfa?: number | null
@@ -158,6 +162,7 @@ const form = ref({
   consultationQuotaFcfa: '',
   consultationValidityDays: '30',
   consultationRenewalPolicy: 'FULL' as ConsultationRenewalPolicy,
+  surgeryQuotaPercent: '',
   service: '',
   clinicServiceId: '',
   clinicServiceIds: [] as string[],
@@ -186,6 +191,10 @@ function parseEmployeeDisplayName(input: string): { firstName: string; lastName:
 const parsedEmployeeName = computed(() => parseEmployeeDisplayName(form.value.displayName))
 
 const isMedecinProfile = computed(() => form.value.profile === 'MEDECIN')
+
+const isSurgeryAssistantProfile = computed(() =>
+  isSurgeryAssistantJobTitle(form.value.jobTitle),
+)
 
 /** Médecin avec part quota (quota seul ou salaire + quota). */
 const isQuotaDoctor = computed(
@@ -457,6 +466,7 @@ function resetForm() {
     consultationQuotaFcfa: '',
     consultationValidityDays: '30',
     consultationRenewalPolicy: 'FULL',
+    surgeryQuotaPercent: '',
     service: '',
     clinicServiceId: '',
     clinicServiceIds: [],
@@ -530,6 +540,8 @@ function openEditModal(id: string) {
         ? String(employee.consultationValidityDays)
         : '30',
     consultationRenewalPolicy: employee.consultationRenewalPolicy ?? 'FULL',
+    surgeryQuotaPercent:
+      employee.surgeryQuotaPercent != null ? String(employee.surgeryQuotaPercent) : '',
     service: employee.service ?? '',
     clinicServiceId: employee.clinicServiceId ?? employee.clinicService?.id ?? '',
     clinicServiceIds: (() => {
@@ -563,33 +575,48 @@ function closeModal() {
 }
 
 function compensationPayload() {
-  if (!isMedecinProfile.value) return { isMedecin: false as const }
+  const surgeryQuotaPercent = isSurgeryAssistantProfile.value
+    ? form.value.surgeryQuotaPercent.trim()
+      ? Number(form.value.surgeryQuotaPercent)
+      : null
+    : undefined
+  if (!isMedecinProfile.value) {
+    return { isMedecin: false as const, surgeryQuotaPercent }
+  }
   const usesQuota = doctorUsesQuotaCompensationType(form.value.doctorCompensationType)
+  const isFixedSalary = form.value.doctorCompensationType === 'FIXED_SALARY'
+  const priceRaw = form.value.consultationTotalFcfa.trim()
+  const priceValue = priceRaw ? Number(priceRaw) : null
   return {
     isMedecin: true as const,
     doctorCompensationType: form.value.doctorCompensationType,
+    // Toujours envoyer le tarif (nombre ou null) pour ne pas l’effacer côté API
     consultationTotalFcfa:
-      usesQuota && form.value.consultationTotalFcfa.trim()
-        ? Number(form.value.consultationTotalFcfa)
-        : undefined,
+      usesQuota || isFixedSalary
+        ? Number.isFinite(priceValue) && (priceValue as number) > 0
+          ? (priceValue as number)
+          : null
+        : null,
     consultationQuotaMode: usesQuota ? form.value.consultationQuotaMode : undefined,
     consultationQuotaPercent:
-      usesQuota &&
-      form.value.consultationQuotaMode === 'PERCENT' &&
-      form.value.consultationQuotaPercent.trim()
-        ? Number(form.value.consultationQuotaPercent)
-        : undefined,
+      usesQuota && form.value.consultationQuotaMode === 'PERCENT'
+        ? form.value.consultationQuotaPercent.trim()
+          ? Number(form.value.consultationQuotaPercent)
+          : null
+        : null,
     consultationQuotaFcfa:
-      usesQuota &&
-      form.value.consultationQuotaMode === 'FIXED_AMOUNT' &&
-      form.value.consultationQuotaFcfa.trim()
-        ? Number(form.value.consultationQuotaFcfa)
-        : undefined,
-    consultationValidityDays:
-      usesQuota && form.value.consultationValidityDays.trim()
+      usesQuota && form.value.consultationQuotaMode === 'FIXED_AMOUNT'
+        ? form.value.consultationQuotaFcfa.trim()
+          ? Number(form.value.consultationQuotaFcfa)
+          : null
+        : null,
+    consultationValidityDays: usesQuota
+      ? form.value.consultationValidityDays.trim()
         ? Number(form.value.consultationValidityDays)
-        : undefined,
+        : null
+      : null,
     consultationRenewalPolicy: usesQuota ? form.value.consultationRenewalPolicy : undefined,
+    surgeryQuotaPercent,
   }
 }
 
@@ -689,11 +716,7 @@ function onDoctorCompensationTypeChange(type: DoctorCompensationType) {
 
 function onProfileChange(profile: 'STAFF' | 'MEDECIN') {
   form.value.profile = profile
-  if (profile === 'MEDECIN') {
-    if (!form.value.availabilitySlots.length) {
-      form.value.availabilitySlots = emptyWeekAvailability()
-    }
-  } else {
+  if (profile !== 'MEDECIN') {
     form.value.specialty = ''
     form.value.clinicServiceId = ''
     form.value.clinicServiceIds = []
@@ -713,6 +736,9 @@ watch(
   (title) => {
     if (inferIsMedecinFromJobTitle(title) && form.value.profile !== 'MEDECIN') {
       onProfileChange('MEDECIN')
+    }
+    if (!isSurgeryAssistantJobTitle(title)) {
+      form.value.surgeryQuotaPercent = ''
     }
   },
 )
@@ -796,6 +822,14 @@ async function saveEmployee() {
     messageType.value = 'error'
     return
   }
+  if (isSurgeryAssistantProfile.value && form.value.surgeryQuotaPercent.trim()) {
+    const percent = Number(form.value.surgeryQuotaPercent)
+    if (!Number.isInteger(percent) || percent < 1 || percent > 99) {
+      message.value = 'Le pourcentage assistant chirurgie doit être un entier entre 1 et 99.'
+      messageType.value = 'error'
+      return
+    }
+  }
   if (
     isQuotaDoctor.value &&
     (!form.value.consultationTotalFcfa.trim() || !form.value.consultationValidityDays.trim())
@@ -811,8 +845,12 @@ async function saveEmployee() {
       return
     }
     for (const slot of form.value.availabilitySlots) {
-      if (slot.startTime >= slot.endTime) {
-        message.value = 'Vérifiez les horaires de disponibilité (fin après début).'
+      if (
+        !/^\d{2}:\d{2}$/.test(slot.startTime) ||
+        !/^\d{2}:\d{2}$/.test(slot.endTime) ||
+        slot.startTime >= slot.endTime
+      ) {
+        message.value = 'Renseignez les horaires de chaque jour coché (fin après début).'
         messageType.value = 'error'
         return
       }
@@ -1023,7 +1061,7 @@ onMounted(async () => {
           <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadEmployees">
             Actualiser
           </UiButton>
-          <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
+          <UiButton variant="primary" size="sm" :icon="Plus" ui-action="employees.create" @click="openCreateModal">
             Ajouter
           </UiButton>
         </template>
@@ -1051,7 +1089,7 @@ onMounted(async () => {
                     <th>Profil</th>
                     <th>Poste</th>
                     <th>Spécialité</th>
-                    <th>Services</th>
+                    <th class="simple-table__grow">Services</th>
                     <th>Rémunération</th>
                     <th>Statut</th>
                     <th class="simple-table__actions-head">Actions</th>
@@ -1067,7 +1105,7 @@ onMounted(async () => {
                       <span v-if="row.specialty === '—'" class="st-muted">—</span>
                       <span v-else class="st-date">{{ row.specialty }}</span>
                     </td>
-                    <td>
+                    <td class="simple-table__grow">
                       <span v-if="row.servicesLabel === '—'" class="st-muted">—</span>
                       <span v-else class="st-date">{{ row.servicesLabel }}</span>
                     </td>
@@ -1179,6 +1217,19 @@ onMounted(async () => {
             {{ title }}
           </option>
         </UiSelect>
+        <template v-if="isSurgeryAssistantProfile">
+          <UiInput
+            v-model="form.surgeryQuotaPercent"
+            :label="uiText('% Assistant chirurgie')"
+            type="number"
+            min="1"
+            max="99"
+            placeholder="Ex. 10"
+          />
+          <p class="form-panel__hint">
+            {{ uiText('Pourcentage reversé à cet assistant sur les opérations.') }}
+          </p>
+        </template>
 
         <div class="profile-picker" role="radiogroup" :aria-label="uiText('Profil employé')">
           <button
@@ -1307,19 +1358,22 @@ onMounted(async () => {
               <input
                 type="time"
                 class="availability-day__time"
-                :value="daySlot(day.value)?.startTime"
+                :value="daySlot(day.value)?.startTime || ''"
                 @change="onAvailabilityTimeChange(day.value, 'startTime', ($event.target as HTMLInputElement).value)"
               />
               <span aria-hidden="true">–</span>
               <input
                 type="time"
                 class="availability-day__time"
-                :value="daySlot(day.value)?.endTime"
+                :value="daySlot(day.value)?.endTime || ''"
                 @change="onAvailabilityTimeChange(day.value, 'endTime', ($event.target as HTMLInputElement).value)"
               />
             </div>
           </div>
         </div>
+        <p class="form-panel__hint">
+          Aucun horaire n’est prérempli : cochez les jours puis saisissez début et fin.
+        </p>
       </section>
 
       <section v-if="isMedecinProfile" class="form-panel form-panel--accent">
@@ -1361,8 +1415,8 @@ onMounted(async () => {
         <div v-if="form.doctorCompensationType === 'FIXED_SALARY'" class="info-callout">
           <Info :size="16" />
           <p>
-            Renseignez le salaire mensuel ci-dessous. Le montant de chaque consultation sera saisi
-            manuellement à la réception — aucun tarif fixe ni validité n'est appliqué automatiquement.
+            Renseignez le salaire mensuel ci-dessous et le prix de consultation (tarif patient).
+            Si le prix est renseigné, il s’affiche automatiquement à la réception.
           </p>
         </div>
 
@@ -1381,7 +1435,20 @@ onMounted(async () => {
           </p>
         </div>
 
-        <template v-if="isQuotaDoctor">
+        <template v-if="form.doctorCompensationType === 'FIXED_SALARY'">
+          <UiInput
+            v-model="form.consultationTotalFcfa"
+            label="Prix consultation (FCFA)"
+            type="number"
+            min="1"
+            placeholder="5000"
+          />
+          <p class="form-panel__hint">
+            Tarif payé par le patient à la réception. Laissez vide pour une saisie manuelle à chaque visite.
+          </p>
+        </template>
+
+        <template v-else-if="isQuotaDoctor">
           <div class="form-grid-compact">
             <UiInput
               v-model="form.consultationTotalFcfa"

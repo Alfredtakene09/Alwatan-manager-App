@@ -84,7 +84,7 @@ function closePrescriptionModal() {
 }
 
 function onPrescriptionSaved() {
-  message.value = 'Nouveaux examens ajoutés à la prescription.'
+  message.value = uiText('Nouveaux examens ajoutés à la prescription.')
   messageType.value = 'success'
   void loadVisits()
 }

@@ -623,7 +623,7 @@ onMounted(async () => {
       class="section"
     >
       <template #actions>
-        <UiButton variant="primary" size="sm" :icon="Plus" @click="openAddModal">
+        <UiButton variant="primary" size="sm" :icon="Plus" ui-action="catalog.operation_types" @click="openAddModal">
           {{ uiText(addButtonLabel) }}
         </UiButton>
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshItems">

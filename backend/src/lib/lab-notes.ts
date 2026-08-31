@@ -45,6 +45,66 @@ export function extractSelectedFormLabels(prescribed: string): string[] | null {
   return splitPrescribedExamList(inner);
 }
 
+function normalizeLabLabelKey(label: string): string {
+  return label
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const UNTITLED_SECTION_LABEL = "Formulaire principal";
+
+/** Champs individuels dans « Panel (Section: A · B) » ou « Panel (champ) ». */
+export function extractPrescribedFieldLabels(prescribed: string): string[] {
+  const forms = extractSelectedFormLabels(prescribed);
+  if (forms === null || !forms.length) return [];
+  const fields: string[] = [];
+  for (const form of forms) {
+    const colon = form.indexOf(":");
+    if (colon >= 0) {
+      const rest = form.slice(colon + 1).trim();
+      if (!rest) continue;
+      fields.push(
+        ...rest
+          .split(/\s*·\s*/)
+          .map((part) => part.trim())
+          .filter(Boolean),
+      );
+    } else {
+      fields.push(form);
+    }
+  }
+  return fields;
+}
+
+/** Résumé compact : uniquement les noms de champs / examens (sans répéter le formulaire parent). */
+export function summarizePrescribedExamFieldNames(labels: string[]): string {
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  for (const raw of labels) {
+    const fields = extractPrescribedFieldLabels(raw);
+    if (fields.length) {
+      for (const field of fields) {
+        const key = normalizeLabLabelKey(field);
+        if (!key || key === normalizeLabLabelKey(UNTITLED_SECTION_LABEL) || seen.has(key)) continue;
+        seen.add(key);
+        parts.push(field.trim());
+      }
+      continue;
+    }
+    const base = extractBasePanelLabel(raw).trim() || raw.trim();
+    const key = normalizeLabLabelKey(base);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    parts.push(base);
+  }
+  return parts.length ? parts.join(", ") : "—";
+}
+
 /** Regroupe les lignes prescrites par examen parent (« Biochimie », « NFS »…). */
 export function groupPrescribedLabelsByPanel(labels: string[]): Array<{ panel: string; count: number; details: string[] }> {
   const order: string[] = [];

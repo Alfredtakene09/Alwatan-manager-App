@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { canAccessAnyModule, canManageLabStock, canManagePharmacyCatalog, getDefaultRoute } from '@/lib/roles'
+import { isUiActionAllowed } from '@/lib/ui-actions'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -24,7 +25,7 @@ const router = createRouter({
           path: 'reception/comptabilite',
           redirect: { path: '/comptabilite/tableau-de-bord', query: { tab: 'historique' } },
         },
-        { path: 'reception/en-attente-paiement', redirect: { path: '/comptabilite/tableau-de-bord', query: { tab: 'attente' } } },
+        { path: 'reception/en-attente-paiement', redirect: '/comptabilite/en-attente-paiement' },
         { path: 'reception/examens-payes', redirect: '/comptabilite/examens-payes' },
         {
           path: 'reception/examens-payes/reclamations',
@@ -114,7 +115,7 @@ const router = createRouter({
           path: 'comptabilite/tableau-de-bord',
           name: 'comptabilite-tableau-de-bord',
           component: () => import('@/views/comptabilite/ComptabiliteEncaissementsDashboardView.vue'),
-          meta: { module: 'comptabilite', dashboard: true },
+          meta: { module: 'comptabilite', dashboard: true, uiAction: 'comptabilite.encaissements' },
         },
         { path: 'comptabilite/encaissements', redirect: { path: '/comptabilite/tableau-de-bord', query: { tab: 'historique' } } },
         {
@@ -137,19 +138,21 @@ const router = createRouter({
         },
         {
           path: 'comptabilite/en-attente-paiement',
-          redirect: { path: '/comptabilite/tableau-de-bord', query: { tab: 'attente' } },
+          name: 'comptabilite-en-attente-paiement',
+          component: () => import('@/views/comptabilite/ComptabiliteAttentePaiementView.vue'),
+          meta: { module: 'comptabilite', uiAction: 'comptabilite.exam_payments' },
         },
         {
           path: 'comptabilite/examens-payes',
           name: 'comptabilite-examens-payes',
           component: () => import('@/views/comptabilite/ComptabiliteExamensPayesView.vue'),
-          meta: { module: 'comptabilite' },
+          meta: { module: 'comptabilite', uiAction: 'comptabilite.exam_payments' },
         },
         {
           path: 'comptabilite/examens-payes/reclamations',
           name: 'comptabilite-examens-reclamations',
           component: () => import('@/views/comptabilite/ComptabiliteExamReclamationsView.vue'),
-          meta: { module: 'comptabilite' },
+          meta: { module: 'comptabilite', uiAction: 'comptabilite.exam_payments' },
         },
         {
           path: 'comptabilite/compte-rendu-caisse',
@@ -189,36 +192,41 @@ const router = createRouter({
           name: 'comptabilite-types-examen',
           component: () => import('@/views/comptabilite/exam-types/ComptabiliteExamCatalogTypesView.vue'),
           props: { kind: 'examen' },
-          meta: { module: 'comptabilite' },
+          meta: { module: 'comptabilite', uiAction: 'catalog.exam_types' },
         },
         {
           path: 'comptabilite/types-examen/odonto',
           name: 'comptabilite-types-odonto',
           component: () => import('@/views/comptabilite/exam-types/ComptabiliteExamCatalogTypesView.vue'),
           props: { kind: 'odonto' },
-          meta: { module: 'comptabilite' },
+          meta: { module: 'comptabilite', uiAction: 'catalog.exam_types' },
         },
         {
           path: 'comptabilite/types-examen/radio',
           name: 'comptabilite-types-radio',
           component: () => import('@/views/comptabilite/exam-types/ComptabiliteExamCatalogTypesView.vue'),
           props: { kind: 'radio' },
-          meta: { module: 'comptabilite' },
+          meta: { module: 'comptabilite', uiAction: 'catalog.exam_types' },
         },
         {
           path: 'comptabilite/types-examen/echo',
           name: 'comptabilite-types-echo',
           component: () => import('@/views/comptabilite/exam-types/ComptabiliteExamCatalogTypesView.vue'),
           props: { kind: 'echo' },
-          meta: { module: 'comptabilite' },
+          meta: { module: 'comptabilite', uiAction: 'catalog.exam_types' },
         },
         {
           path: 'comptabilite/types-examen/operation',
           name: 'comptabilite-types-operation',
           component: () => import('@/views/comptabilite/exam-types/ComptabiliteOperationTypesView.vue'),
-          meta: { module: 'comptabilite' },
+          meta: { module: 'comptabilite', uiAction: 'catalog.operation_types' },
         },
-        { path: 'bloc-salles', name: 'bloc-salles', component: () => import('@/views/BlocSallesView.vue'), meta: { module: 'bloc-salles' } },
+        {
+          path: 'bloc-salles',
+          name: 'bloc-salles',
+          component: () => import('@/views/BlocSallesView.vue'),
+          meta: { module: 'bloc-salles', uiAction: 'hospitalisation.rooms' },
+        },
         {
           path: 'bloc-salles/tableau-de-bord',
           name: 'bloc-salles-tableau-de-bord',
@@ -327,7 +335,7 @@ const router = createRouter({
           component: () => import('@/views/logistique/LogistiqueReportsView.vue'),
           meta: { module: 'logistique' },
         },
-        { path: 'factures', name: 'factures', component: () => import('@/views/FacturesView.vue'), meta: { module: 'factures' } },
+        { path: 'factures', name: 'factures', component: () => import('@/views/FacturesView.vue'), meta: { module: 'factures', uiAction: 'comptabilite.factures' } },
         { path: 'admin', redirect: '/comptabilite/types-examen/operation' },
         {
           path: 'admin/employes',
@@ -345,25 +353,25 @@ const router = createRouter({
           path: 'admin/services',
           name: 'admin-services',
           component: () => import('@/views/admin/AdminServicesView.vue'),
-          meta: { modules: ['utilisateurs', 'gestionnaire'] },
+          meta: { modules: ['utilisateurs', 'gestionnaire'], uiAction: 'catalog.services' },
         },
         {
           path: 'admin/parametres/clinique',
           name: 'admin-clinic-info',
           component: () => import('@/views/admin/AdminClinicInfoView.vue'),
-          meta: { roles: ['ADMIN', 'GESTIONNAIRE'] },
+          meta: { roles: ['ADMIN', 'COMPTABLE'] },
         },
         {
           path: 'admin/depenses',
           name: 'admin-depenses',
           component: () => import('@/views/admin/AdminDepensesView.vue'),
-          meta: { module: 'admin' },
+          meta: { module: 'admin', uiAction: 'comptabilite.depenses' },
         },
         {
           path: 'admin/salaires',
           name: 'admin-salaires',
           component: () => import('@/views/admin/AdminSalairesView.vue'),
-          meta: { module: 'admin' },
+          meta: { module: 'admin', uiAction: 'comptabilite.salaires' },
         },
         {
           path: 'admin/salaires/historique',
@@ -382,9 +390,8 @@ const router = createRouter({
           path: 'gestionnaire/livre-journal',
           name: 'gestionnaire-journal',
           component: () => import('@/views/gestionnaire/GestionnaireJournalView.vue'),
-          meta: { module: 'gestionnaire' },
+          meta: { module: 'gestionnaire', uiAction: 'comptabilite.journal' },
         },
-        /** Anciennes URLs gestionnaire → pages Direction (même UI que l’admin). */
         { path: 'gestionnaire/depenses', redirect: '/admin/depenses' },
         { path: 'gestionnaire/depenses/categories', redirect: '/admin/depenses' },
         { path: 'gestionnaire/services', redirect: '/admin/services' },
@@ -419,7 +426,7 @@ const router = createRouter({
           path: 'laboratoire/formulaires',
           name: 'laboratoire-formulaires',
           component: () => import('@/views/LaboratoirePanelsView.vue'),
-          meta: { module: 'laboratoire' },
+          meta: { module: 'laboratoire', uiAction: 'lab.result_forms' },
         },
         {
           path: 'laboratoire/stock',
@@ -475,11 +482,19 @@ router.beforeEach(async (to) => {
     return getDefaultRoute(auth.user.role)
   }
 
-  if (to.meta.labStock && !canManageLabStock(auth.user.role)) {
+  if (to.meta.labStock && (!canManageLabStock(auth.user.role) || !isUiActionAllowed(auth.user, 'lab.stock'))) {
     return getDefaultRoute(auth.user.role)
   }
 
-  if (to.meta.pharmacyCatalog && !canManagePharmacyCatalog(auth.user.role)) {
+  if (
+    to.meta.pharmacyCatalog &&
+    (!canManagePharmacyCatalog(auth.user.role) || !isUiActionAllowed(auth.user, 'pharmacie.catalog'))
+  ) {
+    return getDefaultRoute(auth.user.role)
+  }
+
+  const uiAction = to.meta.uiAction as string | undefined
+  if (uiAction && !isUiActionAllowed(auth.user, uiAction)) {
     return getDefaultRoute(auth.user.role)
   }
 

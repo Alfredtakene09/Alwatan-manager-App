@@ -18,6 +18,8 @@ const props = defineProps<{
   loading?: boolean
   formatTotal?: (value: number) => string
   legend: Array<{ key: string; label: string; colorClass: string }>
+  /** Libellé court sous chaque colonne (ex. lun. 31 août) */
+  showDayLabels?: boolean
 }>()
 
 const maxTotal = computed(() => Math.max(...props.days.map((day) => day.total), 1))
@@ -25,6 +27,8 @@ const maxTotal = computed(() => Math.max(...props.days.map((day) => day.total), 
 function formatValue(value: number) {
   return props.formatTotal ? props.formatTotal(value) : String(value)
 }
+
+const showLabels = computed(() => props.showDayLabels !== false)
 </script>
 
 <template>
@@ -33,6 +37,15 @@ function formatValue(value: number) {
   <template v-else>
     <div class="bar-chart" :style="{ '--bar-cols': String(days.length || 1) }">
       <div v-for="day in days" :key="day.date" class="bar-chart__column">
+        <span
+          v-if="day.total > 0"
+          class="bar-chart__total"
+          dir="ltr"
+          :title="formatValue(day.total)"
+        >
+          {{ formatValue(day.total) }}
+        </span>
+        <span v-else class="bar-chart__total bar-chart__total--empty" dir="ltr">—</span>
         <div class="bar-chart__bars">
           <div
             v-for="segment in day.segments"
@@ -43,13 +56,13 @@ function formatValue(value: number) {
             :title="segment.title"
           />
         </div>
-        <span class="bar-chart__total">{{ day.total > 0 ? formatValue(day.total) : '—' }}</span>
-        <span class="bar-chart__label">{{ day.dayLabel }}</span>
+        <span v-if="showLabels" class="bar-chart__label">{{ day.dayLabel }}</span>
       </div>
     </div>
     <div class="chart-legend">
-      <span v-for="item in legend" :key="item.key">
-        <i class="legend-dot" :class="item.colorClass" /> {{ item.label }}
+      <span v-for="item in legend" :key="item.key" class="chart-legend__item">
+        <i class="legend-dot" :class="item.colorClass" />
+        <span>{{ item.label }}</span>
       </span>
     </div>
   </template>

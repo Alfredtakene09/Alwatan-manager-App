@@ -11,7 +11,6 @@ import {
   HeartPulse,
   CheckCircle2,
   ArrowRightLeft,
-  Coffee,
   CircleDollarSign,
   PillBottle,
   PenLine,
@@ -41,6 +40,9 @@ import {
   isDirectClinicalConsultationPrescription,
   isPharmacyCatalogLine,
   parsePharmacyOrdonnanceLines,
+  parsePrescribedExamsByKind,
+  parsePrescribedExamCommentsByKind,
+  parsePrescribedHospitalisationDays,
   type PharmacyOrdonnanceLine,
 } from '@/lib/lab-notes'
 import ConsultationQueueDataTable, {
@@ -50,8 +52,8 @@ import ConsultationQueueDataTable, {
 const visits = ref<ConsultationVisitRow[]>([])
 const modalVisitId = ref<string | null>(null)
 const transferVisitId = ref<string | null>(null)
-const doctors = ref<{ id: string; firstName: string; lastName: string }[]>([])
-const selectedDoctorId = ref('')
+const transferServices = ref<{ id: string; name: string; doctorCount: number }[]>([])
+const selectedServiceId = ref('')
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const loading = ref(false)
@@ -63,9 +65,6 @@ const operationAmountFcfa = ref<number | null>(null)
 const hospitalisationDays = ref<number | null>(null)
 const doctorComment = ref('')
 const pharmacyOrdonnance = ref<PharmacyOrdonnanceLine[]>([])
-const acceptingPatients = ref(true)
-const availabilityKnown = ref(false)
-const availabilitySaving = ref(false)
 const recentHistory = ref<MedicalHistoryEntry[]>([])
 const loadingHistory = ref(false)
 /** Onglets du modal : Examens | Pharmacie | Hors pharmacie | Notes */
@@ -83,10 +82,10 @@ const showConsultationPanel = computed(() =>
   hasClinicalConsultationSelected(selectedExamsByKind.value),
 )
 
+/** Blocage édition examens uniquement si des résultats labo existent déjà. */
 const isLabLockedVisit = computed(() => {
-  const consultation = modalVisit.value?.consultation
-  const notes = consultation?.clinicalNotes
-  return Boolean(consultation?.labSentToLabAt) || hasLabResults(notes)
+  const notes = modalVisit.value?.consultation?.clinicalNotes
+  return hasLabResults(notes)
 })
 
 const hasOperationSelected = computed(
@@ -132,9 +131,9 @@ const isAdminSupervision = computed(
     auth.user?.role === 'COMPTABLE' ||
     auth.user?.role === 'GESTIONNAIRE',
 )
-const transferDoctorOptions = computed(() => {
-  const assignedId = transferVisit.value?.assignedDoctor?.id
-  return doctors.value.filter((doctor) => doctor.id !== assignedId)
+const transferServiceOptions = computed(() => {
+  const currentServiceId = transferVisit.value?.assignedClinicService?.id
+  return transferServices.value.filter((service) => service.id !== currentServiceId)
 })
 const statsRefreshKey = ref(0)
 const showReceivableModal = ref(false)
@@ -167,62 +166,22 @@ const submitConsultationLabel = computed(() => {
   return uiText('Enregistrer le commentaire')
 })
 
-async function loadDoctors() {
+async function loadTransferServices() {
   try {
-    const { data } = await api.get<{ id: string; firstName: string; lastName: string }[]>('/visits/doctors')
-    doctors.value = Array.isArray(data)
-      ? [...data].sort((a, b) => {
-          const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
-          if (byLast !== 0) return byLast
-          return a.firstName.localeCompare(b.firstName, 'fr', { sensitivity: 'base' })
-        })
+    const { data } = await api.get<{ id: string; name: string; doctorCount: number }[]>(
+      '/visits/transfer-services',
+    )
+    transferServices.value = Array.isArray(data)
+      ? [...data].sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }))
       : []
   } catch {
-    doctors.value = []
+    transferServices.value = []
   }
 }
 
-async function loadAvailability() {
-  if (isAdminSupervision.value) {
-    availabilityKnown.value = false
-    return
-  }
-  try {
-    const { data } = await api.get<{ acceptingPatients: boolean }>('/visits/me/availability')
-    acceptingPatients.value = Boolean(data?.acceptingPatients)
-    availabilityKnown.value = true
-  } catch {
-    availabilityKnown.value = false
-  }
-}
-
-async function toggleAvailability() {
-  if (!availabilityKnown.value || availabilitySaving.value) return
-  const next = !acceptingPatients.value
-  availabilitySaving.value = true
-  message.value = ''
-  try {
-    const { data } = await api.patch<{ acceptingPatients: boolean; message?: string }>(
-      '/visits/me/availability',
-      { acceptingPatients: next },
-    )
-    acceptingPatients.value = Boolean(data?.acceptingPatients)
-    message.value = uiText(
-      data?.message ??
-        (acceptingPatients.value
-          ? 'Vous êtes disponible pour de nouveaux patients.'
-          : 'Vous êtes en pause — votre nom n’apparaît plus à la réception.'),
-    )
-    messageType.value = 'success'
-  } catch (error: unknown) {
-    const shown = await showApiErrorModal(error, 'Impossible de mettre à jour la disponibilité.')
-    if (!shown) {
-      message.value = uiText('Impossible de mettre à jour la disponibilité.')
-      messageType.value = 'error'
-    }
-  } finally {
-    availabilitySaving.value = false
-  }
+async function ensureTransferServicesLoaded() {
+  if (transferServices.value.length) return
+  await loadTransferServices()
 }
 
 async function loadVisits(opts?: { silent?: boolean }) {
@@ -297,19 +256,28 @@ async function loadRecentHistory(patientId: string | undefined) {
 async function openConsultModal(id: string) {
   modalVisitId.value = id
   resetExamForm()
-  preselectClinicalConsultation()
   message.value = ''
   recentHistory.value = []
 
   const visit = visits.value.find((v) => v.id === id)
   void loadRecentHistory(visit?.patient?.id)
 
-  // Reprise d’un dossier déjà au labo : garder pharmacie / notes déjà enregistrées.
+  // Reprise d’un dossier déjà prescrit : préremplir examens / ordonnance / notes.
   const notes = visit?.consultation?.clinicalNotes
-  if (visit?.consultation?.labSentToLabAt || hasLabResults(notes)) {
+  const existingExams = parsePrescribedExamsByKind(notes)
+  if (countExamsByKind(existingExams) > 0) {
+    selectedExamsByKind.value = existingExams
+    examCommentsByKind.value = parsePrescribedExamCommentsByKind(notes)
+    hospitalisationDays.value = parsePrescribedHospitalisationDays(notes)
     pharmacyOrdonnance.value = parsePharmacyOrdonnanceLines(notes)
     doctorComment.value = visit?.consultation?.doctorComment?.trim() ?? ''
-    consultModalTab.value = 'pharmacy'
+    consultModalTab.value = hasLabResults(notes) ? 'pharmacy' : 'exams'
+  } else {
+    preselectClinicalConsultation()
+    if (notes || visit?.consultation?.doctorComment) {
+      pharmacyOrdonnance.value = parsePharmacyOrdonnanceLines(notes)
+      doctorComment.value = visit?.consultation?.doctorComment?.trim() ?? ''
+    }
   }
 
   if (visit?.status === 'WAITING_CONSULTATION') {
@@ -334,25 +302,26 @@ function closeModal() {
 
 function openTransferModal(id: string) {
   transferVisitId.value = id
-  selectedDoctorId.value = ''
+  selectedServiceId.value = ''
   message.value = ''
+  void ensureTransferServicesLoaded()
 }
 
 function closeTransferModal() {
   transferVisitId.value = null
-  selectedDoctorId.value = ''
+  selectedServiceId.value = ''
 }
 
 async function submitTransfer() {
-  if (!transferVisitId.value || !selectedDoctorId.value) {
-    message.value = uiText('Sélectionnez un médecin destinataire.')
+  if (!transferVisitId.value || !selectedServiceId.value) {
+    message.value = uiText('Sélectionnez un service destinataire.')
     messageType.value = 'error'
     return
   }
 
   const ok = await confirmAppModal({
     title: uiText('Transférer le patient'),
-    message: uiText('Confirmer le transfert de ce patient vers le médecin sélectionné ?'),
+    message: uiText('Confirmer le transfert de ce patient vers le service sélectionné ?'),
     confirmLabel: uiText('Transférer'),
     type: 'CONFIRM',
   })
@@ -362,9 +331,9 @@ async function submitTransfer() {
   message.value = ''
   try {
     await api.patch(`/visits/${transferVisitId.value}/transfer`, {
-      doctorId: selectedDoctorId.value,
+      clinicServiceId: selectedServiceId.value,
     })
-    message.value = uiText('Patient transféré au médecin sélectionné.')
+    message.value = uiText('Patient transféré vers le service sélectionné.')
     messageType.value = 'success'
     closeTransferModal()
     await loadVisits()
@@ -419,29 +388,15 @@ async function submitExams() {
       }
     }
 
-    const ordonnanceToPrint = [...pharmacyOrdonnance.value]
-    const patientForPrint = modalVisit.value?.patient
-    const doctorForPrint = modalVisit.value?.assignedDoctor
-      ? `Dr ${fullName(modalVisit.value.assignedDoctor.firstName, modalVisit.value.assignedDoctor.lastName)}`
-      : auth.user
-        ? `Dr ${fullName(auth.user.firstName, auth.user.lastName)}`
-        : null
+    const hadOrdonnance = pharmacyOrdonnance.value.length > 0
     await api.post('/consultations/prescribe-exams', payload)
-    if (ordonnanceToPrint.length && patientForPrint) {
-      const { printPharmacyOrdonnance } = await import('@/lib/pharmacy-ordonnance-print')
-      printPharmacyOrdonnance({
-        patient: patientForPrint,
-        doctorName: doctorForPrint,
-        lines: ordonnanceToPrint,
-      })
-    }
     const hasComment = !!doctorComment.value.trim()
     const consultationOnly = isDirectClinicalConsultationPrescription(selectedExamsByKind.value)
     message.value = uiText(
-      isLabLockedVisit.value && ordonnanceToPrint.length
-        ? 'Ordonnance enregistrée — ordonnance imprimée.'
-        : ordonnanceToPrint.length
-          ? 'Consultation enregistrée — ordonnance imprimée.'
+      isLabLockedVisit.value && hadOrdonnance
+        ? 'Ordonnance enregistrée.'
+        : hadOrdonnance
+          ? 'Consultation enregistrée — ordonnance sauvegardée (impression manuelle).'
           : consultationOnly
             ? 'Consultation enregistrée — aucun examen prescrit.'
             : selectedExamsCount.value && hasComment
@@ -465,7 +420,7 @@ async function submitExams() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadVisits(), loadDoctors(), loadAvailability()])
+  await Promise.all([loadVisits(), loadTransferServices()])
   if (isAdminSupervision.value) return
   const visitId = route.query.visit
   if (typeof visitId === 'string' && (await ensureVisitAvailable(visitId))) {
@@ -496,28 +451,9 @@ onMounted(async () => {
             >
               {{ uiText('À percevoir') }}
             </UiButton>
-            <UiButton
-              v-if="availabilityKnown"
-              :variant="acceptingPatients ? 'success' : 'outline'"
-              size="sm"
-              :icon="acceptingPatients ? CheckCircle2 : Coffee"
-              :loading="availabilitySaving"
-              :disabled="availabilitySaving"
-              @click="toggleAvailability"
-            >
-              {{ uiText(acceptingPatients ? 'Disponible' : 'En pause') }}
-            </UiButton>
           </div>
         </template>
       </UiPageHeader>
-
-      <p v-if="availabilityKnown && !acceptingPatients" class="availability-hint">
-        {{
-          uiText(
-            'Vous êtes en pause — votre nom n’apparaît pas dans la liste médecins à la réception.',
-          )
-        }}
-      </p>
 
       <UiAlert v-if="message" :type="messageType" :message="message" />
 
@@ -756,14 +692,19 @@ onMounted(async () => {
           </header>
 
           <div class="modal__body">
-            <UiSelect v-model="selectedDoctorId" label="Médecin destinataire" required>
-              <option value="" disabled>Choisir un médecin…</option>
-              <option v-for="doctor in transferDoctorOptions" :key="doctor.id" :value="doctor.id">
-                Dr {{ fullName(doctor.firstName, doctor.lastName) }}
+            <UiSelect v-model="selectedServiceId" label="Service destinataire" required>
+              <option value="" disabled>Choisir un service…</option>
+              <option v-for="service in transferServiceOptions" :key="service.id" :value="service.id">
+                {{ service.name
+                }}{{ service.doctorCount ? '' : ` (${uiText('aucun médecin rattaché')})` }}
               </option>
             </UiSelect>
-            <p class="transfer-hint">
-              Le patient retournera en attente de consultation chez le médecin choisi.
+            <p v-if="!transferServiceOptions.length" class="transfer-hint" style="color: var(--danger, #b91c1c)">
+              {{ uiText('Aucun service disponible. Créez-en un dans la page Services.') }}
+            </p>
+            <p v-else class="transfer-hint">
+              Le patient apparaîtra en attente de consultation chez le(s) médecin(s) de ce service.
+              Dès qu’un médecin démarre la consultation, le patient disparaît des autres files.
             </p>
           </div>
 
@@ -772,7 +713,7 @@ onMounted(async () => {
             <UiButton
               variant="primary"
               :icon="ArrowRightLeft"
-              :disabled="transferring || !selectedDoctorId"
+              :disabled="transferring || !selectedServiceId"
               @click="submitTransfer"
             >
               {{ uiText(transferring ? 'Transfert…' : 'Confirmer le transfert') }}
@@ -797,13 +738,6 @@ onMounted(async () => {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
-}
-
-.availability-hint {
-  margin: -0.35rem 0 0.65rem;
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-  line-height: 1.35;
 }
 
 .consultation-queue-panel :deep(.ui-card__header) {

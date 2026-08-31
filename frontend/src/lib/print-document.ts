@@ -1,5 +1,5 @@
 import { CLINIC, clinicTaxLine } from './clinic'
-import { formatFcfa } from './format-fcfa'
+import { formatFcfa, formatFcfaShort } from './format-fcfa'
 import { getAppLocale, translateUi, translateUiLocale } from '@/i18n/translate'
 import { formatAppDate, formatAppTime, intlLocaleFor } from '@/i18n/locale-format'
 import {
@@ -1000,11 +1000,11 @@ export const CLINIC_PRINT_STYLES = `
     unicode-bidi: isolate;
   }
 
-  /* Tickets thermiques stylés — Courier, titre + n° + logo */
+  /* Tickets thermiques — Arial, titre + n° + logo */
   body.print-thermal .thermal-receipt--ticket {
-    font-family: 'Courier New', Courier, monospace !important;
-    font-size: 15px;
-    line-height: 1.35;
+    font-family: Arial, Helvetica, sans-serif !important;
+    font-size: 11px;
+    line-height: 1.3;
   }
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__ticket-head {
     display: flex;
@@ -1028,22 +1028,22 @@ export const CLINIC_PRINT_STYLES = `
   }
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__title,
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__title--fr {
-    font-family: 'Courier New', Courier, monospace !important;
-    font-size: 15px;
+    font-family: Arial, Helvetica, sans-serif !important;
+    font-size: 12px;
     font-weight: 700;
     margin: 0;
     text-transform: none;
     letter-spacing: 0;
   }
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__subtitle-no {
-    font-family: 'Courier New', Courier, monospace !important;
-    font-size: 13px;
+    font-family: Arial, Helvetica, sans-serif !important;
+    font-size: 11px;
     font-weight: 700;
     margin: 0;
   }
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__contact {
-    font-family: 'Courier New', Courier, monospace !important;
-    font-size: 12px;
+    font-family: Arial, Helvetica, sans-serif !important;
+    font-size: 9px;
     margin: 2px 0 0;
   }
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__logo {
@@ -1054,28 +1054,85 @@ export const CLINIC_PRINT_STYLES = `
   }
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__row,
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__line {
-    font-family: 'Courier New', Courier, monospace !important;
-    font-size: 14px;
-    margin: 4px 0;
+    font-family: Arial, Helvetica, sans-serif !important;
+    font-size: 10px;
+    margin: 3px 0;
   }
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__label-ar {
-    font-family: 'Courier New', Courier, monospace !important;
+    font-family: Arial, Helvetica, sans-serif !important;
   }
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__value {
-    font-size: 14px;
+    font-size: 10px;
     font-weight: 700;
   }
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__line--total,
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__row--total {
-    font-size: 16px;
+    font-size: 12px;
     font-weight: 700;
   }
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__thanks {
-    font-size: 14px;
+    font-size: 11px;
     font-weight: 700;
   }
   body.print-thermal .thermal-receipt--ticket .thermal-receipt__note {
-    font-size: 12px;
+    font-size: 9px;
+  }
+
+  /* Tableau pharmacie : Produit | Qté | PU | PT + Total en pied */
+  body.print-thermal .thermal-receipt__items-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 2px 0 0;
+    font-family: Arial, Helvetica, sans-serif !important;
+    font-size: 9px;
+    table-layout: fixed;
+  }
+  body.print-thermal .thermal-receipt__items-table th,
+  body.print-thermal .thermal-receipt__items-table td {
+    border: none;
+    padding: 2px 2px;
+    vertical-align: top;
+    font-family: Arial, Helvetica, sans-serif !important;
+  }
+  body.print-thermal .thermal-receipt__items-table thead th {
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  body.print-thermal .thermal-receipt__items-table .col-product {
+    width: 42%;
+    text-align: left;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+  }
+  body.print-thermal .thermal-receipt__items-table .col-qty {
+    width: 12%;
+    text-align: center;
+    white-space: nowrap;
+  }
+  body.print-thermal .thermal-receipt__items-table .col-pu,
+  body.print-thermal .thermal-receipt__items-table .col-pt {
+    width: 23%;
+    text-align: right;
+    white-space: nowrap;
+  }
+  body.print-thermal .thermal-receipt__items-table tfoot td {
+    border: none;
+    font-weight: 700;
+    padding-top: 3px;
+  }
+  body.print-thermal .thermal-receipt__items-table tfoot .col-total-label {
+    text-align: left;
+  }
+  body.print-thermal .thermal-receipt__items-table tfoot .col-total-value {
+    text-align: right;
+    white-space: nowrap;
+  }
+  body.print-thermal .thermal-receipt__items-table tfoot tr.thermal-receipt__items-sub td {
+    font-weight: 400;
+  }
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__thanks {
+    margin: 3px 0 0;
+    padding: 0;
   }
 `
 
@@ -1120,6 +1177,70 @@ export function thermalMetaRow(labelFr: string, value: string, labelAr?: string)
   <strong class="thermal-receipt__value" dir="ltr">${escapeHtml(value)}</strong>
   ${arCell}
 </div>`
+}
+
+export type PharmacyTicketLine = {
+  name: string
+  quantity: number
+  unitPriceFcfa: number
+  lineTotalFcfa: number
+}
+
+/** Tableau ticket pharmacie : Produit, Qté, PU, PT + Total (et réductions éventuelles) en pied. */
+export function buildPharmacyTicketItemsTableHtml(options: {
+  lines: PharmacyTicketLine[]
+  totalFcfa: number
+  grossTotalFcfa?: number
+  reductionFcfa?: number
+  reductionLabel?: string
+}) {
+  const fmt = formatFcfaShort
+  const rows = options.lines
+    .map(
+      (line) => `<tr>
+  <td class="col-product" dir="ltr">${escapeHtml(line.name)}</td>
+  <td class="col-qty" dir="ltr">${escapeHtml(String(line.quantity))}</td>
+  <td class="col-pu" dir="ltr">${escapeHtml(fmt(line.unitPriceFcfa))}</td>
+  <td class="col-pt" dir="ltr">${escapeHtml(fmt(line.lineTotalFcfa))}</td>
+</tr>`,
+    )
+    .join('')
+
+  const reductionFcfa = options.reductionFcfa ?? 0
+  const grossTotal = options.grossTotalFcfa ?? options.totalFcfa
+  const reductionLabel = options.reductionLabel?.trim() || 'Réduction'
+  const subRows =
+    reductionFcfa > 0
+      ? `<tr class="thermal-receipt__items-sub">
+  <td class="col-total-label" colspan="3" dir="ltr">Sous-total</td>
+  <td class="col-total-value" dir="ltr">${escapeHtml(fmt(grossTotal))}</td>
+</tr>
+<tr class="thermal-receipt__items-sub">
+  <td class="col-total-label" colspan="3" dir="ltr">${escapeHtml(reductionLabel)}</td>
+  <td class="col-total-value" dir="ltr">- ${escapeHtml(fmt(reductionFcfa))}</td>
+</tr>`
+      : ''
+
+  return `<table class="thermal-receipt__items-table" dir="ltr">
+  <thead>
+    <tr>
+      <th class="col-product">Produit</th>
+      <th class="col-qty">Qté</th>
+      <th class="col-pu">PU</th>
+      <th class="col-pt">PT</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${rows}
+  </tbody>
+  <tfoot>
+    ${subRows}
+    <tr>
+      <td class="col-total-label" colspan="3" dir="ltr">Total</td>
+      <td class="col-total-value" dir="ltr">${escapeHtml(fmt(options.totalFcfa))}</td>
+    </tr>
+  </tfoot>
+</table>`
 }
 
 /** En-tête ticket : titre + n° à gauche, logo à droite. */
@@ -1684,10 +1805,12 @@ export type OpenPrintOptions = {
   pageSize?: 'A5' | 'A4' | '80mm'
   /** Force LTR même si la session est en arabe (ex. feuilles de résultats labo). */
   forceLtr?: boolean
+  /** Ticket court (pharmacie) : hauteur page serrée après le contenu. */
+  thermalTight?: boolean
 }
 
 /** Hauteur page thermique (mm) — toujours portrait (> 80 mm de largeur). */
-function measureThermalPageHeightMm(doc: Document): number {
+function measureThermalPageHeightMm(doc: Document, tight = false): number {
   const receipt = doc.querySelector('.thermal-receipt') as HTMLElement | null
   let px = 0
 
@@ -1707,15 +1830,15 @@ function measureThermalPageHeightMm(doc: Document): number {
   }
 
   // CSS px → mm (+ marge coupe)
-  let mm = Math.ceil((px * 25.4) / 96) + 8
+  let mm = Math.ceil((px * 25.4) / 96) + (tight ? 2 : 8)
   // Portrait obligatoire : si hauteur ≤ largeur, Chrome part en paysage et le rouleau se vide
-  mm = Math.max(mm, 92)
+  mm = Math.max(mm, tight ? 81 : 92)
   // Plafond anti-A4 (~297 mm)
   mm = Math.min(mm, 170)
   return mm
 }
 
-function applyThermalPageSize(doc: Document, heightMm: number) {
+function applyThermalPageSize(doc: Document, heightMm: number, tight = false) {
   doc.querySelectorAll('style[data-thermal-fit]').forEach((el) => el.remove())
   const style = doc.createElement('style')
   style.setAttribute('data-thermal-fit', '1')
@@ -1753,6 +1876,18 @@ function applyThermalPageSize(doc: Document, heightMm: number) {
   body.print-thermal .thermal-receipt__cut {
     display: none !important;
     height: 0 !important;
+  }
+  ${
+    tight
+      ? `
+  body.print-thermal {
+    padding: 0.5mm 1.5mm 0 !important;
+  }
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__thanks {
+    margin: 3px 0 0 !important;
+    padding: 0 !important;
+  }`
+      : ''
   }
 }`
   doc.head.appendChild(style)
@@ -2003,11 +2138,12 @@ ${contentHtml}
 </body></html>`
 
   const runThermalFit = (doc: Document) => {
+    const tight = Boolean(options.thermalTight)
     try {
-      applyThermalPageSize(doc, measureThermalPageHeightMm(doc))
+      applyThermalPageSize(doc, measureThermalPageHeightMm(doc, tight), tight)
     } catch {
       try {
-        applyThermalPageSize(doc, 110)
+        applyThermalPageSize(doc, tight ? 81 : 110, tight)
       } catch {
         /* ignore */
       }

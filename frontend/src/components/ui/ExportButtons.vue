@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { FileDown, FileSpreadsheet } from '@lucide/vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
+
+const { canSeeUiAction } = useUiActionVisibility()
 
 withDefaults(
   defineProps<{
@@ -26,7 +29,7 @@ defineEmits<{
 <template>
   <div class="export-buttons">
     <UiButton
-      v-if="showPdf"
+      v-if="showPdf && canSeeUiAction('export.pdf')"
       variant="secondary"
       :size="size"
       :icon="FileDown"
@@ -36,7 +39,7 @@ defineEmits<{
       Exporter PDF
     </UiButton>
     <UiButton
-      v-if="showExcel"
+      v-if="showExcel && canSeeUiAction('export.excel')"
       variant="outline"
       :size="size"
       :icon="FileSpreadsheet"

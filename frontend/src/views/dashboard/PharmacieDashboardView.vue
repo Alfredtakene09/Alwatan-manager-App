@@ -14,10 +14,11 @@ import {
 } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
-import { canAccessModule, formatFcfa } from '@/lib/roles'
+import { canAccessModule, formatFcfa, formatFcfaShort } from '@/lib/roles'
 import UiCard from '@/components/ui/UiCard.vue'
 import RoleDashboardShell from '@/components/dashboard/RoleDashboardShell.vue'
 import DashboardBarChart, { type BarChartDay } from '@/components/dashboard/DashboardBarChart.vue'
+import DashboardMetricBars, { type MetricBar } from '@/components/dashboard/DashboardMetricBars.vue'
 import DashboardPendingBars from '@/components/dashboard/DashboardPendingBars.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import type { SummaryStat } from '@/lib/dashboard-summary'
@@ -109,6 +110,40 @@ const activityLegend = computed(() => {
     { key: 'externes', label: uiText('Externes'), colorClass: 'legend-dot--c' },
     { key: 'alertes', label: uiText('Alertes stock'), colorClass: 'legend-dot--e' },
   ]
+})
+
+const activityMetrics = computed((): MetricBar[] => {
+  void localeCode.value
+  if (!stats.value) return []
+  const s = stats.value
+  return [
+    {
+      key: 'ordonnances',
+      label: uiText('Ordonnances'),
+      value: s.prescriptionsToday,
+      color: '#0d9488',
+      hint: translateTemplate('Ordonnances patients : {n}', { n: s.prescriptionsToday }),
+    },
+    {
+      key: 'externes',
+      label: uiText('Externes'),
+      value: s.prescriptionsExternalToday,
+      color: '#d97706',
+      hint: translateTemplate('Clients externes : {n}', { n: s.prescriptionsExternalToday }),
+    },
+    {
+      key: 'alertes',
+      label: uiText('Alertes stock'),
+      value: s.lowStock,
+      color: '#e11d48',
+      hint: translateTemplate('Alertes stock : {n}', { n: s.lowStock }),
+    },
+  ]
+})
+
+const weekSalesTotal = computed(() => {
+  if (!stats.value) return 0
+  return stats.value.salesLast7Days.reduce((sum, day) => sum + day.totalFcfa, 0)
 })
 
 const summaryStats = computed((): SummaryStat[] => {
@@ -214,7 +249,7 @@ const salesChart = computed((): BarChartDay[] => {
                   value: day.patientFcfa,
                   colorClass: 'bar-chart__bar--a',
                   title: translateTemplate('Patients : {amount}', {
-                    amount: formatFcfa(day.patientFcfa),
+                    amount: formatFcfaShort(day.patientFcfa),
                   }),
                 }]
               : []),
@@ -224,7 +259,7 @@ const salesChart = computed((): BarChartDay[] => {
                   value: day.externalFcfa,
                   colorClass: 'bar-chart__bar--c',
                   title: translateTemplate('Clients externes : {amount}', {
-                    amount: formatFcfa(day.externalFcfa),
+                    amount: formatFcfaShort(day.externalFcfa),
                   }),
                 }]
               : []),
@@ -236,50 +271,6 @@ const salesChart = computed((): BarChartDay[] => {
             title: uiText('Aucune vente'),
           }],
   }))
-})
-
-const activityChart = computed((): BarChartDay[] => {
-  void localeCode.value
-  if (!stats.value) return []
-  const s = stats.value
-  const makeBar = (
-    date: string,
-    dayLabel: string,
-    value: number,
-    colorClass: string,
-    title: string,
-  ): BarChartDay => ({
-    date,
-    dayLabel,
-    total: value,
-    segments:
-      value > 0
-        ? [{ key: date, value, colorClass, title }]
-        : [{ key: 'empty', value: 1, colorClass: 'bar-chart__bar--empty', title }],
-  })
-  return [
-    makeBar(
-      'ordonnances',
-      uiText('Ordonnances'),
-      s.prescriptionsToday,
-      'bar-chart__bar--b',
-      translateTemplate('Ordonnances patients : {n}', { n: s.prescriptionsToday }),
-    ),
-    makeBar(
-      'externes',
-      uiText('Externes'),
-      s.prescriptionsExternalToday,
-      'bar-chart__bar--c',
-      translateTemplate('Clients externes : {n}', { n: s.prescriptionsExternalToday }),
-    ),
-    makeBar(
-      'alertes',
-      uiText('Alertes stock'),
-      s.lowStock,
-      'bar-chart__bar--e',
-      translateTemplate('Alertes stock : {n}', { n: s.lowStock }),
-    ),
-  ]
 })
 
 const stockBars = computed(() => {
@@ -341,45 +332,59 @@ onMounted(loadStats)
       </div>
     </section>
 
-    <div class="charts-grid">
+    <section class="pharma-dashboard">
       <UiCard
+        class="pharma-dashboard__sales"
         :title="salesChartTitle"
         :description="salesChartDescription"
         :icon="Banknote"
         icon-variant="green"
       >
+        <div v-if="stats && weekSalesTotal > 0" class="pharma-dashboard__sales-kpi">
+          <span class="pharma-dashboard__sales-kpi-label">{{ uiText('Total 7 jours') }}</span>
+          <strong class="pharma-dashboard__sales-kpi-value" dir="ltr">{{ formatFcfaShort(weekSalesTotal) }}</strong>
+        </div>
         <DashboardBarChart
           :days="salesChart"
           :loading="loading"
-          :format-total="formatFcfa"
+          :format-total="formatFcfaShort"
           :legend="salesLegend"
         />
       </UiCard>
 
-      <UiCard
-        :title="activityChartTitle"
-        :description="uiText('Histogramme — ordonnances, ventes externes et alertes')"
-        :icon="PillBottle"
-        icon-variant="teal"
-      >
-        <DashboardBarChart
-          :days="activityChart"
-          :loading="loading"
-          :format-total="(v) => String(v)"
-          :legend="activityLegend"
-        />
-      </UiCard>
-    </div>
+      <div class="pharma-dashboard__row">
+        <UiCard
+          class="pharma-dashboard__activity"
+          :title="activityChartTitle"
+          :description="uiText('Répartition du jour — ordonnances, ventes externes et alertes')"
+          :icon="PillBottle"
+          icon-variant="teal"
+        >
+          <DashboardMetricBars
+            :items="activityMetrics"
+            :loading="loading"
+            :empty-label="uiText('Aucune activité aujourd’hui')"
+          />
+          <div class="pharma-dashboard__activity-legend chart-legend">
+            <span v-for="item in activityLegend" :key="item.key" class="chart-legend__item">
+              <i class="legend-dot" :class="item.colorClass" />
+              <span>{{ item.label }}</span>
+            </span>
+          </div>
+        </UiCard>
 
-    <UiCard
-      title="Stocks critiques"
-      description="Niveau par rapport au seuil d'alerte"
-      :icon="PackageX"
-      icon-variant="amber"
-    >
-      <div v-if="!stockBars.length" class="chart-empty">{{ uiText('Aucune alerte stock') }}</div>
-      <DashboardPendingBars v-else :items="stockBars" />
-    </UiCard>
+        <UiCard
+          class="pharma-dashboard__stock"
+          :title="uiText('Stocks critiques')"
+          :description="uiText('Niveau par rapport au seuil d\'alerte')"
+          :icon="PackageX"
+          icon-variant="amber"
+        >
+          <div v-if="!stockBars.length" class="chart-empty">{{ uiText('Aucune alerte stock') }}</div>
+          <DashboardPendingBars v-else :items="stockBars" />
+        </UiCard>
+      </div>
+    </section>
   </RoleDashboardShell>
 </template>
 
@@ -409,11 +414,55 @@ onMounted(loadStats)
   gap: 0.85rem;
 }
 
-.charts-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.pharma-dashboard {
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
 }
+
+.pharma-dashboard__sales :deep(.ui-card__body) {
+  padding-top: 0.35rem;
+}
+
+.pharma-dashboard__sales-kpi {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, #ecfdf5, #f0fdf4);
+  border: 1px solid #bbf7d0;
+}
+
+.pharma-dashboard__sales-kpi-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #166534;
+}
+
+.pharma-dashboard__sales-kpi-value {
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: #14532d;
+  font-variant-numeric: tabular-nums;
+}
+
+.pharma-dashboard__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.pharma-dashboard__activity-legend {
+  margin-top: 1.15rem;
+}
+
+.pharma-dashboard__activity-legend .legend-dot--b { background: #0d9488; }
+.pharma-dashboard__activity-legend .legend-dot--c { background: #d97706; }
+.pharma-dashboard__activity-legend .legend-dot--e { background: #e11d48; }
 
 .chart-empty {
   padding: 2rem 1rem;
@@ -429,7 +478,7 @@ onMounted(loadStats)
 }
 
 @media (max-width: 960px) {
-  .charts-grid {
+  .pharma-dashboard__row {
     grid-template-columns: 1fr;
   }
 }

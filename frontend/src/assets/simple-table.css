@@ -115,7 +115,7 @@
 .simple-table-wrap {
   min-height: 0;
   overflow-x: auto;
-  padding: 0.15rem 0.35rem 0.5rem;
+  padding: 0.15rem 0 0.5rem 0.35rem;
 }
 
 .simple-table {
@@ -160,8 +160,30 @@
 
 .simple-table__actions-head,
 .simple-table__actions {
+  width: 1%;
+  min-width: 4.75rem;
   text-align: right;
   white-space: nowrap;
+  position: sticky;
+  inset-inline-end: 0;
+  z-index: 2;
+  padding-inline-end: 0.5rem;
+  background: var(--bg-card, #fff);
+  box-shadow: -8px 0 8px -8px rgba(15, 23, 42, 0.08);
+}
+
+.simple-table thead .simple-table__actions-head {
+  z-index: 3;
+}
+
+.simple-table tbody tr:hover .simple-table__actions {
+  background: var(--surface-soft, #f6f8fb);
+}
+
+.simple-table__exam,
+.simple-table__grow {
+  width: 100%;
+  min-width: 16rem;
 }
 
 .simple-table__empty {
@@ -339,7 +361,8 @@
   display: flex;
   align-items: flex-start;
   gap: 0.45rem;
-  max-width: 28rem;
+  width: 100%;
+  max-width: none;
 }
 
 .st-exam-count {
@@ -440,11 +463,12 @@
   align-items: center;
   gap: 0.45rem;
   max-width: 100%;
+  width: 100%;
 }
 
 .st-exam-preview .st-sub--truncate {
   margin-top: 0;
-  max-width: 14rem;
+  max-width: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

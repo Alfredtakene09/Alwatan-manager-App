@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Pencil, Ban, Check, Trash2, Eye } from '@lucide/vue'
+import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
+
+const { canSeeUiAction } = useUiActionVisibility()
 
 const props = withDefaults(
   defineProps<{
@@ -28,12 +31,17 @@ const emit = defineEmits<{
 const resolvedToggleLabel = computed(
   () => props.toggleLabel ?? (props.isActive ? 'Désactiver' : 'Activer'),
 )
+
+const allowView = computed(() => props.showView && canSeeUiAction('table.edit'))
+const allowEdit = computed(() => props.showEdit && canSeeUiAction('table.edit'))
+const allowToggle = computed(() => props.showToggle && canSeeUiAction('table.toggle'))
+const allowDelete = computed(() => props.canDelete && canSeeUiAction('table.delete'))
 </script>
 
 <template>
   <div class="st-actions">
     <button
-      v-if="showView"
+      v-if="allowView"
       type="button"
       class="st-btn st-btn--soft"
       title="Voir"
@@ -43,7 +51,7 @@ const resolvedToggleLabel = computed(
       <Eye :size="15" />
     </button>
     <button
-      v-if="showEdit"
+      v-if="allowEdit"
       type="button"
       class="st-btn st-btn--edit"
       title="Modifier"
@@ -53,7 +61,7 @@ const resolvedToggleLabel = computed(
       <Pencil :size="15" />
     </button>
     <button
-      v-if="showToggle"
+      v-if="allowToggle"
       type="button"
       class="st-btn"
       :class="isActive ? 'st-btn--catalog-off' : 'st-btn--catalog-on'"
@@ -65,7 +73,7 @@ const resolvedToggleLabel = computed(
       <Check v-else :size="15" />
     </button>
     <button
-      v-if="canDelete"
+      v-if="allowDelete"
       type="button"
       class="st-btn st-btn--delete"
       title="Supprimer"

@@ -37,6 +37,7 @@ import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere, resolveDoctorConsultationAmount } from "../lib/doctor-compensation.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 import { EXTERNAL_PATIENT_VISIT_NOTE } from "../lib/visit-external.js";
+import { patientsWhoReceivedExamsWhere } from "../lib/patient-exam-stats.js";
 
 /** Réceptionniste : uniquement ses dossiers. Direction / gestionnaire / admin : tout, ou un réceptionniste choisi. */
 function receptionistOwnPatientsWhere(
@@ -171,6 +172,30 @@ async function findPrintableConsultationVisit(patientId: string) {
   });
 }
 
+function mapConsultationPayment(invoice: {
+  id: string;
+  invoiceNumber: string;
+  status: InvoiceStatus;
+  amountFcfa: number;
+  paidAmountFcfa: number;
+} | null | undefined) {
+  if (!invoice || invoice.status === InvoiceStatus.CANCELLED) return null;
+  const remainingFcfa = Math.max(0, invoice.amountFcfa - invoice.paidAmountFcfa);
+  return {
+    invoiceId: invoice.id,
+    invoiceNumber: invoice.invoiceNumber,
+    status: invoice.status,
+    amountFcfa: invoice.amountFcfa,
+    paidAmountFcfa: invoice.paidAmountFcfa,
+    remainingFcfa,
+    payable:
+      remainingFcfa > 0 &&
+      (invoice.status === InvoiceStatus.PENDING ||
+        invoice.status === InvoiceStatus.PARTIALLY_PAID ||
+        invoice.status === InvoiceStatus.DRAFT),
+  };
+}
+
 function mapConsultationVisitForReception(
   visit: NonNullable<Awaited<ReturnType<typeof findPrintableConsultationVisit>>>,
 ) {
@@ -189,6 +214,7 @@ function mapConsultationVisitForReception(
     consultationAmountFcfa: amounts.consultationFeeFcfa || null,
     invoiceNumber: visit.invoices[0]?.invoiceNumber ?? null,
     totalFcfa: amounts.totalFcfa,
+    consultationPayment: mapConsultationPayment(visit.invoices[0]),
   };
 }
 
@@ -351,6 +377,18 @@ router.get("/", async (req, res) => {
     include: {
       treatingDoctor: { select: treatingDoctorSelect },
       createdBy: { select: { id: true, firstName: true, lastName: true } },
+      invoices: {
+        where: { type: InvoiceType.CONSULTATION, status: { not: InvoiceStatus.CANCELLED } },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          invoiceNumber: true,
+          status: true,
+          amountFcfa: true,
+          paidAmountFcfa: true,
+        },
+      },
     },
     orderBy: [{ createdAt: "desc" }, { code: "desc" }],
     take: createdAtFilter ? 500 : 50,
@@ -358,10 +396,14 @@ router.get("/", async (req, res) => {
 
   const lockedIds = await findPatientIdsDeletionLocked(patients.map((p) => p.id));
   return res.json(
-    patients.map((patient) => ({
-      ...patient,
-      canDelete: !lockedIds.has(patient.id),
-    })),
+    patients.map((patient) => {
+      const { invoices, ...rest } = patient;
+      return {
+        ...rest,
+        canDelete: !lockedIds.has(patient.id),
+        consultationPayment: mapConsultationPayment(invoices[0]),
+      };
+    }),
   );
 });
 
@@ -400,6 +442,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     registeredToday,
     femalePatients,
     malePatients,
+    examPatientsCount,
     visitsToday,
     externalPatientsToday,
     collectedToday,
@@ -410,6 +453,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     }),
     prisma.patient.count({ where: { ...ownScope, gender: "F" } }),
     prisma.patient.count({ where: { ...ownScope, gender: "M" } }),
+    prisma.patient.count({ where: patientsWhoReceivedExamsWhere(ownScope) }),
     scopedReceptionistId
       ? prisma.visit.count({
           where: {
@@ -446,6 +490,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     registeredToday,
     femalePatients,
     malePatients,
+    examPatientsCount,
     visitsToday,
     externalPatientsToday,
     revenueTodayFcfa: collectedToday.totalFcfa,
@@ -608,6 +653,9 @@ router.get("/:id", requireModule("reception"), async (req, res) => {
   return res.json({
     ...patient,
     waitingVisit: printableVisit ? mapConsultationVisitForReception(printableVisit) : null,
+    consultationPayment: printableVisit
+      ? mapConsultationPayment(printableVisit.invoices[0])
+      : null,
   });
 });
 

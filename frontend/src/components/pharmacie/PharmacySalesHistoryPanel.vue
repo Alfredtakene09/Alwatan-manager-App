@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RefreshCw, Printer, Eye } from '@lucide/vue'
+import { RefreshCw, Printer, Eye, Pencil, Save, Trash2 } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { CLINIC } from '@/lib/clinic'
 import { formatPatientTableDate } from '@/lib/patient-datatable-columns'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
-import { buildThermalTicketHeadHtml, openPrintDocument, thermalMetaRow } from '@/lib/print-document'
+import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, openPrintDocument, thermalMetaRow } from '@/lib/print-document'
 import { translateUi } from '@/i18n/translate'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -19,6 +19,7 @@ import UiFormModal from '@/components/ui/UiFormModal.vue'
 
 type SaleLine = {
   id: string
+  productId?: string
   productName: string
   sku: string
   categoryName: string | null
@@ -26,6 +27,8 @@ type SaleLine = {
   unitPriceFcfa: number
   lineTotalFcfa: number
 }
+
+type EditableSaleLine = SaleLine & { quantityDraft: number }
 
 type SaleRecord = {
   id: string
@@ -63,24 +66,17 @@ function saleBuyerLabel(item: SaleRecord) {
   return '—'
 }
 
-function saleBuyerName(item: SaleRecord) {
-  if (item.externalClient) {
-    return item.externalClient.firstName === item.externalClient.lastName
-      ? item.externalClient.firstName
-      : fullName(item.externalClient.firstName, item.externalClient.lastName)
-  }
-  if (item.patient) {
-    return fullName(item.patient.firstName, item.patient.lastName)
-  }
-  return '—'
-}
-
 const items = ref<SaleRecord[]>([])
 const loading = ref(false)
 const message = ref('')
+const messageType = ref<'success' | 'error'>('error')
 const filterFrom = ref('')
 const filterTo = ref('')
 const expandedId = ref<string | null>(null)
+const editId = ref<string | null>(null)
+const editingLines = ref<EditableSaleLine[]>([])
+const pendingDeleteLineIds = ref<string[]>([])
+const savingEdit = ref(false)
 
 const { uiText, localeCode } = useAppI18n()
 
@@ -102,6 +98,21 @@ const tableRows = computed(() => {
 
 const expandedSale = computed(() => items.value.find((item) => item.id === expandedId.value) ?? null)
 const expandedSaleLabel = computed(() => (expandedSale.value ? saleBuyerLabel(expandedSale.value) : '—'))
+const editSale = computed(() => items.value.find((item) => item.id === editId.value) ?? null)
+const editSaleLabel = computed(() => (editSale.value ? saleBuyerLabel(editSale.value) : '—'))
+
+const editTotalFcfa = computed(() =>
+  editingLines.value.reduce(
+    (sum, line) => sum + line.unitPriceFcfa * Math.max(1, Math.floor(line.quantityDraft) || 1),
+    0,
+  ),
+)
+
+const editHasChanges = computed(
+  () =>
+    pendingDeleteLineIds.value.length > 0 ||
+    editingLines.value.some((line) => line.quantityDraft !== line.quantity),
+)
 
 async function loadItems() {
   loading.value = true
@@ -113,7 +124,8 @@ async function loadItems() {
     const { data } = await api.get<SaleRecord[]>('/pharmacie/sales', { params })
     items.value = data
   } catch {
-    message.value = 'Impossible de charger l\'historique des ventes.'
+    message.value = uiText("Impossible de charger l'historique des ventes.")
+    messageType.value = 'error'
     items.value = []
   } finally {
     loading.value = false
@@ -121,19 +133,24 @@ async function loadItems() {
 }
 
 function printSale(sale: SaleRecord) {
-  const buyerLabel = saleBuyerName(sale)
   const invoiceNumber = sale.invoiceNumber ?? sale.id.slice(0, 8).toUpperCase()
   const date = new Date(sale.createdAt).toLocaleString('fr-FR')
-  const thermalRows = sale.lines
-    .map((line) =>
-      thermalMetaRow(`${line.productName} x${line.quantity}`, formatFcfa(line.lineTotalFcfa), ''),
-    )
-    .join('')
+  const isInternal = sale.buyerType === 'patient' || Boolean(sale.patient)
+  const internalBlock = isInternal ? thermalMetaRow('Type', 'Interne', '') : ''
+  const itemsTable = buildPharmacyTicketItemsTableHtml({
+    lines: sale.lines.map((line) => ({
+      name: line.productName,
+      quantity: line.quantity,
+      unitPriceFcfa: line.unitPriceFcfa,
+      lineTotalFcfa: line.lineTotalFcfa,
+    })),
+    totalFcfa: sale.totalFcfa,
+  })
 
   openPrintDocument(
     `Ticket ${invoiceNumber}`,
     `
-<div class="thermal-receipt thermal-receipt--ticket">
+<div class="thermal-receipt thermal-receipt--ticket thermal-receipt--pharmacy">
   ${buildThermalTicketHeadHtml({
     title: 'Clinique Alwatan Pharmacie',
     number: invoiceNumber,
@@ -144,16 +161,11 @@ function printSale(sale: SaleRecord) {
 
   <div class="thermal-receipt__fields">
     ${thermalMetaRow('Date', date, '')}
-    ${thermalMetaRow('Client', buyerLabel, '')}
+    ${internalBlock}
   </div>
 
   <hr class="thermal-receipt__rule" />
-  <div class="thermal-receipt__lines">
-    ${thermalRows}
-  </div>
-  <div class="thermal-receipt__fields">
-    ${thermalMetaRow('TOTAL', formatFcfa(sale.totalFcfa), '')}
-  </div>
+  ${itemsTable}
   ${
     sale.notes
       ? `<p class="thermal-receipt__note" dir="ltr">${escapeReceiptText(sale.notes)}</p>`
@@ -163,7 +175,7 @@ function printSale(sale: SaleRecord) {
   <p class="thermal-receipt__thanks">Merci</p>
 </div>
 `,
-    { pageSize: '80mm', autoPrint: true },
+    { pageSize: '80mm', autoPrint: true, thermalTight: true },
   )
 }
 
@@ -172,9 +184,97 @@ function onTableAction({ action, id }: { action: string; id: string }) {
     expandedId.value = id
     return
   }
+  if (action === 'edit') {
+    openEditModal(id)
+    return
+  }
   if (action === 'print') {
     const sale = items.value.find((item) => item.id === id)
     if (sale) printSale(sale)
+  }
+}
+
+function openEditModal(id: string) {
+  const sale = items.value.find((item) => item.id === id)
+  if (!sale) return
+  editId.value = id
+  editingLines.value = sale.lines.map((line) => ({
+    ...line,
+    quantityDraft: line.quantity,
+  }))
+  pendingDeleteLineIds.value = []
+  message.value = ''
+}
+
+function closeEditModal() {
+  editId.value = null
+  editingLines.value = []
+  pendingDeleteLineIds.value = []
+}
+
+function removeEditLine(lineId: string) {
+  const index = editingLines.value.findIndex((line) => line.id === lineId)
+  if (index < 0) return
+  if (!pendingDeleteLineIds.value.includes(lineId)) {
+    pendingDeleteLineIds.value = [...pendingDeleteLineIds.value, lineId]
+  }
+  editingLines.value = editingLines.value.filter((line) => line.id !== lineId)
+}
+
+function lineDraftTotal(line: EditableSaleLine) {
+  const qty = Math.max(1, Math.floor(line.quantityDraft) || 1)
+  return line.unitPriceFcfa * qty
+}
+
+async function saveEdit() {
+  if (!editId.value || !editHasChanges.value) return
+  if (!editingLines.value.length && !pendingDeleteLineIds.value.length) {
+    message.value = uiText('Ajoutez au moins une ligne ou annulez la modification.')
+    messageType.value = 'error'
+    return
+  }
+  for (const line of editingLines.value) {
+    const qty = Math.floor(line.quantityDraft)
+    if (!Number.isFinite(qty) || qty < 1 || qty > 999) {
+      message.value = uiText('Quantité invalide — saisissez un nombre entre 1 et 999.')
+      messageType.value = 'error'
+      return
+    }
+  }
+
+  savingEdit.value = true
+  message.value = ''
+  try {
+    const { data } = await api.patch<SaleRecord | { deleted: true; id: string }>(
+      `/pharmacie/sales/${editId.value}`,
+      {
+        lines: editingLines.value.map((line) => ({
+          id: line.id,
+          quantity: Math.floor(line.quantityDraft),
+        })),
+        deleteLineIds: pendingDeleteLineIds.value,
+      },
+    )
+    if ('deleted' in data && data.deleted) {
+      items.value = items.value.filter((item) => item.id !== data.id)
+      message.value = uiText('Vente supprimée — toutes les lignes ont été retirées.')
+    } else {
+      const sale = data as SaleRecord
+      const index = items.value.findIndex((item) => item.id === sale.id)
+      if (index >= 0) items.value[index] = sale
+      message.value = uiText('Vente mise à jour.')
+    }
+    messageType.value = 'success'
+    closeEditModal()
+  } catch (error: unknown) {
+    const apiMessage =
+      error && typeof error === 'object' && 'response' in error
+        ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined
+    message.value = apiMessage ?? uiText('Impossible de modifier cette vente.')
+    messageType.value = 'error'
+  } finally {
+    savingEdit.value = false
   }
 }
 
@@ -205,7 +305,8 @@ function exportCaption() {
 
 function exportPdf() {
   if (!tableRows.value.length) {
-    message.value = 'Aucune vente à exporter.'
+    message.value = uiText('Aucune vente à exporter.')
+    messageType.value = 'error'
     return
   }
   exportTablePdf(uiText('Historique des ventes pharmacie'), exportColumns.value, tableRows.value, {
@@ -215,7 +316,8 @@ function exportPdf() {
 
 function exportExcel() {
   if (!tableRows.value.length) {
-    message.value = 'Aucune vente à exporter.'
+    message.value = uiText('Aucune vente à exporter.')
+    messageType.value = 'error'
     return
   }
   exportTableExcel(uiText('Historique des ventes pharmacie'), exportColumns.value, tableRows.value)
@@ -237,13 +339,13 @@ defineExpose({ reload: loadItems })
       </UiButton>
     </template>
 
-    <UiAlert v-if="message" type="error" :message="message" class="panel-alert" />
+    <UiAlert v-if="message" :type="messageType" :message="message" class="panel-alert" />
 
     <p v-if="!loading && !items.length" class="empty">{{ uiText('Aucune vente enregistrée pour cette période.') }}</p>
     <div v-else class="simple-table-shell" :class="{ 'simple-table-shell--fill': true }">
       <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
         <span class="simple-table-spinner" aria-hidden="true" />
-        Chargement des ventes…
+        {{ uiText('Chargement des ventes…') }}
       </div>
       <div class="simple-table-scroll">
         <div class="simple-table-wrap">
@@ -273,6 +375,15 @@ defineExpose({ reload: loadItems })
                   <div class="st-actions">
                     <button
                       type="button"
+                      class="st-btn st-btn--soft"
+                      :title="uiText('Détail')"
+                      :aria-label="uiText('Détail')"
+                      @click="onTableAction({ action: 'view', id: row.id })"
+                    >
+                      <Eye :size="15" />
+                    </button>
+                    <button
+                      type="button"
                       class="st-btn st-btn--accent"
                       :title="uiText('Imprimer')"
                       :aria-label="uiText('Imprimer')"
@@ -282,12 +393,12 @@ defineExpose({ reload: loadItems })
                     </button>
                     <button
                       type="button"
-                      class="st-btn st-btn--soft"
-                      :title="uiText('Détail')"
-                      :aria-label="uiText('Détail')"
-                      @click="onTableAction({ action: 'view', id: row.id })"
+                      class="st-btn st-btn--edit"
+                      :title="uiText('Modifier')"
+                      :aria-label="uiText('Modifier')"
+                      @click="onTableAction({ action: 'edit', id: row.id })"
                     >
-                      <Eye :size="15" />
+                      <Pencil :size="15" />
                     </button>
                   </div>
                 </td>
@@ -337,8 +448,82 @@ defineExpose({ reload: loadItems })
     </div>
     <template #footer>
       <UiButton variant="ghost" @click="expandedId = null">{{ uiText('Fermer') }}</UiButton>
+      <UiButton variant="secondary" :icon="Pencil" @click="openEditModal(expandedSale.id); expandedId = null">
+        {{ uiText('Modifier') }}
+      </UiButton>
       <UiButton variant="primary" :icon="Printer" @click="printSale(expandedSale)">
         {{ uiText('Imprimer') }}
+      </UiButton>
+    </template>
+  </UiFormModal>
+
+  <UiFormModal
+    v-if="editSale"
+    title="Modifier la vente"
+    :subtitle="editSaleLabel"
+    size="large"
+    @close="closeEditModal"
+  >
+    <p class="sale-meta">
+      <strong>{{ uiText('Date :') }}</strong> {{ formatPatientTableDate(editSale.createdAt) }} ·
+      <strong>{{ uiText('Pharmacien :') }}</strong>
+      {{ fullName(editSale.pharmacist.firstName, editSale.pharmacist.lastName) }}
+    </p>
+    <p class="edit-hint">
+      {{ uiText('Corrigez les quantités ou supprimez des lignes — le stock est ajusté automatiquement.') }}
+    </p>
+    <table class="detail-table detail-table--edit">
+      <thead>
+        <tr>
+          <th>{{ uiText('Produit') }}</th>
+          <th>{{ uiText('Qté') }}</th>
+          <th>{{ uiText('Prix unit.') }}</th>
+          <th>{{ uiText('Total') }}</th>
+          <th class="detail-table__actions-head">{{ uiText('Actions') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="line in editingLines" :key="line.id">
+          <td>{{ line.productName }} <span class="sku">{{ line.sku }}</span></td>
+          <td>
+            <input
+              v-model.number="line.quantityDraft"
+              type="number"
+              min="1"
+              max="999"
+              class="qty-input"
+              :aria-label="`${uiText('Quantité')} — ${line.productName}`"
+            />
+          </td>
+          <td>{{ formatFcfa(line.unitPriceFcfa) }}</td>
+          <td>{{ formatFcfa(lineDraftTotal(line)) }}</td>
+          <td class="detail-table__actions">
+            <button
+              type="button"
+              class="st-btn st-btn--delete"
+              :title="uiText('Supprimer cette ligne')"
+              :aria-label="uiText('Supprimer cette ligne')"
+              @click="removeEditLine(line.id)"
+            >
+              <Trash2 :size="15" />
+            </button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="edit-total">
+      <strong>{{ uiText('Nouveau total :') }}</strong> {{ formatFcfa(editTotalFcfa) }}
+    </p>
+    <template #footer>
+      <UiButton variant="ghost" @click="closeEditModal">{{ uiText('Annuler') }}</UiButton>
+      <UiButton
+        variant="primary"
+        :icon="Save"
+        :loading="savingEdit"
+        :disabled="!editHasChanges"
+        @click="saveEdit"
+      >
+        {{ uiText('Enregistrer') }}
       </UiButton>
     </template>
   </UiFormModal>
@@ -404,5 +589,40 @@ defineExpose({ reload: loadItems })
 .sku {
   color: var(--text-muted);
   font-size: 0.75rem;
+}
+
+.edit-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.edit-total {
+  margin: 0.85rem 0 0;
+  font-size: 0.875rem;
+  text-align: right;
+}
+
+.qty-input {
+  width: 4.5rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
+.detail-table--edit td {
+  vertical-align: middle;
+}
+
+.detail-table__actions-head,
+.detail-table__actions {
+  width: 3rem;
+  text-align: center;
+}
+
+.detail-table__actions .st-btn {
+  margin: 0 auto;
 }
 </style>

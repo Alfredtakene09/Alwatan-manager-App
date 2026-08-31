@@ -1,7 +1,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AppUserRole } from '@/lib/roles'
-import { getAppLocale, translateRole, translateUi } from './translate'
+import { getAppLocale, translateExamName, translateRole, translateUi } from './translate'
 import {
   formatAppDate,
   formatAppDateTime,
@@ -19,6 +19,11 @@ export function useAppI18n() {
   function uiText(label: string) {
     void localeCode.value
     return translateUi(label)
+  }
+
+  function examNameText(label: string) {
+    void localeCode.value
+    return translateExamName(label)
   }
 
   function navLabel(label: string) {
@@ -68,6 +73,7 @@ export function useAppI18n() {
     isRtl: computed(() => getAppLocale() === 'ar'),
     intlLocale: computed(() => intlLocaleFor()),
     uiText,
+    examNameText,
     navLabel,
     roleLabel,
     dateText,

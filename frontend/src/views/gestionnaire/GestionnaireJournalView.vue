@@ -571,6 +571,7 @@ onMounted(loadJournal)
             size="sm"
             variant="secondary"
             :icon="Printer"
+            ui-action="export.print"
             :disabled="loading || !journal?.dailyByMonth.length"
             @click="printJournal"
           >

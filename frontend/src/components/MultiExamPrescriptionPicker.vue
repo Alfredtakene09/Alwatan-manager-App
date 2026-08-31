@@ -99,7 +99,7 @@ const emit = defineEmits<{
   ]
 }>()
 
-const { uiText, localeCode } = useAppI18n()
+const { uiText, examNameText, localeCode } = useAppI18n()
 const labPanelsStore = useLabPanelsStore()
 
 const activePanel = ref<ActivePanel>('examen')
@@ -847,7 +847,7 @@ watch(
               "
               @click="removePanelGroup(kind, group.items.map((item) => item.raw))"
             >
-              <span>{{ uiText(group.panel) }} ({{ group.items.length }})</span>
+              <span>{{ examNameText(group.panel) }} ({{ group.items.length }})</span>
               <X :size="13" aria-hidden="true" />
             </button>
           </div>

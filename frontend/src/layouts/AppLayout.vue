@@ -73,6 +73,7 @@ const navConfig = computed(() =>
   auth.user
     ? getNavigation(auth.user.role, {
         showDoctorOperations: Boolean(auth.user.showDoctorOperations),
+        hiddenUiActions: auth.user.hiddenUiActions,
       })
     : { sidebarTitle: 'Navigation', sections: [] },
 )

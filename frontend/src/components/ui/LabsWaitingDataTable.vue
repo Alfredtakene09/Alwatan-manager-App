@@ -14,6 +14,7 @@ import {
 import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
 import { formatAppDate, formatAppTime } from '@/i18n/locale-format'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
 import type { PrescribedByPerson } from '@/lib/lab-panel-print'
 import '@/assets/simple-table.css'
 
@@ -88,16 +89,19 @@ const emit = defineEmits<{
 }>()
 
 const { uiText } = useAppI18n()
+const { canSeeUiAction } = useUiActionVisibility()
 
 const showActions = computed(() => props.actionsMode !== 'none')
 const isCompletedLayout = computed(() => props.actionsMode === 'lab-completed')
 const dateColumnTitle = computed(() =>
-  props.dateMode === 'completed' ? 'Terminé le' : 'Transféré le',
+  uiText(props.dateMode === 'completed' ? 'Terminé le' : 'Transféré le'),
 )
 const loadingLabel = computed(() =>
-  props.dateMode === 'completed'
-    ? 'Chargement des examens terminés…'
-    : 'Chargement des analyses en cours…',
+  uiText(
+    props.dateMode === 'completed'
+      ? 'Chargement des examens terminés…'
+      : 'Chargement des analyses en cours…',
+  ),
 )
 
 const rows = computed(() =>
@@ -159,24 +163,26 @@ const rows = computed(() =>
     </div>
 
     <div class="simple-table-scroll">
-      <p v-if="!loading && !rows.length" class="simple-table__empty">Aucun examen à afficher</p>
+      <p v-if="!loading && !rows.length" class="simple-table__empty">
+        {{ uiText('Aucun examen à afficher') }}
+      </p>
       <div v-else class="simple-table-wrap">
         <table class="simple-table">
           <thead>
             <tr>
               <th class="simple-table__num">#</th>
-              <th>Matricule</th>
-              <th>Patient</th>
-              <th>Médecin</th>
+              <th>{{ uiText('Matricule') }}</th>
+              <th>{{ uiText('Patient') }}</th>
+              <th>{{ uiText('Médecin') }}</th>
               <template v-if="isCompletedLayout">
                 <th>{{ dateColumnTitle }}</th>
-                <th>Examens</th>
+                <th class="simple-table__exam">{{ uiText('Examens') }}</th>
               </template>
               <template v-else>
-                <th>Examens</th>
+                <th class="simple-table__exam">{{ uiText('Examens') }}</th>
                 <th>{{ dateColumnTitle }}</th>
               </template>
-              <th v-if="showActions" class="simple-table__actions-head">Actions</th>
+              <th v-if="showActions" class="simple-table__actions-head">{{ uiText('Actions') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -203,7 +209,7 @@ const rows = computed(() =>
                   <span class="st-date">{{ row.eventDate }}</span>
                   <span class="st-sub">{{ row.eventTime }}</span>
                 </td>
-                <td>
+                <td class="simple-table__exam">
                   <span
                     class="st-exam-preview"
                     :title="
@@ -218,7 +224,7 @@ const rows = computed(() =>
                 </td>
               </template>
               <template v-else>
-                <td>
+                <td class="simple-table__exam">
                   <span
                     class="st-exam-preview"
                     :title="
@@ -263,6 +269,7 @@ const rows = computed(() =>
                       {{ uiText('Resaisir') }}
                     </button>
                     <button
+                      v-if="canSeeUiAction('export.print')"
                       type="button"
                       class="st-btn st-btn--text"
                       :title="uiText('Imprimer')"
@@ -278,12 +285,12 @@ const rows = computed(() =>
                     v-else
                     type="button"
                     class="st-btn st-btn--text st-btn--accent"
-                    title="Ajouter des examens"
-                    aria-label="Ajouter des examens"
+                    :title="uiText('Ajouter des examens')"
+                    :aria-label="uiText('Ajouter des examens')"
                     @click="emit('append', row.id)"
                   >
                     <Plus :size="15" />
-                    Ajouter
+                    {{ uiText('Ajouter') }}
                   </button>
                 </div>
               </td>

@@ -58,7 +58,9 @@ import {
   findDuplicateRoomByName,
 } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
-import { requireAuth, requireAdmin, requireAnyModule, requireModule } from "../middleware/auth.js";
+import { requireAuth, requireAdmin, requireAdminOrDirection, requireAnyModule, requireModule } from "../middleware/auth.js";
+import { UI_ACTION_IDS, UI_ACTION_TARGET_ROLES, parseHiddenByRole, parseHiddenUiActionList } from "../lib/ui-actions.js";
+import { getHiddenByRole, saveHiddenByRole } from "../lib/role-ui-settings.js";
 import {
   currentPayrollPeriod,
   ensurePayrollForMonth,
@@ -135,14 +137,14 @@ const assignableUserRoleSchema = z.enum(USER_ROLES);
 
 const employeeCompensationSchema = z.object({
   doctorCompensationType: z.nativeEnum(DoctorCompensationType).optional(),
-  consultationTotalFcfa: z.number().int().min(0).optional(),
+  consultationTotalFcfa: z.number().int().min(0).nullable().optional(),
   consultationQuotaMode: z.nativeEnum(ConsultationQuotaMode).optional(),
-  consultationQuotaPercent: z.number().int().min(1).max(100).optional(),
-  consultationQuotaFcfa: z.number().int().min(0).optional(),
-  consultationValidityDays: z.number().int().min(1).max(365).optional(),
+  consultationQuotaPercent: z.number().int().min(1).max(100).nullable().optional(),
+  consultationQuotaFcfa: z.number().int().min(0).nullable().optional(),
+  consultationValidityDays: z.number().int().min(1).max(365).nullable().optional(),
   consultationRenewalPolicy: z.nativeEnum(ConsultationRenewalPolicy).optional(),
-  surgeryQuotaPercent: z.number().int().min(1).max(99).optional(),
-  fixedSalaryFcfa: z.number().int().min(0).optional(),
+  surgeryQuotaPercent: z.number().int().min(1).max(99).nullable().optional(),
+  fixedSalaryFcfa: z.number().int().min(0).nullable().optional(),
   overtimeHourlyRateFcfa: z.number().int().min(0).optional().nullable(),
 });
 
@@ -209,6 +211,7 @@ const createUserSchema = z.object({
   employeeId: z.string().min(1, "Sélectionnez un employé à lier au compte."),
   cashShiftSlot: cashShiftSlotSchema.optional().nullable(),
   active: z.boolean().optional(),
+  hiddenUiActions: z.array(z.string()).optional(),
 });
 
 const booleanFromForm = z.preprocess((value) => {
@@ -231,6 +234,7 @@ const updateUserSchema = z.object({
   active: booleanFromForm.optional(),
   employeeId: z.string().min(1).optional(),
   cashShiftSlot: cashShiftSlotSchema.optional().nullable(),
+  hiddenUiActions: z.array(z.string()).optional(),
 });
 
 const jobTitleSchema = z.object({
@@ -260,6 +264,7 @@ const userSelect = {
   lockedAt: true,
   employeeId: true,
   cashShiftSlot: true,
+  hiddenUiActions: true,
   createdAt: true,
   updatedAt: true,
   employee: {
@@ -294,6 +299,7 @@ function serializeUser(
     lockedAt: Date | null;
     employeeId: string;
     cashShiftSlot: ReceptionShiftSlot | null;
+    hiddenUiActions?: unknown;
     createdAt: Date;
     updatedAt: Date;
     employee: {
@@ -319,6 +325,7 @@ function serializeUser(
     failedLoginAttempts: user.failedLoginAttempts,
     employeeId: user.employeeId,
     cashShiftSlot: user.cashShiftSlot,
+    hiddenUiActions: parseHiddenUiActionList(user.hiddenUiActions),
     employee: user.employee,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
@@ -580,7 +587,7 @@ router.post("/employees", requireModule("utilisateurs"), async (req, res) => {
         overtimeHourlyRateFcfa: isMedecin
           ? body.overtimeHourlyRateFcfa ?? null
           : null,
-        ...employeeCompensationData(isMedecin, body),
+        ...employeeCompensationData(isMedecin, { ...body, jobTitle }),
       },
       select: employeeSelect,
     });
@@ -628,9 +635,17 @@ router.put("/employees/:id", requireModule("utilisateurs"), async (req, res) => 
       body.doctorCompensationType !== undefined ||
       body.consultationTotalFcfa !== undefined ||
       body.consultationQuotaPercent !== undefined ||
+      body.consultationQuotaFcfa !== undefined ||
+      body.consultationQuotaMode !== undefined ||
+      body.consultationValidityDays !== undefined ||
+      body.consultationRenewalPolicy !== undefined ||
       body.surgeryQuotaPercent !== undefined ||
       body.fixedSalaryFcfa !== undefined
-        ? employeeCompensationData(nextIsMedecin, body)
+        ? employeeCompensationData(
+            nextIsMedecin,
+            { ...body, jobTitle: nextJobTitle },
+            existing,
+          )
         : {};
 
     const availabilitySlots =
@@ -832,6 +847,7 @@ router.post("/users", requireModule("user-accounts"), async (req, res) => {
 
     const cashShiftSlot = resolveCashShiftSlotForRole(body.role, body.cashShiftSlot);
     const passwordHash = await bcrypt.hash(body.password, 10);
+    const hiddenUiActions = parseHiddenUiActionList(body.hiddenUiActions ?? []);
     const user = await prisma.user.create({
       data: {
         username: body.username,
@@ -843,6 +859,7 @@ router.post("/users", requireModule("user-accounts"), async (req, res) => {
         active: body.active ?? true,
         employeeId: body.employeeId,
         cashShiftSlot,
+        hiddenUiActions,
       },
       select: userSelect,
     });
@@ -959,6 +976,9 @@ router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
         ...(employeeChanged ? { employeeId: body.employeeId } : {}),
         ...(cashShiftSlot !== undefined ? { cashShiftSlot } : {}),
         ...(employeeNames ?? {}),
+        ...(body.hiddenUiActions !== undefined
+          ? { hiddenUiActions: parseHiddenUiActionList(body.hiddenUiActions) }
+          : {}),
         ...(passwordHash
           ? {
               passwordHash,
@@ -1650,6 +1670,28 @@ router.post("/payroll/:id/pay", async (req, res) => {
   return res.json(
     serializePayrollRow(updated, { pendingAdvancesFcfa: 0 }),
   );
+});
+
+const uiPermissionsBodySchema = z.object({
+  hiddenByRole: z.record(z.string(), z.array(z.string())).default({}),
+});
+
+router.get("/ui-permissions", requireAdminOrDirection, async (_req, res) => {
+  const hiddenByRole = await getHiddenByRole();
+  return res.json({
+    hiddenByRole,
+    targetRoles: UI_ACTION_TARGET_ROLES,
+    actionIds: UI_ACTION_IDS,
+  });
+});
+
+router.put("/ui-permissions", requireAdminOrDirection, async (req, res) => {
+  const parsed = uiPermissionsBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Données invalides.", detail: parsed.error.flatten() });
+  }
+  const hiddenByRole = await saveHiddenByRole(parseHiddenByRole(parsed.data.hiddenByRole), req.user?.id);
+  return res.json({ hiddenByRole });
 });
 
 export default router;

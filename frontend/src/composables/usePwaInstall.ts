@@ -8,6 +8,7 @@ interface BeforeInstallPromptEvent extends Event {
 const DISMISS_KEY = 'alwatan-pwa-install-dismissed'
 /** Une fois le raccourci Bureau / tablette téléchargé, ne plus proposer le bandeau. */
 const SHORTCUT_DONE_KEY = 'alwatan-desktop-shortcut-done'
+const LAUNCHER_REV_KEY = 'alwatan-launcher-revision'
 
 function readFlag(key: string): boolean {
   try {
@@ -21,6 +22,22 @@ function writeFlag(key: string, persistent: boolean) {
   try {
     if (persistent) localStorage.setItem(key, '1')
     else sessionStorage.setItem(key, '1')
+  } catch {
+    /* ignore */
+  }
+}
+
+function readStoredRevision(): string | null {
+  try {
+    return localStorage.getItem(LAUNCHER_REV_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeStoredRevision(revision: string) {
+  try {
+    localStorage.setItem(LAUNCHER_REV_KEY, revision)
   } catch {
     /* ignore */
   }
@@ -54,6 +71,8 @@ export function usePwaInstall() {
   const shortcutDone = ref(readFlag(SHORTCUT_DONE_KEY))
   const isStandalone = ref(false)
   const showAndroidHelp = ref(false)
+  const launcherNeedsSync = ref(false)
+  const serverLauncherRevision = ref<string | null>(null)
   const platform = detectPlatform()
 
   const canNativeInstall = computed(() => deferredPrompt.value !== null)
@@ -68,13 +87,38 @@ export function usePwaInstall() {
   const isWindows = computed(() => platform.isWindows)
 
   const shouldShowBanner = computed(() => {
-    if (isStandalone.value || dismissed.value || shortcutDone.value) return false
+    if (isStandalone.value) return false
+    // Actualisation réseau : prioritaire même si le bandeau a été fermé avant
+    if (launcherNeedsSync.value && isWindows.value) return true
+    if (dismissed.value) return false
+    if (shortcutDone.value) return false
     return true
   })
 
   const onBeforeInstall = (event: Event) => {
     event.preventDefault()
     deferredPrompt.value = event as BeforeInstallPromptEvent
+  }
+
+  async function checkLauncherRevision() {
+    if (!platform.isWindows || typeof window === 'undefined') return
+    try {
+      const res = await fetch(`/api/client-setup/info?_=${Date.now()}`, {
+        credentials: 'omit',
+        cache: 'no-store',
+      })
+      if (!res.ok) return
+      const data = (await res.json()) as { launcherRevision?: string }
+      const rev = data.launcherRevision?.trim()
+      if (!rev) return
+      serverLauncherRevision.value = rev
+      const stored = readStoredRevision()
+      if (stored !== rev) {
+        launcherNeedsSync.value = true
+      }
+    } catch {
+      /* ignore */
+    }
   }
 
   onMounted(() => {
@@ -84,6 +128,7 @@ export function usePwaInstall() {
       (window.navigator as Navigator & { standalone?: boolean }).standalone === true
 
     window.addEventListener('beforeinstallprompt', onBeforeInstall)
+    void checkLauncherRevision()
   })
 
   onUnmounted(() => {
@@ -94,11 +139,21 @@ export function usePwaInstall() {
     dismissed.value = true
     writeFlag(DISMISS_KEY, true)
     showAndroidHelp.value = false
+    // Reporter l’actualisation : mémoriser la révision pour ne pas spammer,
+    // mais le prochain changement serveur rappellera le bandeau.
+    if (launcherNeedsSync.value && serverLauncherRevision.value) {
+      writeStoredRevision(serverLauncherRevision.value)
+      launcherNeedsSync.value = false
+    }
   }
 
   function markShortcutDownloaded() {
     shortcutDone.value = true
     writeFlag(SHORTCUT_DONE_KEY, true)
+    launcherNeedsSync.value = false
+    if (serverLauncherRevision.value) {
+      writeStoredRevision(serverLauncherRevision.value)
+    }
   }
 
   async function promptNativeInstall(): Promise<boolean> {
@@ -113,7 +168,17 @@ export function usePwaInstall() {
 
   function downloadShortcut() {
     markShortcutDownloaded()
-    window.location.assign('/api/client-setup/install-desktop-shortcut.cmd')
+    window.location.assign(
+      `/api/client-setup/install-desktop-shortcut.cmd?_=${Date.now()}`,
+    )
+  }
+
+  /** Toujours un téléchargement neuf (pas une simple mise à jour du raccourci). */
+  function syncDesktopShortcut() {
+    markShortcutDownloaded()
+    window.location.assign(
+      `/api/client-setup/install-desktop-shortcut.cmd?_=${Date.now()}`,
+    )
   }
 
   function downloadAndroidShortcut() {
@@ -142,9 +207,11 @@ export function usePwaInstall() {
     canNativeInstall,
     shouldShowBanner,
     showAndroidHelp,
+    launcherNeedsSync,
     dismissBanner,
     promptNativeInstall,
     downloadShortcut,
+    syncDesktopShortcut,
     downloadAndroidShortcut,
     openAndroidHelp,
     closeAndroidHelp,

@@ -109,6 +109,10 @@ defineExpose({ reload: loadRows })
 </script>
 
 <template>
+  <div>
+    <div class="page-create-bar">
+      <UiButton :icon="Plus" size="sm" @click="openCreate">Nouvelle catégorie</UiButton>
+    </div>
   <UiCard class="categories-card">
     <div class="categories-card__head">
       <div class="categories-card__intro">
@@ -120,7 +124,6 @@ defineExpose({ reload: loadRows })
           <p class="categories-card__desc">Organisez les natures de sorties de caisse</p>
         </div>
       </div>
-      <UiButton :icon="Plus" size="sm" @click="openCreate">Nouvelle catégorie</UiButton>
     </div>
 
     <div v-if="loading" class="categories-state">Chargement…</div>
@@ -183,6 +186,7 @@ defineExpose({ reload: loadRows })
     @close="closeModal"
     @submit="submitForm"
   />
+  </div>
 </template>
 
 <style scoped>

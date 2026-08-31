@@ -76,3 +76,14 @@ export function employeeJobTitleOptions(current?: string | null, loaded?: string
 export function invalidateEmployeeJobTitleCache() {
   cachedJobTitleLabels = null
 }
+
+/** Poste « Assistant chirurgie » (part % sur les opérations). */
+export function isSurgeryAssistantJobTitle(jobTitle?: string | null): boolean {
+  const normalized =
+    jobTitle
+      ?.trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') ?? ''
+  return normalized.includes('assistant') && normalized.includes('chirurgie')
+}

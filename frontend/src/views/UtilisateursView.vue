@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { confirmAppModal } from '@/lib/api-modal-helper'
-import { Users, Plus, RefreshCw, Save, Eye, Search, Unlock } from '@lucide/vue'
+import { Users, Plus, RefreshCw, Save, Eye, Search, Unlock, Shield } from '@lucide/vue'
 import api from '@/api/client'
 import {
   fullName,
@@ -11,6 +11,14 @@ import {
   type AppUserRole,
   type AdminAssignableUserRole,
 } from '@/lib/roles'
+import {
+  UI_ACTIONS,
+  UI_ACTION_GROUPS,
+  actionAppliesToRole,
+  isUiActionTargetRole,
+  type HiddenByRole,
+  type UiActionTargetRole,
+} from '@/lib/ui-actions'
 import { isHiddenPlatformAdminEmployee } from '@/lib/employee-app-account'
 import { shiftButtonLabel, type ShiftSlot } from '@/lib/cash-shift'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -21,6 +29,7 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import StCatalogActions from '@/components/ui/StCatalogActions.vue'
+import RoleUiPermissionsPanel from '@/components/admin/RoleUiPermissionsPanel.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import { useAuthStore } from '@/stores/auth'
@@ -56,10 +65,16 @@ type PlatformUser = {
   createdAt: string
   canDelete?: boolean
   relatedDataCount?: number
+  /** Actions masquées en plus du rôle (réglages individuels). */
+  hiddenUiActions?: string[]
 }
 
 const auth = useAuthStore()
 const isAdmin = computed(() => auth.user?.role === 'ADMIN')
+const canConfigureUiButtons = computed(
+  () => auth.user?.role === 'ADMIN' || auth.user?.role === 'COMPTABLE',
+)
+const usersTab = ref<'accounts' | 'buttons'>('accounts')
 
 const users = ref<PlatformUser[]>([])
 const employeeOptions = ref<EmployeeOption[]>([])
@@ -90,7 +105,11 @@ const form = ref({
   cashShiftSlot: '' as '' | ShiftSlot,
   /** String pour UiSelect (évite le faux conflit booléen / "true"). */
   active: 'true' as 'true' | 'false',
+  /** Actions décochées pour cet utilisateur (en plus du rôle). */
+  hiddenUiActions: [] as string[],
 })
+/** Réglages rôle → actions déjà masquées pour tous les comptes de ce type. */
+const roleHiddenByRole = ref<HiddenByRole>({})
 /** Employé lié au moment de l’ouverture de l’édition (filet de sécurité). */
 const editingOriginalEmployeeId = ref<string | null>(null)
 
@@ -241,9 +260,56 @@ function resetForm() {
     passwordConfirm: '',
     cashShiftSlot: '',
     active: 'true',
+    hiddenUiActions: [],
   }
   editingOriginalEmployeeId.value = null
   employeeFilter.value = 'ALL'
+}
+
+const formRoleIsTarget = computed(() => isUiActionTargetRole(form.value.role))
+
+const formRoleHidden = computed(() => {
+  if (!isUiActionTargetRole(form.value.role)) return [] as string[]
+  return roleHiddenByRole.value[form.value.role as UiActionTargetRole] ?? []
+})
+
+const userActionGroups = computed(() => {
+  if (!isUiActionTargetRole(form.value.role)) return []
+  const role = form.value.role as UiActionTargetRole
+  return UI_ACTION_GROUPS.map((group) => ({
+    ...group,
+    actions: UI_ACTIONS.filter((action) => action.group === group.id && actionAppliesToRole(action, role)),
+  })).filter((group) => group.actions.length > 0)
+})
+
+function isRoleLockedAction(actionId: string) {
+  return formRoleHidden.value.includes(actionId)
+}
+
+function isUserActionVisible(actionId: string) {
+  if (isRoleLockedAction(actionId)) return false
+  return !form.value.hiddenUiActions.includes(actionId)
+}
+
+function setUserActionVisible(actionId: string, visible: boolean) {
+  if (isRoleLockedAction(actionId)) return
+  const next = new Set(form.value.hiddenUiActions)
+  if (visible) next.delete(actionId)
+  else next.add(actionId)
+  form.value.hiddenUiActions = [...next]
+}
+
+async function loadRoleUiPermissions() {
+  if (!canConfigureUiButtons.value) {
+    roleHiddenByRole.value = {}
+    return
+  }
+  try {
+    const { data } = await api.get<{ hiddenByRole?: HiddenByRole }>('/admin/ui-permissions')
+    roleHiddenByRole.value = data.hiddenByRole ?? {}
+  } catch {
+    roleHiddenByRole.value = {}
+  }
 }
 
 async function loadEmployeeOptions(
@@ -297,7 +363,7 @@ async function openCreateModal() {
   editingId.value = null
   resetForm()
   if (form.value.role === 'MEDECIN') employeeFilter.value = 'MEDECINS'
-  await loadEmployeeOptions()
+  await Promise.all([loadEmployeeOptions(), loadRoleUiPermissions()])
   modalOpen.value = true
   message.value = ''
 }
@@ -307,7 +373,10 @@ async function openEditModal(id: string) {
   if (!user) return
   editingId.value = id
   editingOriginalEmployeeId.value = user.employeeId
-  await loadEmployeeOptions(user.employeeId, user.employee)
+  await Promise.all([
+    loadEmployeeOptions(user.employeeId, user.employee),
+    loadRoleUiPermissions(),
+  ])
   form.value = {
     employeeId: user.employeeId,
     username: user.username,
@@ -317,6 +386,7 @@ async function openEditModal(id: string) {
     passwordConfirm: '',
     cashShiftSlot: user.cashShiftSlot ?? '',
     active: user.active ? 'true' : 'false',
+    hiddenUiActions: [...(user.hiddenUiActions ?? [])],
   }
   employeeFilter.value = form.value.role === 'MEDECIN' ? 'MEDECINS' : 'ALL'
   modalOpen.value = true
@@ -436,7 +506,7 @@ async function saveUser() {
       form.value.role === 'RECEPTIONNISTE' ? form.value.cashShiftSlot || null : null
     const active = form.value.active === 'true'
     if (isEditing && currentId) {
-      const payload: Record<string, string | boolean | null | undefined> = {
+      const payload: Record<string, string | boolean | null | undefined | string[]> = {
         username: form.value.username.trim(),
         role: form.value.role,
         employeeId,
@@ -445,6 +515,9 @@ async function saveUser() {
       }
       if (email) payload.email = email
       if (isAdmin.value && form.value.password.trim()) payload.password = form.value.password
+      if (canConfigureUiButtons.value && formRoleIsTarget.value) {
+        payload.hiddenUiActions = form.value.hiddenUiActions
+      }
       await api.put(`/admin/users/${currentId}`, payload)
       message.value = 'Utilisateur mis à jour.'
     } else {
@@ -456,6 +529,9 @@ async function saveUser() {
         employeeId,
         cashShiftSlot,
         active: true,
+        ...(canConfigureUiButtons.value && formRoleIsTarget.value
+          ? { hiddenUiActions: form.value.hiddenUiActions }
+          : {}),
       })
       message.value = 'Utilisateur créé avec succès.'
     }
@@ -630,11 +706,14 @@ async function confirmUnlock() {
 
 watch(
   () => form.value.role,
-  () => {
+  (role, previous) => {
     if (form.value.role === 'MEDECIN') {
       employeeFilter.value = 'MEDECINS'
     } else if (employeeFilter.value === 'MEDECINS') {
       employeeFilter.value = 'ALL'
+    }
+    if (previous !== undefined && role !== previous) {
+      form.value.hiddenUiActions = []
     }
     // Ne pas effacer l'employé lié pendant une modification (évite faux « déjà lié »).
     if (!editingId.value && form.value.employeeId && !selectedEmployee.value) {
@@ -655,10 +734,44 @@ onMounted(loadUsers)
         :icon="Users"
       />
 
-      <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" />
+      <UiAlert v-if="message && !modalOpen && usersTab === 'accounts'" :type="messageType" :message="message" />
+
+      <div v-if="canConfigureUiButtons" class="page-tabs" role="tablist" :aria-label="uiText('Sections utilisateurs')">
+        <button
+          type="button"
+          class="page-tab"
+          :class="{ 'page-tab--active': usersTab === 'accounts' }"
+          @click="usersTab = 'accounts'"
+        >
+          <Users :size="14" />
+          {{ uiText('Comptes') }}
+        </button>
+        <button
+          type="button"
+          class="page-tab"
+          :class="{ 'page-tab--active': usersTab === 'buttons' }"
+          @click="usersTab = 'buttons'"
+        >
+          <Shield :size="14" />
+          {{ uiText('Boutons') }}
+        </button>
+      </div>
     </section>
 
-    <section class="page-with-table__body">
+    <section v-if="canConfigureUiButtons && usersTab === 'buttons'" class="page-with-table__body">
+      <UiCard
+        direct
+        title="Boutons par type d’utilisateur"
+        description="Décochez une action pour la masquer au rôle sélectionné. Admin et Direction conservent toujours tous leurs boutons."
+        class="ui-card--table-panel ui-card--permissions"
+        :icon="Shield"
+        icon-variant="violet"
+      >
+        <RoleUiPermissionsPanel />
+      </UiCard>
+    </section>
+
+    <section v-else class="page-with-table__body">
       <UiCard direct title="Comptes utilisateurs"
         description="Créez d'abord l'employé dans Employés, puis liez-le ici pour lui ouvrir un accès"
         class="ui-card--table-panel"
@@ -669,7 +782,7 @@ onMounted(loadUsers)
           <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadUsers">
             Actualiser
           </UiButton>
-          <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
+          <UiButton variant="primary" size="sm" :icon="Plus" ui-action="users.create" @click="openCreateModal">
             Nouvel utilisateur
           </UiButton>
         </template>
@@ -889,6 +1002,53 @@ onMounted(loadUsers)
               : uiText('Compte verrouillé — seul un administrateur peut le déverrouiller.')
           "
         />
+
+        <section
+          v-if="canConfigureUiButtons && formRoleIsTarget && userActionGroups.length"
+          class="user-ui-actions"
+        >
+          <h3 class="user-ui-actions__title">
+            <Shield :size="14" />
+            {{ uiText('Boutons visibles pour ce compte') }}
+          </h3>
+          <p class="user-ui-actions__hint">
+            {{
+              uiText(
+                'Par défaut : droits du rôle. Décochez une action pour la masquer uniquement à cet utilisateur (ex. un laborantin sans impression).',
+              )
+            }}
+          </p>
+          <div
+            v-for="group in userActionGroups"
+            :key="group.id"
+            class="user-ui-actions__group"
+          >
+            <h4>{{ uiText(group.label) }}</h4>
+            <ul class="user-ui-actions__list">
+              <li v-for="action in group.actions" :key="action.id">
+                <label
+                  class="user-ui-actions__item"
+                  :class="{ 'user-ui-actions__item--locked': isRoleLockedAction(action.id) }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="isUserActionVisible(action.id)"
+                    :disabled="isRoleLockedAction(action.id)"
+                    @change="
+                      setUserActionVisible(action.id, ($event.target as HTMLInputElement).checked)
+                    "
+                  />
+                  <span>
+                    <strong>{{ uiText(action.label) }}</strong>
+                    <small v-if="isRoleLockedAction(action.id)">
+                      {{ uiText('Déjà masqué pour ce rôle') }}
+                    </small>
+                  </span>
+                </label>
+              </li>
+            </ul>
+          </div>
+        </section>
       </section>
 
       <template #footer>
@@ -1160,5 +1320,101 @@ onMounted(loadUsers)
 .user-detail__muted {
   color: var(--text-muted);
   font-size: 0.875rem;
+}
+
+.user-ui-actions {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.user-ui-actions__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 800;
+  color: var(--primary-800, #2d3319);
+}
+
+.user-ui-actions__hint {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.user-ui-actions__group {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.5rem 0.65rem 0.4rem;
+  background: #fff;
+}
+
+.user-ui-actions__group h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.user-ui-actions__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.15rem 0.65rem;
+}
+
+.user-ui-actions__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  padding: 0.28rem 0.1rem;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  min-width: 0;
+}
+
+.user-ui-actions__item--locked {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.user-ui-actions__item input {
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+}
+
+.user-ui-actions__item strong {
+  display: block;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.user-ui-actions__item small {
+  display: block;
+  margin-top: 0.08rem;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+@media (max-width: 900px) {
+  .user-ui-actions__list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .user-ui-actions__list {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

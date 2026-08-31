@@ -245,7 +245,7 @@ onMounted(reloadAll)
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="reloadAll">
           Actualiser
         </UiButton>
-        <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
+        <UiButton variant="primary" size="sm" :icon="Plus" ui-action="catalog.services" @click="openCreateModal">
           Nouveau service
         </UiButton>
       </template>

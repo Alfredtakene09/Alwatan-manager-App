@@ -428,9 +428,14 @@ onMounted(loadOverview)
 }
 
 .finance-entry-cards {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0.75rem;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.55rem;
+}
+
+.finance-entry-cards > * {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .charts-grid {
@@ -444,9 +449,14 @@ onMounted(loadOverview)
 }
 
 .clinical-cards {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.55rem;
+}
+
+.clinical-cards > * {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .trend-filters {
@@ -460,8 +470,7 @@ onMounted(loadOverview)
 }
 
 @media (max-width: 1100px) {
-  .charts-grid,
-  .clinical-cards {
+  .charts-grid {
     grid-template-columns: 1fr;
   }
 
@@ -470,15 +479,15 @@ onMounted(loadOverview)
   }
 }
 
-@media (max-width: 800px) {
-  .finance-entry-cards {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+@media (max-width: 639px) {
+  .finance-entry-cards,
+  .clinical-cards {
+    flex-wrap: wrap;
   }
-}
 
-@media (max-width: 520px) {
-  .finance-entry-cards {
-    grid-template-columns: 1fr;
+  .finance-entry-cards > *,
+  .clinical-cards > * {
+    flex: 1 1 calc(50% - 0.55rem);
   }
 }
 </style>

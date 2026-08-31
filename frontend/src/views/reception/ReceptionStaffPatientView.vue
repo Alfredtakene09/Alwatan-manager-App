@@ -13,7 +13,13 @@ import { showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { fullName } from '@/lib/roles'
 import { parsePatientAge, splitPatientFullName, formatPatientAge } from '@/lib/patient-name'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
-import { doctorMatchesService, type DoctorOption } from '@/lib/doctor-compensation'
+import {
+  doctorMatchesService,
+  doctorMatchesClinicServiceId,
+  preferredDoctorId,
+  sortDoctorsForReception,
+  type DoctorOption,
+} from '@/lib/doctor-compensation'
 import { CLINIC } from '@/lib/clinic'
 import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
 import { useAppI18n } from '@/i18n/useAppI18n'
@@ -44,7 +50,7 @@ type StaffPatientRow = {
 }
 
 const doctors = ref<DoctorOption[]>([])
-const services = ref<Array<{ id: string; name: string }>>([])
+const services = ref<Array<{ id: string; name: string; doctorUserIds?: string[] }>>([])
 const queue = ref<StaffPatientRow[]>([])
 const loadingQueue = ref(false)
 const registering = ref(false)
@@ -66,16 +72,23 @@ const form = ref({
 
 const parsedName = computed(() => splitPatientFullName(form.value.fullName))
 const parsedAge = computed(() => parsePatientAge(form.value.age, form.value.ageUnit))
-const sortedDoctors = computed(() =>
-  [...doctors.value].sort((a, b) => {
-    const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
-    if (byLast !== 0) return byLast
-    return a.firstName.localeCompare(b.firstName, 'fr', { sensitivity: 'base' })
-  }),
-)
+const sortedDoctors = computed(() => sortDoctorsForReception(doctors.value))
 const filteredDoctors = computed(() => {
   if (!form.value.service) return sortedDoctors.value
-  return sortedDoctors.value.filter((doctor) => doctorMatchesService(doctor, form.value.service))
+  const svc = services.value.find((service) => service.name === form.value.service)
+  const linkedIds = svc?.doctorUserIds?.filter(Boolean) ?? []
+  if (linkedIds.length) {
+    const idSet = new Set(linkedIds)
+    return sortDoctorsForReception(sortedDoctors.value.filter((doctor) => idSet.has(doctor.id)))
+  }
+  if (svc?.id) {
+    return sortDoctorsForReception(
+      sortedDoctors.value.filter((doctor) => doctorMatchesClinicServiceId(doctor, svc.id)),
+    )
+  }
+  return sortDoctorsForReception(
+    sortedDoctors.value.filter((doctor) => doctorMatchesService(doctor, form.value.service)),
+  )
 })
 
 const canRegister = computed(() => {
@@ -118,9 +131,7 @@ function syncDoctorsForService() {
     form.value.treatingDoctorId = ''
     return
   }
-  if (!filteredDoctors.value.some((d) => d.id === form.value.doctorId)) {
-    form.value.doctorId = filteredDoctors.value[0]?.id ?? ''
-  }
+  form.value.doctorId = preferredDoctorId(filteredDoctors.value, form.value.doctorId)
   if (form.value.treatingDoctorId && !filteredDoctors.value.some((d) => d.id === form.value.treatingDoctorId)) {
     form.value.treatingDoctorId = ''
   }
@@ -149,7 +160,9 @@ async function loadDoctors() {
 
 async function loadServices() {
   try {
-    const { data } = await api.get<Array<{ id: string; name: string }>>('/visits/external-services')
+    const { data } = await api.get<Array<{ id: string; name: string; doctorUserIds?: string[] }>>(
+      '/visits/external-services',
+    )
     services.value = Array.isArray(data) ? data : []
     if (!form.value.service) form.value.service = services.value[0]?.name ?? ''
     syncDoctorsForService()
@@ -266,11 +279,14 @@ onMounted(() => {
 
     <UiAlert v-if="message" :type="messageType" :message="message" />
 
+    <div class="page-create-bar">
+      <UiButton variant="primary" :icon="UserPlus" @click="openFormModal">
+        Nouveau
+      </UiButton>
+    </div>
+
     <UiCard title="Patients personnel enregistrés" class="queue-card" :icon="UserCheck" icon-variant="blue">
       <template #actions>
-        <UiButton variant="primary" size="sm" :icon="UserPlus" @click="openFormModal">
-          Nouveau
-        </UiButton>
         <UiButton variant="ghost" size="sm" :disabled="loadingQueue" @click="loadQueue">
           Actualiser
         </UiButton>

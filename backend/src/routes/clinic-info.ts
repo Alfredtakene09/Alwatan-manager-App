@@ -17,7 +17,7 @@ import type { AppUserRole } from "../lib/roles.js";
 
 const router = Router();
 
-const CLINIC_INFO_EDITORS: AppUserRole[] = ["ADMIN", "GESTIONNAIRE"];
+const CLINIC_INFO_EDITORS: AppUserRole[] = ["ADMIN", "COMPTABLE"];
 
 const updateSchema = z.object({
   nameFr: z.string().trim().min(2).max(200).optional(),
@@ -45,7 +45,7 @@ function requireClinicInfoEditor(
   }
   if (!CLINIC_INFO_EDITORS.includes(req.user.role as AppUserRole)) {
     return res.status(403).json({
-      error: "Accès réservé à la Direction et au Gestionnaire.",
+      error: "Accès réservé à l'administration et à la Direction.",
       code: "CLINIC_INFO_FORBIDDEN",
     });
   }

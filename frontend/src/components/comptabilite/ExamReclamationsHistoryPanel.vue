@@ -27,7 +27,7 @@ const props = withDefaults(
 const rows = ref<ExamReclamationRow[]>([])
 const loading = ref(false)
 
-const { uiText, t, localeCode, isArabic } = useAppI18n()
+const { uiText, examNameText, t, localeCode, isArabic } = useAppI18n()
 const dateLocale = computed(() => (isArabic.value ? 'ar-TD' : 'fr-FR'))
 
 const STATUS_CLASS: Record<ExamReclamationStatus, string> = {
@@ -75,9 +75,9 @@ function statusLabel(status: ExamReclamationStatus) {
 
 function examsSummary(row: ExamReclamationRow) {
   if (row.examLines?.length) {
-    return row.examLines.map((line) => line.examLabel).join(', ')
+    return row.examLines.map((line) => examNameText(line.examLabel)).join(', ')
   }
-  return row.examLabel ?? '—'
+  return row.examLabel ? examNameText(row.examLabel) : '—'
 }
 
 const reclamationExportColumns: ExportColumn<ExamReclamationRow>[] = [

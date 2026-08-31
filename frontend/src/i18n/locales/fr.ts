@@ -22,6 +22,13 @@ export default {
       'Ce dossier est déjà au laboratoire ou validé — utilisez « Ajouter des examens » pour compléter la prescription.',
     'Ordonnance enregistrée — ordonnance imprimée.': 'Ordonnance enregistrée — ordonnance imprimée.',
     'Consultation enregistrée — ordonnance imprimée.': 'Consultation enregistrée — ordonnance imprimée.',
+    'Ordonnance enregistrée.': 'Ordonnance enregistrée.',
+    'Consultation enregistrée — ordonnance sauvegardée (impression manuelle).':
+      'Consultation enregistrée — ordonnance sauvegardée (impression manuelle).',
+    'Modifier la prescription': 'Modifier la prescription',
+    'Enregistrer la prescription': 'Enregistrer la prescription',
+    'Des résultats labo sont déjà enregistrés. Pour ajouter des examens, utilisez « Ajouter des examens ». Vous pouvez modifier l’ordonnance pharmacie ici.':
+      'Des résultats labo sont déjà enregistrés. Pour ajouter des examens, utilisez « Ajouter des examens ». Vous pouvez modifier l’ordonnance pharmacie ici.',
     Compris: 'Compris',
     Valider: 'Valider',
     Imprimer: 'Imprimer',
@@ -83,6 +90,12 @@ export default {
     'Validé le {date} · {n} formulaire(s)': 'Validé le {date} · {n} formulaire(s)',
     '50 derniers dossiers — recherchez pour affiner':
       '50 derniers dossiers — recherchez pour affiner',
+    'Patients consultés': 'Patients consultés',
+    'Dossiers enregistrés par les médecins': 'Dossiers enregistrés par les médecins',
+    'Aucun dossier médical pour le moment.': 'Aucun dossier médical pour le moment.',
+    'Patients consultés par les médecins — historique clinique complet':
+      'Patients consultés par les médecins — historique clinique complet',
+    'Enregistré par {name}': 'Enregistré par {name}',
     'Aucun patient trouvé. Utilisez la recherche ci-contre.':
       'Aucun patient trouvé. Utilisez la recherche ci-contre.',
     'Rechercher un patient': 'Rechercher un patient',
@@ -175,11 +188,22 @@ export default {
     'Transférer le patient': 'Transférer le patient',
     'Confirmer le transfert de ce patient vers le médecin sélectionné ?':
       'Confirmer le transfert de ce patient vers le médecin sélectionné ?',
+    'Confirmer le transfert de ce patient vers le service sélectionné ?':
+      'Confirmer le transfert de ce patient vers le service sélectionné ?',
     Transférer: 'Transférer',
     'Transfert…': 'Transfert…',
     'Confirmer le transfert': 'Confirmer le transfert',
     'Sélectionnez un médecin destinataire.': 'Sélectionnez un médecin destinataire.',
+    'Sélectionnez un service destinataire.': 'Sélectionnez un service destinataire.',
+    'Service destinataire': 'Service destinataire',
+    'Choisir un service…': 'Choisir un service…',
+    'aucun médecin rattaché': 'aucun médecin rattaché',
+    'Aucun service disponible. Créez-en un dans la page Services.':
+      'Aucun service disponible. Créez-en un dans la page Services.',
+    'Le patient apparaîtra en attente de consultation chez le(s) médecin(s) de ce service.':
+      'Le patient apparaîtra en attente de consultation chez le(s) médecin(s) de ce service.',
     'Patient transféré au médecin sélectionné.': 'Patient transféré au médecin sélectionné.',
+    'Patient transféré vers le service sélectionné.': 'Patient transféré vers le service sélectionné.',
     'Impossible de transférer ce patient.': 'Impossible de transférer ce patient.',
     'Impossible de démarrer la consultation.': 'Impossible de démarrer la consultation.',
     'Sélectionnez au moins un examen ou saisissez un commentaire (2 caractères min.).':
@@ -221,6 +245,9 @@ export default {
       'Dossier {code} enregistré — {name} est en attente de consultation.',
     'Erreur lors de la création du dossier.': 'Erreur lors de la création du dossier.',
     "Impossible d'imprimer le reçu.": "Impossible d'imprimer le reçu.",
+    'Imprimer le reçu': 'Imprimer le reçu',
+    'Imprimer le reçu de consultation': 'Imprimer le reçu de consultation',
+    'Reçu {code}': 'Reçu {code}',
     'Dossier {code} supprimé.': 'Dossier {code} supprimé.',
     '{name} remis en consultation — {hint}': '{name} remis en consultation — {hint}',
     '{name} remis en consultation.': '{name} remis en consultation.',
@@ -428,9 +455,37 @@ export default {
     "Date d'inscription": "Date d'inscription",
     Féminin: 'Féminin',
     Masculin: 'Masculin',
+    'Féminin / Masculin': 'Féminin / Masculin',
+    'Patients examens': 'Patients examens',
+    'Ont reçu des examens': 'Ont reçu des examens',
     "Inscrits aujourd'hui": "Inscrits aujourd'hui",
     'Patients externes': 'Patients externes',
     'Examens sans consultation — aujourd’hui': 'Examens sans consultation — aujourd’hui',
+    'Paiement — à régler chez le gestionnaire': 'Paiement — à régler chez le gestionnaire',
+    'Enregistrement — paiement chez le gestionnaire': 'Enregistrement — paiement chez le gestionnaire',
+    'Enregistrement des patients uniquement — le paiement est géré par le gestionnaire':
+      'Enregistrement des patients uniquement — le paiement est géré par le gestionnaire',
+    'À payer chez le gestionnaire.': 'À payer chez le gestionnaire.',
+    'Tarif selon le gestionnaire — à régler chez le gestionnaire.':
+      'Tarif selon le gestionnaire — à régler chez le gestionnaire.',
+    'Patients enregistrés aujourd’hui — sans encaissement à la réception':
+      'Patients enregistrés aujourd’hui — sans encaissement à la réception',
+    'Sections réception': 'Sections réception',
+    'Consultation gratuite (validité en cours).': 'Consultation gratuite (validité en cours).',
+    'Vérification de la validité…': 'Vérification de la validité…',
+    'Paiement — soldé': 'Paiement — soldé',
+    'À payer': 'À payer',
+    'Non payé': 'Non payé',
+    Partiel: 'Partiel',
+    'Le patient règle cette consultation chez le gestionnaire.':
+      'Le patient règle cette consultation chez le gestionnaire.',
+    'Le gestionnaire peut appliquer une réduction avant l’encaissement.':
+      'Le gestionnaire peut appliquer une réduction avant l’encaissement.',
+    'Consultation soldée.': 'Consultation soldée.',
+    'Aucun paiement en attente pour ce dossier.': 'Aucun paiement en attente pour ce dossier.',
+    'Bilan du jour': 'Bilan du jour',
+    'Le paiement des consultations et examens se fait chez le gestionnaire.':
+      'Le paiement des consultations et examens se fait chez le gestionnaire.',
     'Dossiers patients': 'Dossiers patients',
     'Recettes du jour': 'Recettes du jour',
     'Mes encaissements (jour)': 'Mes encaissements (jour)',
@@ -518,6 +573,12 @@ export default {
     'Voir la pharmacie': 'Voir la pharmacie',
     'Nouvelle hospitalisation': 'Nouvelle hospitalisation',
     'Admettre le patient': 'Admettre le patient',
+    'Paiement examens': 'Paiement examens',
+    'Paiement consultation': 'Paiement consultation',
+    'Tout est à jour — aucun paiement, clôture, dépense, paie ni hospitalisation en attente.':
+      'Tout est à jour — aucun paiement, clôture, dépense, paie ni hospitalisation en attente.',
+    'Tout est à jour — aucune hospitalisation en attente.':
+      'Tout est à jour — aucune hospitalisation en attente.',
     'Tout est à jour — aucune clôture, dépense, paie ni hospitalisation en attente.':
       'Tout est à jour — aucune clôture, dépense, paie ni hospitalisation en attente.',
     'Tout est à jour — aucune action urgente sur la caisse comptable, les dépenses ni la paie.':
@@ -1214,6 +1275,8 @@ export default {
     'Poste & profil': 'Poste & profil',
     'Poste / fonction': 'Poste / fonction',
     'Sélectionnez un poste': 'Sélectionnez un poste',
+    'Pourcentage reversé à cet assistant sur les opérations.':
+      'Pourcentage reversé à cet assistant sur les opérations.',
     'Profil employé': 'Profil employé',
     'Administration, technique, accueil…': 'Administration, technique, accueil…',
     'Consultations et rémunération': 'Consultations et rémunération',
@@ -1237,6 +1300,45 @@ export default {
     'Comptes d\'accès — les soignants restent dans le registre sans compte':
       'Comptes d\'accès — les soignants restent dans le registre sans compte',
     'Comptes utilisateurs': 'Comptes utilisateurs',
+    Boutons: 'Boutons',
+    'Sections utilisateurs': 'Sections utilisateurs',
+    'Boutons par type d’utilisateur': 'Boutons par type d’utilisateur',
+    'Masquez des actions pour le gestionnaire, le laborantin, le pharmacien, etc. Sans modification, les droits actuels restent inchangés.':
+      'Masquez des actions pour le gestionnaire, le laborantin, le pharmacien, etc. Sans modification, les droits actuels restent inchangés.',
+    'Décochez un bouton pour le masquer à ce type d’utilisateur. Les cases cochées conservent le comportement actuel du rôle. Admin et Direction voient toujours tous leurs boutons.':
+      'Décochez un bouton pour le masquer à ce type d’utilisateur. Les cases cochées conservent le comportement actuel du rôle. Admin et Direction voient toujours tous leurs boutons.',
+    'Type d’utilisateur': 'Type d’utilisateur',
+    'Actions générales': 'Actions générales',
+    'Ajouter / Nouveau (catalogues)': 'Ajouter / Nouveau (catalogues)',
+    'Boutons d’ajout sur les nomenclatures et listes.':
+      'Boutons d’ajout sur les nomenclatures et listes.',
+    'Modifier une ligne': 'Modifier une ligne',
+    'Supprimer une ligne': 'Supprimer une ligne',
+    'Activer / Désactiver': 'Activer / Désactiver',
+    'Dossiers, résultats laboratoire et ordonnances.':
+      'Dossiers, résultats laboratoire et ordonnances.',
+    'Ajouter un fichier au dossier patient.': 'Ajouter un fichier au dossier patient.',
+    'Menu Comptabilité → Encaissements.': 'Menu Comptabilité → Encaissements.',
+    'Examens payés, réclamations, en attente de paiement.':
+      'Examens payés, réclamations, en attente de paiement.',
+    'Encaisser la consultation': 'Encaisser la consultation',
+    'Types & catalogues': 'Types & catalogues',
+    'Hospitalisation & salles': 'Hospitalisation & salles',
+    'Menu, ajout et modification des chambres.': 'Menu, ajout et modification des chambres.',
+    'Nomenclature et tarifs des examens.': 'Nomenclature et tarifs des examens.',
+    'Types d’opération, tarifs et parts médecins.': 'Types d’opération, tarifs et parts médecins.',
+    'Services cliniques et médecins associés.': 'Services cliniques et médecins associés.',
+    'Créer et modifier les formulaires de résultats labo.':
+      'Créer et modifier les formulaires de résultats labo.',
+    'Ajouter un employé': 'Ajouter un employé',
+    'Catalogue pharmacie (catégories, fournisseurs, produits)':
+      'Catalogue pharmacie (catégories, fournisseurs, produits)',
+    'Réduction avant encaissement (consultation)': 'Réduction avant encaissement (consultation)',
+    'Caisse / comptabilité': 'Caisse / comptabilité',
+    'Boutons visibles pour ce compte': 'Boutons visibles pour ce compte',
+    'Par défaut : droits du rôle. Décochez une action pour la masquer uniquement à cet utilisateur (ex. un laborantin sans impression).':
+      'Par défaut : droits du rôle. Décochez une action pour la masquer uniquement à cet utilisateur (ex. un laborantin sans impression).',
+    'Déjà masqué pour ce rôle': 'Déjà masqué pour ce rôle',
     'Créez d\'abord l\'employé dans Employés, puis liez-le ici pour lui ouvrir un accès':
       'Créez d\'abord l\'employé dans Employés, puis liez-le ici pour lui ouvrir un accès',
     'Nouvel utilisateur': 'Nouvel utilisateur',
@@ -1823,6 +1925,9 @@ export default {
     'Marge brute = ventes − coût d’achat (prix d’achat des produits)': 'Marge brute = ventes − coût d’achat (prix d’achat des produits)',
     'Clients externes': 'Clients externes',
     'Histogramme — ordonnances, ventes externes et alertes': 'Histogramme — ordonnances, ventes externes et alertes',
+    'Répartition du jour — ordonnances, ventes externes et alertes': 'Répartition du jour — ordonnances, ventes externes et alertes',
+    'Total 7 jours': 'Total 7 jours',
+    'Aucune activité aujourd’hui': 'Aucune activité aujourd’hui',
     'Stocks critiques': 'Stocks critiques',
     'Niveau par rapport au seuil d\'alerte': 'Niveau par rapport au seuil d\'alerte',
     'Aucune alerte stock': 'Aucune alerte stock',
@@ -2134,6 +2239,21 @@ export default {
     'Impossible de charger l\'historique des ventes.': 'Impossible de charger l\'historique des ventes.',
     'Historique des ventes': 'Historique des ventes',
     'Détail de la vente': 'Détail de la vente',
+    'Modifier la vente': 'Modifier la vente',
+    'Vente mise à jour.': 'Vente mise à jour.',
+    'Impossible de modifier cette vente.': 'Impossible de modifier cette vente.',
+    'Corrigez les quantités vendues — le stock est ajusté automatiquement.':
+      'Corrigez les quantités vendues — le stock est ajusté automatiquement.',
+    'Corrigez les quantités ou supprimez des lignes — le stock est ajusté automatiquement.':
+      'Corrigez les quantités ou supprimez des lignes — le stock est ajusté automatiquement.',
+    'Supprimer cette ligne': 'Supprimer cette ligne',
+    'Vente supprimée — toutes les lignes ont été retirées.':
+      'Vente supprimée — toutes les lignes ont été retirées.',
+    'Ajoutez au moins une ligne ou annulez la modification.':
+      'Ajoutez au moins une ligne ou annulez la modification.',
+    'Nouveau total :': 'Nouveau total :',
+    'Quantité invalide — saisissez un nombre entre 1 et 999.':
+      'Quantité invalide — saisissez un nombre entre 1 et 999.',
     'Aucune vente enregistrée': 'Aucune vente enregistrée',
     'Chargement des ventes…': 'Chargement des ventes…',
     Dispensation: 'Dispensation',
@@ -2201,7 +2321,7 @@ export default {
         'Session expirée ou cookie non accepté sur ce poste. Reconnectez-vous (vérifiez l’URL Wi‑Fi du serveur, pas une ancienne IP).',
       sessionIdle: 'Session expirée après 30 minutes sans activité. Veuillez vous reconnecter.',
       sessionActive:
-        'Une session est déjà active pour cet utilisateur sur un autre poste. Déconnectez-vous d’abord là-bas, ou attendez 30 minutes d’inactivité.',
+        "Une session est déjà active pour cet utilisateur sur un autre poste. Déconnectez-vous d'abord sur l'autre appareil, ou attendez 30 minutes d'inactivité.",
       sessionReplaced: 'Cette session a été invalidée. Veuillez vous reconnecter.',
       lastAttempt:
         'Mot de passe incorrect. Attention : dernière tentative avant verrouillage du compte.',
@@ -2219,13 +2339,17 @@ export default {
     installDismiss: 'Plus tard',
     hideSteps: 'Masquer les étapes',
     installHttpHint:
-      'Première connexion : placez le raccourci Bureau (icône Alwatan). Wi-Fi puis Tailscale automatiquement.',
+      'Première connexion : téléchargez le raccourci Bureau (icône Alwatan). Ethernet puis Tailscale automatiquement.',
     installAndroidHint:
-      'Sur Android (Chrome) : ajoutez Alwatan à l’écran d’accueil (pas un APK). Même Wi‑Fi que le serveur ; hors clinique, utilisez Tailscale.',
+      'Sur Android (Chrome) : ajoutez Alwatan à l’écran d’accueil (pas un APK). Même réseau que le serveur ; hors clinique, utilisez Tailscale.',
     installIosHint:
       'Sur iPad/iPhone (Safari) : ajoutez Alwatan à l’écran d’accueil pour un accès rapide.',
-    installDesktopShortcut: 'Mettre le raccourci sur le Bureau',
+    installDesktopShortcut: 'Télécharger le raccourci Bureau',
     installAndroidShortcut: 'Télécharger le guide HTML',
+    syncShortcutTitle: 'Nouveau raccourci Bureau disponible',
+    syncShortcutHint:
+      'L’adresse réseau a changé. Téléchargez un nouveau raccourci (Ethernet actuel), puis exécutez le fichier — les anciens raccourcis seront remplacés.',
+    syncShortcutButton: 'Télécharger le nouveau raccourci',
     androidStep1: 'Ouvrez cette page dans Chrome (pas un autre navigateur).',
     androidStep2: 'Appuyez sur le menu ⋮ en haut à droite.',
     androidStep3: 'Choisissez « Installer l’application » ou « Ajouter à l’écran d’accueil ».',
@@ -2275,7 +2399,9 @@ export default {
     Patients: 'Patients',
     'Patient externe': 'Patient externe',
     'Examens & paiements': 'Examens & paiements',
+    'Paiement examens': 'Paiement examens',
     'En attente de paiement': 'En attente de paiement',
+    'Ajouter examen en cours de paiement': 'Ajouter examen en cours de paiement',
     'Examens payés': 'Examens payés',
     Réclamations: 'Réclamations',
     'Suivi hospitalier': 'Suivi hospitalier',
@@ -2466,6 +2592,14 @@ export default {
     Gynecologie: 'Gynecologie',
     Echographie: 'Echographie',
     Odontologie: 'Odontologie',
+    'Kinesie terapie': 'Kinesie terapie',
+    'Kinésie terapie': 'Kinésie terapie',
+    Kinesitherapie: 'Kinesitherapie',
+    'Kinésithérapie': 'Kinésithérapie',
+    'Kinésithérapeute': 'Kinésithérapeute',
+    'Séance de kinésithérapie': 'Séance de kinésithérapie',
+    'Chargement des dossiers…': 'Chargement des dossiers…',
+    'Aucun patient à afficher': 'Aucun patient à afficher',
     'Chirurgie majeure': 'Chirurgie majeure',
     'Chirurgie moyenne': 'Chirurgie moyenne',
     'Petite chirurgie': 'Petite chirurgie',
@@ -2496,5 +2630,66 @@ export default {
     'Sélectionner un médecin…': 'Sélectionner un médecin…',
     'Aucun médecin lié à ce service': 'Aucun médecin lié à ce service',
     'Médecin — {service}': 'Médecin — {service}',
+    "Patients consultés — en attente de paiement, ou clôturés aujourd'hui":
+      "Patients consultés — en attente de paiement, ou clôturés aujourd'hui",
+    "Aucun patient consulté pour le moment. Les dossiers prescrits ou clôturés aujourd'hui apparaîtront ici.":
+      "Aucun patient consulté pour le moment. Les dossiers prescrits ou clôturés aujourd'hui apparaîtront ici.",
+    'Aucun patient consulté pour le moment': 'Aucun patient consulté pour le moment',
+    'Aucun patient consulté': 'Aucun patient consulté',
+    'Chargement des patients consultés…': 'Chargement des patients consultés…',
+    '{pending} en attente de paiement · {closed} clôturé(s) aujourd\'hui':
+      '{pending} en attente de paiement · {closed} clôturé(s) aujourd\'hui',
+    "{n} consultation(s) clôturée(s) aujourd'hui": "{n} consultation(s) clôturée(s) aujourd'hui",
+    '{n} patient(s) en attente de paiement': '{n} patient(s) en attente de paiement',
+    'Dossier mis à jour avec succès.': 'Dossier mis à jour avec succès.',
+    'Patients transférés au laboratoire — vous pouvez prescrire des examens complémentaires':
+      'Patients transférés au laboratoire — vous pouvez prescrire des examens complémentaires',
+    'Analyses en cours': 'Analyses en cours',
+    'Patients en attente de résultats — visibles après validation par la comptabilité':
+      'Patients en attente de résultats — visibles après validation par la comptabilité',
+    'Aucun patient en attente de résultats laboratoire pour le moment.':
+      'Aucun patient en attente de résultats laboratoire pour le moment.',
+    'Nouveaux examens ajoutés. Les examens supplémentaires suivront le circuit paiement / laboratoire.':
+      'Nouveaux examens ajoutés. Les examens supplémentaires suivront le circuit paiement / laboratoire.',
+    'Aucun examen à afficher': 'Aucun examen à afficher',
+    'Aucun résultat à afficher': 'Aucun résultat à afficher',
+    'Aucune visite en file': 'Aucune visite en file',
+    Arrivée: 'Arrivée',
+    'Œil : consulter · Bouton Ajouter : examens complémentaires':
+      'Œil : consulter · Bouton Ajouter : examens complémentaires',
+    Effectuées: 'Effectuées',
+    Personnaliser: 'Personnaliser',
+    Jour: 'Jour',
+    'Aucune opération en attente pour le moment': 'Aucune opération en attente pour le moment',
+    'Aucune opération effectuée sur la période sélectionnée':
+      'Aucune opération effectuée sur la période sélectionnée',
+    'Aucune part opération à percevoir pour le moment': 'Aucune part opération à percevoir pour le moment',
+    '{n} part(s) opération — % calculé sur le montant déjà encaissé (tranches incluses)':
+      '{n} part(s) opération — % calculé sur le montant déjà encaissé (tranches incluses)',
+    'Suivi opératoire': 'Suivi opératoire',
+    'Devis — en attente de paiement': 'Devis — en attente de paiement',
+    'Prescrite — en attente de paiement': 'Prescrite — en attente de paiement',
+    "Payée — date d'opération à fixer": "Payée — date d'opération à fixer",
+    'Programmée le {date}': 'Programmée le {date}',
+    'Date prévue le {date}': 'Date prévue le {date}',
+    'Effectuée le {date}': 'Effectuée le {date}',
+    'Patient non encaissé': 'Patient non encaissé',
+    'Réglée le {date}': 'Réglée le {date}',
+    Réglée: 'Réglée',
+    'En attente de règlement': 'En attente de règlement',
+    Assistant: 'Assistant',
+    'Dossier indisponible': 'Dossier indisponible',
+    'Résultats laboratoire introuvables.': 'Résultats laboratoire introuvables.',
+    'Avis enregistré pour ce formulaire.': 'Avis enregistré pour ce formulaire.',
+    "Impossible d'enregistrer l'avis.": "Impossible d'enregistrer l'avis.",
+    '{n} formulaire(s) — cliquez pour consulter': '{n} formulaire(s) — cliquez pour consulter',
+    Avis: 'Avis',
+    'Avis / commentaire du médecin': 'Avis / commentaire du médecin',
+    'Interprétation des résultats, recommandations, suite à donner au patient…':
+      'Interprétation des résultats, recommandations, suite à donner au patient…',
+    'Dernier enregistrement :': 'Dernier enregistrement :',
+    "Enregistrer l'avis": "Enregistrer l'avis",
+    'Imprimer ce formulaire': 'Imprimer ce formulaire',
+    'Commentaire à la prescription': 'Commentaire à la prescription',
   },
 }

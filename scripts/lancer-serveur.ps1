@@ -5,6 +5,7 @@ param(
 )
 
 . "$PSScriptRoot\_alwatan-common.ps1"
+. "$PSScriptRoot\_alwatan-access-ethernet.ps1"
 
 $Root = Get-AlwatanRoot
 $nodeDir = Initialize-NodePath
@@ -56,11 +57,26 @@ $networkIps = Get-AlwatanNetworkIps -IncludeTailscale
 $lanIp = Get-LocalLanIpv4
 
 Ensure-AlwatanEnvFile -Root $Root | Out-Null
-Sync-AlwatanLanConfig -Root $Root -LanIp $lanIp -LanIps $networkIps
+
+# Si politique Ethernet+Tailscale activee : IP cable + Tailscale seulement (pas Wi-Fi serveur)
+$accessMode = Read-AlwatanAccessMode -Root $Root
+if ($accessMode -eq 'ethernet_tailscale') {
+    $ethIp = Get-AlwatanEthernetIpv4
+    $tsOnly = Get-TailscaleIpv4
+    if ($ethIp) { $lanIp = $ethIp }
+    $networkIps = @($lanIp, $tsOnly | Where-Object { $_ }) | Select-Object -Unique
+    Sync-AlwatanLanConfig -Root $Root -LanIp $lanIp -LanIps $networkIps
+} else {
+    Sync-AlwatanLanConfig -Root $Root -LanIp $lanIp -LanIps $networkIps
+}
 
 $fwPorts = if ($Dev -and -not $Production) { @(4000, 5173) } else { @(4000) }
 Write-Host "Verification pare-feu (TCP $($fwPorts -join ', '))..."
-Ensure-AlwatanLanFirewall -Ports $fwPorts | Out-Null
+if ($accessMode -eq 'ethernet_tailscale' -and (Test-AlwatanIsAdmin)) {
+    Ensure-AlwatanEthernetTailscaleFirewall -Ports $fwPorts | Out-Null
+} else {
+    Ensure-AlwatanLanFirewall -Ports $fwPorts | Out-Null
+}
 
 $dbPort = Get-AlwatanDatabasePort -Root $Root
 if (-not (Test-AlwatanQuickTcp -HostName '127.0.0.1' -Port $dbPort -TimeoutMs 500)) {

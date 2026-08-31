@@ -2,7 +2,6 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { registerSW } from 'virtual:pwa-register'
 
 const BUILD_KEY = 'alwatan-app-build-id'
-const AUTO_APPLIED_BUILD_KEY = 'alwatan-auto-applied-build-id'
 const needRefresh = ref(false)
 let updateServiceWorker: ((reloadPage?: boolean) => Promise<void>) | null = null
 let started = false
@@ -22,6 +21,18 @@ async function fetchServerBuildId(): Promise<string | null> {
   }
 }
 
+/** Bundle réellement chargé dans cette page (pas le localStorage). */
+function loadedBundleId(): string | null {
+  if (typeof document === 'undefined') return null
+  const scripts = Array.from(document.querySelectorAll('script[src]'))
+  for (const el of scripts) {
+    const src = el.getAttribute('src') ?? ''
+    const match = src.match(/assets\/index-[^"'/?#]+\.js/)
+    if (match) return match[0]
+  }
+  return null
+}
+
 async function requestServiceWorkerUpdate() {
   if (!('serviceWorker' in navigator)) return
   try {
@@ -31,6 +42,16 @@ async function requestServiceWorkerUpdate() {
     if (reg.waiting) {
       reg.waiting.postMessage({ type: 'SKIP_WAITING' })
     }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function unregisterStaleWorkers() {
+  if (!('serviceWorker' in navigator)) return
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations()
+    await Promise.all(regs.map((reg) => reg.update()))
   } catch {
     /* ignore */
   }
@@ -49,36 +70,7 @@ async function clearAppCaches() {
 function hardReload(buildId?: string | null) {
   const url = new URL(window.location.href)
   url.searchParams.set('v', buildId || String(Date.now()))
-  // replace évite de garder l’ancienne entrée d’historique / bfcache
   window.location.replace(url.toString())
-}
-
-function hasAlreadyAutoApplied(buildId: string) {
-  try {
-    return sessionStorage.getItem(AUTO_APPLIED_BUILD_KEY) === buildId
-  } catch {
-    return false
-  }
-}
-
-function markAutoApplied(buildId: string) {
-  try {
-    sessionStorage.setItem(AUTO_APPLIED_BUILD_KEY, buildId)
-  } catch {
-    /* ignore */
-  }
-}
-
-async function autoApplyUpdate(buildId: string) {
-  if (applying || hasAlreadyAutoApplied(buildId)) return
-  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-  if (typeof navigator !== 'undefined' && !navigator.onLine) return
-
-  markAutoApplied(buildId)
-  // Laisser un court délai pour éviter une coupure en pleine saisie
-  setTimeout(() => {
-    void applyUpdateInternal(buildId)
-  }, 3500)
 }
 
 async function applyUpdateInternal(knownBuildId?: string | null) {
@@ -86,19 +78,12 @@ async function applyUpdateInternal(knownBuildId?: string | null) {
   applying = true
 
   const buildId = knownBuildId ?? (await fetchServerBuildId())
-  if (buildId) {
-    try {
-      localStorage.setItem(BUILD_KEY, buildId)
-    } catch {
-      /* ignore */
-    }
-  }
 
   try {
     if (updateServiceWorker) {
       await Promise.race([
         updateServiceWorker(true),
-        new Promise((resolve) => setTimeout(resolve, 1500)),
+        new Promise((resolve) => setTimeout(resolve, 1200)),
       ])
     }
   } catch {
@@ -114,6 +99,19 @@ async function checkServerBuild() {
   const buildId = await fetchServerBuildId()
   if (!buildId) return
 
+  const loaded = loadedBundleId()
+  const loadedMatchesServer = Boolean(loaded && buildId.includes(loaded))
+
+  if (loadedMatchesServer) {
+    try {
+      localStorage.setItem(BUILD_KEY, buildId)
+    } catch {
+      /* ignore */
+    }
+    needRefresh.value = false
+    return
+  }
+
   let stored: string | null = null
   try {
     stored = localStorage.getItem(BUILD_KEY)
@@ -121,20 +119,14 @@ async function checkServerBuild() {
     /* ignore */
   }
 
-  if (!stored) {
-    try {
-      localStorage.setItem(BUILD_KEY, buildId)
-    } catch {
-      /* ignore */
-    }
-    return
-  }
+  if (stored === buildId && loadedMatchesServer) return
 
-  if (stored !== buildId) {
-    // Afficher la bannière + tentative d'application auto contrôlée (anti-boucle).
-    needRefresh.value = true
-    void requestServiceWorkerUpdate()
-    void autoApplyUpdate(buildId)
+  needRefresh.value = true
+  void requestServiceWorkerUpdate()
+  if (!applying) {
+    window.setTimeout(() => {
+      void applyUpdateInternal(buildId)
+    }, 800)
   }
 }
 
@@ -146,23 +138,31 @@ function ensureStarted() {
     immediate: true,
     onNeedRefresh() {
       needRefresh.value = true
+      window.setTimeout(() => {
+        void applyUpdateInternal()
+      }, 600)
     },
     onRegisteredSW(_swUrl, registration) {
       if (!registration) return
+      void registration.update()
       setInterval(() => {
         void registration.update()
-      }, 60_000)
+      }, 30_000)
     },
   })
 
+  void unregisterStaleWorkers()
   void checkServerBuild()
   setInterval(() => {
     void checkServerBuild()
-  }, 60_000)
+  }, 30_000)
 
   window.addEventListener('focus', () => {
     void checkServerBuild()
     void requestServiceWorkerUpdate()
+  })
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void checkServerBuild()
   })
 }
 

@@ -285,7 +285,7 @@ defineExpose({ reload: loadItems })
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
         Actualiser
       </UiButton>
-      <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
+      <UiButton variant="primary" size="sm" :icon="Plus" ui-action="table.create" @click="openCreateModal">
         Nouvel article
       </UiButton>
     </template>

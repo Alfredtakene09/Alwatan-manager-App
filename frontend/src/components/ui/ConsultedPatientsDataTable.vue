@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Eye } from '@lucide/vue'
+import { Eye, ArrowLeftRight } from '@lucide/vue'
 import { fullName } from '@/lib/roles'
 import {
   formatPrescribedExamsPreview,
@@ -8,6 +8,7 @@ import {
   countPrescribedExams,
 } from '@/lib/lab-notes'
 import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import '@/assets/simple-table.css'
 
 export type ConsultedVisitRow = {
@@ -24,6 +25,7 @@ export type ConsultedVisitRow = {
     ongName?: string | null
   }
   assignedDoctor?: { firstName: string; lastName: string } | null
+  assignedClinicService?: { id: string; name: string } | null
   vitalSigns?: Array<{
     weightKg?: number | null
     bloodPressure?: string | null
@@ -49,10 +51,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   view: [id: string]
+  transfer: [id: string]
 }>()
 
-const rows = computed(() =>
-  sortByCreatedAtNewestFirst(props.visits).map((v) => {
+const { uiText, localeCode, dateText, timeText } = useAppI18n()
+
+const rows = computed(() => {
+  void localeCode.value
+  return sortByCreatedAtNewestFirst(props.visits).map((v) => {
     const consultedAt = new Date(v.consultation?.updatedAt ?? v.updatedAt)
     const notes = v.consultation?.clinicalNotes
     const examsFull = formatPrescribedExamsSummary(notes)
@@ -67,34 +73,36 @@ const rows = computed(() =>
       exams,
       examsFull,
       examCount,
-      consultedDate: consultedAt.toLocaleDateString('fr-FR'),
-      consultedTime: consultedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-      statusLabel: closed ? 'Clôturé' : 'En attente paiement',
+      consultedDate: dateText(consultedAt),
+      consultedTime: timeText(consultedAt, { hour: '2-digit', minute: '2-digit' }),
+      statusLabel: uiText(closed ? 'Clôturé' : 'En attente paiement'),
       statusVariant: closed ? 'success' : 'warning',
     }
-  }),
-)
+  })
+})
 </script>
 
 <template>
   <div class="simple-table-shell" :class="{ 'simple-table-shell--fill': fill }">
     <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
       <span class="simple-table-spinner" aria-hidden="true" />
-      Chargement des patients consultés…
+      {{ uiText('Chargement des patients consultés…') }}
     </div>
     <div class="simple-table-scroll">
-      <p v-if="!loading && !rows.length" class="simple-table__empty">Aucun patient consulté</p>
+      <p v-if="!loading && !rows.length" class="simple-table__empty">
+        {{ uiText('Aucun patient consulté') }}
+      </p>
       <div v-else class="simple-table-wrap">
         <table class="simple-table">
           <thead>
             <tr>
               <th class="simple-table__num">#</th>
-              <th>Matricule</th>
-              <th>Patient</th>
-              <th>Examens prescrits</th>
-              <th>Consulté le</th>
-              <th>Statut</th>
-              <th class="simple-table__actions-head">Actions</th>
+              <th>{{ uiText('Matricule') }}</th>
+              <th>{{ uiText('Patient') }}</th>
+              <th>{{ uiText('Examens prescrits') }}</th>
+              <th>{{ uiText('Consulté le') }}</th>
+              <th>{{ uiText('Statut') }}</th>
+              <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -126,15 +134,25 @@ const rows = computed(() =>
                 <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
               </td>
               <td class="simple-table__actions">
-                <div class="st-actions">
+                <div class="st-actions st-actions--wrap">
                   <button
                     type="button"
                     class="st-btn st-btn--accent"
-                    title="Voir"
-                    aria-label="Voir"
+                    :title="uiText('Voir')"
+                    :aria-label="uiText('Voir')"
                     @click="emit('view', row.id)"
                   >
                     <Eye :size="15" />
+                  </button>
+                  <button
+                    type="button"
+                    class="st-btn st-btn--text"
+                    :title="uiText('Transférer')"
+                    :aria-label="uiText('Transférer')"
+                    @click="emit('transfer', row.id)"
+                  >
+                    <ArrowLeftRight :size="15" />
+                    {{ uiText('Transférer') }}
                   </button>
                 </div>
               </td>

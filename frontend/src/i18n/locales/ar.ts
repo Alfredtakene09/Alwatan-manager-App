@@ -22,6 +22,13 @@ export default {
       'هذا الملف موجود بالفعل في المختبر أو تم التحقق منه — استخدم « إضافة فحوصات » لإكمال الوصفة.',
     'Ordonnance enregistrée — ordonnance imprimée.': 'تم حفظ الوصفة — تم طباعة الوصفة.',
     'Consultation enregistrée — ordonnance imprimée.': 'تم حفظ الاستشارة — تم طباعة الوصفة.',
+    'Ordonnance enregistrée.': 'تم حفظ الوصفة.',
+    'Consultation enregistrée — ordonnance sauvegardée (impression manuelle).':
+      'تم حفظ الاستشارة — الوصفة محفوظة (الطباعة يدوية).',
+    'Modifier la prescription': 'تعديل الوصفة',
+    'Enregistrer la prescription': 'حفظ الوصفة',
+    'Des résultats labo sont déjà enregistrés. Pour ajouter des examens, utilisez « Ajouter des examens ». Vous pouvez modifier l’ordonnance pharmacie ici.':
+      'نتائج المختبر مسجّلة مسبقاً. لإضافة فحوصات، استخدم « إضافة فحوصات ». يمكنك تعديل وصفة الصيدلية هنا.',
     Compris: 'مفهوم',
     Valider: 'تأكيد',
     Imprimer: 'طباعة',
@@ -102,6 +109,13 @@ export default {
     'Validé le {date} · {n} formulaire(s)': 'صُدّق في {date} · {n} نموذج',
     '50 derniers dossiers — recherchez pour affiner':
       'آخر 50 ملفاً — استخدم البحث للتدقيق',
+    'Patients consultés': 'المرضى المستشارون',
+    'Dossiers enregistrés par les médecins': 'الملفات المسجلة من الأطباء',
+    'Aucun dossier médical pour le moment.': 'لا يوجد ملف طبي حالياً.',
+    'Patients consultés par les médecins': 'المرضى الذين استشارهم الأطباء',
+    'Patients consultés par les médecins — historique clinique complet':
+      'المرضى الذين استشارهم الأطباء — السجل السريري الكامل',
+    'Enregistré par {name}': 'سجّله {name}',
     'Aucun patient trouvé. Utilisez la recherche ci-contre.':
       'لم يُعثر على مريض. استخدم البحث المجاور.',
     'Rechercher un patient': 'البحث عن مريض',
@@ -194,11 +208,22 @@ export default {
     'Transférer le patient': 'تحويل المريض',
     'Confirmer le transfert de ce patient vers le médecin sélectionné ?':
       'تأكيد تحويل هذا المريض إلى الطبيب المحدد؟',
+    'Confirmer le transfert de ce patient vers le service sélectionné ?':
+      'تأكيد تحويل هذا المريض إلى الخدمة المحددة؟',
     Transférer: 'تحويل',
     'Transfert…': 'جاري التحويل…',
     'Confirmer le transfert': 'تأكيد التحويل',
     'Sélectionnez un médecin destinataire.': 'حدد الطبيب المستلم.',
+    'Sélectionnez un service destinataire.': 'حدد الخدمة المستلمة.',
+    'Service destinataire': 'الخدمة المستلمة',
+    'Choisir un service…': 'اختر خدمة…',
+    'aucun médecin rattaché': 'لا طبيب مرتبط',
+    'Aucun service disponible. Créez-en un dans la page Services.':
+      'لا توجد خدمة متاحة. أنشئ واحدةا في صفحة الخدمات.',
+    'Le patient apparaîtra en attente de consultation chez le(s) médecin(s) de ce service.':
+      'سيظهر المريض في قائمة انتظار الاستشارة لدى طبيب/أطباء هذه الخدمة.',
     'Patient transféré au médecin sélectionné.': 'تم تحويل المريض إلى الطبيب المحدد.',
+    'Patient transféré vers le service sélectionné.': 'تم تحويل المريض إلى الخدمة المحددة.',
     'Impossible de transférer ce patient.': 'تعذر تحويل هذا المريض.',
     'Impossible de démarrer la consultation.': 'تعذر بدء الاستشارة.',
     'Sélectionnez au moins un examen ou saisissez un commentaire (2 caractères min.).':
@@ -442,9 +467,34 @@ export default {
     "Date d'inscription": 'تاريخ التسجيل',
     Féminin: 'أنثى',
     Masculin: 'ذكر',
+    'Féminin / Masculin': 'أنثى / ذكر',
+    'Patients examens': 'مرضى الفحوصات',
+    'Ont reçu des examens': 'تلقّوا فحوصات',
     "Inscrits aujourd'hui": 'المسجلون اليوم',
     'Patients externes': 'المرضى الخارجيون',
     'Examens sans consultation — aujourd’hui': 'فحوصات بدون استشارة — اليوم',
+    'Paiement — à régler chez le gestionnaire': 'الدفع — يُسدَّد عند المسير',
+    'Enregistrement — paiement chez le gestionnaire': 'التسجيل — الدفع عند المسير',
+    'Enregistrement des patients uniquement — le paiement est géré par le gestionnaire':
+      'تسجيل المرضى فقط — الدفع يديره المسير',
+    'À payer chez le gestionnaire.': 'يُدفع عند المسير.',
+    'Tarif selon le gestionnaire — à régler chez le gestionnaire.':
+      'التعرفة حسب المسير — يُسدَّد عند المسير.',
+    'Patients enregistrés aujourd’hui — sans encaissement à la réception':
+      'المرضى المسجلون اليوم — بدون تحصيل في الاستقبال',
+    'Sections réception': 'أقسام الاستقبال',
+    'Consultation gratuite (validité en cours).': 'استشارة مجانية (الصلاحية سارية).',
+    'Vérification de la validité…': 'جاري التحقق من الصلاحية…',
+    'Paiement — soldé': 'الدفع — مُسدَّد',
+    'À payer': 'للدفع',
+    'Non payé': 'غير مدفوع',
+    Partiel: 'جزئي',
+    'Le patient règle cette consultation chez le gestionnaire.':
+      'يدفع المريض هذه الاستشارة عند المسير.',
+    'Le gestionnaire peut appliquer une réduction avant l’encaissement.':
+      'يمكن للمسير تطبيق تخفيض قبل التحصيل.',
+    'Consultation soldée.': 'الاستشارة مسددة.',
+    'Aucun paiement en attente pour ce dossier.': 'لا يوجد دفع معلّق لهذا الملف.',
     'Bilan du jour': 'حصيلة اليوم',
     'Le paiement des consultations et examens se fait chez le gestionnaire.':
       'دفع الاستشارات والفحوصات يتم عند المسير.',
@@ -534,6 +584,12 @@ export default {
     'Voir la pharmacie': 'عرض الصيدلية',
     'Nouvelle hospitalisation': 'استشفاء جديد',
     'Admettre le patient': 'قبول المريض',
+    'Paiement examens': 'دفع الفحوصات',
+    'Paiement consultation': 'دفع الاستشارة',
+    'Tout est à jour — aucun paiement, clôture, dépense, paie ni hospitalisation en attente.':
+      'كل شيء محدّث — لا دفعات ولا إغلاق ولا مصاريف ولا رواتب ولا استشفاء قيد الانتظار.',
+    'Tout est à jour — aucune hospitalisation en attente.':
+      'كل شيء محدّث — لا استشفاء قيد الانتظار.',
     'Tout est à jour — aucune clôture, dépense, paie ni hospitalisation en attente.':
       'كل شيء محدّث — لا إغلاق ولا مصاريف ولا رواتب ولا استشفاء قيد الانتظار.',
     'Tout est à jour — aucune action urgente sur la caisse comptable, les dépenses ni la paie.':
@@ -841,6 +897,7 @@ export default {
     'Reçu {code}': 'إيصال {code}',
     Reçu: 'إيصال',
     'Imprimer le reçu': 'طباعة الإيصال',
+    'Imprimer le reçu de consultation': 'طباعة إيصال الاستشارة',
     'Total payé': 'المجموع المدفوع',
     'Merci de votre confiance': 'شكراً لثقتكم',
     'Tél.': 'هاتف',
@@ -1299,6 +1356,8 @@ export default {
     'Poste & profil': 'المنصب والملف',
     'Poste / fonction': 'المنصب / الوظيفة',
     'Sélectionnez un poste': 'اختر منصباً',
+    'Pourcentage reversé à cet assistant sur les opérations.':
+      'النسبة المئوية المستحقة لهذا المساعد على العمليات.',
     'Profil employé': 'ملف الموظف',
     'Administration, technique, accueil…': 'إدارة، تقني، استقبال…',
     'Consultations et rémunération': 'الاستشارات والأجر',
@@ -1322,6 +1381,44 @@ export default {
     'Comptes d\'accès — les soignants restent dans le registre sans compte':
       'حسابات الدخول — الممارسون يبقون في السجل بدون حساب',
     'Comptes utilisateurs': 'حسابات المستخدمين',
+    Boutons: 'الأزرار',
+    'Sections utilisateurs': 'أقسام المستخدمين',
+    'Boutons par type d’utilisateur': 'الأزرار حسب نوع المستخدم',
+    'Masquez des actions pour le gestionnaire, le laborantin, le pharmacien, etc. Sans modification, les droits actuels restent inchangés.':
+      'أخفِ إجراءات عن المدير والمختبري والصيدلي وغيرهم. دون تغيير تبقى صلاحيات الدور الحالية.',
+    'Décochez un bouton pour le masquer à ce type d’utilisateur. Les cases cochées conservent le comportement actuel du rôle. Admin et Direction voient toujours tous leurs boutons.':
+      'أزل التحديد لإخفاء الزر عن هذا النوع من المستخدمين. المحدد يبقي سلوك الدور الحالي. المدير والإدارة يريان دائماً كل أزرارهما.',
+    'Type d’utilisateur': 'نوع المستخدم',
+    'Actions générales': 'إجراءات عامة',
+    'Ajouter / Nouveau (catalogues)': 'إضافة / جديد (الفهارس)',
+    'Boutons d’ajout sur les nomenclatures et listes.': 'أزرار الإضافة في الفهارس والقوائم.',
+    'Modifier une ligne': 'تعديل سطر',
+    'Supprimer une ligne': 'حذف سطر',
+    'Activer / Désactiver': 'تفعيل / تعطيل',
+    'Dossiers, résultats laboratoire et ordonnances.':
+      'الملفات ونتائج المختبر والوصفات.',
+    'Ajouter un fichier au dossier patient.': 'إرفاق ملف بملف المريض.',
+    'Menu Comptabilité → Encaissements.': 'قائمة المحاسبة ← التحصيلات.',
+    'Examens payés, réclamations, en attente de paiement.':
+      'تحاليل مدفوعة، شكاوى، بانتظار الدفع.',
+    'Encaisser la consultation': 'تحصيل الاستشارة',
+    'Types & catalogues': 'الأنواع والفهارس',
+    'Hospitalisation & salles': 'الاستشفاء والغرف',
+    'Menu, ajout et modification des chambres.': 'القائمة وإضافة وتعديل الغرف.',
+    'Nomenclature et tarifs des examens.': 'تسمية وأسعار التحاليل.',
+    'Types d’opération, tarifs et parts médecins.': 'أنواع العمليات والأسعار وحصص الأطباء.',
+    'Services cliniques et médecins associés.': 'الخدمات السريرية والأطباء المرتبطون.',
+    'Créer et modifier les formulaires de résultats labo.':
+      'إنشاء وتعديل نماذج نتائج المختبر.',
+    'Ajouter un employé': 'إضافة موظف',
+    'Catalogue pharmacie (catégories, fournisseurs, produits)':
+      'فهرس الصيدلية (الفئات، الموردون، المنتجات)',
+    'Réduction avant encaissement (consultation)': 'تخفيض قبل التحصيل (الاستشارة)',
+    'Caisse / comptabilité': 'الصندوق / المحاسبة',
+    'Boutons visibles pour ce compte': 'الأزرار المرئية لهذا الحساب',
+    'Par défaut : droits du rôle. Décochez une action pour la masquer uniquement à cet utilisateur (ex. un laborantin sans impression).':
+      'افتراضياً: صلاحيات الدور. أزل التحديد لإخفاء إجراء لهذا المستخدم فقط (مثال: مختبري بدون طباعة).',
+    'Déjà masqué pour ce rôle': 'مخفي مسبقاً لهذا الدور',
     'Créez d\'abord l\'employé dans Employés, puis liez-le ici pour lui ouvrir un accès':
       'أنشئ الموظف أولاً في قسم الموظفين ثم اربطه هنا لفتح حساب',
     'Nouvel utilisateur': 'مستخدم جديد',
@@ -1918,6 +2015,9 @@ export default {
     'Marge brute = ventes − coût d’achat (prix d’achat des produits)': 'الهامش الإجمالي = المبيعات − تكلفة الشراء (أسعار شراء المنتجات)',
     'Clients externes': 'الزبائن الخارجيون',
     'Histogramme — ordonnances, ventes externes et alertes': 'مخطط — الوصفات والمبيعات الخارجية والتنبيهات',
+    'Répartition du jour — ordonnances, ventes externes et alertes': 'توزيع اليوم — الوصفات والمبيعات الخارجية والتنبيهات',
+    'Total 7 jours': 'المجموع 7 أيام',
+    'Aucune activité aujourd’hui': 'لا نشاط اليوم',
     'Stocks critiques': 'مخزون حرج',
     'Niveau par rapport au seuil d\'alerte': 'المستوى بالنسبة لعتبة التنبيه',
     'Aucune alerte stock': 'لا تنبيهات مخزون',
@@ -2169,6 +2269,21 @@ export default {
     'Impossible de charger l\'historique des ventes.': 'تعذر تحميل سجل المبيعات.',
     'Historique des ventes': 'سجل المبيعات',
     'Détail de la vente': 'تفاصيل البيع',
+    'Modifier la vente': 'تعديل البيع',
+    'Vente mise à jour.': 'تم تحديث البيع.',
+    'Impossible de modifier cette vente.': 'تعذر تعديل هذا البيع.',
+    'Corrigez les quantités vendues — le stock est ajusté automatiquement.':
+      'صحّح الكميات المباعة — يُعدَّل المخزون تلقائياً.',
+    'Corrigez les quantités ou supprimez des lignes — le stock est ajusté automatiquement.':
+      'صحّح الكميات أو احذف الأسطر — يُعدَّل المخزون تلقائياً.',
+    'Supprimer cette ligne': 'حذف هذا السطر',
+    'Vente supprimée — toutes les lignes ont été retirées.':
+      'تم حذف البيع — أُزيلت جميع الأسطر.',
+    'Ajoutez au moins une ligne ou annulez la modification.':
+      'احتفظ بسطر واحد على الأقل أو ألغِ التعديل.',
+    'Nouveau total :': 'المجموع الجديد:',
+    'Quantité invalide — saisissez un nombre entre 1 et 999.':
+      'كمية غير صالحة — أدخل رقماً بين 1 و 999.',
     'Aucune vente enregistrée': 'لا مبيعات مسجلة',
     'Chargement des ventes…': 'جاري تحميل المبيعات…',
     Dispensation: 'صرف',
@@ -2236,7 +2351,7 @@ export default {
         'انتهت الجلسة أو رُفض ملف تعريف الارتباط على هذا الجهاز. سجّل الدخول مجددًا (استخدم عنوان Wi‑Fi الحالي للخادم وليس عنوانًا قديمًا).',
       sessionIdle: 'انتهت الجلسة بعد 30 دقيقة دون نشاط. يرجى تسجيل الدخول مجددًا.',
       sessionActive:
-        'هناك جلسة نشطة بالفعل لهذا المستخدم على جهاز آخر. سجّل الخروج هناك أولًا، أو انتظر 30 دقيقة من عدم النشاط.',
+        'جلسة نشطة موجودة بالفعل لهذا المستخدم على جهاز آخر. سجّل الخروج أولاً من الجهاز الآخر، أو انتظر 30 دقيقة من عدم النشاط.',
       sessionReplaced: 'تم إلغاء هذه الجلسة. يرجى تسجيل الدخول مجددًا.',
       lastAttempt: 'كلمة المرور غير صحيحة. تنبيه: هذه آخر محاولة قبل قفل الحساب.',
       locked:
@@ -2252,13 +2367,17 @@ export default {
     installDismiss: 'لاحقاً',
     hideSteps: 'إخفاء الخطوات',
     installHttpHint:
-      'أول زيارة: ضع اختصار سطح المكتب (أيقونة Alwatan). يفتح عبر Wi‑Fi ثم Tailscale عند الحاجة.',
+      'أول زيارة: حمّل اختصار سطح المكتب (أيقونة Alwatan). Ethernet ثم Tailscale تلقائياً.',
     installAndroidHint:
-      'على أندرويد (Chrome): أضف الوطن إلى الشاشة الرئيسية (وليس ملف APK). نفس شبكة Wi‑Fi للخادم؛ خارج العيادة استخدم Tailscale.',
+      'على أندرويد (Chrome): أضف الوطن إلى الشاشة الرئيسية (وليس ملف APK). نفس شبكة الخادم؛ خارج العيادة استخدم Tailscale.',
     installIosHint:
       'على iPad/iPhone (Safari): أضف الوطن إلى الشاشة الرئيسية للوصول السريع.',
-    installDesktopShortcut: 'وضع الاختصار على سطح المكتب',
+    installDesktopShortcut: 'تحميل اختصار سطح المكتب',
     installAndroidShortcut: 'تحميل دليل HTML',
+    syncShortcutTitle: 'اختصار سطح مكتب جديد متاح',
+    syncShortcutHint:
+      'تغيّر عنوان الشبكة. حمّل اختصاراً جديداً (Ethernet الحالي) ثم نفّذ الملف — ستُستبدل الاختصارات القديمة.',
+    syncShortcutButton: 'تحميل الاختصار الجديد',
     androidStep1: 'افتح هذه الصفحة في Chrome (وليس متصفحاً آخر).',
     androidStep2: 'اضغط على القائمة ⋮ في أعلى اليمين.',
     androidStep3: 'اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».',
@@ -2308,7 +2427,9 @@ export default {
     Patients: 'المرضى',
     'Patient externe': 'مريض خارجي',
     'Examens & paiements': 'الفحوصات والمدفوعات',
+    'Paiement examens': 'دفع الفحوصات',
     'En attente de paiement': 'في انتظار الدفع',
+    'Ajouter examen en cours de paiement': 'إضافة فحص قيد الدفع',
     'Examens payés': 'فحوصات مدفوعة',
     Réclamations: 'الشكاوى',
     'Suivi hospitalier': 'المتابعة الاستشفائية',
@@ -2512,6 +2633,14 @@ export default {
     Gynecologie: 'أمراض النساء',
     Echographie: 'تخطيط الصدى',
     Odontologie: 'طب الأسنان',
+    'Kinesie terapie': 'العلاج الطبيعي',
+    'Kinésie terapie': 'العلاج الطبيعي',
+    Kinesitherapie: 'العلاج الطبيعي',
+    'Kinésithérapie': 'العلاج الطبيعي',
+    'Kinésithérapeute': 'أخصائي العلاج الطبيعي',
+    'Séance de kinésithérapie': 'جلسة علاج طبيعي',
+    'Chargement des dossiers…': 'جاري تحميل الملفات…',
+    'Aucun patient à afficher': 'لا يوجد مريض للعرض',
     'Chirurgie majeure': 'جراحة كبرى',
     'Chirurgie moyenne': 'جراحة متوسطة',
     'Petite chirurgie': 'جراحة صغرى',
@@ -2542,5 +2671,67 @@ export default {
     'Sélectionner un médecin…': 'اختر طبيباً…',
     'Aucun médecin lié à ce service': 'لا يوجد طبيب مرتبط بهذه الخدمة',
     'Médecin — {service}': 'الطبيب — {service}',
+    // Module médecin — pages / tableaux / boutons
+    "Patients consultés — en attente de paiement, ou clôturés aujourd'hui":
+      'مرضى تمت معاينتهم — بانتظار الدفع، أو أُغلقت ملفاتهم اليوم',
+    "Aucun patient consulté pour le moment. Les dossiers prescrits ou clôturés aujourd'hui apparaîtront ici.":
+      'لا يوجد مرضى تمت معاينتهم حالياً. ستظهر هنا الملفات الموصوفة أو المغلقة اليوم.',
+    'Aucun patient consulté pour le moment': 'لا يوجد مرضى تمت معاينتهم حالياً',
+    'Aucun patient consulté': 'لا يوجد مرضى تمت معاينتهم',
+    'Chargement des patients consultés…': 'جاري تحميل المرضى المستشارين…',
+    '{pending} en attente de paiement · {closed} clôturé(s) aujourd\'hui':
+      '{pending} بانتظار الدفع · {closed} مغلق(ة) اليوم',
+    "{n} consultation(s) clôturée(s) aujourd'hui": '{n} استشارة/استشارات مغلقة اليوم',
+    '{n} patient(s) en attente de paiement': '{n} مريض/مرضى بانتظار الدفع',
+    'Dossier mis à jour avec succès.': 'تم تحديث الملف بنجاح.',
+    'Patients transférés au laboratoire — vous pouvez prescrire des examens complémentaires':
+      'مرضى نُقلوا إلى المختبر — يمكنك وصف فحوصات إضافية',
+    'Analyses en cours': 'التحاليل الجارية',
+    'Patients en attente de résultats — visibles après validation par la comptabilité':
+      'مرضى بانتظار النتائج — تظهر بعد مصادقة المحاسبة',
+    'Aucun patient en attente de résultats laboratoire pour le moment.':
+      'لا يوجد مرضى بانتظار نتائج المختبر حالياً.',
+    'Nouveaux examens ajoutés. Les examens supplémentaires suivront le circuit paiement / laboratoire.':
+      'تمت إضافة فحوصات جديدة. ستتبع الفحوصات الإضافية مسار الدفع / المختبر.',
+    'Aucun examen à afficher': 'لا توجد فحوصات للعرض',
+    'Aucun résultat à afficher': 'لا توجد نتائج للعرض',
+    'Aucune visite en file': 'لا توجد زيارات في الطابور',
+    Arrivée: 'الوصول',
+    'Œil : consulter · Bouton Ajouter : examens complémentaires':
+      'العين: عرض · زر إضافة: فحوصات مكملة',
+    Effectuées: 'منجزة',
+    Personnaliser: 'تخصيص',
+    Jour: 'يوم',
+    'Aucune opération en attente pour le moment': 'لا توجد عمليات قيد الانتظار حالياً',
+    'Aucune opération effectuée sur la période sélectionnée':
+      'لا توجد عمليات منجزة في الفترة المحددة',
+    'Aucune part opération à percevoir pour le moment': 'لا توجد حصة عمليات مستحقة حالياً',
+    '{n} part(s) opération — % calculé sur le montant déjà encaissé (tranches incluses)':
+      '{n} حصة/حصص عملية — تُحسب النسبة على المبلغ المحصّل (بما في ذلك الأقساط)',
+    'Suivi opératoire': 'متابعة العمليات',
+    'Devis — en attente de paiement': 'عرض سعر — بانتظار الدفع',
+    'Prescrite — en attente de paiement': 'موصوفة — بانتظار الدفع',
+    "Payée — date d'opération à fixer": 'مدفوعة — تاريخ العملية لم يُحدد بعد',
+    'Programmée le {date}': 'مجدولة في {date}',
+    'Date prévue le {date}': 'التاريخ المقرر {date}',
+    'Effectuée le {date}': 'أُنجزت في {date}',
+    'Patient non encaissé': 'المريض لم يُحصّل منه',
+    'Réglée le {date}': 'سُوّيت في {date}',
+    Réglée: 'مسوّاة',
+    'En attente de règlement': 'بانتظار التسوية',
+    Assistant: 'مساعد',
+    'Dossier indisponible': 'الملف غير متاح',
+    'Résultats laboratoire introuvables.': 'نتائج المختبر غير موجودة.',
+    'Avis enregistré pour ce formulaire.': 'تم حفظ الملاحظة لهذا النموذج.',
+    "Impossible d'enregistrer l'avis.": 'تعذر حفظ الملاحظة.',
+    '{n} formulaire(s) — cliquez pour consulter': '{n} نموذج/نماذج — انقر للعرض',
+    Avis: 'ملاحظة',
+    'Avis / commentaire du médecin': 'ملاحظة / تعليق الطبيب',
+    'Interprétation des résultats, recommandations, suite à donner au patient…':
+      'تفسير النتائج، التوصيات، والمتابعة للمريض…',
+    'Dernier enregistrement :': 'آخر حفظ:',
+    "Enregistrer l'avis": 'حفظ الملاحظة',
+    'Imprimer ce formulaire': 'طباعة هذا النموذج',
+    'Commentaire à la prescription': 'تعليق الوصفة',
   },
 }

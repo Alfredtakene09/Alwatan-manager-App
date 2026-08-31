@@ -13,6 +13,7 @@ import {
 import { getDefaultRoute } from "../lib/roles.js";
 import { requireAuth } from "../middleware/auth.js";
 import { doctorCanAccessOperationsMenu } from "../lib/clinic-service-exam.js";
+import { getEffectiveHiddenUiActions } from "../lib/role-ui-settings.js";
 import {
   hasActiveConcurrentSession,
   isAccountLocked,
@@ -48,6 +49,8 @@ const passwordSchema = z.object({
 export type AuthUserPayload = SessionUser & {
   /** MEDECIN : afficher « Mes opérations » (bloc / chirurgie / chirurgien autorisé). */
   showDoctorOperations?: boolean;
+  /** Boutons UI masqués pour ce rôle (vide pour Admin / Direction). */
+  hiddenUiActions?: string[];
 };
 
 function toSessionUser(user: {
@@ -68,10 +71,17 @@ function toSessionUser(user: {
   };
 }
 
-async function toAuthUserPayload(user: SessionUser): Promise<AuthUserPayload> {
-  if (user.role !== "MEDECIN") return user;
+async function toAuthUserPayload(
+  user: SessionUser,
+  userHiddenRaw?: unknown,
+): Promise<AuthUserPayload> {
+  const hiddenUiActions = await getEffectiveHiddenUiActions(user.role, userHiddenRaw);
+  if (user.role !== "MEDECIN") {
+    return { ...user, hiddenUiActions };
+  }
   return {
     ...user,
+    hiddenUiActions,
     showDoctorOperations: await doctorCanAccessOperationsMenu(user.id),
   };
 }
@@ -189,7 +199,7 @@ router.post("/login", async (req, res) => {
 
     return res.json({
       success: true,
-      user: await toAuthUserPayload(sessionUser),
+      user: await toAuthUserPayload(sessionUser, user.hiddenUiActions),
       redirectTo: getDefaultRoute(user.role),
     });
   } catch {
@@ -234,6 +244,7 @@ router.get("/me", async (req, res) => {
         lockedAt: true,
         sessionTokenId: true,
         lastActivityAt: true,
+        hiddenUiActions: true,
       },
     });
     if (!dbUser?.active) {
@@ -278,7 +289,7 @@ router.get("/me", async (req, res) => {
     const session = toSessionUser(dbUser);
     const freshToken = await createSessionToken(session, sessionUser.sid);
     res.cookie(COOKIE_NAME, freshToken, sessionCookieOptions(req));
-    return res.json(await toAuthUserPayload(session));
+    return res.json(await toAuthUserPayload(session, dbUser.hiddenUiActions));
   } catch {
     await clearSessionCookie(req, res);
     return res.status(401).json({ error: "Session invalide", code: "SESSION_INVALID" });
@@ -356,7 +367,9 @@ router.patch("/profile", requireAuth, async (req, res) => {
       });
     }
     await attachSession(res, sessionUser, sid, req);
-    return res.json({ user: await toAuthUserPayload(sessionUser) });
+    return res.json({
+      user: await toAuthUserPayload(sessionUser, updated.hiddenUiActions),
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: error.issues[0]?.message ?? "Données invalides." });

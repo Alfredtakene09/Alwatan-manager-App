@@ -25,6 +25,7 @@ import {
 import { countLowStockProducts, listPharmacyStockAlerts } from "../lib/pharmacy-alerts.js";
 import { computePharmacyProfit } from "../lib/pharmacy-profit.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
+import { patientsWhoReceivedExamsWhere } from "../lib/patient-exam-stats.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -118,8 +119,11 @@ router.get("/reception", requireModule("reception"), async (_req, res) => {
     };
   });
 
-  const femalePatients = await prisma.patient.count({ where: { gender: "F" } });
-  const malePatients = await prisma.patient.count({ where: { gender: "M" } });
+  const [femalePatients, malePatients, examPatientsCount] = await Promise.all([
+    prisma.patient.count({ where: { gender: "F" } }),
+    prisma.patient.count({ where: { gender: "M" } }),
+    prisma.patient.count({ where: patientsWhoReceivedExamsWhere() }),
+  ]);
 
   return res.json({
     registeredToday,
@@ -134,6 +138,7 @@ router.get("/reception", requireModule("reception"), async (_req, res) => {
     hospitalizationsPending,
     femalePatients,
     malePatients,
+    examPatientsCount,
     activityLast7Days,
   });
 });

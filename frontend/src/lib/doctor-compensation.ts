@@ -73,7 +73,7 @@ export const DOCTOR_COMPENSATION_OPTIONS: {
   {
     value: 'FIXED_SALARY',
     label: 'Salaire fixe',
-    hint: 'Montant consultation saisi à la réception',
+    hint: 'Salaire mensuel + prix de consultation (optionnel)',
   },
   {
     value: 'COMBINED',
@@ -113,19 +113,21 @@ export function doctorUsesSalaryCompensation(doctor?: DoctorOption | null) {
 export function doctorRequiresConsultationFee(doctor?: DoctorOption | null) {
   if (!doctor) return true
   if (doctor.requiresConsultationFee != null) return doctor.requiresConsultationFee
-  return doctorUsesQuotaCompensation(doctor)
+  if (doctorUsesQuotaCompensation(doctor)) return true
+  // Salaire fixe : facturer dès qu’un tarif patient est renseigné
+  return (doctor.consultationTotalFcfa ?? 0) > 0
 }
 
-/** Médecin quota avec tarif consultation configuré → affichage automatique à la réception. */
+/** Médecin avec tarif consultation configuré → affichage automatique à la réception. */
 export function doctorShowsFixedConsultationPrice(doctor?: DoctorOption | null) {
-  return doctorUsesQuotaCompensation(doctor) && (doctor?.consultationTotalFcfa ?? 0) > 0
+  return (doctor?.consultationTotalFcfa ?? 0) > 0
 }
 
-/** Salaire fixe ou quota sans tarif → saisie manuelle du montant. */
+/** Quota/salaire sans tarif → saisie manuelle du montant. */
 export function doctorNeedsConsultationAmountInput(doctor?: DoctorOption | null) {
-  if (doctorIsFixedSalary(doctor)) return true
-  if (doctorUsesQuotaCompensation(doctor) && !(doctor?.consultationTotalFcfa ?? 0)) return true
-  return false
+  if (!doctor) return true
+  if ((doctor.consultationTotalFcfa ?? 0) > 0) return false
+  return doctorIsFixedSalary(doctor) || doctorUsesQuotaCompensation(doctor)
 }
 
 /** Afficher prix fixe ou champ de saisie à la réception. */
@@ -224,9 +226,40 @@ export function doctorMatchesService(
   return doctorClinicServiceNames(doctor).some((name) => name === serviceName)
 }
 
+/** Filtre médecins par id de service clinique (défaut + services liés). */
+export function doctorMatchesClinicServiceId(
+  doctor: DoctorOption | null | undefined,
+  clinicServiceId: string | null | undefined,
+) {
+  if (!clinicServiceId) return true
+  if (doctor?.clinicServices?.length) {
+    return doctor.clinicServices.some((service) => service.id === clinicServiceId)
+  }
+  return doctor?.clinicServiceId === clinicServiceId || doctor?.clinicService?.id === clinicServiceId
+}
+
+/** Tri réception : A→Z. */
+export function sortDoctorsForReception(doctors: DoctorOption[]) {
+  return [...doctors].sort((a, b) => {
+    const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
+    if (byLast !== 0) return byLast
+    return a.firstName.localeCompare(b.firstName, 'fr', { sensitivity: 'base' })
+  })
+}
+
+/** Préfère le médecin courant s’il est encore dans la liste, sinon le premier. */
+export function preferredDoctorId(
+  doctors: DoctorOption[],
+  currentId?: string | null,
+) {
+  if (currentId && doctors.some((doctor) => doctor.id === currentId)) return currentId
+  return doctors[0]?.id ?? ''
+}
+
 export function defaultConsultationAmountForDoctor(doctor?: DoctorOption | null) {
-  if (!doctor || doctorIsFixedSalary(doctor)) return 0
-  return doctor.consultationTotalFcfa ?? 0
+  if (!doctor) return 0
+  // Tarif patient configuré (quota, combiné ou salaire fixe)
+  return Math.max(0, Number(doctor.consultationTotalFcfa) || 0)
 }
 
 export function doctorQuotaHint(doctor?: DoctorOption | null, amount?: number) {

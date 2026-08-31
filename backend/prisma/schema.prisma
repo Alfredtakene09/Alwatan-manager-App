@@ -158,6 +158,8 @@ model ClinicService {
   examCatalogItems ExamCatalogItem[]
   examCatalogServiceTabs ExamCatalogServiceTab[]
   interventionTypes InterventionType[]
+  /// Visites en attente assignées à ce service (transfert inter-services)
+  assignedVisits Visit[]
 
   @@index([active, sortOrder, name])
 }
@@ -248,6 +250,8 @@ model User {
   employeeId    String              @unique
   /// Créneau caisse assigné (obligatoire pour les réceptionnistes)
   cashShiftSlot ReceptionShiftSlot?
+  /// Actions UI masquées en plus des réglages du rôle (ex. un laborantin sans impression).
+  hiddenUiActions Json               @default("[]")
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
 
@@ -377,29 +381,33 @@ model PatientDocument {
 }
 
 model Visit {
-  id                  String      @id @default(cuid())
-  patientId           String
-  status              VisitStatus @default(WAITING_CONSULTATION)
-  assignedDoctorId    String?
-  consultationFeeFcfa Int?
-  reductionFcfa       Int?        @default(0)
-  notes               String?
-  createdAt           DateTime    @default(now())
-  updatedAt           DateTime    @updatedAt
+  id                      String      @id @default(cuid())
+  patientId               String
+  status                  VisitStatus @default(WAITING_CONSULTATION)
+  assignedDoctorId        String?
+  /// Service destinataire (transfert) — visible par les médecins du service tant qu’aucun n’a démarré.
+  assignedClinicServiceId String?
+  consultationFeeFcfa     Int?
+  reductionFcfa           Int?        @default(0)
+  notes                   String?
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
 
-  patient         Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  assignedDoctor  User?            @relation("VisitAssignedDoctor", fields: [assignedDoctorId], references: [id])
-  vitalSigns      VitalSign[]
-  consultation    Consultation?
-  surgeryCase     SurgeryCase?
-  hospitalization Hospitalization?
-  invoices        Invoice[]
-  prescriptions   Prescription[]
-  documents       PatientDocument[]
-  examReclamations ExamReclamation[]
+  patient               Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  assignedDoctor        User?            @relation("VisitAssignedDoctor", fields: [assignedDoctorId], references: [id])
+  assignedClinicService  ClinicService?   @relation(fields: [assignedClinicServiceId], references: [id], onDelete: SetNull)
+  vitalSigns            VitalSign[]
+  consultation          Consultation?
+  surgeryCase           SurgeryCase?
+  hospitalization       Hospitalization?
+  invoices              Invoice[]
+  prescriptions         Prescription[]
+  documents             PatientDocument[]
+  examReclamations      ExamReclamation[]
 
   @@index([patientId])
   @@index([status])
+  @@index([assignedClinicServiceId, status])
 }
 
 model VitalSign {
@@ -1479,4 +1487,13 @@ model ClinicInfo {
   printFooter String   @default("")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+/// Overrides de visibilité des boutons UI par rôle (masquer uniquement ; défaut = rôles actuels).
+model RoleUiSettings {
+  id           String   @id @default("default")
+  /// { "GESTIONNAIRE": ["table.delete", ...], ... }
+  hiddenByRole Json     @default("{}")
+  updatedAt    DateTime @updatedAt
+  updatedById  String?
 }

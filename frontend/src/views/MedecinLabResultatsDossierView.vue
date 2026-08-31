@@ -22,6 +22,7 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiTextarea from '@/components/ui/UiTextarea.vue'
 import type { LabsResultsVisitRow } from '@/components/ui/LabsResultsDataTable.vue'
 import { useSilentRefresh } from '@/composables/useSilentRefresh'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 type LabPanelDoctorComment = {
   comment: string
@@ -50,6 +51,7 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const labPanels = useLabPanelsStore()
+const { uiText, dateTimeText } = useAppI18n()
 
 const visit = ref<LabsResultsVisitRow | null>(null)
 const panelResults = ref<DossierResponse['panelResults']>({})
@@ -186,7 +188,7 @@ async function loadDossier(opts?: { silent?: boolean }) {
     if (!opts?.silent) {
       visit.value = null
       selectPanel(null)
-      showMessage('Résultats laboratoire introuvables.', 'error')
+      showMessage(uiText('Résultats laboratoire introuvables.'), 'error')
     }
   } finally {
     if (!opts?.silent) loading.value = false
@@ -204,9 +206,9 @@ async function savePanelComment() {
     })
     panelDoctorComments.value = data.panelDoctorComments ?? {}
     syncCommentDraft(activePanel.value)
-    showMessage('Avis enregistré pour ce formulaire.')
+    showMessage(uiText('Avis enregistré pour ce formulaire.'))
   } catch {
-    showMessage("Impossible d'enregistrer l'avis.", 'error')
+    showMessage(uiText("Impossible d'enregistrer l'avis."), 'error')
   } finally {
     savingComment.value = false
   }
@@ -260,15 +262,15 @@ onMounted(async () => {
 <template>
   <div class="lab-dossier">
     <UiPageHeader
-      :title="patientLabel || 'Résultats laboratoire'"
+      :title="patientLabel || uiText('Résultats laboratoire')"
       :subtitle="
         visit
           ? `${visit.patient.code} — ${prescribedExamsPreview}`
           : loading
-            ? 'Chargement…'
+            ? uiText('Chargement…')
             : message
-              ? 'Dossier indisponible'
-              : 'Chargement…'
+              ? uiText('Dossier indisponible')
+              : uiText('Chargement…')
       "
       :icon="ClipboardList"
     >
@@ -278,10 +280,11 @@ onMounted(async () => {
           variant="outline"
           size="sm"
           :icon="Printer"
+          ui-action="export.print"
           :disabled="printingAll"
           @click="printAllPanels"
         >
-          {{ printingAll ? 'Impression…' : 'Imprimer tout le dossier' }}
+          {{ printingAll ? uiText('Impression…') : uiText('Imprimer tout le dossier') }}
         </UiButton>
         <UiButton
           v-if="visit?.patient?.id"
@@ -290,7 +293,7 @@ onMounted(async () => {
           :icon="FolderOpen"
           @click="router.push({ name: 'dossier-patient', query: { patient: visit!.patient.id } })"
         >
-          Dossier patient
+          {{ uiText('Dossier patient') }}
         </UiButton>
         <UiButton
           variant="ghost"
@@ -298,36 +301,36 @@ onMounted(async () => {
           :icon="ArrowLeft"
           @click="router.push({ name: 'medecin-labs-resultats' })"
         >
-          Retour
+          {{ uiText('Retour') }}
         </UiButton>
       </template>
     </UiPageHeader>
 
     <UiAlert v-if="message" :type="messageType" :message="message" />
 
-    <p v-if="loading" class="hint">Chargement des résultats…</p>
+    <p v-if="loading" class="hint">{{ uiText('Chargement des résultats…') }}</p>
 
     <template v-else-if="visit">
       <UiCard title="Informations patient" icon-variant="blue" class="lab-dossier__card lab-dossier__card--info">
         <dl class="info-row">
           <div class="info-row__item">
-            <dt>Matricule</dt>
+            <dt>{{ uiText('Matricule') }}</dt>
             <dd>{{ visit.patient.code }}</dd>
           </div>
           <div class="info-row__item">
-            <dt>Catégorie</dt>
+            <dt>{{ uiText('Catégorie') }}</dt>
             <dd>{{ patientCategoryLabel((visit.patient.category ?? 'STANDARD') as PatientCategory) }}</dd>
           </div>
           <div class="info-row__item">
-            <dt>Prescripteur</dt>
+            <dt>{{ uiText('Prescripteur') }}</dt>
             <dd>{{ doctorLabel }}</dd>
           </div>
           <div class="info-row__item info-row__item--exams">
-            <dt>Examens laboratoire</dt>
+            <dt>{{ uiText('Examens laboratoire') }}</dt>
             <dd class="prescribed-exams-text" :title="prescribedExamsFull">{{ prescribedExamsPreview }}</dd>
           </div>
           <div v-if="doctorComment" class="info-row__item info-row__item--full">
-            <dt>Commentaire à la prescription</dt>
+            <dt>{{ uiText('Commentaire à la prescription') }}</dt>
             <dd class="doctor-comment-preview">{{ doctorComment }}</dd>
           </div>
         </dl>
@@ -335,12 +338,19 @@ onMounted(async () => {
 
       <UiCard
         title="Résultats disponibles"
-        :description="`${panelFiles.length} formulaire(s) — cliquez pour consulter`"
+        :description="
+          uiText('{n} formulaire(s) — cliquez pour consulter').replace(
+            '{n}',
+            String(panelFiles.length),
+          )
+        "
         icon-variant="teal"
         :icon="ClipboardList"
         class="lab-dossier__card lab-dossier__card--files"
       >
-        <p v-if="!panelFiles.length" class="hint">Aucun formulaire enregistré pour ce dossier.</p>
+        <p v-if="!panelFiles.length" class="hint">
+          {{ uiText('Aucun formulaire enregistré pour ce dossier.') }}
+        </p>
 
         <div v-else class="panel-files">
           <button
@@ -358,7 +368,9 @@ onMounted(async () => {
               <span class="panel-file__label">{{ file.label }}</span>
               <span class="panel-file__meta">{{ file.dateLabel }} · {{ file.timeLabel }}</span>
             </span>
-            <span v-if="panelHasDoctorComment(file.slug)" class="panel-file__note">Avis</span>
+            <span v-if="panelHasDoctorComment(file.slug)" class="panel-file__note">{{
+              uiText('Avis')
+            }}</span>
           </button>
         </div>
       </UiCard>
@@ -406,13 +418,17 @@ onMounted(async () => {
         <section class="doctor-comment-block">
           <UiTextarea
             v-model="commentDraft"
-            label="Avis / commentaire du médecin"
-            placeholder="Interprétation des résultats, recommandations, suite à donner au patient…"
+            :label="uiText('Avis / commentaire du médecin')"
+            :placeholder="
+              uiText(
+                'Interprétation des résultats, recommandations, suite à donner au patient…',
+              )
+            "
             :rows="4"
           />
           <p v-if="activePanelComment?.updatedAt" class="doctor-comment-block__meta">
-            Dernier enregistrement :
-            {{ new Date(activePanelComment.updatedAt).toLocaleString('fr-FR') }}
+            {{ uiText('Dernier enregistrement :') }}
+            {{ dateTimeText(activePanelComment.updatedAt) }}
           </p>
         </section>
 
@@ -423,10 +439,10 @@ onMounted(async () => {
             :disabled="savingComment || !commentDraftDirty"
             @click="savePanelComment"
           >
-            {{ savingComment ? 'Enregistrement…' : "Enregistrer l'avis" }}
+            {{ savingComment ? uiText('Enregistrement…') : uiText("Enregistrer l'avis") }}
           </UiButton>
-          <UiButton variant="outline" :icon="Printer" @click="printPanel">
-            Imprimer ce formulaire
+          <UiButton variant="outline" :icon="Printer" ui-action="export.print" @click="printPanel">
+            {{ uiText('Imprimer ce formulaire') }}
           </UiButton>
         </div>
       </UiCard>

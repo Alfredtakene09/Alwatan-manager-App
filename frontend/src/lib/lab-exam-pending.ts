@@ -6,8 +6,8 @@ import type { ExamReductionsByKind, ExamsByKindBlocks } from '@/lib/exam-billing
 import { examsByKindFromLines } from '@/lib/exam-billing'
 import { translateUi } from '@/i18n/translate'
 import {
-  formatGroupedPrescribedSummary,
   countGroupedPrescribedPanels,
+  summarizePrescribedExamFieldNames,
 } from '@/lib/lab-prescribed-panels'
 
 export type LabExamLine = {
@@ -133,7 +133,7 @@ export function formatExamLinesSummary(lines: LabExamLine[]): string {
     if (!blockLines.length) return []
     // Réception / caisse : résumé compact « Laboratoire: Biochimie (1), NFS (1) »
     // — sans détail « Formulaire principal ».
-    const summary = formatGroupedPrescribedSummary(blockLines.map((line) => line.label))
+    const summary = summarizePrescribedExamFieldNames(blockLines.map((line) => line.label))
     if (summary === '—') return []
     return [`${translateUi(EXAM_KIND_LABELS[kind])}: ${summary}`]
   })
@@ -161,7 +161,7 @@ export function formatExamLinesSummaryShort(
   const parts = EXAM_KIND_ORDER.flatMap((kind) => {
     const blockLines = blocks[kind]?.lines ?? []
     if (!blockLines.length) return []
-    const summary = formatGroupedPrescribedSummary(blockLines.map((line) => line.label))
+    const summary = summarizePrescribedExamFieldNames(blockLines.map((line) => line.label))
     if (summary === '—') return []
     return [
       `${translateUi(EXAM_KIND_LABELS[kind])}: ${truncateExamText(summary, maxLabelChars * 2)}`,

@@ -18,6 +18,7 @@
     "db:seed:demo": "SEED_DEMO_RESET=1 npm run db:seed",
     "db:reset": "tsx scripts/reset-database.ts",
     "db:purge-patients-expenses": "tsx scripts/purge-patients-and-expenses.ts",
+    "db:reset-operational": "tsx scripts/reset-operational-data.ts",
     "db:setup": "npx prisma db push && npm run db:seed",
     "db:docker:up": "docker compose -f ../docker-compose.yml up -d postgres",
     "db:docker:down": "docker compose -f ../docker-compose.yml down",

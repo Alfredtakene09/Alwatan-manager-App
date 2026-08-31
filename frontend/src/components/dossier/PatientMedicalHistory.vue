@@ -74,7 +74,7 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const labPanels = useLabPanelsStore()
-const { uiText, dateText, timeText, localeCode, t } = useAppI18n()
+const { uiText, examNameText, dateText, timeText, localeCode, t } = useAppI18n()
 const expandedVisitId = ref<string | null>(null)
 /** Un seul formulaire labo déplié à la fois (compact, surtout tablette). */
 const expandedPanelKey = ref<string | null>(null)
@@ -191,7 +191,7 @@ function panelSummary(entry: MedicalHistoryEntry, slug: LabPanelSlug) {
   void localeCode.value
   const parts = panelSections(entry, slug).flatMap((section) =>
     section.fields.map((field) => {
-      const label = uiText(field.label)
+      const label = examNameText(field.label)
       const unit = field.unit && field.value ? ` ${field.unit}` : ''
       return `${label}: ${field.value || '—'}${unit}`
     }),
@@ -316,7 +316,7 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
               v-else-if="entry.labPanels.length && expandedVisitId !== entry.visitId"
               class="timeline-card__preview"
             >
-              {{ entry.labPanels.map((panel) => uiText(panel.label)).join(' · ') }}
+              {{ entry.labPanels.map((panel) => examNameText(panel.label)).join(' · ') }}
             </p>
           </button>
 
@@ -398,7 +398,7 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
                     class="panel-card__chevron"
                   />
                   <FileText :size="14" />
-                  <span class="panel-card__title">{{ uiText(panel.label) }}</span>
+                  <span class="panel-card__title">{{ examNameText(panel.label) }}</span>
                   <span class="panel-card__count">{{ panel.filledCount }}</span>
                 </button>
                 <p
@@ -413,10 +413,10 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
                     :key="section.title ?? 'default'"
                     class="result-section"
                   >
-                    <h5 v-if="section.title">{{ uiText(section.title) }}</h5>
+                    <h5 v-if="section.title">{{ examNameText(section.title) }}</h5>
                     <dl class="result-grid">
                       <template v-for="field in section.fields" :key="field.key">
-                        <dt>{{ uiText(field.label) }}</dt>
+                        <dt>{{ examNameText(field.label) }}</dt>
                         <dd>
                           {{ field.value || '—' }}
                           <span v-if="field.unit && field.value" class="unit">
@@ -448,7 +448,7 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
                   class="mini-chip"
                   :title="formatPanelGroupDetails(group)"
                 >
-                  {{ uiText(group.panel) }} ({{ group.items.length }})
+                  {{ examNameText(group.panel) }} ({{ group.items.length }})
                 </span>
               </div>
             </div>

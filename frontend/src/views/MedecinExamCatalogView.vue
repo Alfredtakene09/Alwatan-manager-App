@@ -42,7 +42,7 @@ type TabId = 'exams' | 'operations'
 
 const route = useRoute()
 const router = useRouter()
-const { uiText, localeCode } = useAppI18n()
+const { uiText, examNameText, localeCode } = useAppI18n()
 
 function tabFromQuery(): TabId {
   return route.query.tab === 'operations' ? 'operations' : 'exams'
@@ -109,9 +109,9 @@ const tableRows = computed(() => {
   localeCode.value
   return filteredItems.value.map((item) => ({
     id: item.id,
-    label: uiText(item.label),
+    label: examNameText(item.label),
     code: item.code,
-    category: uiText(item.category || '—'),
+    category: examNameText(item.category || '—'),
     price: formatFcfa(item.priceFcfa),
     priceSort: item.priceFcfa,
     statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),

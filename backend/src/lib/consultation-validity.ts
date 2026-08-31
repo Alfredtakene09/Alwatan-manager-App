@@ -83,9 +83,11 @@ export function computeConsultationRenewalFee(input: {
   const renewalPolicy =
     input.doctor.employee?.consultationRenewalPolicy ?? ConsultationRenewalPolicy.FULL;
 
-  const baseAmountFcfa = doctorRequiresConsultationFee(input.doctor)
-    ? resolveDoctorConsultationAmount(input.doctor, input.requestedAmount)
-    : Math.max(0, input.requestedAmount ?? 0);
+  // Toujours résoudre via le tarif médecin (quota ou salaire fixe avec prix configuré).
+  const baseAmountFcfa = resolveDoctorConsultationAmount(
+    input.doctor,
+    input.requestedAmount,
+  );
 
   if (isExemptPatient(input.category)) {
     return {

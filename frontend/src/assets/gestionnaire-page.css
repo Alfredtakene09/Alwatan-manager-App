@@ -7,10 +7,18 @@
 .gestionnaire-page .kpi-grid,
 .gestionnaire-page .stats-grid,
 .gestionnaire-page .cash-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
   gap: 0.4rem;
   flex-shrink: 0;
+}
+
+.gestionnaire-page .kpi-grid > *,
+.gestionnaire-page .stats-grid > *,
+.gestionnaire-page .cash-cards > * {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .gestionnaire-page .ui-card--table-panel {

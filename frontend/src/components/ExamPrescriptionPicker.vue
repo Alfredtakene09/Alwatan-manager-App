@@ -47,7 +47,7 @@ const emit = defineEmits<{
   'update:hospitalisationDays': [value: number | null]
 }>()
 
-const { uiText, localeCode } = useAppI18n()
+const { uiText, examNameText, localeCode } = useAppI18n()
 const labPanels = useLabPanelsStore()
 
 const search = ref('')
@@ -187,7 +187,7 @@ watch(
 function textMatchesQuery(text: string, q: string) {
   if (!q) return true
   const fr = text.toLowerCase()
-  const local = uiText(text).toLowerCase()
+  const local = examNameText(text).toLowerCase()
   return fr.includes(q) || local.includes(q)
 }
 
@@ -842,7 +842,7 @@ function onCatalogInvalidate() {
           :key="group.category"
           class="exam-picker__chip-group"
         >
-          <h4 class="exam-picker__chip-group-label">{{ uiText(group.category) }}</h4>
+          <h4 class="exam-picker__chip-group-label">{{ examNameText(group.category) }}</h4>
           <div class="exam-picker__chip-stack">
             <div
               v-for="exam in group.exams"
@@ -874,8 +874,8 @@ function onCatalogInvalidate() {
                   "
                   :aria-label="
                     exam.expandable
-                      ? `${uiText(exam.label)} — ${uiText('Tout sélectionner / tout retirer')}`
-                      : uiText(exam.label)
+                      ? `${examNameText(exam.label)} — ${uiText('Tout sélectionner / tout retirer')}`
+                      : examNameText(exam.label)
                   "
                   @click="togglePanelAll(exam)"
                 >
@@ -888,7 +888,7 @@ function onCatalogInvalidate() {
                   :aria-expanded="exam.expandable ? exam.expanded : undefined"
                   @click="onChipExpand(exam)"
                 >
-                  <span class="exam-picker__chip-label">{{ uiText(exam.label) }}</span>
+                  <span class="exam-picker__chip-label">{{ examNameText(exam.label) }}</span>
                   <span
                     v-if="exam.selectedCount > 0"
                     class="exam-picker__chip-count-badge"
@@ -945,7 +945,7 @@ function onCatalogInvalidate() {
                         "
                         @change="toggleSectionForms(exam.label, section.fields)"
                       />
-                      <span>{{ uiText(section.title) }}</span>
+                      <span>{{ examNameText(section.title) }}</span>
                     </label>
                     <ul class="exam-picker__forms-list">
                       <li v-for="item in section.fields" :key="item.key">
@@ -965,7 +965,7 @@ function onCatalogInvalidate() {
                             :disabled="!item.hasUnitPrice"
                             @change="toggleFormItem(exam.label, item)"
                           />
-                          <span>{{ uiText(item.label) }}</span>
+                          <span>{{ examNameText(item.label) }}</span>
                         </label>
                       </li>
                     </ul>
@@ -1024,7 +1024,7 @@ function onCatalogInvalidate() {
               :key="group.category"
               class="exam-picker__group"
             >
-              <div class="exam-picker__group-label">{{ uiText(group.category) }}</div>
+              <div class="exam-picker__group-label">{{ examNameText(group.category) }}</div>
               <button
                 v-for="exam in group.exams"
                 :key="exam.id"
@@ -1035,7 +1035,7 @@ function onCatalogInvalidate() {
               >
                 <span class="exam-picker__option-main">
                   <span class="exam-picker__option-num">{{ exam.number }}</span>
-                  <span class="exam-picker__option-label">{{ uiText(exam.label) }}</span>
+                  <span class="exam-picker__option-label">{{ examNameText(exam.label) }}</span>
                 </span>
                 <Plus :size="15" />
               </button>
@@ -1060,7 +1060,7 @@ function onCatalogInvalidate() {
         <ul class="exam-picker__cart-list">
           <li v-for="(exam, index) in cart" :key="exam" class="exam-picker__cart-item">
             <span class="exam-picker__cart-num">{{ index + 1 }}</span>
-            <span class="exam-picker__cart-label">{{ uiText(exam) }}</span>
+            <span class="exam-picker__cart-label">{{ examNameText(exam) }}</span>
             <button
               type="button"
               class="exam-picker__cart-remove"

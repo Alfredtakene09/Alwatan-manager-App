@@ -95,8 +95,21 @@ function Get-AlwatanNetworkIps {
 }
 
 function Get-LocalLanIpv4 {
-    # IP locale Wi-Fi/Ethernet uniquement — jamais Tailscale (les clients du même réseau
-    # se connectent directement avec cette adresse, sans mesh).
+    # Priorite : Ethernet cable (DHCP auto OK), puis autres LAN — jamais Tailscale.
+    $eth = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.IPAddress -notlike '127.*' -and
+            $_.IPAddress -notlike '169.254.*' -and
+            $_.IPAddress -notlike '192.168.137.*' -and
+            $_.InterfaceAlias -match '(?i)^Ethernet' -and
+            $_.InterfaceAlias -notmatch '(?i)tailscale|bluetooth|virtual' -and
+            $_.AddressState -eq 'Preferred' -and
+            -not (Test-AlwatanTailscaleIpv4 $_.IPAddress)
+        } |
+        Sort-Object InterfaceMetric |
+        Select-Object -First 1 -ExpandProperty IPAddress
+    if ($eth) { return $eth }
+
     $ips = Get-AlwatanNetworkIps
     foreach ($ip in $ips) {
         if ($ip -eq '192.168.137.1') { continue }
@@ -189,7 +202,7 @@ function Get-AlwatanServerCandidates {
         [void]$hosts.Add($Value)
     }
 
-    # Wi-Fi / Ethernet d'abord, puis Tailscale (même fichier de config)
+    # Ethernet/LAN d'abord, puis Tailscale (meme fichier de config)
     Add-HostCandidate (Read-AlwatanServerIp)
     Add-HostCandidate (Read-AlwatanTailscaleIp)
     foreach ($targetHost in $ExtraHosts) { Add-HostCandidate $targetHost }
@@ -199,7 +212,105 @@ function Get-AlwatanServerCandidates {
     Add-HostCandidate (Get-LocalLanIpv4)
     Add-HostCandidate (Get-TailscaleIpv4)
 
+    # Voisins ARP deja connus sur le LAN (decouverte rapide sans scan complet)
+    $neighbors = Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.State -match 'Reachable|Stale|Permanent' -and
+            $_.IPAddress -match '^\d+\.\d+\.\d+\.\d+$' -and
+            $_.IPAddress -notlike '127.*' -and
+            $_.IPAddress -notlike '169.254.*' -and
+            -not (Test-AlwatanTailscaleIpv4 $_.IPAddress)
+        } |
+        Select-Object -ExpandProperty IPAddress -Unique
+    foreach ($n in $neighbors) { Add-HostCandidate $n }
+
     return ,$hosts
+}
+
+# Decouverte auto du serveur Alwatan sur le meme sous-reseau Ethernet (DHCP).
+function Find-AlwatanServerOnEthernetSubnet {
+    param([int]$Port = 4000)
+
+    $local = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.IPAddress -notlike '127.*' -and
+            $_.IPAddress -notlike '169.254.*' -and
+            $_.AddressState -eq 'Preferred' -and
+            $_.InterfaceAlias -notmatch '(?i)tailscale|bluetooth|virtual' -and
+            -not (Test-AlwatanTailscaleIpv4 $_.IPAddress)
+        } |
+        Sort-Object @{ Expression = { if ($_.InterfaceAlias -match '(?i)^Ethernet') { 0 } else { 1 } } }, InterfaceMetric |
+        Select-Object -First 1
+    if (-not $local) { return $null }
+
+    $parts = $local.IPAddress.Split('.')
+    if ($parts.Count -ne 4) { return $null }
+    $prefix = "{0}.{1}.{2}" -f $parts[0], $parts[1], $parts[2]
+    $selfIp = $local.IPAddress
+
+    $priority = [System.Collections.Generic.List[string]]::new()
+    $cfg = Read-AlwatanServerIp
+    if ($cfg) { [void]$priority.Add($cfg) }
+    $gw = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+        Where-Object { $_.NextHop -and $_.NextHop -ne '0.0.0.0' } |
+        Sort-Object RouteMetric |
+        Select-Object -First 1 -ExpandProperty NextHop)
+    if ($gw) { [void]$priority.Add($gw) }
+    Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.IPAddress -like "$prefix.*" -and
+            $_.State -match 'Reachable|Stale|Permanent'
+        } |
+        ForEach-Object { [void]$priority.Add($_.IPAddress) }
+
+    $seen = @{}
+    foreach ($ip in $priority) {
+        if (-not $ip -or $seen.ContainsKey($ip) -or $ip -eq $selfIp) { continue }
+        $seen[$ip] = $true
+        if (Test-AlwatanApiReachable -HostName $ip -Port $Port -TimeoutSec 1) {
+            return $ip
+        }
+    }
+
+    # Scan parallele rapide du /24 (pool de connexions TCP)
+    $ips = 1..254 | ForEach-Object { "$prefix.$_" } | Where-Object { $_ -ne $selfIp -and -not $seen.ContainsKey($_) }
+    $pool = [runspacefactory]::CreateRunspacePool(1, 40)
+    $pool.Open()
+    $script = {
+        param($HostIp, $PortNum)
+        try {
+            $client = New-Object System.Net.Sockets.TcpClient
+            $iar = $client.BeginConnect($HostIp, $PortNum, $null, $null)
+            if (-not $iar.AsyncWaitHandle.WaitOne(200, $false)) {
+                $client.Close()
+                return $null
+            }
+            $client.EndConnect($iar)
+            $client.Close()
+            return $HostIp
+        } catch { return $null }
+    }
+    $handles = foreach ($ip in $ips) {
+        $ps = [powershell]::Create().AddScript($script).AddArgument($ip).AddArgument($Port)
+        $ps.RunspacePool = $pool
+        [pscustomobject]@{ Pipe = $ps; Handle = $ps.BeginInvoke() }
+    }
+    $found = $null
+    try {
+        foreach ($h in $handles) {
+            $result = $h.Pipe.EndInvoke($h.Handle)
+            $h.Pipe.Dispose()
+            if ($result -and -not $found) {
+                if (Test-AlwatanApiReachable -HostName $result -Port $Port -TimeoutSec 1) {
+                    $found = $result
+                }
+            }
+        }
+    } finally {
+        $pool.Close()
+        $pool.Dispose()
+    }
+    return $found
 }
 
 function Test-AlwatanApi {

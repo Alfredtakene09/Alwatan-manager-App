@@ -27,9 +27,11 @@ import {
   Building2,
   Warehouse,
   Hospital,
+  Plus,
 } from '@lucide/vue'
 import type { AppUserRole } from './roles'
 import { canAccessModule, canManageLabStock, canManagePharmacyCatalog } from './roles'
+import { isUiActionAllowed } from './ui-actions'
 import {
   EXAM_CATALOG_KIND_CONFIG,
   findExamCatalogKindFromPath,
@@ -48,6 +50,8 @@ export type NavChildItem = {
   pharmacyCatalog?: boolean
   /** Stock laboratoire — gestionnaire & Direction uniquement */
   labStock?: boolean
+  /** Action UI granulaire (onglet Boutons) — masque l’entrée si décochée. */
+  uiAction?: string
   /** Si défini, n’afficher que pour ces rôles (en plus du module). */
   roles?: AppUserRole[]
   children?: NavChildItem[]
@@ -64,6 +68,8 @@ export type NavItem = {
   /** Catégories / fournisseurs pharmacie — admin & gestionnaire uniquement */
   pharmacyCatalog?: boolean
   labStock?: boolean
+  /** Action UI granulaire (onglet Boutons) — masque l’entrée si décochée. */
+  uiAction?: string
   /** MEDECIN : visible seulement si lié au bloc / chirurgie / types d’opération. */
   doctorOperations?: boolean
   children?: NavChildItem[]
@@ -204,6 +210,7 @@ const laboratoireNavChildren: NavChildItem[] = [
     icon: ClipboardList,
     module: 'laboratoire',
     description: 'Créer et modifier les formulaires de résultats',
+    uiAction: 'lab.result_forms',
   },
   {
     to: '/laboratoire/stock',
@@ -357,6 +364,36 @@ const directionOperationalNav: NavSection[] = [
         ],
       },
       {
+        label: 'Paiement examens',
+        icon: FlaskConical,
+        module: 'comptabilite',
+        uiAction: 'comptabilite.exam_payments',
+        children: [
+          {
+            to: '/comptabilite/examens-payes',
+            label: 'Examens payés',
+            icon: CheckCircle2,
+            module: 'comptabilite',
+            uiAction: 'comptabilite.exam_payments',
+          },
+          {
+            to: '/comptabilite/examens-payes/reclamations',
+            label: 'Réclamations',
+            icon: ClipboardList,
+            module: 'comptabilite',
+            uiAction: 'comptabilite.exam_payments',
+          },
+          {
+            to: '/comptabilite/en-attente-paiement',
+            label: 'Ajouter examen en cours de paiement',
+            icon: Plus,
+            module: 'comptabilite',
+            description: 'Examens prescrits à encaisser',
+            uiAction: 'comptabilite.exam_payments',
+          },
+        ],
+      },
+      {
         label: 'Comptabilité',
         icon: Receipt,
         module: 'comptabilite',
@@ -367,6 +404,7 @@ const directionOperationalNav: NavSection[] = [
             icon: Banknote,
             module: 'comptabilite',
             description: "Vue d'ensemble, files à encaisser et historique",
+            uiAction: 'comptabilite.encaissements',
           },
           {
             to: '/gestionnaire/livre-journal',
@@ -374,6 +412,7 @@ const directionOperationalNav: NavSection[] = [
             icon: FileText,
             module: 'comptabilite',
             description: 'Livre journal et historique des journées',
+            uiAction: 'comptabilite.journal',
           },
           {
             to: '/admin/depenses',
@@ -381,6 +420,7 @@ const directionOperationalNav: NavSection[] = [
             icon: Receipt,
             module: 'admin',
             badgeKey: 'depenses',
+            uiAction: 'comptabilite.depenses',
           },
           {
             to: '/admin/salaires',
@@ -388,24 +428,14 @@ const directionOperationalNav: NavSection[] = [
             icon: Coins,
             module: 'admin',
             badgeKey: 'salaires',
+            uiAction: 'comptabilite.salaires',
           },
           {
             to: '/factures',
             label: 'Factures',
             icon: FileText,
             module: 'factures',
-          },
-          {
-            to: '/comptabilite/examens-payes',
-            label: 'Examens payés',
-            icon: CheckCircle2,
-            module: 'comptabilite',
-          },
-          {
-            to: '/comptabilite/examens-payes/reclamations',
-            label: 'Réclamations',
-            icon: ClipboardList,
-            module: 'comptabilite',
+            uiAction: 'comptabilite.factures',
           },
         ],
       },
@@ -414,6 +444,13 @@ const directionOperationalNav: NavSection[] = [
         icon: BedDouble,
         module: 'reception',
         children: [
+          {
+            to: '/dossier-patient',
+            label: 'Dossiers patients',
+            icon: FolderOpen,
+            module: 'dossier-patient',
+            description: 'Patients consultés par les médecins',
+          },
           {
             to: '/reception/operations-attente',
             label: 'Opérations en attente',
@@ -432,6 +469,14 @@ const directionOperationalNav: NavSection[] = [
             icon: BedDouble,
             module: 'hospitalisation',
           },
+          {
+            to: '/bloc-salles',
+            label: 'Bloc & salles',
+            icon: Scissors,
+            module: 'bloc-salles',
+            description: 'Ajouter ou modifier les chambres',
+            uiAction: 'hospitalisation.rooms',
+          },
         ],
       },
     ],
@@ -445,7 +490,7 @@ const parametresChildren = [
     label: 'Infos clinique',
     icon: Hospital,
     module: 'admin',
-    roles: ['ADMIN', 'GESTIONNAIRE'] as AppUserRole[],
+    roles: ['ADMIN', 'COMPTABLE'] as AppUserRole[],
     description: 'Nom, adresse, contact et infos fiscales pour les impressions',
   },
   {
@@ -467,6 +512,14 @@ const directionAdminNav: NavSection[] = [
   {
     label: 'Clinique',
     items: [
+      {
+        to: '/bloc-salles',
+        label: 'Bloc & salles',
+        icon: Scissors,
+        module: 'bloc-salles',
+        description: 'Gestion des chambres et du bloc opératoire',
+        uiAction: 'hospitalisation.rooms',
+      },
       {
         label: 'Supervision',
         icon: Stethoscope,
@@ -490,12 +543,6 @@ const directionAdminNav: NavSection[] = [
             label: 'Hospitalisation',
             icon: BedDouble,
             module: 'hospitalisation',
-          },
-          {
-            to: '/bloc-salles',
-            label: 'Bloc & salles',
-            icon: Scissors,
-            module: 'bloc-salles',
           },
         ],
       },
@@ -523,18 +570,21 @@ const directionAdminNav: NavSection[] = [
         icon: Scissors,
         module: 'comptabilite',
         description: 'Types d’opération, tarifs et parts médecins',
+        uiAction: 'catalog.operation_types',
       },
       {
         to: '/comptabilite/types-examen/examen',
         label: "Types d'examen",
         icon: FlaskConical,
         module: 'comptabilite',
+        uiAction: 'catalog.exam_types',
       },
       {
         to: '/admin/services',
         label: 'Services',
         icon: Building2,
         module: 'utilisateurs',
+        uiAction: 'catalog.services',
       },
       {
         label: 'Paramètres',
@@ -556,7 +606,13 @@ const soignantNav: NavSection[] = [
   {
     items: [
       { to: '/bloc-salles/tableau-de-bord', label: 'Tableau de bord', icon: LayoutDashboard, module: 'bloc-salles', primary: true },
-      { to: '/bloc-salles', label: 'Bloc & Salles', icon: BedDouble, module: 'bloc-salles' },
+      {
+        to: '/bloc-salles',
+        label: 'Bloc & Salles',
+        icon: BedDouble,
+        module: 'bloc-salles',
+        uiAction: 'hospitalisation.rooms',
+      },
     ],
   },
 ]
@@ -631,27 +687,33 @@ const SIDEBAR_TITLES: Record<AppUserRole, string> = {
 function filterNavChild(
   child: NavChildItem,
   role: AppUserRole,
-  options?: { showDoctorOperations?: boolean },
+  options?: { showDoctorOperations?: boolean; hiddenUiActions?: string[] },
 ): NavChildItem | null {
+  const navUser = { role, hiddenUiActions: options?.hiddenUiActions }
   if (child.roles && !child.roles.includes(role)) return null
+  if (child.uiAction && !isUiActionAllowed(navUser, child.uiAction)) return null
   if (hasNavChildChildren(child)) {
     const children = child.children
       .map((nested) => filterNavChild(nested, role, options))
       .filter((nested): nested is NavChildItem => nested !== null)
     if (!children.length) return null
     if (child.labStock) {
-      if (!canManageLabStock(role)) return null
+      if (!canManageLabStock(role) || !isUiActionAllowed(navUser, 'lab.stock')) return null
       return { ...child, children }
     }
-    if (child.pharmacyCatalog && !canManagePharmacyCatalog(role)) return null
+    if (child.pharmacyCatalog && (!canManagePharmacyCatalog(role) || !isUiActionAllowed(navUser, 'pharmacie.catalog'))) {
+      return null
+    }
     if (!canAccessModule(role, child.module)) return null
     return { ...child, children }
   }
   if (!child.to) return null
   if (child.labStock) {
-    return canManageLabStock(role) ? child : null
+    return canManageLabStock(role) && isUiActionAllowed(navUser, 'lab.stock') ? child : null
   }
-  if (child.pharmacyCatalog && !canManagePharmacyCatalog(role)) return null
+  if (child.pharmacyCatalog && (!canManagePharmacyCatalog(role) || !isUiActionAllowed(navUser, 'pharmacie.catalog'))) {
+    return null
+  }
   if (!canAccessModule(role, child.module)) return null
   return child
 }
@@ -659,27 +721,33 @@ function filterNavChild(
 function filterNavItem(
   item: NavItem,
   role: AppUserRole,
-  options?: { showDoctorOperations?: boolean },
+  options?: { showDoctorOperations?: boolean; hiddenUiActions?: string[] },
 ): NavItem | null {
+  const navUser = { role, hiddenUiActions: options?.hiddenUiActions }
   if (item.doctorOperations && !options?.showDoctorOperations) return null
+  if (item.uiAction && !isUiActionAllowed(navUser, item.uiAction)) return null
   if (hasNavChildren(item)) {
     const children = item.children
       .map((child) => filterNavChild(child, role, options))
       .filter((child): child is NavChildItem => child !== null)
     if (!children.length) return null
     if (item.labStock) {
-      if (!canManageLabStock(role)) return null
+      if (!canManageLabStock(role) || !isUiActionAllowed(navUser, 'lab.stock')) return null
       return { ...item, children }
     }
-    if (item.pharmacyCatalog && !canManagePharmacyCatalog(role)) return null
+    if (item.pharmacyCatalog && (!canManagePharmacyCatalog(role) || !isUiActionAllowed(navUser, 'pharmacie.catalog'))) {
+      return null
+    }
     if (!canAccessModule(role, item.module)) return null
     return { ...item, children }
   }
   if (!item.to) return null
   if (item.labStock) {
-    return canManageLabStock(role) ? item : null
+    return canManageLabStock(role) && isUiActionAllowed(navUser, 'lab.stock') ? item : null
   }
-  if (item.pharmacyCatalog && !canManagePharmacyCatalog(role)) return null
+  if (item.pharmacyCatalog && (!canManagePharmacyCatalog(role) || !isUiActionAllowed(navUser, 'pharmacie.catalog'))) {
+    return null
+  }
   if (!canAccessModule(role, item.module)) return null
   return item
 }
@@ -687,7 +755,7 @@ function filterNavItem(
 function filterSections(
   sections: NavSection[],
   role: AppUserRole,
-  options?: { showDoctorOperations?: boolean },
+  options?: { showDoctorOperations?: boolean; hiddenUiActions?: string[] },
 ): NavSection[] {
   return sections
     .map((section) => ({
@@ -701,7 +769,7 @@ function filterSections(
 
 export function getNavigation(
   role: AppUserRole,
-  options?: { showDoctorOperations?: boolean },
+  options?: { showDoctorOperations?: boolean; hiddenUiActions?: string[] },
 ): NavConfig {
   const sections = filterSections(NAV_BY_ROLE[role] ?? [], role, options)
   return {

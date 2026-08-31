@@ -34,7 +34,9 @@ async function submit() {
         typeof e.response?.data?.error === 'string' ? e.response.data.error : ''
       if (code === 'ACCOUNT_LOCKED') {
         error.value = apiMsg || t('login.errors.locked')
-      } else if (code === 'SESSION_ACTIVE' || e.response?.status === 409) {
+      } else if (code === 'SESSION_ACTIVE') {
+        error.value = t('login.errors.sessionActive')
+      } else if (e.response?.status === 409) {
         error.value = apiMsg || t('login.errors.sessionActive')
       } else if (code === 'LAST_ATTEMPT') {
         error.value = apiMsg || t('login.errors.lastAttempt')

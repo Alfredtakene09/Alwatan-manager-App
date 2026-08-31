@@ -23,6 +23,11 @@ export function formatFcfa(amount: number): string {
   return ltrIsolate(`${formatDigitsRaw(amount)} FCFA`)
 }
 
+/** Montant compact pour tickets thermiques (ex. pharmacie). */
+export function formatFcfaShort(amount: number): string {
+  return ltrIsolate(`${formatDigitsRaw(amount)} F`)
+}
+
 /** Montant sans suffixe (cartes KPI, prévisualisations compactes). */
 export function formatFcfaCompact(amount: number): string {
   return formatFcfaDigits(amount)

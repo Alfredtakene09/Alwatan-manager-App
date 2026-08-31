@@ -76,10 +76,7 @@ function resolveAccessBases(req: Request): {
     if (!all.includes(value)) all.push(value);
   };
 
-  // Wi‑Fi puis hotspot puis Tailscale (jamais Tailscale en premier)
-  push(wifi);
-  push(hotspot);
-  push(tailscale);
+  // Ethernet/LAN demandé en premier (IP actuelle de la requête), puis interfaces locales, puis Tailscale
   if (requestBase) {
     try {
       const reqHost = new URL(requestBase).hostname;
@@ -90,6 +87,9 @@ function resolveAccessBases(req: Request): {
       push(requestBase);
     }
   }
+  push(wifi);
+  push(hotspot);
+  push(tailscale);
 
   if (all.length === 0) {
     const fallbackIp = getLanIpv4() ?? getTailscaleIpv4() ?? "127.0.0.1";
@@ -289,14 +289,19 @@ function buildAndroidShortcutHtml(opts: {
 </html>`;
 }
 
-/** Lanceur client : Wi‑Fi d’abord, Tailscale en secours (un seul raccourci). */
+/** Révision du lanceur Bureau — incrémenter pour proposer un nouveau téléchargement. */
+const LAUNCHER_REVISION = "2026-08-27-shortcut-fix2";
+
+/** Lanceur client : Ethernet/LAN d’abord, Tailscale en secours (un seul raccourci). */
 function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
   const wifi = wifiUrl.replace(/'/g, "''");
   const ts = tailscaleUrl.replace(/'/g, "''");
+  const rev = LAUNCHER_REVISION.replace(/'/g, "''");
   return [
     "$ErrorActionPreference = 'Continue'",
     `$wifi = '${wifi}'`,
     `$ts = '${ts}'`,
+    `$launcherRevision = '${rev}'`,
     "",
     "function Test-AlwatanUrl([string]$Url) {",
     "  if (-not $Url) { return $false }",
@@ -317,11 +322,49 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "  } catch { return $false }",
     "}",
     "",
+    "function Sync-AlwatanLauncherFromServer([string]$BaseUrl) {",
+    "  if (-not $BaseUrl) { return }",
+    "  try {",
+    "    $base = $BaseUrl.TrimEnd('/')",
+    "    $info = Invoke-RestMethod -Uri ($base + '/api/client-setup/info?_=' + [guid]::NewGuid().ToString('N')) -TimeoutSec 4",
+    "    if ($info.wifiUrl) { $script:wifi = [string]$info.wifiUrl }",
+    "    if ($null -ne $info.tailscaleUrl) { $script:ts = [string]$info.tailscaleUrl }",
+    "    $store = Join-Path $env:LOCALAPPDATA 'CliniqueAlwatan'",
+    "    if (-not (Test-Path -LiteralPath $store)) { New-Item -ItemType Directory -Path $store -Force | Out-Null }",
+    "    $cfg = Join-Path $store 'alwatan-server.txt'",
+    "    try {",
+    "      $wifiHost = ([uri]$script:wifi).Host",
+    "      $lines = @('SERVER_IP=' + $wifiHost)",
+    "      if ($script:ts) {",
+    "        try { $tsHost = ([uri]$script:ts).Host; if ($tsHost -and $tsHost -ne $wifiHost) { $lines += ('TAILSCALE_IP=' + $tsHost) } } catch {}",
+    "      }",
+    '      [System.IO.File]::WriteAllText($cfg, (($lines -join "`r`n") + "`r`n"), [System.Text.UTF8Encoding]::new($false))',
+    "    } catch {}",
+    "    $out = Join-Path $store 'lancer-alwatan-bureau.ps1'",
+    "    $tmp = $out + '.new'",
+    "    Invoke-WebRequest -Uri ($base + '/api/client-setup/client-launcher.ps1?_=' + [guid]::NewGuid().ToString('N')) -OutFile $tmp -UseBasicParsing -TimeoutSec 8",
+    "    if ((Get-Item -LiteralPath $tmp).Length -gt 200) { Move-Item -LiteralPath $tmp -Destination $out -Force }",
+    "    $vbs = Join-Path $store 'lancer-alwatan-bureau.vbs'",
+    "    try {",
+    "      $vbsTmp = $vbs + '.new'",
+    "      Invoke-WebRequest -Uri ($base + '/api/client-setup/client-launcher.vbs?_=' + [guid]::NewGuid().ToString('N')) -OutFile $vbsTmp -UseBasicParsing -TimeoutSec 8",
+    "      if ((Get-Item -LiteralPath $vbsTmp).Length -gt 20) { Move-Item -LiteralPath $vbsTmp -Destination $vbs -Force }",
+    "    } catch {}",
+    "    try {",
+    "      $boot = Join-Path $store 'bootstrap-alwatan.ps1'",
+    "      $bootTmp = $boot + '.new'",
+    "      Invoke-WebRequest -Uri ($base + '/api/client-setup/bootstrap-alwatan.ps1?_=' + [guid]::NewGuid().ToString('N')) -OutFile $bootTmp -UseBasicParsing -TimeoutSec 8",
+    "      if ((Get-Item -LiteralPath $bootTmp).Length -gt 50) { Move-Item -LiteralPath $bootTmp -Destination $boot -Force }",
+    "    } catch {}",
+    "  } catch {}",
+    "}",
+    "",
     "function Open-AlwatanUrl([string]$Url) {",
     "  if (-not $Url) { return }",
     "  $openUrl = $Url",
     "  try {",
     "    $base = $Url.TrimEnd('/')",
+    "    Sync-AlwatanLauncherFromServer $base",
     "    $ver = Invoke-RestMethod -Uri ($base + '/api/app-version?_=' + [guid]::NewGuid().ToString('N')) -TimeoutSec 3",
     "    if ($ver -and $ver.buildId) {",
     "      $q = [uri]::EscapeDataString([string]$ver.buildId)",
@@ -420,15 +463,49 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
   ].join("\r\n");
 }
 
-function buildSilentVbs(): string {
+/** Bootstrap Bureau : récupère le lanceur à jour (Wi‑Fi puis Tailscale), puis l’exécute. */
+function buildBootstrapPs1(wifiUrl: string, tailscaleUrl: string): string {
+  const wifi = (wifiUrl || "").replace(/'/g, "''").replace(/\/?$/, "");
+  const ts = (tailscaleUrl || "").replace(/'/g, "''").replace(/\/?$/, "");
   return [
-    'Set sh = CreateObject("WScript.Shell")',
-    'ps1 = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\\CliniqueAlwatan\\lancer-alwatan-bureau.ps1"',
-    'sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & ps1 & """", 0, False',
+    "$ErrorActionPreference = 'Continue'",
+    `$seeds = @('${wifi}','${ts}') | Where-Object { $_ }`,
+    "$store = Join-Path $env:LOCALAPPDATA 'CliniqueAlwatan'",
+    "New-Item -ItemType Directory -Force -Path $store | Out-Null",
+    "$ps1 = Join-Path $store 'lancer-alwatan-bureau.ps1'",
+    "$vbs = Join-Path $store 'lancer-alwatan-bureau.vbs'",
+    "foreach ($b in $seeds) {",
+    "  try {",
+    "    $base = $b.TrimEnd('/')",
+    "    Invoke-WebRequest -Uri ($base + '/api/client-setup/client-launcher.ps1?_=' + [guid]::NewGuid().ToString('N')) -OutFile $ps1 -UseBasicParsing -TimeoutSec 6",
+    "    if ((Get-Item -LiteralPath $ps1).Length -gt 200) {",
+    "      try {",
+    "        Invoke-WebRequest -Uri ($base + '/api/client-setup/client-launcher.vbs?_=' + [guid]::NewGuid().ToString('N')) -OutFile $vbs -UseBasicParsing -TimeoutSec 6",
+    "      } catch {}",
+    "      break",
+    "    }",
+    "  } catch {}",
+    "}",
+    "if (Test-Path -LiteralPath $ps1) { & $ps1 }",
   ].join("\r\n");
 }
 
-/** Installe 1 raccourci Bureau (icône Alwatan) branché sur le lanceur Wi‑Fi → Tailscale. */
+function buildSilentVbs(): string {
+  return [
+    'Set sh = CreateObject("WScript.Shell")',
+    'store = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\\CliniqueAlwatan"',
+    'boot = store & "\\bootstrap-alwatan.ps1"',
+    'ps1 = store & "\\lancer-alwatan-bureau.ps1"',
+    'Set fso = CreateObject("Scripting.FileSystemObject")',
+    'If fso.FileExists(boot) Then',
+    '  sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & boot & """", 0, False',
+    'ElseIf fso.FileExists(ps1) Then',
+    '  sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & ps1 & """", 0, False',
+    'End If',
+  ].join("\r\n");
+}
+
+/** Installe 1 raccourci Bureau (icône Alwatan) branché sur le lanceur Ethernet → Tailscale. */
 function buildDesktopShortcutPs1(opts: {
   apiBase: string;
   wifiUrl: string;
@@ -440,6 +517,10 @@ function buildDesktopShortcutPs1(opts: {
 
   const launcherB64 = Buffer.from(
     buildClientLauncherPs1(wifiUrl, tsUrl),
+    "utf8",
+  ).toString("base64");
+  const bootstrapB64 = Buffer.from(
+    buildBootstrapPs1(wifiUrl, tsUrl),
     "utf8",
   ).toString("base64");
   const vbsB64 = Buffer.from(buildSilentVbs(), "utf8").toString("base64");
@@ -461,17 +542,27 @@ $launcherPs1 = Join-Path $store 'lancer-alwatan-bureau.ps1'
 $launcherBytes = [Convert]::FromBase64String('${launcherB64}')
 [System.IO.File]::WriteAllBytes($launcherPs1, $launcherBytes)
 
+$bootstrapPs1 = Join-Path $store 'bootstrap-alwatan.ps1'
+$bootstrapBytes = [Convert]::FromBase64String('${bootstrapB64}')
+[System.IO.File]::WriteAllBytes($bootstrapPs1, $bootstrapBytes)
+
 $launcherVbs = Join-Path $store 'lancer-alwatan-bureau.vbs'
 $vbsBytes = [Convert]::FromBase64String('${vbsB64}')
 [System.IO.File]::WriteAllBytes($launcherVbs, $vbsBytes)
+
+try {
+  Set-Content -LiteralPath (Join-Path $store 'launcher-revision.txt') -Value '${LAUNCHER_REVISION}' -Encoding ASCII
+} catch {}
 
 @(
   'Alwatan Manager (Tailscale).lnk',
   'Alwatan Manager (Tailscale).url',
   'Alwatan Manager (Wi-Fi).url',
   'Alwatan Manager (Wi-Fi).lnk',
+  'Alwatan Manager (Ethernet).url',
   'Alwatan Manager (direct).url',
-  'Alwatan Manager (direct).bat'
+  'Alwatan Manager (direct).bat',
+  'Alwatan Manager.lnk'
 ) | ForEach-Object {
   $p = Join-Path $desk $_
   if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
@@ -483,13 +574,13 @@ $s = $shell.CreateShortcut($lnkPath)
 $s.TargetPath = $launcherVbs
 $s.WorkingDirectory = $store
 $s.WindowStyle = 1
-$s.Description = 'Clinique Alwatan — Wi-Fi puis Tailscale si besoin'
+$s.Description = 'Clinique Alwatan - Ethernet puis Tailscale'
 $s.IconLocation = $icoDesk + ',0'
 $s.Save()
 
-Write-Host ('OK — Bureau : ' + $desk)
-Write-Host '  • Alwatan Manager.lnk (unique : Wi-Fi → Tailscale)'
-Write-Host '  • alwatan.ico (icone clinique sur le Bureau)'
+Write-Host ('OK - Bureau : ' + $desk)
+Write-Host '  - Alwatan Manager.lnk (nouveau : Ethernet puis Tailscale)'
+Write-Host '  - alwatan.ico (icone clinique sur le Bureau)'
 `.trim();
 }
 
@@ -497,29 +588,58 @@ function buildDesktopShortcutCmd(opts: {
   apiBase: string;
   wifiUrl: string;
   tailscaleUrl: string;
+  silent?: boolean;
 }): string {
-  const ps1 = buildDesktopShortcutPs1(opts);
-  // EncodedCommand = UTF-16LE Base64 (fiable sous cmd)
-  const encoded = Buffer.from(ps1, "utf16le").toString("base64");
+  // Petit bootstrap EncodedCommand : l'ancien script (~45 Ko) depassait CreateProcess.
+  const api = opts.apiBase.replace(/\/$/, "");
+  const ps1Url = `${api}/api/client-setup/install-desktop-shortcut.ps1`.replace(
+    /'/g,
+    "''",
+  );
+  const silent = Boolean(opts.silent);
+  const bootstrap = [
+    "$ErrorActionPreference = 'Stop'",
+    `$u = '${ps1Url}'`,
+    "$p = Join-Path $env:TEMP ('alwatan-install-desk-' + [guid]::NewGuid().ToString('N') + '.ps1')",
+    "try {",
+    "  Invoke-WebRequest -Uri $u -OutFile $p -UseBasicParsing -TimeoutSec 30",
+    "  & $p",
+    "} finally {",
+    "  Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue",
+    "}",
+  ].join("\r\n");
+  const encoded = Buffer.from(bootstrap, "utf16le").toString("base64");
 
   return [
     "@echo off",
     "setlocal EnableExtensions",
-    "title Alwatan Manager — raccourci Bureau",
-    "echo.",
-    "echo   Installation du raccourci Bureau avec l'icone Alwatan...",
-    "echo.",
+    "title Alwatan Manager - raccourci Bureau",
+    ...(silent
+      ? []
+      : [
+          "echo.",
+          "echo   Telechargement du nouveau raccourci Bureau (IP Ethernet actuelle)...",
+          "echo.",
+        ]),
     `powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
     "if errorlevel 1 (",
-    "  echo.",
-    "  echo Echec. Verifiez la connexion au serveur puis reessayez.",
-    "  pause",
-    "  exit /b 1",
+    ...(silent
+      ? ["  exit /b 1"]
+      : [
+          "  echo.",
+          "  echo Echec. Verifiez la connexion au serveur puis reessayez.",
+          "  pause",
+          "  exit /b 1",
+        ]),
     ")",
-    "echo.",
-    "echo Termine. Un seul raccourci « Alwatan Manager » : Wi-Fi puis Tailscale si besoin.",
-    "echo.",
-    "pause",
+    ...(silent
+      ? ["exit /b 0"]
+      : [
+          "echo.",
+          "echo Termine. Nouveau raccourci Alwatan Manager : Ethernet puis Tailscale.",
+          "echo.",
+          "pause",
+        ]),
   ].join("\r\n");
 }
 
@@ -538,10 +658,12 @@ router.get("/info", (req, res) => {
     shortcutTailscaleUrl: bases.tailscale
       ? "/api/client-setup/install-desktop-shortcut.cmd"
       : null,
+    syncShortcutUrl: "/api/client-setup/sync-desktop-shortcut.cmd",
     androidShortcutUrl: "/api/client-setup/android-shortcut.html",
     launcherUrl: "/api/client-setup/launcher.cmd",
     packageUrl: findSetupZip() ? "/api/client-setup/package.zip" : null,
     packageAvailable: Boolean(findSetupZip()),
+    launcherRevision: LAUNCHER_REVISION,
   });
 });
 
@@ -557,8 +679,91 @@ router.get("/alwatan.ico", (_req, res) => {
   fs.createReadStream(iconPath).pipe(res);
 });
 
-router.get("/install-desktop-shortcut.cmd", (req, res) => {
+function resolveWifiAndTailscaleUrls(req: Request): {
+  wifiUrl: string;
+  tailscaleUrl: string;
+  apiBase: string;
+} {
   const bases = resolveAccessBases(req);
+  // Priorité : IP actuellement utilisée dans le navigateur (Ethernet DHCP),
+  // pour que le fichier téléchargé pointe vers cette adresse.
+  let wifiUrl = bases.primary;
+  try {
+    if (wifiUrl && isTailscaleHost(new URL(wifiUrl).hostname)) {
+      wifiUrl = bases.wifi ?? bases.hotspot ?? bases.primary;
+      if (wifiUrl && isTailscaleHost(new URL(wifiUrl).hostname)) {
+        wifiUrl = bases.primary;
+      }
+    }
+  } catch {
+    /* keep wifiUrl */
+  }
+  return {
+    wifiUrl,
+    tailscaleUrl: bases.tailscale ?? "",
+    apiBase: wifiUrl,
+  };
+}
+
+router.get("/client-launcher.ps1", (req, res) => {
+  const { wifiUrl, tailscaleUrl } = resolveWifiAndTailscaleUrls(req);
+  const body = buildClientLauncherPs1(
+    wifiUrl.replace(/\/?$/, "/"),
+    tailscaleUrl ? tailscaleUrl.replace(/\/?$/, "/") : "",
+  );
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    'inline; filename="lancer-alwatan-bureau.ps1"',
+  );
+  res.setHeader("Cache-Control", "no-store");
+  res.send(body);
+});
+
+router.get("/client-launcher.vbs", (_req, res) => {
+  const body = buildSilentVbs();
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    'inline; filename="lancer-alwatan-bureau.vbs"',
+  );
+  res.setHeader("Cache-Control", "no-store");
+  res.send(body);
+});
+
+router.get("/bootstrap-alwatan.ps1", (req, res) => {
+  const { wifiUrl, tailscaleUrl } = resolveWifiAndTailscaleUrls(req);
+  const body = buildBootstrapPs1(
+    wifiUrl.replace(/\/?$/, "/"),
+    tailscaleUrl ? tailscaleUrl.replace(/\/?$/, "/") : "",
+  );
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    'inline; filename="bootstrap-alwatan.ps1"',
+  );
+  res.setHeader("Cache-Control", "no-store");
+  res.send(body);
+});
+
+router.get("/install-desktop-shortcut.ps1", (req, res) => {
+  const { wifiUrl, tailscaleUrl, apiBase } = resolveWifiAndTailscaleUrls(req);
+  if (!findAlwatanIcon()) {
+    res.status(404).type("text/plain").send("Icone alwatan.ico introuvable sur le serveur.");
+    return;
+  }
+  const body = buildDesktopShortcutPs1({ apiBase, wifiUrl, tailscaleUrl });
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    'inline; filename="install-desktop-shortcut.ps1"',
+  );
+  res.setHeader("Cache-Control", "no-store");
+  res.send(body);
+});
+
+router.get("/install-desktop-shortcut.cmd", (req, res) => {
+  const { wifiUrl, tailscaleUrl, apiBase } = resolveWifiAndTailscaleUrls(req);
   if (!findAlwatanIcon()) {
     res.status(404).json({
       error:
@@ -567,31 +772,46 @@ router.get("/install-desktop-shortcut.cmd", (req, res) => {
     return;
   }
 
-  // Jamais d’IP Tailscale comme URL Wi‑Fi principale
-  let wifiUrl = bases.wifi ?? bases.hotspot ?? bases.primary;
-  try {
-    if (wifiUrl && isTailscaleHost(new URL(wifiUrl).hostname)) {
-      wifiUrl = bases.hotspot ?? bases.primary;
-      if (wifiUrl && isTailscaleHost(new URL(wifiUrl).hostname)) {
-        // dernier recours : garder l’IP demandée mais signaler via logs clients
-        wifiUrl = bases.primary;
-      }
-    }
-  } catch {
-    /* keep wifiUrl */
-  }
-
   const body = buildDesktopShortcutCmd({
-    apiBase: wifiUrl,
+    apiBase,
     wifiUrl,
-    tailscaleUrl: bases.tailscale ?? "",
+    tailscaleUrl,
+    silent: false,
   });
 
   res.setHeader("Content-Type", "application/octet-stream");
   res.setHeader(
     "Content-Disposition",
-    'attachment; filename="Installer-Raccourci-Alwatan-Bureau.cmd"',
+    'attachment; filename="Telecharger-Raccourci-Alwatan-Bureau.cmd"',
   );
+  res.setHeader("Cache-Control", "no-store");
+  res.send(body);
+});
+
+/** Ancien endpoint « sync » : télécharge un installateur neuf (plus de simple mise à jour). */
+router.get("/sync-desktop-shortcut.cmd", (req, res) => {
+  const { wifiUrl, tailscaleUrl, apiBase } = resolveWifiAndTailscaleUrls(req);
+  if (!findAlwatanIcon()) {
+    res.status(404).json({
+      error:
+        "Icône alwatan.ico introuvable. Sur le serveur, lancez scripts\\installer-raccourcis-bureau.ps1.",
+    });
+    return;
+  }
+
+  const body = buildDesktopShortcutCmd({
+    apiBase,
+    wifiUrl,
+    tailscaleUrl,
+    silent: false,
+  });
+
+  res.setHeader("Content-Type", "application/octet-stream");
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="Telecharger-Nouveau-Raccourci-Alwatan.cmd"',
+  );
+  res.setHeader("Cache-Control", "no-store");
   res.send(body);
 });
 

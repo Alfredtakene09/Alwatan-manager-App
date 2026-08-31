@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { LayoutDashboard, Users, CalendarDays, Clock, Search, X, UserPlus } from '@lucide/vue'
+import { LayoutDashboard, Users, CalendarDays, Clock, Search, X, UserPlus, FlaskConical } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { sortPatientsNewestFirst } from '@/lib/patient-sort'
@@ -26,6 +26,7 @@ type ReceptionDashboardStats = {
   hospitalizationsPending: number
   femalePatients: number
   malePatients: number
+  examPatientsCount?: number
   activityLast7Days: Array<{
     date: string
     dayLabel: string
@@ -63,20 +64,20 @@ const summaryStats = computed((): SummaryStat[] => {
       trend: `${s.registeredToday} nouveau(x) patient(s)`,
     },
     {
-      id: 'female',
-      label: 'Féminin',
-      value: s.femalePatients,
+      id: 'gender',
+      label: 'Féminin / Masculin',
+      value: `${s.femalePatients} / ${s.malePatients}`,
       icon: Users,
       variant: 'rose',
       trend: 'Dossiers patients',
     },
     {
-      id: 'male',
-      label: 'Masculin',
-      value: s.malePatients,
-      icon: Users,
+      id: 'exams',
+      label: 'Patients examens',
+      value: s.examPatientsCount ?? 0,
+      icon: FlaskConical,
       variant: 'blue',
-      trend: 'Dossiers patients',
+      trend: 'Ont reçu des examens',
     },
     {
       id: 'queues',
@@ -200,6 +201,14 @@ onMounted(refreshAll)
         :load-error="loadError"
         @refresh="refreshAll"
       >
+        <template #actions>
+          <UiButton variant="primary" size="sm" :icon="UserPlus" @click="goToRegistration">
+            Nouveau
+          </UiButton>
+          <UiButton variant="ghost" size="sm" :disabled="loading" @click="refreshAll">
+            Actualiser
+          </UiButton>
+        </template>
         <div class="charts-grid">
           <UiCard title="Activité — 7 derniers jours" description="Visites et nouvelles inscriptions" :icon="CalendarDays" icon-variant="teal">
             <DashboardBarChart
@@ -264,16 +273,13 @@ onMounted(refreshAll)
               </button>
             </div>
             <span class="search-count">{{ searchLabel }}</span>
-            <UiButton variant="primary" size="sm" @click="goToRegistration">
-              <UserPlus :size="16" />
-              Nouveau
-            </UiButton>
           </div>
         </template>
 
         <PatientsDataTable
           fill
           :show-delete="false"
+          :show-pay="false"
           :show-receptionist="canFilterByReceptionist"
           :patients="patients"
           :loading="loadingPatients"

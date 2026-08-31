@@ -170,9 +170,7 @@ function doctorMatchesActiveService(doctor: DoctorOption): boolean {
 }
 
 const doctorsForActiveService = computed(() => {
-  const list = doctors.value.filter(
-    (d) => d.acceptingPatients !== false && doctorMatchesActiveService(d),
-  )
+  const list = doctors.value.filter((d) => doctorMatchesActiveService(d))
   // Si aucun médecin lié au service, ne pas bloquer : liste vide → message
   return list.sort((a, b) =>
     fullName(a.firstName, a.lastName).localeCompare(fullName(b.firstName, b.lastName), 'fr'),
@@ -639,6 +637,12 @@ onMounted(() => {
 
     <UiAlert v-if="message" :type="messageType" :message="message" />
 
+    <div class="page-create-bar">
+      <UiButton variant="primary" :icon="UserPlus" @click="openNewPatientModal">
+        {{ uiText('Nouveau') }}
+      </UiButton>
+    </div>
+
     <UiCard :title="uiText('Rechercher un patient existant')" :icon="UserRound" icon-variant="teal" class="patient-card">
       <div class="search-block">
         <div class="search-compact">
@@ -680,9 +684,6 @@ onMounted(() => {
 
     <UiCard :title="uiText('Patients externes enregistrés')" class="queue-card" :icon="UserRound" icon-variant="blue">
       <template #actions>
-        <UiButton variant="primary" size="sm" @click="openNewPatientModal">
-          {{ uiText('Nouveau') }}
-        </UiButton>
         <UiButton variant="ghost" size="sm" :disabled="loadingQueue" @click="loadQueue">
           {{ uiText('Actualiser') }}
         </UiButton>

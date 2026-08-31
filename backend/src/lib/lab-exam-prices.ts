@@ -9,6 +9,7 @@ import {
 import {
   countPrescribedFieldUnits,
   extractBasePanelLabel,
+  extractPrescribedFieldLabels,
   extractSelectedFormLabels,
 } from "./lab-notes.js";
 
@@ -54,29 +55,6 @@ function normalizePriceKey(value: string) {
 
 function fieldPriceLookupKey(panelLabel: string, fieldLabel: string) {
   return `${normalizePriceKey(panelLabel)}::${normalizePriceKey(fieldLabel)}`;
-}
-
-/** Champs individuels dans « Panel (Section: A · B) » ou « Panel (champ) ». */
-export function extractPrescribedFieldLabels(prescribed: string): string[] {
-  const forms = extractSelectedFormLabels(prescribed);
-  if (forms === null || !forms.length) return [];
-  const fields: string[] = [];
-  for (const form of forms) {
-    const colon = form.indexOf(":");
-    if (colon >= 0) {
-      const rest = form.slice(colon + 1).trim();
-      if (!rest) continue;
-      fields.push(
-        ...rest
-          .split(/\s*·\s*/)
-          .map((part) => part.trim())
-          .filter(Boolean),
-      );
-    } else {
-      fields.push(form);
-    }
-  }
-  return fields;
 }
 
 function resolveExamBasePrice(label: string): number {

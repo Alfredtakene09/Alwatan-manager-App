@@ -54,7 +54,7 @@ const props = defineProps<{
   kind: ExamCatalogKindSlug
 }>()
 
-const { uiText, localeCode } = useAppI18n()
+const { uiText, examNameText, localeCode } = useAppI18n()
 
 const config = computed(() => EXAM_CATALOG_KIND_CONFIG[props.kind])
 const formPlaceholders = computed(() => EXAM_CATALOG_FORM_PLACEHOLDERS[props.kind])
@@ -170,16 +170,16 @@ const tableRows = computed(() => {
   localeCode.value
   return filteredItems.value.map((item) => ({
     id: item.id,
-    label: uiText(item.label),
+    label: examNameText(item.label),
     code: item.code,
-    category: uiText(item.category || '—'),
+    category: examNameText(item.category || '—'),
     service: uiText(item.clinicService?.name || 'Tous les services'),
     formLabel: (() => {
       if (props.kind !== 'examen') return '—'
       if (!item.labPanelId) return uiText('À créer')
       const fieldCount = item.labPanel?._count?.fields ?? 0
       if (fieldCount <= 0) return uiText('Formulaire à compléter au labo')
-      return uiText(item.labPanel?.label || 'Lié')
+      return examNameText(item.labPanel?.label || 'Lié')
     })(),
     formLinked: Boolean(item.labPanelId),
     formNeedsLabFields:
@@ -615,7 +615,7 @@ onMounted(async () => {
       class="section"
     >
       <template #actions>
-        <UiButton variant="primary" size="sm" :icon="Plus" @click="openAddModal">
+        <UiButton variant="primary" size="sm" :icon="Plus" ui-action="catalog.exam_types" @click="openAddModal">
           {{ uiText(addButtonLabel) }}
         </UiButton>
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">

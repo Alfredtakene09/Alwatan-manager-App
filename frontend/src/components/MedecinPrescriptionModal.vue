@@ -80,7 +80,7 @@ const emit = defineEmits<{
 }>()
 
 const auth = useAuthStore()
-const { uiText } = useAppI18n()
+const { uiText, examNameText } = useAppI18n()
 
 /** Visite figée à l'ouverture — évite la perte de sélection lors des rafraîchissements liste. */
 const sessionVisit = ref<PrescriptionVisit | null>(null)
@@ -103,12 +103,10 @@ const showConsultationPanel = computed(() =>
   hasClinicalConsultationSelected(selectedExamsByKind.value),
 )
 
-/** Dossier déjà au labo ou avec résultats : on peut encore enregistrer pharmacie / notes. */
+/** Résultats labo déjà saisis : examens figés ; ordonnance / notes encore modifiables. */
 const isLabLocked = computed(() => {
   const notes = sessionVisit.value?.consultation?.clinicalNotes
-  return (
-    Boolean(sessionVisit.value?.consultation?.labSentToLabAt) || hasLabResults(notes)
-  )
+  return hasLabResults(notes)
 })
 
 const canSavePharmacyFollowUp = computed(
@@ -170,7 +168,8 @@ const canSubmit = computed(() => {
   }
   if (canSavePharmacyFollowUp.value) return true
   if (isLabLocked.value) return false
-  return selectedInPickerCount.value > 0
+  if (selectedInPickerCount.value > 0) return true
+  return pharmacyOrdonnance.value.length > 0 || doctorComment.value.trim().length >= 2
 })
 
 const duplicateSelectionHint = computed(() => {
@@ -181,7 +180,7 @@ const duplicateSelectionHint = computed(() => {
 const labLockedHint = computed(() => {
   if (workingMode.value !== 'edit' || !isLabLocked.value) return ''
   if (consultModalTab.value === 'exams') {
-    return 'Ce dossier est déjà au laboratoire. Pour ajouter des examens, utilisez « Ajouter des examens ». Vous pouvez enregistrer une ordonnance pharmacie ici.'
+    return 'Des résultats labo sont déjà enregistrés. Pour ajouter des examens, utilisez « Ajouter des examens ». Vous pouvez modifier l’ordonnance pharmacie ici.'
   }
   return ''
 })
@@ -190,13 +189,13 @@ const modalTitle = computed(() => {
   if (props.showResumeTab && consultModalTab.value === 'resume') return uiText('Dossier consulté')
   if (workingMode.value === 'append') return uiText('Ajouter des examens')
   if (isLabLocked.value) return uiText('Ordonnance / notes')
-  return uiText('Prescription')
+  return uiText('Modifier la prescription')
 })
 
 const submitLabel = computed(() => {
   if (workingMode.value === 'append') return uiText('Envoyer au labo')
   if (isLabLocked.value) return uiText('Enregistrer l’ordonnance')
-  return uiText('Enregistrer et envoyer')
+  return uiText('Enregistrer la prescription')
 })
 
 const resumeExamSections = computed(() => {
@@ -350,7 +349,7 @@ async function submit() {
     return
   }
 
-  // Après envoi labo : enregistrer seulement pharmacie / notes (sans réécrire les examens).
+  // Résultats labo déjà saisis : enregistrer seulement pharmacie / notes (sans réécrire les examens).
   if (workingMode.value === 'edit' && isLabLocked.value) {
     if (!canSavePharmacyFollowUp.value) {
       errorMessage.value = uiText('Ajoutez au moins un produit ou une note clinique (2 caractères min.).')
@@ -364,18 +363,6 @@ async function submit() {
         pharmacyOrdonnance: pharmacyOrdonnance.value,
         doctorComment: doctorComment.value.trim() || undefined,
       })
-      if (pharmacyOrdonnance.value.length) {
-        const { printPharmacyOrdonnance } = await import('@/lib/pharmacy-ordonnance-print')
-        printPharmacyOrdonnance({
-          patient: sessionVisit.value.patient,
-          doctorName: sessionVisit.value.assignedDoctor
-            ? `Dr ${fullName(sessionVisit.value.assignedDoctor.firstName, sessionVisit.value.assignedDoctor.lastName)}`
-            : auth.user
-              ? `Dr ${fullName(auth.user.firstName, auth.user.lastName)}`
-              : null,
-          lines: pharmacyOrdonnance.value,
-        })
-      }
       emit('saved')
       emit('close')
     } catch (error: unknown) {
@@ -390,7 +377,11 @@ async function submit() {
     return
   }
 
-  if (workingMode.value === 'edit' && !selectedInPickerCount.value) {
+  if (
+    workingMode.value === 'edit' &&
+    !selectedInPickerCount.value &&
+    !(pharmacyOrdonnance.value.length || doctorComment.value.trim().length >= 2)
+  ) {
     errorMessage.value = 'Sélectionnez au moins un examen.'
     return
   }
@@ -405,36 +396,33 @@ async function submit() {
   try {
     await api.post('/consultations/prescribe-exams', {
       visitId: sessionVisit.value.id,
-      examsByKind: selectedExamsByKind.value,
-      examCommentsByKind: filterInvoiceExamComments(examCommentsByKind.value),
-      hospitalisationDays: hospPrescribed ? hospitalisationDays.value ?? undefined : undefined,
+      examsByKind: selectedInPickerCount.value > 0 ? selectedExamsByKind.value : undefined,
+      examCommentsByKind:
+        selectedInPickerCount.value > 0
+          ? filterInvoiceExamComments(examCommentsByKind.value)
+          : undefined,
+      hospitalisationDays:
+        selectedInPickerCount.value > 0 && hospPrescribed
+          ? hospitalisationDays.value ?? undefined
+          : undefined,
       doctorComment: doctorComment.value.trim() || undefined,
       pharmacyOrdonnance:
-        showConsultationPanel.value || props.showResumeTab
-          ? pharmacyOrdonnance.value
-          : undefined,
+        workingMode.value === 'append'
+          ? undefined
+          : showConsultationPanel.value || props.showResumeTab
+            ? pharmacyOrdonnance.value
+            : pharmacyOrdonnance.value.length
+              ? pharmacyOrdonnance.value
+              : undefined,
       append: workingMode.value === 'append',
       ...(
-        (selectedExamsByKind.value.operation?.length ?? 0) > 0 && operationAmountFcfa.value != null
+        selectedInPickerCount.value > 0 &&
+        (selectedExamsByKind.value.operation?.length ?? 0) > 0 &&
+        operationAmountFcfa.value != null
           ? { operationAmountFcfa: operationAmountFcfa.value }
           : {}
       ),
     })
-    if (
-      (showConsultationPanel.value || props.showResumeTab) &&
-      pharmacyOrdonnance.value.length
-    ) {
-      const { printPharmacyOrdonnance } = await import('@/lib/pharmacy-ordonnance-print')
-      printPharmacyOrdonnance({
-        patient: sessionVisit.value.patient,
-        doctorName: sessionVisit.value.assignedDoctor
-          ? `Dr ${fullName(sessionVisit.value.assignedDoctor.firstName, sessionVisit.value.assignedDoctor.lastName)}`
-          : auth.user
-            ? `Dr ${fullName(auth.user.firstName, auth.user.lastName)}`
-            : null,
-        lines: pharmacyOrdonnance.value,
-      })
-    }
     emit('saved')
     emit('close')
   } catch (error: unknown) {
@@ -492,7 +480,7 @@ async function submit() {
                 :title="uiText(exam.kindLabel)"
                 disabled
               >
-                {{ uiText(exam.label) }}
+                {{ examNameText(exam.label) }}
               </button>
             </div>
           </section>
@@ -637,7 +625,7 @@ async function submit() {
                 <h4>{{ uiText(section.label) }}</h4>
                 <ul v-if="section.exams.length">
                   <li v-for="exam in section.exams" :key="`${section.kind}-${exam}`">
-                    {{ uiText(exam) }}
+                    {{ examNameText(exam) }}
                   </li>
                 </ul>
                 <p v-if="section.comment" class="resume-comment">{{ section.comment }}</p>
@@ -771,7 +759,7 @@ async function submit() {
               {{ uiText('Ajouter des examens') }}
             </UiButton>
             <UiButton variant="secondary" :icon="Pencil" @click="switchToEditFromResume">
-              {{ isLabLocked ? uiText('Ordonnance pharmacie') : uiText('Modifier') }}
+              {{ isLabLocked ? uiText('Ordonnance / notes') : uiText('Modifier') }}
             </UiButton>
           </template>
           <UiButton

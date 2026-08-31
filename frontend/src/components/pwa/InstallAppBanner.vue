@@ -14,9 +14,11 @@ const {
   isMobile,
   isWindows,
   showAndroidHelp,
+  launcherNeedsSync,
   dismissBanner,
   promptNativeInstall,
   downloadShortcut,
+  syncDesktopShortcut,
   downloadAndroidShortcut,
   openAndroidHelp,
   closeAndroidHelp,
@@ -41,10 +43,15 @@ async function onInstallClick() {
     </div>
     <div class="install-banner__body">
       <p class="install-banner__title">
-        {{ isAndroid || isIos ? t('pwa.installTabletTitle') : t('pwa.installTitle') }}
+        <template v-if="launcherNeedsSync">{{ t('pwa.syncShortcutTitle') }}</template>
+        <template v-else-if="isAndroid || isIos">{{ t('pwa.installTabletTitle') }}</template>
+        <template v-else>{{ t('pwa.installTitle') }}</template>
       </p>
       <p class="install-banner__text">
-        <template v-if="isAndroid">
+        <template v-if="launcherNeedsSync">
+          {{ t('pwa.syncShortcutHint') }}
+        </template>
+        <template v-else-if="isAndroid">
           {{ t('pwa.installAndroidHint') }}
         </template>
         <template v-else-if="isIos">
@@ -73,7 +80,17 @@ async function onInstallClick() {
 
       <div class="install-banner__actions">
         <UiButton
-          v-if="canNativeInstall"
+          v-if="launcherNeedsSync"
+          type="button"
+          size="sm"
+          :icon="Download"
+          @click="syncDesktopShortcut"
+        >
+          {{ t('pwa.syncShortcutButton') }}
+        </UiButton>
+
+        <UiButton
+          v-else-if="canNativeInstall"
           type="button"
           size="sm"
           :icon="Smartphone"
@@ -93,7 +110,7 @@ async function onInstallClick() {
         </UiButton>
 
         <UiButton
-          v-if="isAndroid"
+          v-if="!launcherNeedsSync && isAndroid"
           type="button"
           size="sm"
           :icon="Download"
@@ -103,7 +120,7 @@ async function onInstallClick() {
         </UiButton>
 
         <UiButton
-          v-if="isWindows || (!isAndroid && !isIos)"
+          v-if="!launcherNeedsSync && (isWindows || (!isAndroid && !isIos))"
           type="button"
           size="sm"
           :icon="Download"

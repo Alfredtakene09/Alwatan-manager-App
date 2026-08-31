@@ -1,9 +1,8 @@
 import {
   splitPrescribedExamList,
   formatGroupedPrescribedSummary,
-  formatGroupedPrescribedDetails,
-  formatGroupedPrescribedLabels,
   countGroupedPrescribedPanels,
+  summarizePrescribedExamFieldNames,
 } from '@/lib/lab-prescribed-panels'
 import { translateUi } from '@/i18n/translate'
 
@@ -282,7 +281,7 @@ export function formatPrescribedExamsSummary(notes?: string | null): string {
   const parts = EXAM_KIND_ORDER.flatMap((kind) => {
     const exams = byKind[kind]
     if (!exams.length) return []
-    const details = formatGroupedPrescribedDetails(exams)
+    const details = summarizePrescribedExamFieldNames(exams)
     if (details === '—') return []
     return [`${translateUi(EXAM_KIND_SECTION_LABELS[kind])}: ${details}`]
   })
@@ -290,29 +289,31 @@ export function formatPrescribedExamsSummary(notes?: string | null): string {
   return parts.join(' · ')
 }
 
-/** Aperçu court pour tableaux : quelques examens regroupés max puis « … ». */
+/** Aperçu court pour tableaux : noms de champs (max N visibles). */
 export function formatPrescribedExamsPreview(notes?: string | null, maxVisible = 2): string {
-  const labels = formatGroupedPrescribedLabels(parsePrescribedExamsList(notes))
-  if (!labels.length) return '—'
-  if (labels.length <= maxVisible) return labels.join(', ')
-  return `${labels.slice(0, maxVisible).join(', ')}…`
+  const summary = summarizePrescribedExamFieldNames(parsePrescribedExamsList(notes))
+  if (summary === '—') return '—'
+  const fields = summary.split(', ').filter(Boolean)
+  if (fields.length <= maxVisible) return summary
+  return `${fields.slice(0, maxVisible).join(', ')}…`
 }
 
 export function countPrescribedExams(notes?: string | null): number {
   return countGroupedPrescribedPanels(parsePrescribedExamsList(notes))
 }
 
-/** Résumé détaillé laboratoire (noms des formulaires) pour tooltip. */
+/** Résumé détaillé laboratoire : noms des champs cochés. */
 export function formatLabPrescribedExamsSummary(notes?: string | null): string {
-  return formatGroupedPrescribedDetails(parsePrescribedExamsByKind(notes).examen)
+  return summarizePrescribedExamFieldNames(parsePrescribedExamsByKind(notes).examen)
 }
 
-/** Aperçu court : « Biochimie (2), NFS (1)… ». */
+/** Aperçu court laboratoire : noms de champs (max N visibles). */
 export function formatLabPrescribedExamsPreview(notes?: string | null, maxVisible = 2): string {
-  const labels = formatGroupedPrescribedLabels(parsePrescribedExamsByKind(notes).examen)
-  if (!labels.length) return '—'
-  if (labels.length <= maxVisible) return labels.join(', ')
-  return `${labels.slice(0, maxVisible).join(', ')}…`
+  const summary = summarizePrescribedExamFieldNames(parsePrescribedExamsByKind(notes).examen)
+  if (summary === '—') return '—'
+  const fields = summary.split(', ').filter(Boolean)
+  if (fields.length <= maxVisible) return summary
+  return `${fields.slice(0, maxVisible).join(', ')}…`
 }
 
 export function countLabPrescribedExams(notes?: string | null): number {

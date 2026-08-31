@@ -18,7 +18,7 @@ import {
 import api from '@/api/client'
 import { CLINIC } from '@/lib/clinic'
 import { formatFcfa, fullName } from '@/lib/roles'
-import { buildThermalTicketHeadHtml, openPrintDocument, thermalMetaRow } from '@/lib/print-document'
+import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, openPrintDocument, thermalMetaRow } from '@/lib/print-document'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiSelect from '@/components/ui/UiSelect.vue'
@@ -335,7 +335,6 @@ function saleSuccessMessage(data: {
 }
 
 function printReceipt(data: {
-  buyerLabel: string
   items: PrescriptionPrintLine[]
   notes?: string
   invoiceNumber: string
@@ -349,10 +348,6 @@ function printReceipt(data: {
   isFree?: boolean
 }) {
   const clinic = CLINIC
-  const thermalRows = data.items
-    .map((item) => thermalMetaRow(`${item.name} x${item.quantity}`, formatFcfa(item.lineTotal), ''))
-    .join('')
-
   const grossTotal = data.grossTotal ?? data.total
   const reductionFcfa = data.reductionFcfa ?? 0
   const reductionPercent = data.reductionPercent
@@ -365,12 +360,25 @@ function printReceipt(data: {
     data.coveredByName && (data.isFree || reductionFcfa > 0)
       ? thermalMetaRow('Par', data.coveredByName, '')
       : ''
+  const internalBlock = !data.isExternal ? thermalMetaRow('Type', 'Interne', '') : ''
   const reductionLabel = reductionPercent ? `Réduc. ${reductionPercent}%` : 'Réduction'
+  const itemsTable = buildPharmacyTicketItemsTableHtml({
+    lines: data.items.map((item) => ({
+      name: item.name,
+      quantity: item.quantity,
+      unitPriceFcfa: item.unitPrice,
+      lineTotalFcfa: item.lineTotal,
+    })),
+    totalFcfa: data.total,
+    grossTotalFcfa: grossTotal,
+    reductionFcfa,
+    reductionLabel,
+  })
 
   openPrintDocument(
     `Ticket ${data.invoiceNumber}`,
     `
-<div class="thermal-receipt thermal-receipt--ticket">
+<div class="thermal-receipt thermal-receipt--ticket thermal-receipt--pharmacy">
   ${buildThermalTicketHeadHtml({
     title: 'Clinique Alwatan Pharmacie',
     number: data.invoiceNumber,
@@ -381,20 +389,13 @@ function printReceipt(data: {
 
   <div class="thermal-receipt__fields">
     ${thermalMetaRow('Date', data.date, '')}
-    ${thermalMetaRow('Client', data.buyerLabel, '')}
+    ${internalBlock}
     ${thermalMetaRow('Paiement', paymentModeLabel, '')}
     ${coveredByBlock}
   </div>
 
   <hr class="thermal-receipt__rule" />
-  <div class="thermal-receipt__lines">
-    ${thermalRows}
-  </div>
-  <div class="thermal-receipt__fields">
-    ${reductionFcfa > 0 ? thermalMetaRow('Sous-total', formatFcfa(grossTotal), '') : ''}
-    ${reductionFcfa > 0 ? thermalMetaRow(reductionLabel, `- ${formatFcfa(reductionFcfa)}`, '') : ''}
-    ${thermalMetaRow('TOTAL', formatFcfa(data.total), '')}
-  </div>
+  ${itemsTable}
   ${
     data.notes
       ? `<p class="thermal-receipt__note" dir="ltr">${escapeReceiptText(data.notes)}</p>`
@@ -404,7 +405,7 @@ function printReceipt(data: {
   <p class="thermal-receipt__thanks">Merci</p>
 </div>
 `,
-    { pageSize: '80mm', autoPrint: true },
+    { pageSize: '80mm', autoPrint: true, thermalTight: true },
   )
 }
 
@@ -621,9 +622,6 @@ function validateBuyerSelection() {
 }
 
 async function submitSale() {
-  const selectedPatient =
-    props.patients.find((p) => p.id === patientId.value) ??
-    (linkedPatient.value?.id === patientId.value ? linkedPatient.value : null)
   const externalName = externalClientName.value.trim()
 
   if (!validateBuyerSelection()) return
@@ -670,17 +668,7 @@ async function submitSale() {
 
     if (printItems.length && data.invoice) {
       const isExternal = buyerType.value === 'external'
-      const externalLabel =
-        externalName ||
-        (data.externalClient
-          ? data.externalClient.firstName === data.externalClient.lastName
-            ? data.externalClient.firstName
-            : fullName(data.externalClient.firstName, data.externalClient.lastName)
-          : uiText('Client'))
       printReceipt({
-        buyerLabel: isExternal
-          ? externalLabel
-          : fullName(selectedPatient!.firstName, selectedPatient!.lastName),
         items: printItems,
         notes: isExternal ? undefined : notes.value.trim(),
         invoiceNumber: data.invoice.invoiceNumber,

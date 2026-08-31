@@ -1,21 +1,58 @@
 import { PatientCategory, VisitStatus, type Prisma } from "@prisma/client";
 import { EXAMS_PRESCRIBED_PREFIX } from "./lab-notes.js";
+import { resolveDoctorClinicServices } from "./clinic-service-exam.js";
 
 /** Patient assigné à la réception / transféré, ou déjà pris en charge en consultation. */
-export function medecinMatchWhere(doctorId: string): Prisma.VisitWhereInput {
-  return {
-    OR: [{ assignedDoctorId: doctorId }, { consultation: { is: { doctorId } } }],
-  };
+export function medecinMatchWhere(
+  doctorId: string,
+  clinicServiceIds: string[] = [],
+): Prisma.VisitWhereInput {
+  const or: Prisma.VisitWhereInput[] = [
+    { assignedDoctorId: doctorId },
+    { consultation: { is: { doctorId } } },
+  ];
+
+  // File partagée d’un service : visible tant qu’aucun médecin n’a démarré (assignedDoctorId null).
+  if (clinicServiceIds.length > 0) {
+    or.push({
+      assignedDoctorId: null,
+      assignedClinicServiceId: { in: clinicServiceIds },
+      status: VisitStatus.WAITING_CONSULTATION,
+    });
+  }
+
+  return { OR: or };
 }
 
 export function visitBelongsToDoctor(
   visit: {
     assignedDoctorId: string | null;
+    assignedClinicServiceId?: string | null;
+    status?: VisitStatus | string | null;
     consultation?: { doctorId: string | null } | null;
   },
   doctorId: string,
+  clinicServiceIds: string[] = [],
 ): boolean {
-  return visit.assignedDoctorId === doctorId || visit.consultation?.doctorId === doctorId;
+  if (visit.assignedDoctorId === doctorId || visit.consultation?.doctorId === doctorId) {
+    return true;
+  }
+
+  // Patient en attente sur un service du médecin (pas encore pris en charge).
+  return (
+    visit.status === VisitStatus.WAITING_CONSULTATION &&
+    !visit.assignedDoctorId &&
+    Boolean(visit.assignedClinicServiceId) &&
+    clinicServiceIds.includes(visit.assignedClinicServiceId!)
+  );
+}
+
+export async function resolveDoctorQueueContext(doctorId: string) {
+  const services = await resolveDoctorClinicServices(doctorId);
+  return {
+    doctorId,
+    clinicServiceIds: services?.ids ?? [],
+  };
 }
 
 export function medecinPatientWhere(doctorId: string, patientId: string): Prisma.VisitWhereInput {
@@ -110,8 +147,11 @@ export function medecinPrescribedTodayVisitWhere(
   };
 }
 
-/** File de consultation — uniquement les patients assignés ou transférés au médecin. */
-export function medecinPendingConsultationVisitWhere(doctorId: string): Prisma.VisitWhereInput {
+/** File de consultation — patients assignés, ou en attente sur un service du médecin. */
+export function medecinPendingConsultationVisitWhere(
+  doctorId: string,
+  clinicServiceIds: string[] = [],
+): Prisma.VisitWhereInput {
   return {
     status: { in: [VisitStatus.WAITING_CONSULTATION, VisitStatus.IN_CONSULTATION] },
     NOT: {
@@ -119,6 +159,6 @@ export function medecinPendingConsultationVisitWhere(doctorId: string): Prisma.V
         clinicalNotes: { contains: EXAMS_PRESCRIBED_PREFIX },
       },
     },
-    AND: [medecinMatchWhere(doctorId)],
+    AND: [medecinMatchWhere(doctorId, clinicServiceIds)],
   };
 }

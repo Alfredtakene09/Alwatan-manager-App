@@ -53,6 +53,32 @@ const prescriptionSchema = z
     }
   });
 
+const updateSaleLinesSchema = z
+  .object({
+    lines: z
+      .array(
+        z.object({
+          id: z.string(),
+          quantity: z.number().int().positive().max(999),
+        }),
+      )
+      .default([]),
+    deleteLineIds: z.array(z.string()).default([]),
+  })
+  .superRefine((body, ctx) => {
+    if (body.lines.length === 0 && body.deleteLineIds.length === 0) {
+      ctx.addIssue({ code: "custom", message: "NO_LINE_CHANGES" });
+    }
+  });
+
+function canEditPharmacySale(
+  user: { id: string; role: string },
+  prescription: { pharmacistId: string },
+) {
+  if (user.role === "PHARMACIEN") return prescription.pharmacistId === user.id;
+  return user.role === "ADMIN" || user.role === "GESTIONNAIRE" || user.role === "COMPTABLE";
+}
+
 const externalClientSchema = z.object({
   firstName: z.string().min(2),
   lastName: z.string().min(2),
@@ -192,6 +218,14 @@ function mapStockError(error: unknown, res: import("express").Response) {
     }
     if (error.message === "ORDONNANCE_ALREADY_DISPENSED") {
       return res.status(409).json({ error: "Cette ordonnance a déjà été délivrée." });
+    }
+    if (error.message === "SALE_NOT_FOUND") return res.status(404).json({ error: "Vente introuvable" });
+    if (error.message === "LINE_NOT_FOUND") return res.status(404).json({ error: "Ligne de vente introuvable" });
+    if (error.message === "NOT_AUTHORIZED") {
+      return res.status(403).json({ error: "Vous ne pouvez modifier que vos propres ventes." });
+    }
+    if (error.message === "NO_LINE_CHANGES") {
+      return res.status(400).json({ error: "Aucune modification à enregistrer." });
     }
   }
   return res.status(500).json({ error: "Erreur serveur" });
@@ -434,6 +468,183 @@ router.get("/sales", async (req, res) => {
       };
     }),
   );
+});
+
+router.patch("/sales/:prescriptionId", async (req, res) => {
+  const user = req.user!;
+  const prescriptionId = String(req.params.prescriptionId);
+  try {
+    const body = updateSaleLinesSchema.parse(req.body);
+    const result = await prisma.$transaction(async (tx) => {
+      const prescription = await tx.prescription.findUnique({
+        where: { id: prescriptionId },
+        include: {
+          saleLines: { include: { product: true, invoice: true } },
+        },
+      });
+      if (!prescription) throw new Error("SALE_NOT_FOUND");
+      if (!canEditPharmacySale(user, prescription)) throw new Error("NOT_AUTHORIZED");
+
+      const lineMap = new Map(prescription.saleLines.map((line) => [line.id, line]));
+      let invoiceDeltaFcfa = 0;
+      let changed = false;
+
+      for (const lineId of body.deleteLineIds) {
+        const existing = lineMap.get(lineId);
+        if (!existing) throw new Error("LINE_NOT_FOUND");
+        changed = true;
+
+        await applyStockMovement(tx, {
+          productId: existing.productId,
+          type: "ENTRY",
+          quantity: existing.quantity,
+          reference: `SALE-LINE-REMOVE-${prescription.id.slice(0, 8)}`,
+          notes: "Suppression ligne vente pharmacie",
+          prescriptionId: prescription.id,
+          userId: user.id,
+        });
+
+        invoiceDeltaFcfa -= existing.lineTotalFcfa;
+        await tx.pharmacySaleLine.delete({ where: { id: lineId } });
+        lineMap.delete(lineId);
+      }
+
+      for (const update of body.lines) {
+        const existing = lineMap.get(update.id);
+        if (!existing) continue;
+        if (update.quantity === existing.quantity) continue;
+        changed = true;
+
+        const delta = update.quantity - existing.quantity;
+        if (delta > 0) {
+          await recordDispensationMovement(tx, {
+            productId: existing.productId,
+            quantity: delta,
+            prescriptionId: prescription.id,
+            userId: user.id,
+          });
+        } else {
+          await applyStockMovement(tx, {
+            productId: existing.productId,
+            type: "ENTRY",
+            quantity: Math.abs(delta),
+            reference: `SALE-CORRECTION-${prescription.id.slice(0, 8)}`,
+            notes: "Correction quantité vente pharmacie",
+            prescriptionId: prescription.id,
+            userId: user.id,
+          });
+        }
+
+        const oldLineTotal = existing.lineTotalFcfa;
+        const newLineTotal = existing.unitPriceFcfa * update.quantity;
+        invoiceDeltaFcfa += newLineTotal - oldLineTotal;
+
+        await tx.pharmacySaleLine.update({
+          where: { id: existing.id },
+          data: { quantity: update.quantity, lineTotalFcfa: newLineTotal },
+        });
+      }
+
+      if (!changed) throw new Error("NO_LINE_CHANGES");
+
+      const remainingCount = await tx.pharmacySaleLine.count({
+        where: { prescriptionId: prescription.id },
+      });
+
+      if (remainingCount === 0) {
+        if (invoiceDeltaFcfa !== 0) {
+          const invoiceIds = [
+            ...new Set(prescription.saleLines.map((line) => line.invoiceId).filter(Boolean)),
+          ] as string[];
+          for (const invoiceId of invoiceIds) {
+            const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
+            if (!invoice) continue;
+            const nextAmount = Math.max(0, invoice.amountFcfa + invoiceDeltaFcfa);
+            await tx.invoice.update({
+              where: { id: invoiceId },
+              data: { amountFcfa: nextAmount },
+            });
+          }
+        }
+        await tx.prescription.delete({ where: { id: prescription.id } });
+        return { deleted: true as const, id: prescription.id };
+      }
+
+      const updatedLines = await tx.pharmacySaleLine.findMany({
+        where: { prescriptionId: prescription.id },
+        include: {
+          product: {
+            select: {
+              id: true,
+              name: true,
+              sku: true,
+              category: { select: { name: true } },
+            },
+          },
+          invoice: { select: { invoiceNumber: true, amountFcfa: true, status: true } },
+        },
+      });
+
+      const totalFcfa = updatedLines.reduce((sum, line) => sum + line.lineTotalFcfa, 0);
+
+      if (invoiceDeltaFcfa !== 0) {
+        const invoiceIds = [
+          ...new Set(prescription.saleLines.map((line) => line.invoiceId).filter(Boolean)),
+        ] as string[];
+        for (const invoiceId of invoiceIds) {
+          const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
+          if (!invoice) continue;
+          const nextAmount = Math.max(0, invoice.amountFcfa + invoiceDeltaFcfa);
+          await tx.invoice.update({
+            where: { id: invoiceId },
+            data: { amountFcfa: nextAmount },
+          });
+        }
+      }
+
+      const invoiceNumber =
+        updatedLines.find((line) => line.invoice?.invoiceNumber)?.invoice?.invoiceNumber ?? null;
+
+      return {
+        id: prescription.id,
+        createdAt: prescription.createdAt,
+        notes: prescription.notes,
+        patient: prescription.patientId
+          ? await tx.patient.findUnique({
+              where: { id: prescription.patientId },
+              select: { code: true, firstName: true, lastName: true },
+            })
+          : null,
+        externalClient: prescription.externalClientId
+          ? await tx.pharmacyExternalClient.findUnique({
+              where: { id: prescription.externalClientId },
+              select: { code: true, firstName: true, lastName: true },
+            })
+          : null,
+        buyerType: prescription.externalClientId ? "external" : "patient",
+        pharmacist: await tx.user.findUnique({
+          where: { id: prescription.pharmacistId },
+          select: { firstName: true, lastName: true },
+        }),
+        totalFcfa,
+        invoiceNumber,
+        lines: updatedLines.map((line) => ({
+          id: line.id,
+          productId: line.productId,
+          productName: line.product.name,
+          sku: line.product.sku,
+          categoryName: line.product.category?.name ?? null,
+          quantity: line.quantity,
+          unitPriceFcfa: line.unitPriceFcfa,
+          lineTotalFcfa: line.lineTotalFcfa,
+        })),
+      };
+    });
+
+    return res.json(result);
+  } catch (error) {
+    return mapStockError(error, res);
+  }
 });
 
 router.get("/reports", async (req, res) => {

@@ -51,6 +51,7 @@ import {
   medecinMatchWhere,
   medecinPendingConsultationVisitWhere,
   medecinPrescribedTodayVisitWhere,
+  resolveDoctorQueueContext,
   visitBelongsToDoctor,
 } from "../lib/medecin-queues.js";
 import { computeLabExamsGrossFcfa } from "../lib/lab-exam-prices.js";
@@ -212,6 +213,7 @@ async function syncPrescribedProcedures(
 
 router.get("/medecin-stats", async (req, res) => {
   const doctorId = req.user!.id;
+  const queueCtx = await resolveDoctorQueueContext(doctorId);
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
 
@@ -231,7 +233,7 @@ router.get("/medecin-stats", async (req, res) => {
     prisma.visit.count({
       where: {
         createdAt: { gte: startOfToday },
-        ...medecinPendingConsultationVisitWhere(doctorId),
+        ...medecinPendingConsultationVisitWhere(doctorId, queueCtx.clinicServiceIds),
       },
     }),
     prisma.visit.count({
@@ -254,6 +256,15 @@ router.get("/medecin-stats", async (req, res) => {
         OR: [
           { assignedDoctorId: doctorId },
           { consultation: { is: { doctorId } } },
+          ...(queueCtx.clinicServiceIds.length
+            ? [
+                {
+                  assignedDoctorId: null,
+                  assignedClinicServiceId: { in: queueCtx.clinicServiceIds },
+                  status: VisitStatus.WAITING_CONSULTATION,
+                },
+              ]
+            : []),
         ],
       },
     }),
@@ -495,6 +506,7 @@ router.post("/prescribe-exams", async (req, res) => {
     const body = prescribeExamsSchema.parse(req.body);
     const user = req.user!;
     await ensureVisitPatientMergedByPhone(body.visitId);
+    const queueCtx = await resolveDoctorQueueContext(user.id);
 
     const result = await prisma.$transaction(async (tx) => {
       const visit = await tx.visit.findUnique({
@@ -503,7 +515,7 @@ router.post("/prescribe-exams", async (req, res) => {
       });
       if (!visit) throw new Error("VISIT_NOT_FOUND");
 
-      if (!visitBelongsToDoctor(visit, user.id)) {
+      if (!visitBelongsToDoctor(visit, user.id, queueCtx.clinicServiceIds)) {
         throw new Error("NOT_AUTHORIZED");
       }
 
@@ -515,16 +527,24 @@ router.post("/prescribe-exams", async (req, res) => {
         throw new Error("NOT_AUTHORIZED");
       }
 
-      if (visit.status === VisitStatus.WAITING_CONSULTATION) {
+      if (
+        visit.status === VisitStatus.WAITING_CONSULTATION ||
+        visit.assignedDoctorId !== user.id
+      ) {
         await tx.visit.update({
           where: { id: body.visitId },
-          data: { status: VisitStatus.IN_CONSULTATION },
+          data: {
+            status: VisitStatus.IN_CONSULTATION,
+            assignedDoctorId: user.id,
+          },
         });
       }
 
       const existingNotes = visit.consultation?.clinicalNotes;
-      const labLocked =
-        !!visit.consultation?.labSentToLabAt || hasLabResults(existingNotes);
+      const hasResults = hasLabResults(existingNotes);
+      /** Ancien verrou « déjà au labo » : on autorise la modification des examens
+       *  tant qu’aucun résultat n’est saisi. */
+      const labLocked = hasResults;
 
       let examsByKind = body.examsByKind;
       let examCommentsByKind = body.examCommentsByKind;
@@ -565,7 +585,7 @@ router.post("/prescribe-exams", async (req, res) => {
         ? flattenPrescribedExams(examsByKind).length > 0
         : (legacyExams?.length ?? 0) > 0;
 
-      // Dossier déjà au labo / avec résultats :
+      // Résultats labo déjà saisis :
       // - réécriture d’examens interdite hors « Ajouter des examens »
       // - ordonnance / notes autorisées même si le client renvoie encore les examens
       const wantsPharmacyOrNotes =
@@ -758,7 +778,7 @@ router.post("/prescribe-exams", async (req, res) => {
     if (error instanceof Error && error.message === "ALREADY_SENT_TO_LAB") {
       return res.status(409).json({
         error:
-          "Ce dossier est déjà au laboratoire ou validé — utilisez « Ajouter des examens » pour compléter la prescription.",
+          "Des résultats labo sont déjà enregistrés — utilisez « Ajouter des examens » pour compléter la prescription.",
       });
     }
     if (error instanceof Error && error.message === "INVALID_HOSPITALISATION_DAYS") {

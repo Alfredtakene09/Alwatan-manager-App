@@ -110,7 +110,6 @@
   min-height: 0;
   overflow: auto;
   padding-bottom: 0.65rem;
-  scrollbar-gutter: stable;
 }
 
 .page-with-table .ui-card--table-panel .simple-table tbody tr:last-child td {
@@ -126,11 +125,24 @@
 .supervision-grid,
 .clinical-cards,
 .cash-settlement-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
   gap: 0.4rem;
   flex-shrink: 0;
   margin: 0;
+}
+
+.stats-grid > *,
+.medecin-stats > *,
+.ops-stats > *,
+.compta-stats > *,
+.kpi-grid > *,
+.supervision-grid > *,
+.clinical-cards > *,
+.cash-settlement-stats > * {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .stats-grid .stat-card,
@@ -421,6 +433,17 @@
   .supervision-grid,
   .clinical-cards,
   .cash-settlement-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    flex-wrap: wrap;
+  }
+
+  .stats-grid > *,
+  .medecin-stats > *,
+  .ops-stats > *,
+  .compta-stats > *,
+  .kpi-grid > *,
+  .supervision-grid > *,
+  .clinical-cards > *,
+  .cash-settlement-stats > * {
+    flex: 1 1 calc(50% - 0.4rem);
   }
 }

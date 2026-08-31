@@ -9,6 +9,7 @@ import {
   parseLatestLabResultAt,
 } from '@/lib/lab-notes'
 import { formatAppDate, formatAppTime } from '@/i18n/locale-format'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import type { PrescribedByPerson } from '@/lib/lab-panel-print'
 import '@/assets/simple-table.css'
 
@@ -58,6 +59,8 @@ const emit = defineEmits<{
   print: [id: string]
 }>()
 
+const { uiText } = useAppI18n()
+
 const rows = computed(() =>
   [...props.visits]
     .map((v) => {
@@ -89,21 +92,23 @@ const rows = computed(() =>
   <div class="simple-table-shell" :class="{ 'simple-table-shell--fill': fill }">
     <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
       <span class="simple-table-spinner" aria-hidden="true" />
-      Chargement des résultats…
+      {{ uiText('Chargement des résultats…') }}
     </div>
 
     <div class="simple-table-scroll">
-      <p v-if="!loading && !rows.length" class="simple-table__empty">Aucun résultat à afficher</p>
+      <p v-if="!loading && !rows.length" class="simple-table__empty">
+        {{ uiText('Aucun résultat à afficher') }}
+      </p>
       <div v-else class="simple-table-wrap">
         <table class="simple-table">
           <thead>
             <tr>
               <th class="simple-table__num">#</th>
-              <th>Matricule</th>
-              <th>Patient</th>
-              <th>Examens</th>
-              <th>Résultats reçus</th>
-              <th class="simple-table__actions-head">Actions</th>
+              <th>{{ uiText('Matricule') }}</th>
+              <th>{{ uiText('Patient') }}</th>
+              <th class="simple-table__exam">{{ uiText('Examens') }}</th>
+              <th>{{ uiText('Résultats reçus') }}</th>
+              <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -120,7 +125,7 @@ const rows = computed(() =>
                 <span class="st-name">{{ row.patientName }}</span>
                 <span v-if="row.patientPhone" class="st-sub">{{ row.patientPhone }}</span>
               </td>
-              <td>
+              <td class="simple-table__exam">
                 <span
                   class="st-exam-preview"
                   :title="
@@ -142,8 +147,8 @@ const rows = computed(() =>
                   <button
                     type="button"
                     class="st-btn st-btn--accent"
-                    title="Voir les résultats"
-                    aria-label="Voir les résultats"
+                    :title="uiText('Voir les résultats')"
+                    :aria-label="uiText('Voir les résultats')"
                     @click="emit('view', row.id)"
                   >
                     <Eye :size="15" />
@@ -151,8 +156,8 @@ const rows = computed(() =>
                   <button
                     type="button"
                     class="st-btn st-btn--soft"
-                    title="Imprimer les résultats"
-                    aria-label="Imprimer les résultats"
+                    :title="uiText('Imprimer les résultats')"
+                    :aria-label="uiText('Imprimer les résultats')"
                     @click="emit('print', row.id)"
                   >
                     <Printer :size="15" />
@@ -160,12 +165,12 @@ const rows = computed(() =>
                   <button
                     type="button"
                     class="st-btn st-btn--accent st-btn--labeled"
-                    title="Ajouter des examens"
-                    aria-label="Ajouter des examens"
+                    :title="uiText('Ajouter des examens')"
+                    :aria-label="uiText('Ajouter des examens')"
                     @click="emit('append', row.id)"
                   >
                     <Plus :size="15" />
-                    <span>Ajouter</span>
+                    <span>{{ uiText('Ajouter') }}</span>
                   </button>
                 </div>
               </td>

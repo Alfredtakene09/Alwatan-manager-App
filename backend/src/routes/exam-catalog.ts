@@ -11,6 +11,7 @@ import {
   isSpecialtyClinicServiceName,
   resolveDoctorClinicServices,
 } from "../lib/clinic-service-exam.js";
+import { ensureKinesitherapieCatalogItems } from "../lib/kinesitherapie-catalog.js";
 import { requireAuth, requireAnyModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -61,7 +62,26 @@ function defaultHospitalisationCatalogItem(
   };
 }
 
+/** Destinations inter-services (ex. Kinésithérapeute) pour le modal médecin. */
+async function appendPrescriptionDestinationServices(
+  specialtyServiceIds: Set<string>,
+  specialtyServicesById: Map<string, string>,
+) {
+  const destinations = await prisma.clinicService.findMany({
+    where: { active: true },
+    select: { id: true, name: true },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+  });
+  for (const svc of destinations) {
+    if (!isPrescriptionDestinationServiceName(svc.name)) continue;
+    specialtyServiceIds.add(svc.id);
+    specialtyServicesById.set(svc.id, svc.name);
+  }
+}
+
 router.get("/", async (req, res) => {
+  await ensureKinesitherapieCatalogItems();
+
   // Un médecin ne peut consulter que son propre périmètre (pas un autre doctorId).
   const isMedecin = req.user?.role === "MEDECIN";
   const queryDoctorId =
@@ -88,6 +108,11 @@ router.get("/", async (req, res) => {
         }
       }
     }
+    // Autres médecins : orientation vers kiné / autres spécialités (pas seulement à la réception).
+    await appendPrescriptionDestinationServices(specialtyServiceIds, specialtyServicesById);
+    if (specialtyServiceIds.size > 1) {
+      specialtyServiceName = null;
+    }
   } else if (serviceId) {
     const service = await prisma.clinicService.findFirst({
       where: { id: serviceId, active: true },
@@ -104,26 +129,19 @@ router.get("/", async (req, res) => {
   } else {
     // Réception / patient externe : tous les services de prescription actifs
     // (nouveaux services inclus même sans nomenclature encore).
-    const specialtyServices = await prisma.clinicService.findMany({
-      where: { active: true },
-      select: { id: true, name: true },
-      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-    });
-    for (const svc of specialtyServices) {
-      if (!isPrescriptionDestinationServiceName(svc.name)) continue;
-      specialtyServiceIds.add(svc.id);
-      specialtyServicesById.set(svc.id, svc.name);
-      if (!specialtyServiceName) specialtyServiceName = svc.name;
-    }
-    if (specialtyServiceIds.size > 1) {
+    await appendPrescriptionDestinationServices(specialtyServiceIds, specialtyServicesById);
+    if (specialtyServiceIds.size === 1) {
+      specialtyServiceName = [...specialtyServicesById.values()][0] ?? null;
+    } else {
       specialtyServiceName = null;
     }
   }
 
-  // Médecin sans service : aucun examen/opération métier hors Labo/Hospit/null.
+  // Médecin : ses services + destinations d’orientation (kiné, etc.) + Labo/Hospit.
+  const catalogServiceIds = [...new Set([...filterServiceIds, ...specialtyServiceIds])];
   const examWhere =
-    filterServiceIds.length > 0
-      ? { active: true, ...examCatalogVisibleForServiceWhere(filterServiceIds) }
+    catalogServiceIds.length > 0
+      ? { active: true, ...examCatalogVisibleForServiceWhere(catalogServiceIds) }
       : doctorId || isMedecin
         ? { active: true, ...examCatalogVisibleForServiceWhere(null) }
         : { active: true };

@@ -21,6 +21,7 @@ import adminRoutes from "./routes/admin.js";
 import dashboardRoutes from "./routes/dashboard.js";
 import hospitalisationRoutes from "./routes/hospitalisation.js";
 import { refreshExamPriceCache } from "./lib/lab-exam-prices.js";
+import { ensureKinesitherapieCatalogItems } from "./lib/kinesitherapie-catalog.js";
 import { backfillLegacyConsultationInvoices } from "./lib/revenue-stats.js";
 import { backfillLabReceptionistApprovals } from "./lib/lab-receptionist-backfill.js";
 import examCatalogRoutes from "./routes/exam-catalog.js";
@@ -44,6 +45,7 @@ import doctorOvertimeRoutes from "./routes/doctor-overtime.js";
 import doctorSharesRoutes from "./routes/doctor-shares.js";
 import clinicInfoRoutes from "./routes/clinic-info.js";
 import { ensureClinicInfoRow } from "./lib/clinic.js";
+import { ensureRoleUiSettingsRow } from "./lib/role-ui-settings.js";
 import { getLanIpv4, getTailscaleIpv4, isPrivateLanOrigin, parseCorsOrigins } from "./lib/lan-host.js";
 
 const app = express();
@@ -106,7 +108,7 @@ app.get("/api/app-version", (_req, res) => {
     const html = fs.readFileSync(frontendIndex, "utf8");
     const match = html.match(/assets\/index-[^"']+\.js/);
     const stat = fs.statSync(frontendIndex);
-    const buildId = match?.[0] ?? `mtime-${stat.mtimeMs}`;
+    const buildId = `${match?.[0] ?? "index"}-${Math.round(stat.mtimeMs)}`;
     res.setHeader("Cache-Control", "no-store");
     res.json({
       buildId,
@@ -159,8 +161,17 @@ refreshExamPriceCache().catch((error) => {
   console.error("Impossible de charger le cache des tarifs examens:", error);
 });
 
+ensureKinesitherapieCatalogItems()
+  .then(() => refreshExamPriceCache())
+  .catch((error) => {
+    console.error("Impossible d'initialiser le catalogue kinésithérapie:", error);
+  });
+
 ensureClinicInfoRow().catch((error) => {
   console.error("Impossible d'initialiser les infos clinique:", error);
+});
+ensureRoleUiSettingsRow().catch((error) => {
+  console.error("Impossible d'initialiser les permissions de boutons:", error);
 });
 
 seedLabPanelsIfEmpty()

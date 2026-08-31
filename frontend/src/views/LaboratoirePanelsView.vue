@@ -39,7 +39,7 @@ type FieldForm = {
 }
 
 const labPanels = useLabPanelsStore()
-const { uiText, numberText } = useAppI18n()
+const { uiText, examNameText, numberText } = useAppI18n()
 const panels = ref<LabPanelDto[]>([])
 const listSearch = ref('')
 const loading = ref(false)
@@ -86,7 +86,7 @@ const tableRows = computed(() =>
     const priceFcfa = exam?.priceFcfa
     return {
       id: panel.id,
-      label: uiText(panel.label),
+      label: examNameText(panel.label),
       slug: panel.slug,
       fieldCount: panel.fields.length,
       tariffLabel:
@@ -434,7 +434,7 @@ onMounted(loadPanels)
           <UiButton v-if="hasActiveSearch" variant="ghost" size="sm" @click="resetSearch">
             Effacer
           </UiButton>
-          <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreate">
+          <UiButton variant="primary" size="sm" :icon="Plus" ui-action="lab.result_forms" @click="openCreate">
             Nouveau formulaire
           </UiButton>
           <LabQueueBell />
@@ -634,8 +634,8 @@ onMounted(loadPanels)
                   v-model="previewValues[field.key]"
                   :label="
                     field.reference
-                      ? `${uiText(field.label)} (${field.reference})`
-                      : uiText(field.label)
+                      ? `${examNameText(field.label)} (${field.reference})`
+                      : examNameText(field.label)
                   "
                   :placeholder="
                     field.unit

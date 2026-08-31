@@ -309,12 +309,25 @@ const PRESCRIPTION_TAB_EXCLUDED_SERVICE_NAMES = [
 ] as const;
 
 /** Normalise pour comparer sans accents / casse. */
-function normalizeServiceNameKey(value: string): string {
+export function normalizeServiceNameKey(value: string): string {
   return value
     .trim()
     .toLowerCase()
     .normalize("NFD")
     .replace(/\p{M}/gu, "");
+}
+
+/** Service kinésithérapie (libellés courants). */
+export function isKinesitherapieServiceName(serviceName: string | null | undefined): boolean {
+  const name = normalizeServiceNameKey(String(serviceName ?? ""));
+  if (!name) return false;
+  return (
+    name.includes("kinesitherap") ||
+    name.includes("kinesie terap") ||
+    name.includes("kinesie-terap") ||
+    name === "kine" ||
+    name.startsWith("kine ")
+  );
 }
 
 /**

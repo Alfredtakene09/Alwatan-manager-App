@@ -19,6 +19,7 @@ import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import { useSilentRefresh } from '@/composables/useSilentRefresh'
+import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
 import { type LabsWaitingVisitRow } from '@/components/ui/LabsWaitingDataTable.vue'
 import '@/assets/lab-visit-table.css'
 import LabQueueBell from '@/components/layout/LabQueueBell.vue'
@@ -26,6 +27,7 @@ import LabQueueBell from '@/components/layout/LabQueueBell.vue'
 const router = useRouter()
 const auth = useAuthStore()
 const { uiText, dateText, timeText, numberText } = useAppI18n()
+const { canSeeUiAction } = useUiActionVisibility()
 
 const visits = ref<LabsWaitingVisitRow[]>([])
 const listSearch = ref('')
@@ -225,6 +227,7 @@ onActivated(() => {
                       <span>{{ uiText('Resaisir') }}</span>
                     </button>
                     <button
+                      v-if="canSeeUiAction('export.print')"
                       type="button"
                       class="lab-visit-act lab-visit-act--labeled"
                       :title="uiText('Imprimer')"

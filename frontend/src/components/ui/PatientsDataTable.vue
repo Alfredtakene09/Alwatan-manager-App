@@ -1,10 +1,22 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Pencil, RefreshCw, Trash2 } from '@lucide/vue'
-import { fullName } from '@/lib/roles'
+import { Pencil, RefreshCw, Trash2, Banknote, Printer } from '@lucide/vue'
+import { fullName, isDirectionOrGestionnaire } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth'
+import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
 import { sortPatientsNewestFirst } from '@/lib/patient-sort'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import '@/assets/simple-table.css'
+
+export type ConsultationPaymentInfo = {
+  invoiceId: string
+  invoiceNumber: string
+  status: string
+  amountFcfa: number
+  paidAmountFcfa: number
+  remainingFcfa: number
+  payable: boolean
+}
 
 export type PatientRow = {
   id: string
@@ -18,6 +30,7 @@ export type PatientRow = {
   /** false = déjà envoyé / consulté (ou données liées) — pas de bouton supprimer */
   canDelete?: boolean
   createdBy?: { id: string; firstName: string; lastName: string } | null
+  consultationPayment?: ConsultationPaymentInfo | null
 }
 
 const props = withDefaults(
@@ -27,17 +40,35 @@ const props = withDefaults(
     fill?: boolean
     showDelete?: boolean
     showReceptionist?: boolean
+    /** Si omis : visible pour admin / gestionnaire / direction, masqué pour les réceptionnistes. */
+    showPay?: boolean
+    showPrint?: boolean
+    printingPatientId?: string | null
   }>(),
-  { showDelete: true, showReceptionist: false },
+  { showDelete: true, showReceptionist: false, showPrint: false, printingPatientId: null },
 )
 
 const emit = defineEmits<{
   edit: [patient: PatientRow]
   reconsult: [patient: PatientRow]
   delete: [patient: PatientRow]
+  pay: [patient: PatientRow]
+  print: [patient: PatientRow]
 }>()
 
-const { uiText } = useAppI18n()
+const { uiText, localeCode, dateText } = useAppI18n()
+const auth = useAuthStore()
+const { canSeeUiAction } = useUiActionVisibility()
+const showPayButton = computed(() =>
+  (props.showPay ?? Boolean(auth.user && isDirectionOrGestionnaire(auth.user.role))) &&
+  canSeeUiAction('reception.pay_consultation'),
+)
+const showPrintButton = computed(
+  () => props.showPrint && canSeeUiAction('reception.print_receipt'),
+)
+const showEditButton = computed(() => canSeeUiAction('reception.edit_patient'))
+const showReconsultButton = computed(() => canSeeUiAction('reception.reconsult'))
+const allowDelete = computed(() => props.showDelete && canSeeUiAction('reception.delete_patient'))
 
 const rows = computed(() =>
   sortPatientsNewestFirst(props.patients).map((p) => ({
@@ -51,17 +82,45 @@ const rows = computed(() =>
     receptionistName: p.createdBy
       ? fullName(p.createdBy.firstName, p.createdBy.lastName)
       : '',
-    canDelete: props.showDelete && p.canDelete !== false,
+    canDelete: allowDelete.value && p.canDelete !== false,
+    payable: Boolean(p.consultationPayment?.payable),
+    paid: p.consultationPayment?.status === 'PAID',
+    payment: consultationPaymentMark(p.consultationPayment),
   })),
 )
 
+function consultationPaymentMark(payment: ConsultationPaymentInfo | null | undefined) {
+  if (!payment) {
+    return { label: '—', variant: 'default' as const }
+  }
+  if (payment.status === 'PAID' || (payment.remainingFcfa <= 0 && payment.paidAmountFcfa > 0)) {
+    return { label: uiText('Payé'), variant: 'success' as const }
+  }
+  if (
+    payment.status === 'PARTIALLY_PAID' ||
+    (payment.paidAmountFcfa > 0 && payment.remainingFcfa > 0)
+  ) {
+    return { label: uiText('Partiel'), variant: 'warning' as const }
+  }
+  if (payment.payable || payment.status === 'PENDING' || payment.status === 'DRAFT') {
+    return { label: uiText('Non payé'), variant: 'danger' as const }
+  }
+  return { label: '—', variant: 'default' as const }
+}
+
 function formatDate(iso?: string) {
   if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('fr-FR', {
+  void localeCode.value
+  return dateText(iso, {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
   })
+}
+
+function serviceLabel(service: string) {
+  void localeCode.value
+  return service ? uiText(service) : ''
 }
 
 function genderLabel(gender?: string) {
@@ -90,26 +149,27 @@ function genderClass(gender?: string) {
       aria-live="polite"
     >
       <span class="simple-table-spinner" aria-hidden="true" />
-      Chargement des dossiers…
+      {{ uiText('Chargement des dossiers…') }}
     </div>
 
     <div class="simple-table-scroll">
       <p v-if="!loading && !rows.length" class="simple-table__empty">
-        Aucun patient à afficher
+        {{ uiText('Aucun patient à afficher') }}
       </p>
       <div v-else class="simple-table-wrap">
         <table class="simple-table">
           <thead>
             <tr>
               <th class="simple-table__num">#</th>
-              <th>Matricule</th>
-              <th>Nom complet</th>
-              <th>Service</th>
-              <th>Téléphone</th>
-              <th>Genre</th>
-              <th>Date d'inscription</th>
-              <th v-if="showReceptionist">Réceptionniste</th>
-              <th class="simple-table__actions-head">Actions</th>
+              <th>{{ uiText('Matricule') }}</th>
+              <th>{{ uiText('Nom complet') }}</th>
+              <th>{{ uiText('Service') }}</th>
+              <th>{{ uiText('Téléphone') }}</th>
+              <th>{{ uiText('Genre') }}</th>
+              <th>{{ uiText("Date d'inscription") }}</th>
+              <th v-if="showReceptionist">{{ uiText('Réceptionniste') }}</th>
+              <th>{{ uiText('Paiement consultation') }}</th>
+              <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -122,7 +182,7 @@ function genderClass(gender?: string) {
                 <span class="st-name">{{ row.fullName }}</span>
               </td>
               <td>
-                <span v-if="row.service" class="st-date">{{ row.service }}</span>
+                <span v-if="row.service" class="st-date">{{ serviceLabel(row.service) }}</span>
                 <span v-else class="st-muted">—</span>
               </td>
               <td>
@@ -143,9 +203,43 @@ function genderClass(gender?: string) {
                 <span v-if="row.receptionistName" class="st-date">{{ row.receptionistName }}</span>
                 <span v-else class="st-muted">—</span>
               </td>
+              <td>
+                <span class="st-badge" :class="`st-badge--${row.payment.variant}`">
+                  {{ row.payment.label }}
+                </span>
+              </td>
               <td class="simple-table__actions">
                 <div class="st-actions">
                   <button
+                    v-if="showPrintButton"
+                    type="button"
+                    class="st-btn st-btn--accent"
+                    :disabled="printingPatientId === row.patient.id"
+                    :title="uiText('Imprimer le reçu de consultation')"
+                    :aria-label="uiText('Imprimer le reçu de consultation')"
+                    @click="emit('print', row.patient)"
+                  >
+                    <Printer :size="15" />
+                  </button>
+                  <button
+                    v-if="showPayButton"
+                    type="button"
+                    class="st-btn"
+                    :class="row.payable ? 'st-btn--pay' : 'st-btn--soft'"
+                    :title="
+                      row.payable
+                        ? uiText('Paiement — à régler chez le gestionnaire')
+                        : row.paid
+                          ? uiText('Paiement — soldé')
+                          : uiText('Paiement')
+                    "
+                    :aria-label="uiText('Paiement')"
+                    @click="emit('pay', row.patient)"
+                  >
+                    <Banknote :size="15" />
+                  </button>
+                  <button
+                    v-if="showEditButton"
                     type="button"
                     class="st-btn st-btn--edit"
                     title="Modifier le dossier"
@@ -155,6 +249,7 @@ function genderClass(gender?: string) {
                     <Pencil :size="15" />
                   </button>
                   <button
+                    v-if="showReconsultButton"
                     type="button"
                     class="st-btn st-btn--accent"
                     title="Reconsultation"

@@ -20,6 +20,7 @@ export type ConsultationVisitRow = {
     phone?: string | null
   }
   assignedDoctor?: { id: string; firstName: string; lastName: string } | null
+  assignedClinicService?: { id: string; name: string } | null
   vitalSigns?: Array<{
     weightKg?: number | null
     bloodPressure?: string | null
@@ -80,21 +81,23 @@ const rows = computed(() => {
   <div class="simple-table-shell">
     <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
       <span class="simple-table-spinner" aria-hidden="true" />
-      Chargement de la file…
+      {{ uiText('Chargement de la file…') }}
     </div>
     <div class="simple-table-scroll">
-      <p v-if="!loading && !rows.length" class="simple-table__empty">Aucune visite en file</p>
+      <p v-if="!loading && !rows.length" class="simple-table__empty">
+        {{ uiText('Aucune visite en file') }}
+      </p>
       <div v-else class="simple-table-wrap">
         <table class="simple-table">
           <thead>
             <tr>
               <th class="simple-table__num">#</th>
-              <th>Matricule</th>
-              <th>Patient</th>
-              <th>Statut</th>
-              <th>Arrivée</th>
-              <th v-if="readOnly">Médecin assigné</th>
-              <th v-else class="simple-table__actions-head">Actions</th>
+              <th>{{ uiText('Matricule') }}</th>
+              <th>{{ uiText('Patient') }}</th>
+              <th>{{ uiText('Statut') }}</th>
+              <th>{{ uiText('Arrivée') }}</th>
+              <th v-if="readOnly">{{ uiText('Médecin assigné') }}</th>
+              <th v-else class="simple-table__actions-head">{{ uiText('Actions') }}</th>
             </tr>
           </thead>
           <tbody>

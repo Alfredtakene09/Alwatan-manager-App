@@ -203,3 +203,17 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   }
   next();
 }
+
+/** Configuration des boutons granulaires — Admin et Direction uniquement. */
+export function requireAdminOrDirection(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({ error: "Non autorisé" });
+  }
+  if (req.user.role !== "ADMIN" && req.user.role !== "COMPTABLE") {
+    return res.status(403).json({
+      error: "Accès réservé à la direction et à l'administrateur.",
+      code: "DIRECTION_OR_ADMIN_ONLY",
+    });
+  }
+  next();
+}

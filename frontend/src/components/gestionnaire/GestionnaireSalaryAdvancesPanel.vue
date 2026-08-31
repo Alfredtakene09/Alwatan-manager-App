@@ -327,6 +327,10 @@ defineExpose({ reload: loadRows })
 </script>
 
 <template>
+  <div>
+    <div class="page-create-bar">
+      <UiButton variant="primary" :icon="Plus" @click="openCreate">Nouvelle avance</UiButton>
+    </div>
   <UiCard class="advances-card">
     <div class="advances-card__head">
       <div class="advances-card__intro">
@@ -340,7 +344,6 @@ defineExpose({ reload: loadRows })
           </p>
         </div>
       </div>
-      <UiButton variant="primary" :icon="Plus" @click="openCreate">Nouvelle avance</UiButton>
     </div>
 
     <div class="advances-filters" role="tablist" aria-label="Filtrer par statut">
@@ -500,6 +503,7 @@ defineExpose({ reload: loadRows })
     @close="closeModal"
     @submit="submitForm"
   />
+  </div>
 </template>
 
 <style scoped>

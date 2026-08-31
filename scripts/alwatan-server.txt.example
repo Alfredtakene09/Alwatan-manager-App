@@ -1,9 +1,12 @@
-# Adresses du poste serveur — les clients utilisent les DEUX si disponibles.
-# SERVER_IP     = Wi-Fi / Ethernet de la clinique (prioritaire)
-# TAILSCALE_IP  = mesh Tailscale (secours / hors site)
+# Adresses du poste serveur (detection automatique au demarrage)
+# SERVER_IP     = IP Ethernet cablee du serveur (DHCP auto recommande)
+# TAILSCALE_IP  = mesh Tailscale (1 utilisateur distant : PC / mobile)
 #
 # Exemple :
-# SERVER_IP=192.168.88.161
-# TAILSCALE_IP=100.106.181.115
+# SERVER_IP=192.168.88.208
+# TAILSCALE_IP=100.88.27.41
+#
+# Les clients Ethernet se connectent automatiquement via le raccourci Alwatan
+# (decouverte si l'IP DHCP du serveur change).
 SERVER_IP=
 TAILSCALE_IP=

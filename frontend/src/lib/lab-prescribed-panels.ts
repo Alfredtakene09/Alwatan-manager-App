@@ -1,5 +1,5 @@
 import type { LabFormPanel, LabFormSection } from '@/lib/lab-form-panels'
-import { translateUi } from '@/i18n/translate'
+import { translateExamName } from '@/i18n/translate'
 
 const UNTITLED_SECTION_LABEL = 'Formulaire principal'
 
@@ -236,7 +236,7 @@ export function groupPrescribedByPanel(labels: string[]): PrescribedPanelChipGro
 /** Affichage résumé : « Biochimie (3) ». */
 export function formatPanelGroupSummaryLabel(
   group: PrescribedPanelChipGroup,
-  t: (label: string) => string = translateUi,
+  t: (label: string) => string = translateExamName,
 ): string {
   return `${t(group.panel)} (${group.items.length})`
 }
@@ -244,7 +244,7 @@ export function formatPanelGroupSummaryLabel(
 /** Noms des formulaires / sections sélectionnés (détail / tooltip), sans doublons. */
 export function formatPanelGroupDetails(
   group: PrescribedPanelChipGroup,
-  t: (label: string) => string = translateUi,
+  t: (label: string) => string = translateExamName,
 ): string {
   const names = group.items.map((item) => item.chip.trim()).filter(Boolean)
   const meaningful = names.filter((name) => {
@@ -269,16 +269,43 @@ export function formatPanelGroupDetails(
 /** Liste compacte : « Biochimie (2) », « NFS (1) ». */
 export function formatGroupedPrescribedLabels(
   labels: string[],
-  t: (label: string) => string = translateUi,
+  t: (label: string) => string = translateExamName,
 ): string[] {
   return groupPrescribedByPanel(labels).map((group) => formatPanelGroupSummaryLabel(group, t))
 }
 
 export function formatGroupedPrescribedSummary(
   labels: string[],
-  t: (label: string) => string = translateUi,
+  t: (label: string) => string = translateExamName,
 ): string {
   const parts = formatGroupedPrescribedLabels(labels, t)
+  return parts.length ? parts.join(', ') : '—'
+}
+
+/** Résumé compact : uniquement les noms de champs cochés (sans répéter le formulaire parent). */
+export function summarizePrescribedExamFieldNames(
+  labels: string[],
+  t: (label: string) => string = translateExamName,
+): string {
+  const seen = new Set<string>()
+  const parts: string[] = []
+  for (const raw of labels) {
+    const fields = extractPrescribedFieldLabels(raw)
+    if (fields.length) {
+      for (const field of fields) {
+        const key = normalizeLabLabelKey(field)
+        if (!key || key === normalizeLabLabelKey(UNTITLED_SECTION_LABEL) || seen.has(key)) continue
+        seen.add(key)
+        parts.push(t(field.trim()))
+      }
+      continue
+    }
+    const base = extractBasePanelLabel(raw).trim() || raw.trim()
+    const key = normalizeLabLabelKey(base)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    parts.push(t(base))
+  }
   return parts.length ? parts.join(', ') : '—'
 }
 
@@ -288,7 +315,7 @@ export function formatGroupedPrescribedSummary(
  */
 export function formatGroupedPrescribedDetails(
   labels: string[],
-  t: (label: string) => string = translateUi,
+  t: (label: string) => string = translateExamName,
 ): string {
   const groups = groupPrescribedByPanel(labels)
   if (!groups.length) return '—'

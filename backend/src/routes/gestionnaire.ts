@@ -111,14 +111,14 @@ const paymentMethodSchema = z.nativeEnum(PaymentMethod);
 
 const employeeCompensationSchema = z.object({
   doctorCompensationType: z.nativeEnum(DoctorCompensationType).optional(),
-  consultationTotalFcfa: z.number().int().min(0).optional(),
+  consultationTotalFcfa: z.number().int().min(0).nullable().optional(),
   consultationQuotaMode: z.nativeEnum(ConsultationQuotaMode).optional(),
-  consultationQuotaPercent: z.number().int().min(1).max(100).optional(),
-  consultationQuotaFcfa: z.number().int().min(0).optional(),
-  consultationValidityDays: z.number().int().min(1).max(365).optional(),
+  consultationQuotaPercent: z.number().int().min(1).max(100).nullable().optional(),
+  consultationQuotaFcfa: z.number().int().min(0).nullable().optional(),
+  consultationValidityDays: z.number().int().min(1).max(365).nullable().optional(),
   consultationRenewalPolicy: z.nativeEnum(ConsultationRenewalPolicy).optional(),
-  surgeryQuotaPercent: z.number().int().min(1).max(99).optional(),
-  fixedSalaryFcfa: z.number().int().min(0).optional(),
+  surgeryQuotaPercent: z.number().int().min(1).max(99).nullable().optional(),
+  fixedSalaryFcfa: z.number().int().min(0).nullable().optional(),
   overtimeHourlyRateFcfa: z.number().int().min(0).optional().nullable(),
 });
 
@@ -873,7 +873,7 @@ router.post("/employees", async (req, res) => {
         specialty: normalizeSpecialty(body.specialty, isMedecin),
         ...(availabilitySlots !== undefined ? { availabilitySlots } : {}),
         active: body.active ?? true,
-        ...employeeCompensationData(isMedecin, body),
+        ...employeeCompensationData(isMedecin, { ...body, jobTitle }),
       },
       select: employeeSelect,
     });
@@ -921,9 +921,17 @@ router.put("/employees/:id", async (req, res) => {
       body.doctorCompensationType !== undefined ||
       body.consultationTotalFcfa !== undefined ||
       body.consultationQuotaPercent !== undefined ||
+      body.consultationQuotaFcfa !== undefined ||
+      body.consultationQuotaMode !== undefined ||
+      body.consultationValidityDays !== undefined ||
+      body.consultationRenewalPolicy !== undefined ||
       body.surgeryQuotaPercent !== undefined ||
       body.fixedSalaryFcfa !== undefined
-        ? employeeCompensationData(nextIsMedecin, body)
+        ? employeeCompensationData(
+            nextIsMedecin,
+            { ...body, jobTitle: nextJobTitle },
+            existing,
+          )
         : {};
 
     const availabilitySlots =

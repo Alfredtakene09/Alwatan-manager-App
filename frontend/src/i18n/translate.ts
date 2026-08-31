@@ -79,6 +79,17 @@ export function translateUi(text: string | null | undefined): string {
   return translateUiLocale(text, activeLocale())
 }
 
+/**
+ * Libellé d’examen / formulaire labo : en arabe, conserver l’anglais (pas la traduction arabe).
+ */
+export function translateExamName(text: string | null | undefined): string {
+  if (text == null) return ''
+  if (activeLocale() === 'ar') {
+    return translateUiLocale(text, 'en')
+  }
+  return translateUi(text)
+}
+
 /** Traduction figée vers une locale (ex. tickets thermiques toujours en arabe). */
 export function translateUiLocale(
   text: string | null | undefined,

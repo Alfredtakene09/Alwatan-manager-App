@@ -32,11 +32,7 @@ export const DOCTOR_SPECIALTY_SUGGESTIONS = [
 ]
 
 export function emptyWeekAvailability(): DoctorAvailabilitySlot[] {
-  return DOCTOR_WEEKDAY_OPTIONS.slice(0, 5).map((day) => ({
-    dayOfWeek: day.value,
-    startTime: '08:00',
-    endTime: '16:00',
-  }))
+  return []
 }
 
 export function parseDoctorAvailabilitySlots(value: unknown): DoctorAvailabilitySlot[] {
@@ -72,10 +68,9 @@ export function toggleDayAvailability(
 ): DoctorAvailabilitySlot[] {
   const without = slots.filter((slot) => slot.dayOfWeek !== dayOfWeek)
   if (!enabled) return without
-  return [
-    ...without,
-    { dayOfWeek, startTime: '08:00', endTime: '16:00' },
-  ].sort((a, b) => a.dayOfWeek - b.dayOfWeek)
+  return [...without, { dayOfWeek, startTime: '', endTime: '' }].sort(
+    (a, b) => a.dayOfWeek - b.dayOfWeek,
+  )
 }
 
 export function updateDayTimes(

@@ -22,6 +22,13 @@ export default {
       'This file is already at the laboratory or validated — use “Add exams” to complete the prescription.',
     'Ordonnance enregistrée — ordonnance imprimée.': 'Prescription saved — prescription printed.',
     'Consultation enregistrée — ordonnance imprimée.': 'Consultation saved — prescription printed.',
+    'Ordonnance enregistrée.': 'Prescription saved.',
+    'Consultation enregistrée — ordonnance sauvegardée (impression manuelle).':
+      'Consultation saved — prescription saved (print manually).',
+    'Modifier la prescription': 'Edit prescription',
+    'Enregistrer la prescription': 'Save prescription',
+    'Des résultats labo sont déjà enregistrés. Pour ajouter des examens, utilisez « Ajouter des examens ». Vous pouvez modifier l’ordonnance pharmacie ici.':
+      'Lab results are already recorded. To add exams, use “Add exams”. You can still edit the pharmacy prescription here.',
     Compris: 'Got it',
     Valider: 'Validate',
     Imprimer: 'Print',
@@ -102,6 +109,13 @@ export default {
     'Validé le {date} · {n} formulaire(s)': 'Validated on {date} · {n} form(s)',
     '50 derniers dossiers — recherchez pour affiner':
       '50 latest records — search to refine',
+    'Patients consultés': 'Consulted patients',
+    'Dossiers enregistrés par les médecins': 'Records created by doctors',
+    'Aucun dossier médical pour le moment.': 'No medical records yet.',
+    'Patients consultés par les médecins': 'Patients seen by doctors',
+    'Patients consultés par les médecins — historique clinique complet':
+      'Patients seen by doctors — full clinical history',
+    'Enregistré par {name}': 'Registered by {name}',
     'Aucun patient trouvé. Utilisez la recherche ci-contre.':
       'No patient found. Use the search on the side.',
     'Rechercher un patient': 'Search for a patient',
@@ -194,11 +208,22 @@ export default {
     'Transférer le patient': 'Transfer patient',
     'Confirmer le transfert de ce patient vers le médecin sélectionné ?':
       'Confirm transferring this patient to the selected doctor?',
+    'Confirmer le transfert de ce patient vers le service sélectionné ?':
+      'Confirm transferring this patient to the selected service?',
     Transférer: 'Transfer',
     'Transfert…': 'Transferring…',
     'Confirmer le transfert': 'Confirm transfer',
     'Sélectionnez un médecin destinataire.': 'Select a destination doctor.',
+    'Sélectionnez un service destinataire.': 'Select a destination service.',
+    'Service destinataire': 'Destination service',
+    'Choisir un service…': 'Choose a service…',
+    'aucun médecin rattaché': 'no doctor linked',
+    'Aucun service disponible. Créez-en un dans la page Services.':
+      'No service available. Create one on the Services page.',
+    'Le patient apparaîtra en attente de consultation chez le(s) médecin(s) de ce service.':
+      'The patient will appear in the consultation queue for doctor(s) in this service.',
     'Patient transféré au médecin sélectionné.': 'Patient transferred to the selected doctor.',
+    'Patient transféré vers le service sélectionné.': 'Patient transferred to the selected service.',
     'Impossible de transférer ce patient.': 'Unable to transfer this patient.',
     'Impossible de démarrer la consultation.': 'Unable to start the consultation.',
     'Sélectionnez au moins un examen ou saisissez un commentaire (2 caractères min.).':
@@ -443,9 +468,34 @@ export default {
     "Date d'inscription": 'Registration date',
     Féminin: 'Female',
     Masculin: 'Male',
+    'Féminin / Masculin': 'Female / Male',
+    'Patients examens': 'Exam patients',
+    'Ont reçu des examens': 'Received exams',
     "Inscrits aujourd'hui": 'Registered today',
     'Patients externes': 'External patients',
     'Examens sans consultation — aujourd’hui': 'Exams without consultation — today',
+    'Paiement — à régler chez le gestionnaire': 'Payment — settle with the manager',
+    'Enregistrement — paiement chez le gestionnaire': 'Registration — payment with the manager',
+    'Enregistrement des patients uniquement — le paiement est géré par le gestionnaire':
+      'Patient registration only — payment is handled by the manager',
+    'À payer chez le gestionnaire.': 'To be paid with the manager.',
+    'Tarif selon le gestionnaire — à régler chez le gestionnaire.':
+      'Rate set by the manager — settle with the manager.',
+    'Patients enregistrés aujourd’hui — sans encaissement à la réception':
+      'Patients registered today — no collection at reception',
+    'Sections réception': 'Reception sections',
+    'Consultation gratuite (validité en cours).': 'Free consultation (validity still active).',
+    'Vérification de la validité…': 'Checking validity…',
+    'Paiement — soldé': 'Payment — settled',
+    'À payer': 'To pay',
+    'Non payé': 'Unpaid',
+    Partiel: 'Partial',
+    'Le patient règle cette consultation chez le gestionnaire.':
+      'The patient pays this consultation with the manager.',
+    'Le gestionnaire peut appliquer une réduction avant l’encaissement.':
+      'The manager can apply a discount before collecting payment.',
+    'Consultation soldée.': 'Consultation settled.',
+    'Aucun paiement en attente pour ce dossier.': 'No pending payment for this record.',
     'Bilan du jour': 'Day summary',
     'Le paiement des consultations et examens se fait chez le gestionnaire.':
       'Consultation and exam payments are made with the manager.',
@@ -534,6 +584,12 @@ export default {
     'Voir la pharmacie': 'View pharmacy',
     'Nouvelle hospitalisation': 'New hospitalization',
     'Admettre le patient': 'Admit the patient',
+    'Paiement examens': 'Exam payment',
+    'Paiement consultation': 'Consultation payment',
+    'Tout est à jour — aucun paiement, clôture, dépense, paie ni hospitalisation en attente.':
+      'Everything is up to date — no pending payments, closures, expenses, payroll or hospitalizations.',
+    'Tout est à jour — aucune hospitalisation en attente.':
+      'Everything is up to date — no pending hospitalizations.',
     'Tout est à jour — aucune clôture, dépense, paie ni hospitalisation en attente.':
       'Everything is up to date — no pending closures, expenses, payroll or hospitalizations.',
     'Tout est à jour — aucune action urgente sur la caisse comptable, les dépenses ni la paie.':
@@ -840,6 +896,7 @@ export default {
     'Reçu {code}': 'Receipt {code}',
     Reçu: 'Receipt',
     'Imprimer le reçu': 'Print receipt',
+    'Imprimer le reçu de consultation': 'Print consultation receipt',
     'Total payé': 'Total paid',
     'Merci de votre confiance': 'Thank you for your trust',
     'Tél.': 'Tel.',
@@ -1298,6 +1355,8 @@ export default {
     'Poste & profil': 'Role & profile',
     'Poste / fonction': 'Job / function',
     'Sélectionnez un poste': 'Select a job title',
+    'Pourcentage reversé à cet assistant sur les opérations.':
+      'Percentage paid to this assistant on operations.',
     'Profil employé': 'Employee profile',
     'Administration, technique, accueil…': 'Administration, technical, reception…',
     'Consultations et rémunération': 'Consultations and compensation',
@@ -1321,6 +1380,44 @@ export default {
     'Comptes d\'accès — les soignants restent dans le registre sans compte':
       'Access accounts — caregivers stay in the registry without an account',
     'Comptes utilisateurs': 'User accounts',
+    Boutons: 'Buttons',
+    'Sections utilisateurs': 'User sections',
+    'Boutons par type d’utilisateur': 'Buttons by user type',
+    'Masquez des actions pour le gestionnaire, le laborantin, le pharmacien, etc. Sans modification, les droits actuels restent inchangés.':
+      'Hide actions for the manager, lab technician, pharmacist, etc. Unchanged boxes keep the current role behaviour.',
+    'Décochez un bouton pour le masquer à ce type d’utilisateur. Les cases cochées conservent le comportement actuel du rôle. Admin et Direction voient toujours tous leurs boutons.':
+      'Uncheck a button to hide it for this user type. Checked items keep the current role behaviour. Admin and Direction always see all their buttons.',
+    'Type d’utilisateur': 'User type',
+    'Actions générales': 'General actions',
+    'Ajouter / Nouveau (catalogues)': 'Add / New (catalogs)',
+    'Boutons d’ajout sur les nomenclatures et listes.': 'Add buttons on catalogs and lists.',
+    'Modifier une ligne': 'Edit a row',
+    'Supprimer une ligne': 'Delete a row',
+    'Activer / Désactiver': 'Enable / Disable',
+    'Dossiers, résultats laboratoire et ordonnances.':
+      'Patient files, lab results and prescriptions.',
+    'Ajouter un fichier au dossier patient.': 'Attach a file to the patient record.',
+    'Menu Comptabilité → Encaissements.': 'Accounting menu → Collections.',
+    'Examens payés, réclamations, en attente de paiement.':
+      'Paid exams, claims, awaiting payment.',
+    'Encaisser la consultation': 'Collect consultation payment',
+    'Types & catalogues': 'Types & catalogs',
+    'Hospitalisation & salles': 'Hospitalization & rooms',
+    'Menu, ajout et modification des chambres.': 'Menu, add and edit rooms.',
+    'Nomenclature et tarifs des examens.': 'Exam nomenclature and rates.',
+    'Types d’opération, tarifs et parts médecins.': 'Operation types, rates and doctor shares.',
+    'Services cliniques et médecins associés.': 'Clinical services and linked doctors.',
+    'Créer et modifier les formulaires de résultats labo.':
+      'Create and edit lab result forms.',
+    'Ajouter un employé': 'Add employee',
+    'Catalogue pharmacie (catégories, fournisseurs, produits)':
+      'Pharmacy catalog (categories, suppliers, products)',
+    'Réduction avant encaissement (consultation)': 'Discount before collection (consultation)',
+    'Caisse / comptabilité': 'Cash / accounting',
+    'Boutons visibles pour ce compte': 'Buttons visible for this account',
+    'Par défaut : droits du rôle. Décochez une action pour la masquer uniquement à cet utilisateur (ex. un laborantin sans impression).':
+      'Default: role rights. Uncheck an action to hide it only for this user (e.g. a lab tech without print).',
+    'Déjà masqué pour ce rôle': 'Already hidden for this role',
     'Créez d\'abord l\'employé dans Employés, puis liez-le ici pour lui ouvrir un accès':
       'Create the employee in Employees first, then link them here to open access',
     'Nouvel utilisateur': 'New user',
@@ -1916,6 +2013,9 @@ export default {
     'Marge brute = ventes − coût d’achat (prix d’achat des produits)': 'Gross margin = sales − purchase cost (product purchase prices)',
     'Clients externes': 'External clients',
     'Histogramme — ordonnances, ventes externes et alertes': 'Chart — prescriptions, external sales and alerts',
+    'Répartition du jour — ordonnances, ventes externes et alertes': 'Today’s breakdown — prescriptions, external sales and alerts',
+    'Total 7 jours': '7-day total',
+    'Aucune activité aujourd’hui': 'No activity today',
     'Stocks critiques': 'Critical stock',
     'Niveau par rapport au seuil d\'alerte': 'Level relative to alert threshold',
     'Aucune alerte stock': 'No stock alerts',
@@ -2167,6 +2267,21 @@ export default {
     'Impossible de charger l\'historique des ventes.': 'Unable to load sales history.',
     'Historique des ventes': 'Sales history',
     'Détail de la vente': 'Sale detail',
+    'Modifier la vente': 'Edit sale',
+    'Vente mise à jour.': 'Sale updated.',
+    'Impossible de modifier cette vente.': 'Unable to edit this sale.',
+    'Corrigez les quantités vendues — le stock est ajusté automatiquement.':
+      'Correct sold quantities — stock is adjusted automatically.',
+    'Corrigez les quantités ou supprimez des lignes — le stock est ajusté automatiquement.':
+      'Correct quantities or remove lines — stock is adjusted automatically.',
+    'Supprimer cette ligne': 'Remove this line',
+    'Vente supprimée — toutes les lignes ont été retirées.':
+      'Sale removed — all lines were deleted.',
+    'Ajoutez au moins une ligne ou annulez la modification.':
+      'Keep at least one line or cancel the edit.',
+    'Nouveau total :': 'New total:',
+    'Quantité invalide — saisissez un nombre entre 1 et 999.':
+      'Invalid quantity — enter a number between 1 and 999.',
     'Aucune vente enregistrée': 'No sales recorded',
     'Chargement des ventes…': 'Loading sales…',
     Dispensation: 'Dispensing',
@@ -2234,7 +2349,7 @@ export default {
         'Session expired or cookie rejected on this PC. Sign in again (use the current Wi‑Fi server URL, not an old IP).',
       sessionIdle: 'Session expired after 30 minutes of inactivity. Please sign in again.',
       sessionActive:
-        'A session is already active for this user on another device. Sign out there first, or wait 30 minutes of inactivity.',
+        'A session is already active for this user on another device. Sign out on the other device first, or wait 30 minutes of inactivity.',
       sessionReplaced: 'This session was invalidated. Please sign in again.',
       lastAttempt: 'Incorrect password. Warning: this is your last attempt before the account is locked.',
       locked:
@@ -2251,13 +2366,17 @@ export default {
     installDismiss: 'Later',
     hideSteps: 'Hide steps',
     installHttpHint:
-      'First visit: add the desktop shortcut (Alwatan icon). Opens via Wi-Fi, then Tailscale if needed.',
+      'First visit: download the desktop shortcut (Alwatan icon). Opens via Ethernet, then Tailscale if needed.',
     installAndroidHint:
-      'On Android (Chrome): add Alwatan to the home screen (not an APK). Same Wi‑Fi as the server; outside the clinic use Tailscale.',
+      'On Android (Chrome): add Alwatan to the home screen (not an APK). Same network as the server; outside the clinic use Tailscale.',
     installIosHint:
       'On iPad/iPhone (Safari): add Alwatan to the home screen for quick access.',
-    installDesktopShortcut: 'Add desktop shortcut',
+    installDesktopShortcut: 'Download desktop shortcut',
     installAndroidShortcut: 'Download HTML guide',
+    syncShortcutTitle: 'New desktop shortcut available',
+    syncShortcutHint:
+      'The network address changed. Download a new shortcut (current Ethernet), then run the file — old shortcuts will be replaced.',
+    syncShortcutButton: 'Download new shortcut',
     androidStep1: 'Open this page in Chrome (not another browser).',
     androidStep2: 'Tap the ⋮ menu at the top right.',
     androidStep3: 'Choose “Install app” or “Add to Home screen”.',
@@ -2307,7 +2426,9 @@ export default {
     Patients: 'Patients',
     'Patient externe': 'External patient',
     'Examens & paiements': 'Exams & payments',
+    'Paiement examens': 'Exam payment',
     'En attente de paiement': 'Awaiting payment',
+    'Ajouter examen en cours de paiement': 'Add exam pending payment',
     'Examens payés': 'Paid exams',
     Réclamations: 'Claims',
     'Suivi hospitalier': 'Hospital follow-up',
@@ -2512,6 +2633,14 @@ export default {
     Gynecologie: 'Gynecology',
     Echographie: 'Ultrasound',
     Odontologie: 'Dentistry',
+    'Kinesie terapie': 'Physiotherapy',
+    'Kinésie terapie': 'Physiotherapy',
+    Kinesitherapie: 'Physiotherapy',
+    'Kinésithérapie': 'Physiotherapy',
+    'Kinésithérapeute': 'Physiotherapist',
+    'Séance de kinésithérapie': 'Physiotherapy session',
+    'Chargement des dossiers…': 'Loading records…',
+    'Aucun patient à afficher': 'No patients to display',
     'Chirurgie majeure': 'Major surgery',
     'Chirurgie moyenne': 'Intermediate surgery',
     'Petite chirurgie': 'Minor surgery',
@@ -2542,5 +2671,67 @@ export default {
     'Sélectionner un médecin…': 'Select a doctor…',
     'Aucun médecin lié à ce service': 'No doctor linked to this service',
     'Médecin — {service}': 'Doctor — {service}',
+    // Module médecin — pages / tableaux / boutons
+    "Patients consultés — en attente de paiement, ou clôturés aujourd'hui":
+      'Patients seen — awaiting payment, or closed today',
+    "Aucun patient consulté pour le moment. Les dossiers prescrits ou clôturés aujourd'hui apparaîtront ici.":
+      'No patients seen yet. Prescribed or closed records from today will appear here.',
+    'Aucun patient consulté pour le moment': 'No patients seen yet',
+    'Aucun patient consulté': 'No patients seen',
+    'Chargement des patients consultés…': 'Loading consulted patients…',
+    '{pending} en attente de paiement · {closed} clôturé(s) aujourd\'hui':
+      '{pending} awaiting payment · {closed} closed today',
+    "{n} consultation(s) clôturée(s) aujourd'hui": '{n} consultation(s) closed today',
+    '{n} patient(s) en attente de paiement': '{n} patient(s) awaiting payment',
+    'Dossier mis à jour avec succès.': 'Record updated successfully.',
+    'Patients transférés au laboratoire — vous pouvez prescrire des examens complémentaires':
+      'Patients transferred to the lab — you can prescribe additional exams',
+    'Analyses en cours': 'Analyses in progress',
+    'Patients en attente de résultats — visibles après validation par la comptabilité':
+      'Patients awaiting results — visible after accounting validation',
+    'Aucun patient en attente de résultats laboratoire pour le moment.':
+      'No patients awaiting lab results at the moment.',
+    'Nouveaux examens ajoutés. Les examens supplémentaires suivront le circuit paiement / laboratoire.':
+      'New exams added. Additional exams will follow the payment / laboratory workflow.',
+    'Aucun examen à afficher': 'No exams to display',
+    'Aucun résultat à afficher': 'No results to display',
+    'Aucune visite en file': 'No visits in queue',
+    Arrivée: 'Arrival',
+    'Œil : consulter · Bouton Ajouter : examens complémentaires':
+      'Eye: view · Add button: complementary exams',
+    Effectuées: 'Completed',
+    Personnaliser: 'Custom',
+    Jour: 'Day',
+    'Aucune opération en attente pour le moment': 'No pending operations at the moment',
+    'Aucune opération effectuée sur la période sélectionnée':
+      'No completed operations in the selected period',
+    'Aucune part opération à percevoir pour le moment': 'No surgery share receivable at the moment',
+    '{n} part(s) opération — % calculé sur le montant déjà encaissé (tranches incluses)':
+      '{n} surgery share(s) — % calculated on the amount already collected (including installments)',
+    'Suivi opératoire': 'Surgery follow-up',
+    'Devis — en attente de paiement': 'Quote — awaiting payment',
+    'Prescrite — en attente de paiement': 'Prescribed — awaiting payment',
+    "Payée — date d'opération à fixer": 'Paid — surgery date to be set',
+    'Programmée le {date}': 'Scheduled on {date}',
+    'Date prévue le {date}': 'Planned date {date}',
+    'Effectuée le {date}': 'Completed on {date}',
+    'Patient non encaissé': 'Patient not charged',
+    'Réglée le {date}': 'Settled on {date}',
+    Réglée: 'Settled',
+    'En attente de règlement': 'Awaiting settlement',
+    Assistant: 'Assistant',
+    'Dossier indisponible': 'Record unavailable',
+    'Résultats laboratoire introuvables.': 'Lab results not found.',
+    'Avis enregistré pour ce formulaire.': 'Note saved for this form.',
+    "Impossible d'enregistrer l'avis.": 'Unable to save the note.',
+    '{n} formulaire(s) — cliquez pour consulter': '{n} form(s) — click to view',
+    Avis: 'Note',
+    'Avis / commentaire du médecin': 'Doctor note / comment',
+    'Interprétation des résultats, recommandations, suite à donner au patient…':
+      'Interpretation of results, recommendations, follow-up for the patient…',
+    'Dernier enregistrement :': 'Last saved:',
+    "Enregistrer l'avis": 'Save note',
+    'Imprimer ce formulaire': 'Print this form',
+    'Commentaire à la prescription': 'Prescription comment',
   },
 }

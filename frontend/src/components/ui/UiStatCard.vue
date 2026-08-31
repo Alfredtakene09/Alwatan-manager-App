@@ -131,7 +131,10 @@ const labelText = computed(() => {
 
 .stat-card--compact .stat-card__value,
 .stat-card--mini .stat-card__value {
-  font-size: 1.125rem;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stat-card--direct {

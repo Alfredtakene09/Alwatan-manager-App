@@ -18,6 +18,8 @@ export type SessionUser = {
   role: AppUserRole
   /** MEDECIN : afficher « Mes opérations » (bloc / chirurgie / chirurgien autorisé). */
   showDoctorOperations?: boolean
+  /** Boutons UI masqués pour ce rôle (vide pour Admin / Direction). */
+  hiddenUiActions?: string[]
 }
 
 export const ROLE_LABELS: Record<AppUserRole, string> = {
@@ -154,6 +156,6 @@ export function fullName(firstName: string, lastName: string) {
   return `${firstName} ${lastName}`.trim()
 }
 
-import { formatFcfa, formatFcfaCompact, formatFcfaDigits } from './format-fcfa.js'
+import { formatFcfa, formatFcfaCompact, formatFcfaDigits, formatFcfaShort } from './format-fcfa.js'
 
-export { formatFcfa, formatFcfaCompact, formatFcfaDigits }
+export { formatFcfa, formatFcfaCompact, formatFcfaDigits, formatFcfaShort }

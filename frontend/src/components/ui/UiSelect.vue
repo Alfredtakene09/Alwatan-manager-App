@@ -58,7 +58,7 @@ const labelText = computed(() => {
   border-radius: var(--radius-sm);
   font-family: inherit;
   /* Hérite / suit l’échelle globale des selects (--app-select-scale) */
-  font-size: calc(0.875rem * var(--app-select-scale, 1.3) / var(--app-text-scale, 1.15));
+  font-size: calc(0.875rem * var(--app-select-scale, 1.08) / var(--app-text-scale, 0.95));
   font-weight: 600;
   color: var(--text);
   background: #fff;

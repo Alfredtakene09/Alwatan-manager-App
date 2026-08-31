@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { Comment, Fragment, Text, computed, useSlots, type Component, type VNode } from 'vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
 
 type Variant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger' | 'success' | 'dark'
 type Size = 'sm' | 'md' | 'lg'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     variant?: Variant
     size?: Size
@@ -14,9 +15,13 @@ withDefaults(
     block?: boolean
     type?: 'button' | 'submit' | 'reset'
     disabled?: boolean
+    uiAction?: string
   }>(),
   { variant: 'primary', size: 'md', type: 'button' },
 )
+
+const { canSeeUiAction } = useUiActionVisibility()
+const uiActionAllowed = computed(() => !props.uiAction || canSeeUiAction(props.uiAction))
 
 const slots = useSlots()
 const { uiText, localeCode, isArabic } = useAppI18n()
@@ -52,6 +57,7 @@ const plainLabel = computed(() => {
 
 <template>
   <button
+    v-if="uiActionAllowed"
     :type="type"
     class="ui-btn"
     :class="[`ui-btn--${variant}`, `ui-btn--${size}`, { 'ui-btn--block': block, 'lang-ar': isArabic && plainLabel !== null }]"

@@ -148,40 +148,52 @@ const stats = computed(() => {
 function evolutionLabel(surgery: SurgeryCaseRow) {
   if (isUnpaidCase(surgery)) {
     return surgery.status === 'QUOTED'
-      ? 'Devis — en attente de paiement'
-      : 'Prescrite — en attente de paiement'
+      ? uiText('Devis — en attente de paiement')
+      : uiText('Prescrite — en attente de paiement')
   }
   if (isAwaiting(surgery)) {
-    if (!surgery.operationScheduledAt) return 'Payée — date d\'opération à fixer'
+    if (!surgery.operationScheduledAt) return uiText('Payée — date d\'opération à fixer')
     const scheduled = new Date(surgery.operationScheduledAt)
     if (scheduled.getTime() > Date.now()) {
-      return `Programmée le ${formatSurgeryDate(surgery.operationScheduledAt)}`
+      return uiText('Programmée le {date}').replace(
+        '{date}',
+        formatSurgeryDate(surgery.operationScheduledAt),
+      )
     }
-    return `Date prévue le ${formatSurgeryDate(surgery.operationScheduledAt)}`
+    return uiText('Date prévue le {date}').replace(
+      '{date}',
+      formatSurgeryDate(surgery.operationScheduledAt),
+    )
   }
-  return `Effectuée le ${formatSurgeryDate(surgery.completedAt ?? surgery.operationScheduledAt)}`
+  return uiText('Effectuée le {date}').replace(
+    '{date}',
+    formatSurgeryDate(surgery.completedAt ?? surgery.operationScheduledAt),
+  )
 }
 
 function paymentLabel(surgery: SurgeryCaseRow) {
-  if (isUnpaidCase(surgery)) return 'Patient non encaissé'
+  if (isUnpaidCase(surgery)) return uiText('Patient non encaissé')
   if (isAwaiting(surgery)) return '—'
   const kind = myShareKind(surgery)
   if (isSharePaid(surgery, kind)) {
     const paidAt = getSharePaidAt(surgery, kind)
     if (paidAt) {
-      return `Réglée le ${new Date(paidAt).toLocaleDateString('fr-FR', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-      })}`
+      return uiText('Réglée le {date}').replace(
+        '{date}',
+        new Date(paidAt).toLocaleDateString('fr-FR', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+        }),
+      )
     }
-    return 'Réglée'
+    return uiText('Réglée')
   }
-  return 'En attente de règlement'
+  return uiText('En attente de règlement')
 }
 
 function roleLabel(surgery: SurgeryCaseRow) {
-  return myShareKind(surgery) === 'assistant' ? 'Assistant' : 'Chirurgien'
+  return myShareKind(surgery) === 'assistant' ? uiText('Assistant') : uiText('Chirurgien')
 }
 
 function canMarkCompleted(surgery: SurgeryCaseRow) {
@@ -311,12 +323,14 @@ onMounted(load)
       <p class="ops-receivable-hint">
         {{
           stats.unpaidCount > 0
-            ? `${stats.unpaidCount} part(s) opération — % calculé sur le montant déjà encaissé (tranches incluses)`
-            : 'Aucune part opération à percevoir pour le moment'
+            ? uiText(
+                '{n} part(s) opération — % calculé sur le montant déjà encaissé (tranches incluses)',
+              ).replace('{n}', String(stats.unpaidCount))
+            : uiText('Aucune part opération à percevoir pour le moment')
         }}
       </p>
 
-      <div v-if="filterTab === 'completed'" class="filter-bar" role="region" aria-label="Filtrer par date">
+      <div v-if="filterTab === 'completed'" class="filter-bar" role="region" :aria-label="uiText('Filtrer par date')">
         <div class="filter-bar__row">
           <div class="filter-bar__modes">
             <button
@@ -328,29 +342,29 @@ onMounted(load)
               @click="dateFilterMode = mode.id"
             >
               <component :is="mode.icon" :size="15" />
-              {{ mode.label }}
+              {{ uiText(mode.label) }}
             </button>
           </div>
           <div class="filter-bar__controls">
             <template v-if="dateFilterMode === 'day'">
               <label class="filter-bar__field">
-                <span class="filter-bar__field-label">Date</span>
+                <span class="filter-bar__field-label">{{ uiText('Date') }}</span>
                 <input v-model="filterDay" type="date" class="filter-bar__input" />
               </label>
             </template>
             <template v-else-if="dateFilterMode === 'month'">
               <label class="filter-bar__field">
-                <span class="filter-bar__field-label">Mois</span>
+                <span class="filter-bar__field-label">{{ uiText('Mois') }}</span>
                 <input v-model="filterMonth" type="month" class="filter-bar__input" />
               </label>
             </template>
             <template v-else>
               <label class="filter-bar__field">
-                <span class="filter-bar__field-label">Du</span>
+                <span class="filter-bar__field-label">{{ uiText('Du') }}</span>
                 <input v-model="filterFrom" type="date" class="filter-bar__input" />
               </label>
               <label class="filter-bar__field">
-                <span class="filter-bar__field-label">Au</span>
+                <span class="filter-bar__field-label">{{ uiText('Au') }}</span>
                 <input v-model="filterTo" type="date" class="filter-bar__input" />
               </label>
             </template>
@@ -375,7 +389,7 @@ onMounted(load)
               :class="{ 'ops-tabs__btn--active': filterTab === 'awaiting' }"
               @click="filterTab = 'awaiting'"
             >
-              En attente ({{ stats.awaiting }})
+              {{ uiText('En attente') }} ({{ stats.awaiting }})
             </button>
             <button
               type="button"
@@ -383,19 +397,21 @@ onMounted(load)
               :class="{ 'ops-tabs__btn--active': filterTab === 'completed' }"
               @click="filterTab = 'completed'"
             >
-              Effectuées
+              {{ uiText('Effectuées') }}
             </button>
           </div>
           <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">
-            Actualiser
+            {{ uiText('Actualiser') }}
           </UiButton>
         </template>
 
         <p v-if="!loading && !displayedSurgeries.length" class="ops-empty">
           {{
-            filterTab === 'awaiting'
-              ? 'Aucune opération en attente pour le moment'
-              : 'Aucune opération effectuée sur la période sélectionnée'
+            uiText(
+              filterTab === 'awaiting'
+                ? 'Aucune opération en attente pour le moment'
+                : 'Aucune opération effectuée sur la période sélectionnée',
+            )
           }}
         </p>
 
@@ -403,11 +419,11 @@ onMounted(load)
           <table class="ops-table">
             <thead>
               <tr>
-                <th>Patient</th>
-                <th>Intervention</th>
-                <th>Évolution</th>
-                <th>Ma part</th>
-                <th>Règlement</th>
+                <th>{{ uiText('Patient') }}</th>
+                <th>{{ uiText('Intervention') }}</th>
+                <th>{{ uiText('Évolution') }}</th>
+                <th>{{ uiText('Ma part') }}</th>
+                <th>{{ uiText('Règlement') }}</th>
                 <th class="ops-table__actions-col">{{ uiText('Actions') }}</th>
               </tr>
             </thead>

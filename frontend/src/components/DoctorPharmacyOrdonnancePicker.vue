@@ -369,6 +369,7 @@ watch(
           variant="ghost"
           size="sm"
           :icon="Printer"
+          ui-action="export.print"
           @click="printCurrentOrdonnance"
         >
           {{ uiText('Imprimer') }}

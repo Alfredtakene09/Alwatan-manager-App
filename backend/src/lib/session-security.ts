@@ -4,9 +4,9 @@ export const SESSION_IDLE_MS = 30 * 60 * 1000;
 /** Fréquence max. de mise à jour de lastActivityAt en base. */
 export const SESSION_ACTIVITY_TOUCH_MS = 60 * 1000;
 
-/** Échecs avant verrouillage : avertissement à la 3e, verrouillage à la 4e. */
-export const MAX_FAILED_LOGIN_ATTEMPTS = 4;
-export const LAST_ATTEMPT_WARNING_AT = 3;
+/** Échecs avant verrouillage : avertissement à la 4e, verrouillage à la 5e. */
+export const MAX_FAILED_LOGIN_ATTEMPTS = 5;
+export const LAST_ATTEMPT_WARNING_AT = 4;
 
 export function isSessionIdle(lastActivityAt: Date | null | undefined, now = Date.now()): boolean {
   if (!lastActivityAt) return false;

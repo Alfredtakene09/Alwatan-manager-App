@@ -10,6 +10,7 @@ import {
   buildPrescribedExamsNotes,
   buildPrescribedExamsNotesByKind,
   flattenPrescribedExams,
+  summarizePrescribedExamFieldNames,
   type ExamKindSlug,
 } from "../lib/lab-notes.js";
 import {
@@ -20,6 +21,7 @@ import { computeInterventionCostShares } from "../lib/surgery-cost-shares.js";
 import {
   medecinDejaConsulteListVisitWhere,
   medecinPendingConsultationVisitWhere,
+  resolveDoctorQueueContext,
   visitBelongsToDoctor,
 } from "../lib/medecin-queues.js";
 import { ensureVisitPatientMergedByPhone } from "../lib/merge-patients.js";
@@ -41,7 +43,7 @@ import {
   PATIENT_HAS_PAYMENTS_CODE,
 } from "../lib/patient-payment-guard.js";
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
-import { serializeDoctorFields, selectableDoctorWhere, selectableDoctorByIdWhere, selectableDoctorIncludingPausedWhere } from "../lib/doctor-compensation.js";
+import { serializeDoctorFields, selectableDoctorIncludingPausedWhere, selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
 import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
 import { resolveConsultationBilling, isComptabiliteBillablePatient, comptabilitePatientWhere } from "../lib/patient-billing.js";
 import { consultationInvoiceCreateData, consultationInvoiceUpdateData } from "../lib/consultation-invoice.js";
@@ -60,6 +62,7 @@ import { requireAuth, requireModule } from "../middleware/auth.js";
 const visitInclude = {
   patient: true,
   assignedDoctor: { select: { id: true, firstName: true, lastName: true } },
+  assignedClinicService: { select: { id: true, name: true } },
   vitalSigns: { orderBy: { recordedAt: "desc" as const }, take: 1 },
   consultation: true,
   invoices: {
@@ -120,8 +123,9 @@ router.get("/doctors", async (req, res) => {
 
   await backfillClinicServiceDoctorLinks();
 
+  // Inclure les médecins « en pause » : la réception doit voir tous les liés au service.
   const doctors = await prisma.user.findMany({
-    where: selectableDoctorWhere,
+    where: selectableDoctorIncludingPausedWhere,
     select: {
       id: true,
       firstName: true,
@@ -194,55 +198,6 @@ router.get("/doctors", async (req, res) => {
   );
 });
 
-const availabilitySchema = z.object({
-  acceptingPatients: z.boolean(),
-});
-
-router.get("/me/availability", requireModule("consultation"), async (req, res) => {
-  const user = req.user!;
-  const dbUser = await prisma.user.findFirst({
-    where: { id: user.id, ...selectableDoctorIncludingPausedWhere },
-    select: { id: true, acceptingPatients: true },
-  });
-  if (!dbUser) {
-    return res.status(403).json({ error: "Réservé aux médecins." });
-  }
-  return res.json({
-    acceptingPatients: dbUser.acceptingPatients,
-  });
-});
-
-router.patch("/me/availability", requireModule("consultation"), async (req, res) => {
-  try {
-    const user = req.user!;
-    const me = await prisma.user.findFirst({
-      where: { id: user.id, ...selectableDoctorIncludingPausedWhere },
-      select: { id: true },
-    });
-    if (!me) {
-      return res.status(403).json({ error: "Réservé aux médecins." });
-    }
-    const body = availabilitySchema.parse(req.body);
-    const updated = await prisma.user.update({
-      where: { id: user.id },
-      data: { acceptingPatients: body.acceptingPatients },
-      select: { id: true, acceptingPatients: true },
-    });
-    return res.json({
-      acceptingPatients: updated.acceptingPatients,
-      message: updated.acceptingPatients
-        ? "Vous êtes disponible pour de nouveaux patients."
-        : "Vous êtes en pause — votre nom n’apparaît plus à la réception.",
-    });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: "Données invalides." });
-    }
-    console.error("[visits/me/availability]", error);
-    return res.status(500).json({ error: "Impossible de mettre à jour la disponibilité." });
-  }
-});
-
 router.get("/external-services", requireModule("reception"), async (_req, res) => {
   await ensureDefaultClinicServices(prisma);
 
@@ -284,7 +239,11 @@ router.get("/", async (req, res) => {
   ) {
     where.status = { in: [VisitStatus.WAITING_CONSULTATION, VisitStatus.IN_CONSULTATION] };
   } else if (queue === "pending" && canAccessModule(user.role, "consultation")) {
-    Object.assign(where, medecinPendingConsultationVisitWhere(user.id));
+    const queueCtx = await resolveDoctorQueueContext(user.id);
+    Object.assign(
+      where,
+      medecinPendingConsultationVisitWhere(user.id, queueCtx.clinicServiceIds),
+    );
   }
 
   if (queue === "consulted" && canAccessModule(user.role, "consultation")) {
@@ -313,6 +272,58 @@ router.get("/", async (req, res) => {
   return res.json(visits.map(mapVisitWithBilling));
 });
 
+router.get("/transfer-services", requireModule("consultation"), async (_req, res) => {
+  try {
+    await ensureDefaultClinicServices(prisma);
+    await backfillClinicServiceDoctorLinks();
+
+    const services = await prisma.clinicService.findMany({
+      where: { active: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: {
+        id: true,
+        name: true,
+        serviceDoctors: {
+          where: {
+            employee: {
+              isMedecin: true,
+              active: true,
+              user: { is: { active: true, role: { not: UserRole.ADMIN } } },
+            },
+          },
+          select: { employeeId: true },
+        },
+        employees: {
+          where: {
+            isMedecin: true,
+            active: true,
+            user: { is: { active: true, role: { not: UserRole.ADMIN } } },
+          },
+          select: { id: true },
+        },
+      },
+    });
+
+    // Tous les services actifs sont proposés (même sans médecin encore rattaché).
+    return res.json(
+      services.map((service) => {
+        const doctorIds = new Set([
+          ...service.serviceDoctors.map((link) => link.employeeId),
+          ...service.employees.map((employee) => employee.id),
+        ]);
+        return {
+          id: service.id,
+          name: service.name,
+          doctorCount: doctorIds.size,
+        };
+      }),
+    );
+  } catch (error) {
+    console.error("[transfer-services]", error);
+    return res.status(500).json({ error: "Impossible de charger les services." });
+  }
+});
+
 router.patch("/:id/start-consultation", requireModule("consultation"), async (req, res) => {
   const visitId = String(req.params.id);
   const user = req.user!;
@@ -323,8 +334,20 @@ router.patch("/:id/start-consultation", requireModule("consultation"), async (re
   });
   if (!existing) return res.status(404).json({ error: "Visite introuvable" });
 
-  if (!visitBelongsToDoctor(existing, user.id)) {
+  const queueCtx = await resolveDoctorQueueContext(user.id);
+  if (!visitBelongsToDoctor(existing, user.id, queueCtx.clinicServiceIds)) {
     return res.status(403).json({ error: "Ce patient n'est pas assigné à votre compte." });
+  }
+
+  // Un autre médecin a déjà démarré la consultation.
+  if (
+    existing.status === VisitStatus.IN_CONSULTATION &&
+    existing.assignedDoctorId &&
+    existing.assignedDoctorId !== user.id
+  ) {
+    return res.status(409).json({
+      error: "Ce patient est déjà en consultation avec un autre médecin.",
+    });
   }
 
   if (
@@ -336,7 +359,11 @@ router.patch("/:id/start-consultation", requireModule("consultation"), async (re
 
   const visit = await prisma.visit.update({
     where: { id: visitId },
-    data: { status: VisitStatus.IN_CONSULTATION },
+    data: {
+      status: VisitStatus.IN_CONSULTATION,
+      // Prise en charge exclusive : disparaît des files des autres médecins du service.
+      assignedDoctorId: user.id,
+    },
     include: visitInclude,
   });
 
@@ -344,7 +371,7 @@ router.patch("/:id/start-consultation", requireModule("consultation"), async (re
 });
 
 const transferSchema = z.object({
-  doctorId: z.string(),
+  clinicServiceId: z.string().min(1),
 });
 
 router.patch("/:id/transfer", requireModule("consultation"), async (req, res) => {
@@ -353,10 +380,14 @@ router.patch("/:id/transfer", requireModule("consultation"), async (req, res) =>
     const user = req.user!;
     const body = transferSchema.parse(req.body);
 
-    const doctor = await prisma.user.findFirst({
-      where: selectableDoctorByIdWhere(body.doctorId),
+    const service = await prisma.clinicService.findFirst({
+      where: { id: body.clinicServiceId, active: true },
+      select: {
+        id: true,
+        name: true,
+      },
     });
-    if (!doctor) return res.status(400).json({ error: "Médecin invalide" });
+    if (!service) return res.status(400).json({ error: "Service invalide" });
 
     const existing = await prisma.visit.findUnique({
       where: { id: visitId },
@@ -364,8 +395,37 @@ router.patch("/:id/transfer", requireModule("consultation"), async (req, res) =>
     });
     if (!existing) return res.status(404).json({ error: "Visite introuvable" });
 
-    if (!visitBelongsToDoctor(existing, user.id)) {
+    const queueCtx = await resolveDoctorQueueContext(user.id);
+    if (!visitBelongsToDoctor(existing, user.id, queueCtx.clinicServiceIds)) {
       return res.status(403).json({ error: "Vous ne pouvez transférer que vos propres patients." });
+    }
+
+    if (existing.status === VisitStatus.CANCELLED) {
+      return res.status(409).json({ error: "Cette visite est annulée." });
+    }
+
+    const alreadyConsulted = hasExamsPrescribed(existing.consultation?.clinicalNotes ?? null);
+    const hasClinicalContent = Boolean(
+      existing.consultation &&
+        (alreadyConsulted ||
+          existing.consultation.doctorComment?.trim() ||
+          existing.consultation.diagnosis?.trim() ||
+          existing.consultation.completedAt),
+    );
+
+    // Après consultation : nouvelle visite en attente sur le service cible (historique conservé).
+    if (hasClinicalContent || existing.status === VisitStatus.COMPLETED) {
+      const visit = await prisma.visit.create({
+        data: {
+          patientId: existing.patientId,
+          status: VisitStatus.WAITING_CONSULTATION,
+          assignedDoctorId: null,
+          assignedClinicServiceId: service.id,
+          notes: `Transféré vers ${service.name}`,
+        },
+        include: visitInclude,
+      });
+      return res.json(mapVisitWithBilling(visit));
     }
 
     if (
@@ -373,10 +433,6 @@ router.patch("/:id/transfer", requireModule("consultation"), async (req, res) =>
       existing.status !== VisitStatus.IN_CONSULTATION
     ) {
       return res.status(409).json({ error: "Ce patient n'est plus en file de consultation." });
-    }
-
-    if (hasExamsPrescribed(existing.consultation?.clinicalNotes ?? null)) {
-      return res.status(409).json({ error: "Patient déjà consulté — transfert impossible." });
     }
 
     const visit = await prisma.$transaction(async (tx) => {
@@ -387,7 +443,8 @@ router.patch("/:id/transfer", requireModule("consultation"), async (req, res) =>
       return tx.visit.update({
         where: { id: visitId },
         data: {
-          assignedDoctorId: body.doctorId,
+          assignedDoctorId: null,
+          assignedClinicServiceId: service.id,
           status: VisitStatus.WAITING_CONSULTATION,
         },
         include: visitInclude,
@@ -932,7 +989,7 @@ router.get("/external-queue", requireModule("reception"), async (_req, res) => {
       clinicalNotes: row.clinicalNotes,
       hasExams,
       examsSummary: hasExams
-        ? buildLabExamLines(row.clinicalNotes).map((l) => l.label).join(", ")
+        ? summarizePrescribedExamFieldNames(buildLabExamLines(row.clinicalNotes).map((l) => l.label))
         : "Examens en attente",
       grossFcfa,
       netFcfa: hasExams ? Math.max(0, grossFcfa - (row.labExamReductionFcfa ?? 0)) : 0,

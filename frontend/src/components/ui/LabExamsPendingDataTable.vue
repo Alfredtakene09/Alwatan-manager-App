@@ -184,7 +184,7 @@ function onPrint(row: TableRow) {
               <th>{{ uiText('Matricule') }}</th>
               <th>{{ uiText('Patient') }}</th>
               <th>{{ uiText('Médecin') }}</th>
-              <th>{{ uiText('Examens') }}</th>
+              <th class="simple-table__exam">{{ uiText('Examens') }}</th>
               <th>{{ uiText(isPaidMode ? 'Net payé' : 'Montant') }}</th>
               <th v-if="!isPaidMode">{{ uiText('Prescrit le') }}</th>
               <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
@@ -203,7 +203,7 @@ function onPrint(row: TableRow) {
               <td>
                 <span class="st-sub">{{ row.doctorName }}</span>
               </td>
-              <td>
+              <td class="simple-table__exam">
                 <div class="st-exam-full">
                   <span v-if="row.examCount > 0" class="st-exam-count">{{ row.examCount }}</span>
                   <div class="st-exam-full__list">

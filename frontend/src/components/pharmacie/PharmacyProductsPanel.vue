@@ -4,6 +4,7 @@ import axios from 'axios'
 import { Package, Plus, RefreshCw, Save, Search } from '@lucide/vue'
 import api from '@/api/client'
 import { canManagePharmacyCatalog, formatFcfa } from '@/lib/roles'
+import { isUiActionAllowed } from '@/lib/ui-actions'
 import { defaultExpiryDateInput, PHARMACEUTICAL_FORMS } from '@/lib/pharmacy-product-forms'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
@@ -51,7 +52,7 @@ const emit = defineEmits<{ changed: [] }>()
 const { uiText, localeCode } = useAppI18n()
 const auth = useAuthStore()
 const canManageCatalog = computed(() =>
-  auth.user ? canManagePharmacyCatalog(auth.user.role) : false,
+  auth.user ? canManagePharmacyCatalog(auth.user.role) && isUiActionAllowed(auth.user, 'pharmacie.catalog') : false,
 )
 
 const items = ref<PharmacyProductRecord[]>([])
@@ -476,6 +477,7 @@ defineExpose({ reload: loadItems })
         variant="primary"
         size="sm"
         :icon="Plus"
+        ui-action="table.create"
         @click="openCreateModal"
       >
         {{ uiText('Nouveau produit') }}

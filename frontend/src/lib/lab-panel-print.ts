@@ -1,7 +1,7 @@
 import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
 import { fullName } from '@/lib/roles'
 import { formatAppDate, formatAppDateTime } from '@/i18n/locale-format'
-import { translateUi } from '@/i18n/translate'
+import { translateExamName, translateUi } from '@/i18n/translate'
 import {
   getAllLabFormPanels,
   getLabFormPanel,
@@ -30,7 +30,7 @@ function escapeHtml(value: string) {
 }
 
 function formatFormTitle(label: string) {
-  return translateUi(label).trim().toUpperCase()
+  return translateExamName(label).trim().toUpperCase()
 }
 
 type LabPanelField = LabFormPanel['sections'][number]['fields'][number]
@@ -114,7 +114,7 @@ function renderSectionTable(
         : ''
       return `
       <tr>
-        <td class="lab-sheet-table__test">${escapeHtml(translateUi(field.label))}</td>
+        <td class="lab-sheet-table__test">${escapeHtml(translateExamName(field.label))}</td>
         ${renderResultCell(field, values)}
         ${refCell}
       </tr>
@@ -156,7 +156,7 @@ function renderPanelTables(
 
       return `
         <div class="lab-sheet-block">
-          <div class="lab-sheet-block__heading">${escapeHtml(translateUi(section.title).toUpperCase())}</div>
+          <div class="lab-sheet-block__heading">${escapeHtml(translateExamName(section.title).toUpperCase())}</div>
           ${table}
         </div>
       `
@@ -350,7 +350,7 @@ function buildFallbackSectionsFromValues(values: Record<string, string>): LabPan
 }
 
 function humanizeFieldKey(key: string) {
-  if (key === 'bloodGrouping') return translateUi('Blood Grouping')
+  if (key === 'bloodGrouping') return translateExamName('Blood Grouping')
   const spaced = key
     .replace(/_/g, ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2')

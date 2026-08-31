@@ -12,6 +12,10 @@ import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
+import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
+
+const { canSeeUiAction } = useUiActionVisibility()
+const canManageRooms = () => canSeeUiAction('hospitalisation.rooms')
 
 type RoomRow = {
   id: string
@@ -211,7 +215,9 @@ onMounted(async () => {
       :icon="BedDouble"
     >
       <template #actions>
-        <UiButton variant="primary" :icon="Plus" @click="openAddModal">Nouvelle salle</UiButton>
+        <UiButton v-if="canManageRooms()" variant="primary" :icon="Plus" @click="openAddModal">
+          Nouvelle salle
+        </UiButton>
       </template>
     </UiPageHeader>
 
@@ -237,7 +243,7 @@ onMounted(async () => {
             {{ fullName(room.currentPatient.firstName, room.currentPatient.lastName) }}
           </p>
           <p v-else class="room-empty">Disponible</p>
-          <div class="room-card__actions">
+          <div v-if="canManageRooms()" class="room-card__actions">
             <UiButton variant="ghost" size="sm" class="room-action-btn" :icon="Pencil" @click="openEditModal(room.id)">
               Modifier
             </UiButton>

@@ -14,9 +14,10 @@ export type NetworkAccessEndpoints = {
   tailscaleIp: string | null;
 };
 
-/** Adresses d’accès : Wi‑Fi/Ethernet, hotspot Windows, Tailscale (mesh). */
+/** Adresses d’accès : Ethernet (prioritaire), Wi‑Fi, hotspot Windows, Tailscale. */
 export function getNetworkAccessEndpoints(): NetworkAccessEndpoints {
   const nets = os.networkInterfaces();
+  const ethernet: string[] = [];
   const preferred: string[] = [];
   const hotspot: string[] = [];
   const mesh: string[] = [];
@@ -41,12 +42,17 @@ export function getNetworkAccessEndpoints(): NetworkAccessEndpoints {
         mesh.push(address);
         continue;
       }
+      if (lower.startsWith("ethernet")) {
+        ethernet.push(address);
+        continue;
+      }
       preferred.push(address);
     }
   }
 
   return {
-    wifiIp: preferred[0] ?? null,
+    // Politique cabinet : câble d’abord, puis Wi‑Fi si pas d’Ethernet
+    wifiIp: ethernet[0] ?? preferred[0] ?? null,
     hotspotIp: hotspot[0] ?? null,
     tailscaleIp: mesh[0] ?? null,
   };

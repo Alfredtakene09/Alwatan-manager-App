@@ -23,6 +23,7 @@ import { useAuthStore } from '@/stores/auth'
 import { fullName, canWriteDossierDocuments, isDirectionOrGestionnaire } from '@/lib/roles'
 import { matchesPatientSearch } from '@/lib/patient-search'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
+import { patientCategoryLabel, type PatientCategory } from '@/lib/patient-category'
 import {
   PATIENT_DOCUMENT_KIND_LABELS,
   PATIENT_DOCUMENT_KINDS,
@@ -51,8 +52,14 @@ type PatientSummary = {
   ageUnit?: PatientAgeUnit | null
   phone?: string | null
   gender?: string | null
+  address?: string | null
   category: string
+  ongName?: string | null
+  recommendedByName?: string | null
+  service?: string | null
   createdAt: string
+  treatingDoctor?: { firstName: string; lastName: string } | null
+  createdBy?: { firstName: string; lastName: string } | null
 }
 
 type PatientDocument = {
@@ -70,6 +77,15 @@ type PatientDocument = {
 type MedecinPatientRow = {
   patient: PatientSummary
   lastVisitAt: string
+  labResultsCount: number
+  hasComment: boolean
+}
+
+type DirectionPatientRow = {
+  patient: PatientSummary
+  lastVisitAt: string
+  doctorName: string | null
+  visitCount: number
   labResultsCount: number
   hasComment: boolean
 }
@@ -121,7 +137,7 @@ const activeTab = ref<'history' | 'payments' | 'files'>('history')
 const activeKind = ref<PatientDocumentKind | 'ALL'>('ALL')
 
 const medecinPatients = ref<MedecinPatientRow[]>([])
-const managementPatients = ref<PatientSummary[]>([])
+const managementPatients = ref<DirectionPatientRow[]>([])
 const loadingMedecinPatients = ref(false)
 const loadingManagementPatients = ref(false)
 const sidebarQuery = ref('')
@@ -167,13 +183,13 @@ const filteredMedecinPatients = computed(() => {
 const filteredManagementPatients = computed(() => {
   const q = sidebarQuery.value.trim()
   if (!q) return managementPatients.value
-  return managementPatients.value.filter((patient) =>
+  return managementPatients.value.filter((row) =>
     matchesPatientSearch(
       {
-        code: patient.code,
-        firstName: patient.firstName,
-        lastName: patient.lastName,
-        phone: patient.phone,
+        code: row.patient.code,
+        firstName: row.patient.firstName,
+        lastName: row.patient.lastName,
+        phone: row.patient.phone,
       },
       q,
     ),
@@ -235,8 +251,15 @@ function patientAgeLabel(age: number, unit: PatientAgeUnit | null | undefined) {
 
 function patientCardDescription(patient: PatientSummary) {
   void localeCode.value
-  const base = translateTemplate('Matricule {code}', { code: patient.code })
-  return patient.phone ? `${base} · ${patient.phone}` : base
+  const parts = [translateTemplate('Matricule {code}', { code: patient.code })]
+  if (patient.phone) parts.push(patient.phone)
+  if (patient.gender === 'F') parts.push(uiText('Féminin'))
+  else if (patient.gender === 'M') parts.push(uiText('Masculin'))
+  else if (patient.gender) parts.push(patient.gender)
+  if (patient.category && patient.category !== 'STANDARD') {
+    parts.push(uiText(patientCategoryLabel(patient.category as PatientCategory)))
+  }
+  return parts.join(' · ')
 }
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
@@ -278,7 +301,7 @@ async function loadManagementPatients() {
   if (!isManagementDossier.value) return
   loadingManagementPatients.value = true
   try {
-    const { data } = await api.get<PatientSummary[]>('/patients')
+    const { data } = await api.get<DirectionPatientRow[]>('/patient-dossiers/direction/patients')
     managementPatients.value = data
   } catch {
     managementPatients.value = []
@@ -445,7 +468,7 @@ onMounted(async () => {
   } else if (isMedecin.value && medecinPatients.value[0]) {
     selectPatient(medecinPatients.value[0].patient)
   } else if (isManagementDossier.value && managementPatients.value[0]) {
-    selectPatient(managementPatients.value[0])
+    selectPatient(managementPatients.value[0].patient)
   }
 })
 </script>
@@ -454,7 +477,11 @@ onMounted(async () => {
   <div class="dossier-page">
     <UiPageHeader
       title="Dossier patient"
-      :subtitle="uiText('Parcours, résultats, opérations et fichiers')"
+      :subtitle="
+        isManagementDossier
+          ? uiText('Patients consultés par les médecins — historique clinique complet')
+          : uiText('Parcours, résultats, opérations et fichiers')
+      "
       :icon="FolderOpen"
     />
 
@@ -497,8 +524,8 @@ onMounted(async () => {
 
       <aside v-else-if="isManagementDossier" class="dossier-sidebar">
         <UiCard
-          title="Patients"
-          description="50 derniers dossiers — recherchez pour affiner"
+          :title="uiText('Patients consultés')"
+          :description="uiText('Dossiers enregistrés par les médecins')"
           :icon="UserRound"
           icon-variant="teal"
         >
@@ -509,20 +536,23 @@ onMounted(async () => {
 
           <p v-if="loadingManagementPatients" class="hint">{{ uiText('Chargement…') }}</p>
           <p v-else-if="!filteredManagementPatients.length" class="hint">
-            {{ uiText('Aucun patient trouvé. Utilisez la recherche ci-contre.') }}
+            {{ uiText('Aucun dossier médical pour le moment.') }}
           </p>
 
           <ul v-else class="patient-list">
-            <li v-for="patient in filteredManagementPatients" :key="patient.id">
+            <li v-for="row in filteredManagementPatients" :key="row.patient.id">
               <button
                 type="button"
                 class="patient-list__item"
-                :class="{ 'patient-list__item--active': selectedPatientId === patient.id }"
-                @click="selectPatient(patient)"
+                :class="{ 'patient-list__item--active': selectedPatientId === row.patient.id }"
+                @click="selectPatient(row.patient)"
               >
-                <strong>{{ patient.code }}</strong>
-                <span>{{ fullName(patient.firstName, patient.lastName) }}</span>
-                <span v-if="patient.phone" class="patient-list__meta">{{ patient.phone }}</span>
+                <strong>{{ row.patient.code }}</strong>
+                <span>{{ fullName(row.patient.firstName, row.patient.lastName) }}</span>
+                <span class="patient-list__meta">
+                  {{ row.doctorName || uiText('Médecin') }}
+                  · {{ formatValidatedMeta(row.lastVisitAt, row.labResultsCount, row.hasComment) }}
+                </span>
               </button>
             </li>
           </ul>
@@ -590,6 +620,7 @@ onMounted(async () => {
                 variant="secondary"
                 size="sm"
                 :icon="Printer"
+                ui-action="export.print"
                 :disabled="!dossier.medicalHistory.length"
                 @click="exportDossier(true)"
               >
@@ -599,6 +630,7 @@ onMounted(async () => {
                 variant="ghost"
                 size="sm"
                 :icon="FileDown"
+                ui-action="export.pdf"
                 :disabled="!dossier.medicalHistory.length"
                 @click="exportDossier(false)"
               >
@@ -609,6 +641,7 @@ onMounted(async () => {
                 variant="ghost"
                 size="sm"
                 :icon="Plus"
+                ui-action="dossier.attach"
                 @click="showUpload = true"
               >
                 {{ uiText('Joindre un fichier') }}
@@ -637,6 +670,26 @@ onMounted(async () => {
               </span>
               <span v-if="dossier.patient.age != null" class="summary-chip">
                 {{ patientAgeLabel(dossier.patient.age, dossier.patient.ageUnit) }}
+              </span>
+              <span v-if="dossier.patient.address" class="summary-chip">
+                {{ dossier.patient.address }}
+              </span>
+              <span v-if="dossier.patient.treatingDoctor" class="summary-chip">
+                {{
+                  translateTemplate('Dr {name}', {
+                    name: fullName(
+                      dossier.patient.treatingDoctor.firstName,
+                      dossier.patient.treatingDoctor.lastName,
+                    ),
+                  })
+                }}
+              </span>
+              <span v-if="dossier.patient.createdBy" class="summary-chip">
+                {{
+                  translateTemplate('Enregistré par {name}', {
+                    name: fullName(dossier.patient.createdBy.firstName, dossier.patient.createdBy.lastName),
+                  })
+                }}
               </span>
             </div>
             <p v-if="latestClinicalSummary" class="latest-clinical">
