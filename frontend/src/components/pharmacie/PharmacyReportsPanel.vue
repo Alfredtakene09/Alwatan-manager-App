@@ -2,7 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { BarChart3, RefreshCw } from '@lucide/vue'
 import api from '@/api/client'
-import { formatFcfa } from '@/lib/roles'
+import { formatFcfa, fullName } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth'
 import {
   buildClinicPrintHeader,
   openPrintDocument,
@@ -35,29 +36,66 @@ type PharmacyReport = {
   salesByCategory: Array<{ name: string; quantity: number; revenueFcfa: number }>
 }
 
+type PharmacyRevenueReport = {
+  from: string
+  to: string
+  period: string
+  pharmacist: { id: string; firstName: string; lastName: string } | null
+  prescriptionsCount: number
+  returnsCount: number
+  grossSalesFcfa: number
+  netSalesFcfa: number
+  returnsGrossFcfa: number
+  returnsNetFcfa: number
+  netRevenueFcfa: number
+  salesByDay: Array<{
+    date: string
+    dayLabel: string
+    grossSalesFcfa: number
+    returnsNetFcfa: number
+    netRevenueFcfa: number
+  }>
+}
+
+type PharmacistOption = { id: string; firstName: string; lastName: string }
+
 const report = ref<PharmacyReport | null>(null)
+const revenueReport = ref<PharmacyRevenueReport | null>(null)
+const pharmacists = ref<PharmacistOption[]>([])
 const loading = ref(false)
 const message = ref('')
-const period = ref<'7d' | '30d' | 'month'>('7d')
+const period = ref<'today' | 'week' | 'month' | 'quarter' | '7d' | '30d'>('today')
+const pharmacistId = ref('')
+
+const auth = useAuthStore()
+const canFilterPharmacist = computed(() =>
+  Boolean(auth.user && auth.user.role !== 'PHARMACIEN'),
+)
 
 const { uiText, localeCode } = useAppI18n()
 
 const salesChart = computed((): BarChartDay[] => {
   void localeCode.value
-  if (!report.value) return []
-  return report.value.salesByDay.map((day) => ({
-    date: day.date,
-    dayLabel: day.dayLabel,
-    total: day.totalFcfa,
-    segments: [
-      {
-        key: 'sales',
-        value: day.totalFcfa,
-        colorClass: 'bar-chart__bar--a',
-        title: translateTemplate('Ventes : {amount}', { amount: formatFcfa(day.totalFcfa) }),
-      },
-    ],
-  }))
+  const days = revenueReport.value?.salesByDay ?? report.value?.salesByDay ?? []
+  return days.map((day) => {
+    const total =
+      'netRevenueFcfa' in day
+        ? day.netRevenueFcfa
+        : (day as { totalFcfa: number }).totalFcfa
+    return {
+      date: day.date,
+      dayLabel: day.dayLabel,
+      total,
+      segments: [
+        {
+          key: 'sales',
+          value: total,
+          colorClass: 'bar-chart__bar--a',
+          title: translateTemplate('CA net : {amount}', { amount: formatFcfa(total) }),
+        },
+      ],
+    }
+  })
 })
 
 const topProductBars = computed(() => {
@@ -84,21 +122,43 @@ async function loadReport() {
   loading.value = true
   message.value = ''
   try {
-    const { data } = await api.get<PharmacyReport>('/pharmacie/reports', { params: { period: period.value } })
-    report.value = data
+    const params: Record<string, string> = { period: period.value }
+    if (canFilterPharmacist.value && pharmacistId.value) {
+      params.pharmacistId = pharmacistId.value
+    }
+    const [reportRes, revenueRes] = await Promise.all([
+      api.get<PharmacyReport>('/pharmacie/reports', { params: { period: period.value } }),
+      api.get<PharmacyRevenueReport>('/pharmacie/revenue-report', { params }),
+    ])
+    report.value = reportRes.data
+    revenueReport.value = revenueRes.data
   } catch {
     message.value = 'Impossible de charger le rapport.'
     report.value = null
+    revenueReport.value = null
   } finally {
     loading.value = false
   }
 }
 
+async function loadPharmacists() {
+  if (!canFilterPharmacist.value) return
+  try {
+    const { data } = await api.get<PharmacistOption[]>('/pharmacie/pharmacists')
+    pharmacists.value = data
+  } catch {
+    pharmacists.value = []
+  }
+}
+
 const periodLabel = computed(() => {
   void localeCode.value
+  if (period.value === 'today') return uiText("Aujourd'hui")
+  if (period.value === 'week') return uiText('Semaine en cours')
+  if (period.value === 'month') return uiText('Mois en cours')
+  if (period.value === 'quarter') return uiText('Trimestre en cours')
   if (period.value === '7d') return uiText('7 derniers jours')
-  if (period.value === '30d') return uiText('30 derniers jours')
-  return uiText('Mois en cours')
+  return uiText('30 derniers jours')
 })
 
 const salesLegend = computed(() => {
@@ -108,13 +168,23 @@ const salesLegend = computed(() => {
 
 const kpiRows = computed(() => {
   void localeCode.value
-  if (!report.value) return []
-  return [
-    { label: uiText('Ordonnances'), value: report.value.prescriptionsCount },
-    { label: uiText('Unités vendues'), value: report.value.totalUnitsSold },
-    { label: uiText("Chiffre d'affaires"), value: formatFcfa(report.value.totalRevenueFcfa) },
-    { label: uiText('Période'), value: `${report.value.from} → ${report.value.to}` },
+  if (!revenueReport.value) return []
+  const rev = revenueReport.value
+  const rows = [
+    { label: uiText('Ventes (net encaissé)'), value: formatFcfa(rev.netSalesFcfa) },
+    { label: uiText('Retours'), value: formatFcfa(rev.returnsNetFcfa) },
+    { label: uiText('CA net'), value: formatFcfa(rev.netRevenueFcfa) },
+    { label: uiText('Nombre de ventes'), value: rev.prescriptionsCount },
+    { label: uiText('Nombre de retours'), value: rev.returnsCount },
+    { label: uiText('Période'), value: `${rev.from} → ${rev.to}` },
   ]
+  if (rev.pharmacist) {
+    rows.unshift({
+      label: uiText('Pharmacien'),
+      value: fullName(rev.pharmacist.firstName, rev.pharmacist.lastName),
+    })
+  }
+  return rows
 })
 
 const kpiColumns = computed<ExportColumn<(typeof kpiRows.value)[number]>[]>(() => {
@@ -164,7 +234,10 @@ function exportExcel() {
   ])
 }
 
-onMounted(loadReport)
+onMounted(() => {
+  void loadPharmacists()
+  void loadReport()
+})
 </script>
 
 <template>
@@ -176,10 +249,19 @@ onMounted(loadReport)
       icon-variant="green"
     >
       <template #actions>
+        <UiSelect v-if="canFilterPharmacist" v-model="pharmacistId" label="Pharmacien" class="period-select" @change="loadReport">
+          <option value="">{{ uiText('Tous les pharmaciens') }}</option>
+          <option v-for="p in pharmacists" :key="p.id" :value="p.id">
+            {{ fullName(p.firstName, p.lastName) }}
+          </option>
+        </UiSelect>
         <UiSelect v-model="period" label="Période" class="period-select" @change="loadReport">
+          <option value="today">{{ uiText("Aujourd'hui") }}</option>
+          <option value="week">{{ uiText('Semaine en cours') }}</option>
+          <option value="month">{{ uiText('Mois en cours') }}</option>
+          <option value="quarter">{{ uiText('Trimestre en cours') }}</option>
           <option value="7d">{{ uiText('7 derniers jours') }}</option>
           <option value="30d">{{ uiText('30 derniers jours') }}</option>
-          <option value="month">{{ uiText('Mois en cours') }}</option>
         </UiSelect>
         <ExportButtons :disabled="loading || !report" @pdf="exportPdf" @excel="exportExcel" />
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadReport">
@@ -189,24 +271,28 @@ onMounted(loadReport)
 
       <UiAlert v-if="message" type="error" :message="message" />
 
-      <div v-if="report" class="report-kpis">
+      <div v-if="revenueReport" class="report-kpis">
         <div class="kpi">
-          <span>{{ uiText('Ordonnances') }}</span>
-          <strong>{{ report.prescriptionsCount }}</strong>
+          <span>{{ uiText('Ventes net') }}</span>
+          <strong>{{ formatFcfa(revenueReport.netSalesFcfa) }}</strong>
         </div>
         <div class="kpi">
-          <span>{{ uiText('Unités vendues') }}</span>
-          <strong>{{ report.totalUnitsSold }}</strong>
+          <span>{{ uiText('Retours') }}</span>
+          <strong>{{ formatFcfa(revenueReport.returnsNetFcfa) }}</strong>
         </div>
         <div class="kpi kpi--accent">
-          <span>{{ uiText("Chiffre d'affaires") }}</span>
-          <strong>{{ formatFcfa(report.totalRevenueFcfa) }}</strong>
+          <span>{{ uiText('CA net') }}</span>
+          <strong>{{ formatFcfa(revenueReport.netRevenueFcfa) }}</strong>
+        </div>
+        <div class="kpi">
+          <span>{{ uiText('Ventes / retours') }}</span>
+          <strong>{{ revenueReport.prescriptionsCount }} / {{ revenueReport.returnsCount }}</strong>
         </div>
       </div>
     </UiCard>
 
     <div class="charts-grid">
-      <UiCard title="Ventes par jour" description="Encaissements sur la période" :icon="BarChart3" icon-variant="teal">
+      <UiCard title="CA net par jour" description="Encaissements nets après retours" :icon="BarChart3" icon-variant="teal">
         <DashboardBarChart
           :days="salesChart"
           :loading="loading"

@@ -26,7 +26,8 @@
     "db:docker:setup": "npm run db:docker:up && npx prisma db push && npm run db:seed",
     "db:import-pharmacy": "tsx scripts/import-syntalsoft-pharmacy.ts",
     "db:rename-pharmacy-categories": "tsx scripts/rename-pharmacy-categories.ts",
-    "db:migrate-pharmacy-categories-to-forms": "tsx scripts/migrate-pharmacy-categories-to-forms.ts"
+    "db:migrate-pharmacy-categories-to-forms": "tsx scripts/migrate-pharmacy-categories-to-forms.ts",
+    "test": "tsx --test src/lib/pharmacy-returns.test.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -6,6 +6,27 @@ function startOfDay(date: Date) {
   return d;
 }
 
+function startOfWeek(date: Date) {
+  const d = startOfDay(date);
+  const day = d.getDay();
+  const diff = day === 0 ? 6 : day - 1;
+  d.setDate(d.getDate() - diff);
+  return d;
+}
+
+function startOfMonth(date: Date) {
+  const d = startOfDay(date);
+  d.setDate(1);
+  return d;
+}
+
+function startOfQuarter(date: Date) {
+  const d = startOfDay(date);
+  const quarterMonth = Math.floor(d.getMonth() / 3) * 3;
+  d.setMonth(quarterMonth, 1);
+  return d;
+}
+
 function parsePeriod(period: string | undefined, fromParam?: string, toParam?: string) {
   const now = new Date();
   const to = toParam ? startOfDay(new Date(toParam)) : startOfDay(now);
@@ -16,10 +37,20 @@ function parsePeriod(period: string | undefined, fromParam?: string, toParam?: s
   }
 
   const from = startOfDay(now);
+  if (period === "today") {
+    return { from, to };
+  }
+  if (period === "week") {
+    return { from: startOfWeek(now), to };
+  }
+  if (period === "month") {
+    return { from: startOfMonth(now), to };
+  }
+  if (period === "quarter") {
+    return { from: startOfQuarter(now), to };
+  }
   if (period === "30d") {
     from.setDate(from.getDate() - 29);
-  } else if (period === "month") {
-    from.setDate(1);
   } else {
     from.setDate(from.getDate() - 6);
   }

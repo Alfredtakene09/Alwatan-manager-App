@@ -1134,6 +1134,52 @@ export const CLINIC_PRINT_STYLES = `
     margin: 3px 0 0;
     padding: 0;
   }
+
+  /* Ticket pharmacie — lisibilité renforcée (80 mm) */
+  body.print-thermal .thermal-receipt--pharmacy.thermal-receipt--ticket {
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__title,
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__title--fr {
+    font-size: 15px;
+    font-weight: 800;
+  }
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__subtitle-no {
+    font-size: 12px;
+    font-weight: 800;
+  }
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__contact {
+    font-size: 10px;
+    font-weight: 600;
+  }
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__row,
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__line {
+    font-size: 11px;
+    font-weight: 600;
+  }
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__value {
+    font-size: 12px;
+    font-weight: 800;
+  }
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__items-table {
+    font-size: 11px;
+  }
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__items-table thead th {
+    font-size: 11px;
+    font-weight: 800;
+  }
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__items-table .col-product {
+    font-weight: 700;
+  }
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__items-table tfoot td {
+    font-size: 12px;
+    font-weight: 800;
+  }
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__thanks {
+    font-size: 13px;
+    font-weight: 800;
+  }
 `
 
 import { EXAM_KIND_LABELS, EXAM_KIND_ORDER, type ExamKindSlug } from '@/lib/exam-catalog/types'
@@ -1198,10 +1244,10 @@ export function buildPharmacyTicketItemsTableHtml(options: {
   const rows = options.lines
     .map(
       (line) => `<tr>
-  <td class="col-product" dir="ltr">${escapeHtml(line.name)}</td>
-  <td class="col-qty" dir="ltr">${escapeHtml(String(line.quantity))}</td>
-  <td class="col-pu" dir="ltr">${escapeHtml(fmt(line.unitPriceFcfa))}</td>
-  <td class="col-pt" dir="ltr">${escapeHtml(fmt(line.lineTotalFcfa))}</td>
+  <td class="col-product" dir="ltr"><strong>${escapeHtml(line.name)}</strong></td>
+  <td class="col-qty" dir="ltr"><strong>${escapeHtml(String(line.quantity))}</strong></td>
+  <td class="col-pu" dir="ltr"><strong>${escapeHtml(fmt(line.unitPriceFcfa))}</strong></td>
+  <td class="col-pt" dir="ltr"><strong>${escapeHtml(fmt(line.lineTotalFcfa))}</strong></td>
 </tr>`,
     )
     .join('')

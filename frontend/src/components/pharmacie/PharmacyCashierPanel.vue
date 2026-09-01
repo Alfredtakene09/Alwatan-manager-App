@@ -14,6 +14,7 @@ import {
   FileText,
   PillBottle,
   ClipboardList,
+  RotateCcw,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { CLINIC } from '@/lib/clinic'
@@ -27,6 +28,9 @@ import UiInput from '@/components/ui/UiInput.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
+import PharmacySaleReturnModal, {
+  type PharmacySaleForReturn,
+} from '@/components/pharmacie/PharmacySaleReturnModal.vue'
 
 export type CashierProduct = {
   id: string
@@ -133,6 +137,11 @@ const coveredByName = ref('')
 
 const ordonnancesModalOpen = ref(false)
 const ordonnancesLoading = ref(false)
+const returnPickerOpen = ref(false)
+const returnModalOpen = ref(false)
+const returnSale = ref<PharmacySaleForReturn | null>(null)
+const todayReturnableSales = ref<PharmacySaleForReturn[]>([])
+const todaySalesLoading = ref(false)
 const ordonnancesSearch = ref('')
 const ordonnances = ref<PendingOrdonnance[]>([])
 const ordonnancesError = ref('')
@@ -621,6 +630,41 @@ function validateBuyerSelection() {
   return true
 }
 
+async function loadTodayReturnableSales() {
+  todaySalesLoading.value = true
+  try {
+    const today = new Date().toISOString().slice(0, 10)
+    const { data } = await api.get<PharmacySaleForReturn[]>('/pharmacie/sales', {
+      params: { from: today, to: today },
+    })
+    todayReturnableSales.value = data.filter((sale) =>
+      sale.lines.some(
+        (line) => (line.quantityReturnable ?? line.quantity - (line.quantityReturned ?? 0)) > 0,
+      ),
+    )
+  } catch {
+    todayReturnableSales.value = []
+  } finally {
+    todaySalesLoading.value = false
+  }
+}
+
+function openReturnPicker() {
+  void loadTodayReturnableSales()
+  returnPickerOpen.value = true
+}
+
+function pickSaleForReturn(sale: PharmacySaleForReturn) {
+  returnSale.value = sale
+  returnPickerOpen.value = false
+  returnModalOpen.value = true
+}
+
+async function onReturnSuccess() {
+  await loadTodayReturnableSales()
+  emit('refresh')
+}
+
 async function submitSale() {
   const externalName = externalClientName.value.trim()
 
@@ -688,6 +732,7 @@ async function submitSale() {
     resetBuyerFields()
     emit('changed')
     void loadPendingOrdonnances('')
+    void loadTodayReturnableSales()
     void nextTick(() => searchRef.value?.focus())
   } catch (error: unknown) {
     const apiMessage =
@@ -729,6 +774,7 @@ onMounted(() => {
   void loadPendingOrdonnances('').then(() => {
     /* compteur badge uniquement */
   })
+  void loadTodayReturnableSales()
 })
 
 onUnmounted(() => {
@@ -762,6 +808,9 @@ watch(
         </div>
       </div>
       <div class="cashier__head-actions">
+        <UiButton variant="secondary" size="sm" :icon="RotateCcw" @click="openReturnPicker">
+          {{ uiText('Retour produit') }}
+        </UiButton>
         <UiButton variant="secondary" size="sm" :icon="ClipboardList" @click="openOrdonnancesModal">
           {{ uiText('Ordonnances médecin') }}
           <span v-if="pendingOrdonnancesCount > 0" class="cashier__badge">{{ pendingOrdonnancesCount }}</span>
@@ -1150,6 +1199,37 @@ watch(
         </template>
       </template>
     </UiFormModal>
+
+    <UiFormModal
+      :open="returnPickerOpen"
+      :title="uiText('Retours du jour')"
+      :subtitle="uiText('Sélectionnez la vente concernée')"
+      size="large"
+      @close="returnPickerOpen = false"
+    >
+      <p v-if="todaySalesLoading" class="text-muted">{{ uiText('Chargement…') }}</p>
+      <p v-else-if="!todayReturnableSales.length" class="text-muted">
+        {{ uiText('Aucune vente du jour avec articles retournables.') }}
+      </p>
+      <ul v-else class="return-picker">
+        <li v-for="sale in todayReturnableSales" :key="sale.id">
+          <button type="button" class="return-picker__btn" @click="pickSaleForReturn(sale)">
+            <strong>{{ sale.invoiceNumber ?? sale.id.slice(0, 8) }}</strong>
+            <span>{{ new Date(sale.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) }}</span>
+            <span>{{ sale.lines.length }} {{ uiText('ligne(s)') }}</span>
+          </button>
+        </li>
+      </ul>
+      <template #footer>
+        <UiButton variant="ghost" @click="returnPickerOpen = false">{{ uiText('Fermer') }}</UiButton>
+      </template>
+    </UiFormModal>
+
+    <PharmacySaleReturnModal
+      v-model:open="returnModalOpen"
+      :sale="returnSale"
+      @success="onReturnSuccess"
+    />
   </div>
 </template>
 
@@ -1666,5 +1746,33 @@ watch(
   .cart-actions {
     grid-template-columns: 1fr;
   }
+}
+
+.return-picker {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.return-picker__btn {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  cursor: pointer;
+  text-align: left;
+}
+
+.return-picker__btn:hover {
+  border-color: var(--primary, #0d9488);
 }
 </style>

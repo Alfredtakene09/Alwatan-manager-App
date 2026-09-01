@@ -8,6 +8,12 @@ import { shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
 import { applyStockMovement, recordDispensationMovement } from "../lib/pharmacy-stock.js";
 import { listPharmacyStockAlerts, listPharmacyExpiryAlerts } from "../lib/pharmacy-alerts.js";
 import { buildPharmacyReport } from "../lib/pharmacy-reports.js";
+import { buildPharmacyRevenueReport } from "../lib/pharmacy-revenue.js";
+import {
+  applyPharmacySaleReturns,
+  canRegisterPharmacyReturn,
+  PharmacyReturnError,
+} from "../lib/pharmacy-returns.js";
 import {
   hasPharmacyOrdonnance,
   isPharmacyOrdonnanceDispensed,
@@ -77,6 +83,88 @@ function canEditPharmacySale(
 ) {
   if (user.role === "PHARMACIEN") return prescription.pharmacistId === user.id;
   return user.role === "ADMIN" || user.role === "GESTIONNAIRE" || user.role === "COMPTABLE";
+}
+
+const pharmacyReturnSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        saleLineId: z.string(),
+        quantity: z.number().int().positive().max(999),
+        reason: z.string().max(500).optional(),
+      }),
+    )
+    .min(1),
+});
+
+function serializePharmacySale(item: {
+  id: string;
+  createdAt: Date;
+  notes: string | null;
+  patient: { id: string; code: string; firstName: string; lastName: string } | null;
+  externalClient: {
+    id: string;
+    code: string;
+    firstName: string;
+    lastName: string;
+    phone: string | null;
+  } | null;
+  pharmacist: { id: string; firstName: string; lastName: string };
+  saleLines: Array<{
+    id: string;
+    productId: string;
+    quantity: number;
+    unitPriceFcfa: number;
+    lineTotalFcfa: number;
+    product: {
+      id: string;
+      name: string;
+      sku: string;
+      category: { name: string } | null;
+    };
+    invoice: { invoiceNumber: string; amountFcfa: number; status: string } | null;
+    returns: Array<{ quantity: number; grossRefundFcfa: number; netRefundFcfa: number }>;
+  }>;
+}) {
+  const totalFcfa = item.saleLines.reduce((sum, line) => sum + line.lineTotalFcfa, 0);
+  const returnedGrossFcfa = item.saleLines.reduce(
+    (sum, line) => sum + line.returns.reduce((inner, row) => inner + row.grossRefundFcfa, 0),
+    0,
+  );
+  const returnedNetFcfa = item.saleLines.reduce(
+    (sum, line) => sum + line.returns.reduce((inner, row) => inner + row.netRefundFcfa, 0),
+    0,
+  );
+  const invoiceNumber =
+    item.saleLines.find((line) => line.invoice?.invoiceNumber)?.invoice?.invoiceNumber ?? null;
+  return {
+    id: item.id,
+    createdAt: item.createdAt,
+    notes: item.notes,
+    patient: item.patient,
+    externalClient: item.externalClient,
+    buyerType: item.externalClient ? "external" : "patient",
+    pharmacist: item.pharmacist,
+    totalFcfa,
+    returnedGrossFcfa,
+    returnedNetFcfa,
+    invoiceNumber,
+    lines: item.saleLines.map((line) => {
+      const quantityReturned = line.returns.reduce((sum, row) => sum + row.quantity, 0);
+      return {
+        id: line.id,
+        productId: line.productId,
+        productName: line.product.name,
+        sku: line.product.sku,
+        categoryName: line.product.category?.name ?? null,
+        quantity: line.quantity,
+        quantityReturned,
+        quantityReturnable: Math.max(0, line.quantity - quantityReturned),
+        unitPriceFcfa: line.unitPriceFcfa,
+        lineTotalFcfa: line.lineTotalFcfa,
+      };
+    }),
+  };
 }
 
 const externalClientSchema = z.object({
@@ -204,6 +292,14 @@ const stockMovementSchema = z
 
 function mapStockError(error: unknown, res: import("express").Response) {
   if (error instanceof z.ZodError) return res.status(400).json({ error: "Données invalides" });
+  if (error instanceof PharmacyReturnError) {
+    if (error.code === "SALE_NOT_FOUND") return res.status(404).json({ error: error.message });
+    if (error.code === "LINE_NOT_FOUND") return res.status(404).json({ error: error.message });
+    if (error.code === "RETURN_NOT_SAME_DAY") return res.status(400).json({ error: error.message });
+    if (error.code === "RETURN_EXCEEDS_SOLD") return res.status(409).json({ error: error.message });
+    if (error.code === "INVALID_QUANTITY") return res.status(400).json({ error: error.message });
+    return res.status(400).json({ error: error.message });
+  }
   if (error instanceof Error) {
     if (error.message === "INVALID_EXTERNAL_NAME") return res.status(400).json({ error: "Nom du client externe invalide" });
     if (error.message === "INSUFFICIENT_STOCK") return res.status(409).json({ error: "Stock insuffisant" });
@@ -226,6 +322,9 @@ function mapStockError(error: unknown, res: import("express").Response) {
     }
     if (error.message === "NO_LINE_CHANGES") {
       return res.status(400).json({ error: "Aucune modification à enregistrer." });
+    }
+    if (error.message === "NOT_AUTHORIZED_RETURN") {
+      return res.status(403).json({ error: "Vous ne pouvez pas enregistrer ce retour." });
     }
   }
   return res.status(500).json({ error: "Erreur serveur" });
@@ -436,38 +535,13 @@ router.get("/sales", async (req, res) => {
             },
           },
           invoice: { select: { invoiceNumber: true, amountFcfa: true, status: true } },
+          returns: { select: { quantity: true, grossRefundFcfa: true, netRefundFcfa: true } },
         },
       },
     },
   });
 
-  return res.json(
-    items.map((item) => {
-      const totalFcfa = item.saleLines.reduce((sum, line) => sum + line.lineTotalFcfa, 0);
-      const invoiceNumber = item.saleLines.find((line) => line.invoice?.invoiceNumber)?.invoice?.invoiceNumber ?? null;
-      return {
-        id: item.id,
-        createdAt: item.createdAt,
-        notes: item.notes,
-        patient: item.patient,
-        externalClient: item.externalClient,
-        buyerType: item.externalClient ? "external" : "patient",
-        pharmacist: item.pharmacist,
-        totalFcfa,
-        invoiceNumber,
-        lines: item.saleLines.map((line) => ({
-          id: line.id,
-          productId: line.productId,
-          productName: line.product.name,
-          sku: line.product.sku,
-          categoryName: line.product.category?.name ?? null,
-          quantity: line.quantity,
-          unitPriceFcfa: line.unitPriceFcfa,
-          lineTotalFcfa: line.lineTotalFcfa,
-        })),
-      };
-    }),
-  );
+  return res.json(items.map((item) => serializePharmacySale(item)));
 });
 
 router.patch("/sales/:prescriptionId", async (req, res) => {
@@ -647,16 +721,104 @@ router.patch("/sales/:prescriptionId", async (req, res) => {
   }
 });
 
+router.post("/sales/:prescriptionId/returns", async (req, res) => {
+  const user = req.user!;
+  const prescriptionId = String(req.params.prescriptionId);
+  try {
+    const body = pharmacyReturnSchema.parse(req.body);
+    const prescription = await prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      select: { id: true, pharmacistId: true, createdAt: true },
+    });
+    if (!prescription) throw new PharmacyReturnError("SALE_NOT_FOUND", "Vente introuvable");
+    if (!canRegisterPharmacyReturn(user, prescription)) {
+      throw new Error("NOT_AUTHORIZED_RETURN");
+    }
+
+    const result = await prisma.$transaction(async (tx) =>
+      applyPharmacySaleReturns(tx, {
+        prescriptionId,
+        items: body.items,
+        userId: user.id,
+      }),
+    );
+
+    const updated = await prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      include: {
+        patient: { select: { id: true, code: true, firstName: true, lastName: true } },
+        externalClient: {
+          select: { id: true, code: true, firstName: true, lastName: true, phone: true },
+        },
+        pharmacist: { select: { id: true, firstName: true, lastName: true } },
+        saleLines: {
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                sku: true,
+                category: { select: { name: true } },
+              },
+            },
+            invoice: { select: { invoiceNumber: true, amountFcfa: true, status: true } },
+            returns: { select: { quantity: true, grossRefundFcfa: true, netRefundFcfa: true } },
+          },
+        },
+      },
+    });
+
+    return res.status(201).json({
+      ...result,
+      sale: updated ? serializePharmacySale(updated) : null,
+    });
+  } catch (error) {
+    return mapStockError(error, res);
+  }
+});
+
+router.get("/revenue-report", async (req, res) => {
+  const user = req.user!;
+  const period = typeof req.query.period === "string" ? req.query.period : "today";
+  const from = typeof req.query.from === "string" ? req.query.from : undefined;
+  const to = typeof req.query.to === "string" ? req.query.to : undefined;
+  const pharmacistIdParam =
+    typeof req.query.pharmacistId === "string" ? req.query.pharmacistId : undefined;
+
+  const pharmacistId =
+    user.role === "PHARMACIEN" ? user.id : pharmacistIdParam || undefined;
+
+  const report = await buildPharmacyRevenueReport({
+    period,
+    from,
+    to,
+    pharmacistId,
+  });
+  return res.json(report);
+});
+
+router.get("/pharmacists", async (_req, res) => {
+  const pharmacists = await prisma.user.findMany({
+    where: { role: "PHARMACIEN", active: true },
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+    select: { id: true, firstName: true, lastName: true },
+  });
+  return res.json(pharmacists);
+});
+
 router.get("/reports", async (req, res) => {
   const user = req.user!;
   const period = typeof req.query.period === "string" ? req.query.period : "7d";
   const from = typeof req.query.from === "string" ? req.query.from : undefined;
   const to = typeof req.query.to === "string" ? req.query.to : undefined;
+  const pharmacistIdParam =
+    typeof req.query.pharmacistId === "string" ? req.query.pharmacistId : undefined;
+  const pharmacistId = user.role === "PHARMACIEN" ? user.id : pharmacistIdParam || undefined;
   const report = await buildPharmacyReport({
     period,
     from,
     to,
-    ...(user.role === "PHARMACIEN" ? { pharmacistId: user.id } : {}),
+    ...(pharmacistId ? { pharmacistId } : {}),
   });
   return res.json(report);
 });
@@ -1221,6 +1383,8 @@ router.post("/", async (req, res) => {
           visitId: body.visitId,
           pharmacistId: user.id,
           notes: mergedNotes || null,
+          grossTotalFcfa: grossTotal,
+          netTotalFcfa: total,
         },
       });
 
@@ -1238,6 +1402,7 @@ router.post("/", async (req, res) => {
             visitId: body.visitId,
             type: InvoiceType.PHARMACY,
             amountFcfa: total,
+            paidAmountFcfa: total,
             status: InvoiceStatus.PAID,
             issuedById: user.id,
             paidAt: new Date(),

@@ -297,6 +297,7 @@ model User {
   doctorShareClaimsRequested             DoctorShareClaim[]        @relation("DoctorShareRequestedBy")
   doctorShareClaimsSettled               DoctorShareClaim[]        @relation("DoctorShareSettledBy")
   pharmacyStockMovements                 StockMovement[]
+  pharmacySaleReturnsProcessed           PharmacySaleReturn[]      @relation("PharmacySaleReturns")
   logisticsStockMovements                LogisticsStockMovement[]
   logisticsRequestsCreated               LogisticsRequest[]        @relation("LogisticsRequestRequestedBy")
   logisticsRequestsHandled               LogisticsRequest[]        @relation("LogisticsRequestHandledBy")
@@ -795,6 +796,7 @@ model Product {
   supplier       PharmacySupplier? @relation(fields: [supplierId], references: [id])
   saleLines      PharmacySaleLine[]
   stockMovements StockMovement[]
+  saleReturns    PharmacySaleReturn[]
 
   @@index([categoryId])
   @@index([supplierId])
@@ -830,6 +832,10 @@ model Prescription {
   visitId          String?
   pharmacistId     String
   notes            String?
+  /// Total catalogue brut (somme des lignes) au moment de la vente.
+  grossTotalFcfa   Int?
+  /// Montant net encaissé ou facturé (après réductions).
+  netTotalFcfa     Int?
   createdAt        DateTime @default(now())
 
   patient        Patient?                @relation(fields: [patientId], references: [id])
@@ -838,9 +844,11 @@ model Prescription {
   pharmacist     User                    @relation(fields: [pharmacistId], references: [id])
   saleLines      PharmacySaleLine[]
   stockMovements StockMovement[]
+  saleReturns    PharmacySaleReturn[]
 
   @@index([patientId])
   @@index([externalClientId])
+  @@index([pharmacistId, createdAt])
 }
 
 model PharmacyExternalClient {
@@ -868,9 +876,35 @@ model PharmacySaleLine {
   unitPriceFcfa  Int
   lineTotalFcfa  Int
 
-  prescription Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
-  product      Product      @relation(fields: [productId], references: [id])
-  invoice      Invoice?     @relation(fields: [invoiceId], references: [id])
+  prescription Prescription         @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  product      Product              @relation(fields: [productId], references: [id])
+  invoice      Invoice?             @relation(fields: [invoiceId], references: [id])
+  returns      PharmacySaleReturn[]
+
+  @@index([prescriptionId])
+}
+
+/// Retour produit pharmacie (même jour que la vente).
+model PharmacySaleReturn {
+  id              String   @id @default(cuid())
+  saleLineId      String
+  prescriptionId  String
+  productId       String
+  quantity        Int
+  grossRefundFcfa Int
+  netRefundFcfa   Int
+  reason          String?
+  processedById   String
+  createdAt       DateTime @default(now())
+
+  saleLine     PharmacySaleLine @relation(fields: [saleLineId], references: [id], onDelete: Cascade)
+  prescription Prescription     @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  product      Product          @relation(fields: [productId], references: [id])
+  processedBy  User             @relation("PharmacySaleReturns", fields: [processedById], references: [id])
+
+  @@index([saleLineId])
+  @@index([prescriptionId, createdAt])
+  @@index([processedById, createdAt])
 }
 
 model ReceptionCashSettlement {

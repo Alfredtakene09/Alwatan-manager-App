@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RefreshCw, Printer, Eye, Pencil, Save, Trash2 } from '@lucide/vue'
+import { RefreshCw, Printer, Eye, Pencil, Save, Trash2, RotateCcw } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { CLINIC } from '@/lib/clinic'
@@ -16,6 +16,9 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
+import PharmacySaleReturnModal, {
+  type PharmacySaleForReturn,
+} from '@/components/pharmacie/PharmacySaleReturnModal.vue'
 
 type SaleLine = {
   id: string
@@ -24,6 +27,8 @@ type SaleLine = {
   sku: string
   categoryName: string | null
   quantity: number
+  quantityReturned?: number
+  quantityReturnable?: number
   unitPriceFcfa: number
   lineTotalFcfa: number
 }
@@ -39,6 +44,8 @@ type SaleRecord = {
   externalClient: { code: string; firstName: string; lastName: string } | null
   pharmacist: { firstName: string; lastName: string }
   totalFcfa: number
+  returnedGrossFcfa?: number
+  returnedNetFcfa?: number
   invoiceNumber: string | null
   lines: SaleLine[]
 }
@@ -77,6 +84,8 @@ const editId = ref<string | null>(null)
 const editingLines = ref<EditableSaleLine[]>([])
 const pendingDeleteLineIds = ref<string[]>([])
 const savingEdit = ref(false)
+const returnModalOpen = ref(false)
+const returnSale = ref<PharmacySaleForReturn | null>(null)
 
 const { uiText, localeCode } = useAppI18n()
 
@@ -113,6 +122,27 @@ const editHasChanges = computed(
     pendingDeleteLineIds.value.length > 0 ||
     editingLines.value.some((line) => line.quantityDraft !== line.quantity),
 )
+
+function isTodaySale(createdAt: string) {
+  return new Date(createdAt).toDateString() === new Date().toDateString()
+}
+
+function canReturnSale(sale: SaleRecord) {
+  return (
+    isTodaySale(sale.createdAt) &&
+    sale.lines.some((line) => (line.quantityReturnable ?? line.quantity - (line.quantityReturned ?? 0)) > 0)
+  )
+}
+
+function openReturnModal(sale: SaleRecord) {
+  returnSale.value = sale
+  returnModalOpen.value = true
+}
+
+async function onReturnSuccess(saleId: string) {
+  await loadItems()
+  expandedId.value = saleId
+}
 
 async function loadItems() {
   loading.value = true
@@ -448,6 +478,14 @@ defineExpose({ reload: loadItems })
     </div>
     <template #footer>
       <UiButton variant="ghost" @click="expandedId = null">{{ uiText('Fermer') }}</UiButton>
+      <UiButton
+        v-if="canReturnSale(expandedSale)"
+        variant="secondary"
+        :icon="RotateCcw"
+        @click="openReturnModal(expandedSale)"
+      >
+        {{ uiText('Retour') }}
+      </UiButton>
       <UiButton variant="secondary" :icon="Pencil" @click="openEditModal(expandedSale.id); expandedId = null">
         {{ uiText('Modifier') }}
       </UiButton>
@@ -527,6 +565,12 @@ defineExpose({ reload: loadItems })
       </UiButton>
     </template>
   </UiFormModal>
+
+  <PharmacySaleReturnModal
+    v-model:open="returnModalOpen"
+    :sale="returnSale"
+    @success="onReturnSuccess"
+  />
 </template>
 
 <style scoped>
