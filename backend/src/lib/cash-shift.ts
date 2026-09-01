@@ -18,14 +18,14 @@ import { ReceptionShiftSlot, UserRole } from "@prisma/client";
 
 /** Rôles autorisés à encaisser au comptoir (compte rendu caisse). */
 export const CASH_COLLECTOR_ROLES: UserRole[] = [
-  UserRole.GESTIONNAIRE,
+  UserRole.RECEPTIONNISTE,
   UserRole.COMPTABLE,
   UserRole.ADMIN,
 ];
 
 export const CASH_COLLECTOR_ROLE_LABELS: Partial<Record<UserRole, string>> = {
-  [UserRole.GESTIONNAIRE]: "Gestionnaire",
-  [UserRole.COMPTABLE]: "Direction",
+  [UserRole.RECEPTIONNISTE]: "Réception",
+  [UserRole.COMPTABLE]: "Comptabilité",
   [UserRole.ADMIN]: "Administration",
 };
 

@@ -65,12 +65,13 @@ import {
   buildRevenueLast7Days,
 } from "../lib/revenue-stats.js";
 import { applyExamKindPayment } from "../lib/patient-invoice-payments.js";
+import { canAccessModule, type AppUserRole } from "../lib/roles.js";
 import { requireAuth, requireAnyModule } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth);
 
-const cashierAccess = requireAnyModule("comptabilite");
+const cashierAccess = requireAnyModule("comptabilite", "reception");
 
 const surgeryPaymentSchema = z.object({
   surgeryCaseId: z.string(),
@@ -709,6 +710,13 @@ router.get("/paid-exams", cashierAccess, async (_req, res) => {
 router.post("/", cashierAccess, async (req, res) => {
   const user = req.user!;
   const action = req.body.action as string;
+  const isReceptionOnly =
+    canAccessModule(user.role as AppUserRole, "reception") &&
+    !canAccessModule(user.role as AppUserRole, "comptabilite");
+
+  if (isReceptionOnly && action !== "pay_lab_exams") {
+    return res.status(403).json({ error: "Accès refusé" });
+  }
 
   try {
     if (action === "pay_consultation") {

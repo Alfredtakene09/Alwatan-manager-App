@@ -5,14 +5,13 @@ import { prisma } from "../lib/db.js";
 import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.js";
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
 import { ageUnitSchema, refinePatientAge } from "../lib/patient-age.js";
-import { comptabilitePatientWhere } from "../lib/patient-billing.js";
+import { comptabilitePatientWhere, resolveConsultationBilling, shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
 import { aggregateCollectedToday } from "../lib/revenue-stats.js";
 import {
   aggregateCollectedForCashier,
   sumExpensesForCashierOnDate,
 } from "../lib/cashier-personal-stats.js";
 import { CASH_COLLECTOR_ROLES } from "../lib/cash-shift.js";
-import { resolveConsultationBilling } from "../lib/patient-billing.js";
 import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
 import {
   consultationInvoiceCreateData,
@@ -595,7 +594,7 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
         visit,
         invoiceNumber,
         totalFcfa: billing.billableAmountFcfa,
-        billingDeferred: true,
+        billingDeferred: !shouldCreateImmediateInvoice(category),
         linkedExistingDossier: false as const,
       };
     });

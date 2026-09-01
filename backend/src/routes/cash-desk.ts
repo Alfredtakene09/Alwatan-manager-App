@@ -20,7 +20,7 @@ import { DEFAULT_EXPENSE_INDICES } from "../lib/expense-indices-seed.js";
 import { requireAuth, requireAnyModule } from "../middleware/auth.js";
 
 const router = Router();
-router.use(requireAuth, requireAnyModule("comptabilite"));
+router.use(requireAuth, requireAnyModule("reception", "comptabilite"));
 
 const EXPENSE_CATEGORY_LABELS: Record<ClinicExpenseCategory, string> = {
   FOURNITURES: "Fournitures",
@@ -73,8 +73,7 @@ function canManageExpense(
     row.recordedById === user.id ||
     row.paidById === user.id ||
     user.role === UserRole.ADMIN ||
-    user.role === UserRole.COMPTABLE ||
-    user.role === UserRole.GESTIONNAIRE
+    user.role === UserRole.COMPTABLE
   );
 }
 
@@ -140,7 +139,8 @@ router.get("/expenses", async (req, res) => {
   const toIso = typeof req.query.to === "string" ? req.query.to : "";
 
   const mineOnly =
-    typeof req.query.mine === "string" && req.query.mine === "1";
+    user.role === UserRole.RECEPTIONNISTE ||
+    (typeof req.query.mine === "string" && req.query.mine === "1");
 
   const baseWhere = mineOnly ? { paidById: user.id } : {};
 
@@ -206,7 +206,8 @@ router.post("/expenses", async (req, res) => {
   try {
     const body = expenseSchema.parse(req.body);
     const businessDate = parseBusinessDate(body.businessDate);
-    const paidById = body.paidById ?? user.id;
+    const paidById =
+      user.role === UserRole.RECEPTIONNISTE ? user.id : (body.paidById ?? user.id);
 
     const cashier = await assertCashier(paidById);
     if (!cashier) return res.status(400).json({ error: "Caissier invalide" });

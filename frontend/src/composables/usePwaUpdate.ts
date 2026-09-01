@@ -7,6 +7,11 @@ let updateServiceWorker: ((reloadPage?: boolean) => Promise<void>) | null = null
 let started = false
 let applying = false
 
+/** Vite dev (5173) : pas de bundle `assets/index-*.js` — évite la boucle de rechargement. */
+function isDevFrontend() {
+  return import.meta.env.DEV
+}
+
 async function fetchServerBuildId(): Promise<string | null> {
   try {
     const res = await fetch(`/api/app-version?_=${Date.now()}`, {
@@ -96,8 +101,10 @@ async function applyUpdateInternal(knownBuildId?: string | null) {
 }
 
 async function checkServerBuild() {
+  if (isDevFrontend()) return
+
   const buildId = await fetchServerBuildId()
-  if (!buildId) return
+  if (!buildId || buildId === 'dev' || buildId === 'unknown') return
 
   const loaded = loadedBundleId()
   const loadedMatchesServer = Boolean(loaded && buildId.includes(loaded))
@@ -133,6 +140,8 @@ async function checkServerBuild() {
 function ensureStarted() {
   if (started || typeof window === 'undefined') return
   started = true
+
+  if (isDevFrontend()) return
 
   updateServiceWorker = registerSW({
     immediate: true,

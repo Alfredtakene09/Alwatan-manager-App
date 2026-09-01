@@ -12,14 +12,14 @@ import {
   X,
   Stethoscope,
   Banknote,
-  CircleDollarSign,
-  FlaskConical,
-  ClipboardList,
   Printer,
+  Percent,
+  Lock,
+  CheckCircle2,
+  CircleDollarSign,
 } from '@lucide/vue'
 import api from '@/api/client'
-import { confirmAppModal, showApiErrorModal, showValidationErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
-import { buildConsultationReceiptHtml, openPrintDocument } from '@/lib/print-document'
+import { confirmAppModal, showApiErrorModal, showSuccessModal, showValidationErrorModal } from '@/lib/api-modal-helper'
 import { fullName, formatFcfa, formatFcfaCompact, isDirectionOrGestionnaire } from '@/lib/roles'
 import {
   joinPatientFullName,
@@ -28,27 +28,39 @@ import {
 } from '@/lib/patient-name'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
 import { sortPatientsNewestFirst } from '@/lib/patient-sort'
-import { type PatientCategory } from '@/lib/patient-category'
 import {
+  isExemptCategory,
+  showConsultationBillingSummary,
+  type PatientCategory,
+} from '@/lib/patient-category'
+import {
+  defaultConsultationAmountForDoctor,
+  doctorConsultationBillingValid,
+  doctorIsFixedSalary,
+  doctorNeedsConsultationAmountInput,
+  doctorQuotaHint,
   doctorMatchesService,
   doctorShowsFixedConsultationPrice,
-  defaultConsultationAmountForDoctor,
-  preferredDoctorId,
-  sortDoctorsForReception,
+  resolveConsultationAmountForDoctor,
+  showDoctorConsultationBilling,
   type ConsultationRenewalPreview,
   type DoctorOption,
 } from '@/lib/doctor-compensation'
+import {
+  buildConsultationReceiptHtml,
+  buildDayClosureReceiptHtml,
+  openPrintDocument,
+} from '@/lib/print-document'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import { useAuthStore } from '@/stores/auth'
-import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
+import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiInput from '@/components/ui/UiInput.vue'
-import PatientsDataTable, { type ConsultationPaymentInfo } from '@/components/ui/PatientsDataTable.vue'
+import PatientsDataTable from '@/components/ui/PatientsDataTable.vue'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
 import DoctorSharesReceivablePanel from '@/components/reception/DoctorSharesReceivablePanel.vue'
 
@@ -56,9 +68,7 @@ type ReceptionStats = {
   registeredToday: number
   femalePatients: number
   malePatients: number
-  examPatientsCount?: number
   visitsToday: number
-  externalPatientsToday?: number
   revenueTodayFcfa: number
   expensesTodayFcfa?: number
   netTodayFcfa?: number
@@ -84,13 +94,10 @@ type Patient = {
   treatingDoctor?: Doctor | null
   createdAt?: string
   canDelete?: boolean
-  createdBy?: { id: string; firstName: string; lastName: string } | null
-  consultationPayment?: ConsultationPaymentInfo | null
 }
 
 type Doctor = DoctorOption
 type ServiceOption = { id: string; name: string }
-type ReceptionistOption = { id: string; name: string }
 
 function findDoctor(doctorId: string) {
   return doctors.value.find((doctor) => doctor.id === doctorId)
@@ -108,14 +115,51 @@ type PatientDetail = Patient & {
     consultationAmountFcfa?: number | null
     invoiceNumber?: string | null
     totalFcfa?: number | null
-    consultationPayment?: ConsultationPaymentInfo | null
+  } | null
+}
+
+type ReceiptData = {
+  patientCode: string
+  patientName: string
+  doctorName: string
+  amount: number
+  reduction: number
+  total: number
+  invoiceNumber?: string
+  date: string
+  age?: number | null
+  ageUnit?: PatientAgeUnit | null
+  gender?: string | null
+  phone?: string | null
+  processedBy?: string
+}
+
+type DayClosureStatus = {
+  businessDate: string
+  shiftSlot: 'MORNING' | 'EVENING' | 'NIGHT' | null
+  shiftLabel: string | null
+  collectedFcfa: number
+  expensesFcfa: number
+  netFcfa: number
+  visitsToday: number
+  registeredToday: number
+  consultationsFcfa?: number
+  examsFcfa?: number
+  surgeryFcfa?: number
+  hospitalizationFcfa?: number
+  receptionistName: string
+  closed: boolean
+  closure: {
+    id: string
+    closedAt: string
+    collectedFcfa: number
+    expensesFcfa: number
+    netFcfa: number
   } | null
 }
 
 const { uiText, dateText, localeCode } = useAppI18n()
 const auth = useAuthStore()
-const { canSeeUiAction } = useUiActionVisibility()
-const isReceptionist = computed(() => auth.user?.role === 'RECEPTIONNISTE')
 
 type ReceptionPageTab = 'enregistrement' | 'doctor-shares'
 const canSeeDoctorSharesTab = computed(() =>
@@ -144,6 +188,10 @@ watch(canSeeDoctorSharesTab, (canSee) => {
   }
 })
 
+function currentReceptionistName() {
+  return auth.user ? fullName(auth.user.firstName, auth.user.lastName) : undefined
+}
+
 function todayInputValue() {
   const d = new Date()
   const y = d.getFullYear()
@@ -155,254 +203,32 @@ function todayInputValue() {
 const patients = ref<Patient[]>([])
 const doctors = ref<Doctor[]>([])
 const services = ref<ServiceOption[]>([])
-const receptionists = ref<ReceptionistOption[]>([])
-const filterReceptionistId = ref('')
 const listFrom = ref(todayInputValue())
 const listTo = ref(todayInputValue())
-const paymentFilter = ref<'all' | 'pending'>('all')
-const paymentPatient = ref<Patient | null>(null)
-const paymentDetail = ref<PatientDetail | null>(null)
-const paymentLoading = ref(false)
-const payingConsultation = ref(false)
-const printingPatientId = ref<string | null>(null)
-const paymentReductionFcfa = ref(0)
-
-const canCollectConsultation = computed(
-  () =>
-    Boolean(auth.user && isDirectionOrGestionnaire(auth.user.role)) &&
-    canSeeUiAction('reception.pay_consultation'),
+const sortedDoctors = computed(() =>
+  [...doctors.value].sort((a, b) => {
+    const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
+    if (byLast !== 0) return byLast
+    return a.firstName.localeCompare(b.firstName, 'fr', { sensitivity: 'base' })
+  }),
 )
-
-const displayedPatients = computed(() => {
-  if (paymentFilter.value !== 'pending') return patients.value
-  return patients.value.filter((item) => item.consultationPayment?.payable)
-})
-
-const paymentSnapshot = computed(() => {
-  const fromDetail =
-    paymentDetail.value?.consultationPayment ??
-    paymentDetail.value?.waitingVisit?.consultationPayment ??
-    paymentPatient.value?.consultationPayment ??
-    null
-  if (fromDetail) return fromDetail
-  const visit = paymentDetail.value?.waitingVisit
-  if (!visit) return null
-  const amount = Math.max(0, Number(visit.totalFcfa ?? visit.consultationFeeFcfa ?? 0))
-  if (!amount && !visit.invoiceNumber) return null
-  return {
-    invoiceId: '',
-    invoiceNumber: visit.invoiceNumber || '—',
-    status: 'PENDING',
-    amountFcfa: amount,
-    paidAmountFcfa: 0,
-    remainingFcfa: amount,
-    payable: amount > 0,
-  }
-})
-
-const canApplyConsultationReduction = computed(
-  () =>
-    canCollectConsultation.value &&
-    canSeeUiAction('comptabilite.reduction') &&
-    Boolean(paymentSnapshot.value?.payable) &&
-    (paymentSnapshot.value?.paidAmountFcfa ?? 0) <= 0,
-)
-
-const paymentCollectAmounts = computed(() => {
-  const snap = paymentSnapshot.value
-  if (!snap) return null
-  const visit = paymentDetail.value?.waitingVisit
-  const existingReduction = Math.max(0, Number(visit?.reductionFcfa ?? 0))
-  const fee = Math.max(
-    0,
-    Number(visit?.consultationFeeFcfa ?? snap.amountFcfa + existingReduction),
-  )
-  const paid = Math.max(0, snap.paidAmountFcfa)
-  const reduction = canApplyConsultationReduction.value
-    ? Math.min(fee, Math.max(0, Math.floor(Number(paymentReductionFcfa.value) || 0)))
-    : existingReduction
-  const net = Math.max(0, fee - reduction)
-  const remaining = Math.max(0, net - paid)
-  return { fee, reduction, net, paid, remaining }
-})
-
-function togglePaymentFilter() {
-  paymentFilter.value = paymentFilter.value === 'pending' ? 'all' : 'pending'
-}
-
-async function openPaymentModal(patient: Patient) {
-  paymentPatient.value = patient
-  paymentDetail.value = null
-  paymentReductionFcfa.value = 0
-  paymentLoading.value = true
-  try {
-    const { data } = await api.get<PatientDetail>(`/patients/${patient.id}`)
-    paymentDetail.value = data
-    paymentReductionFcfa.value = Math.max(0, Number(data.waitingVisit?.reductionFcfa ?? 0))
-  } catch {
-    paymentDetail.value = null
-  } finally {
-    paymentLoading.value = false
-  }
-}
-
-function closePaymentModal() {
-  paymentPatient.value = null
-  paymentDetail.value = null
-  paymentReductionFcfa.value = 0
-}
-
-function printConsultationReceiptFromDetail(patient: Patient, detail: PatientDetail | null) {
-  const visit = detail?.waitingVisit
-  const payment =
-    detail?.consultationPayment ??
-    visit?.consultationPayment ??
-    patient.consultationPayment ??
-    null
-  const doctor = visit?.doctor ?? detail?.treatingDoctor ?? patient.treatingDoctor
-  const fee = Math.max(
-    0,
-    Number(visit?.consultationFeeFcfa ?? visit?.consultationAmountFcfa ?? payment?.amountFcfa ?? 0),
-  )
-  const reduction = Math.max(0, Number(visit?.reductionFcfa ?? 0))
-  const net = Math.max(
-    0,
-    Number(
-      visit?.totalFcfa ??
-        (payment?.status === 'PAID' ? payment.paidAmountFcfa : payment?.amountFcfa) ??
-        fee - reduction,
-    ),
-  )
-  if (!visit && !payment) {
-    return { ok: false as const, reason: 'missing-visit' }
-  }
-  if (!fee && !net) {
-    return { ok: false as const, reason: 'missing-amount' }
-  }
-  openPrintDocument(
-    translateTemplate('Reçu {code}', { code: patient.code }),
-    buildConsultationReceiptHtml({
-      patientCode: patient.code,
-      patientName: fullName(patient.firstName, patient.lastName),
-      doctorName: doctor ? `Dr ${fullName(doctor.firstName, doctor.lastName)}` : '—',
-      amount: fee || net + reduction,
-      reduction,
-      total: net || Math.max(0, fee - reduction),
-      invoiceNumber: visit?.invoiceNumber ?? payment?.invoiceNumber ?? undefined,
-      date: new Date().toISOString(),
-      processedBy: auth.user ? fullName(auth.user.firstName, auth.user.lastName) : undefined,
-    }),
-    { pageSize: '80mm', autoPrint: true },
-  )
-  return { ok: true as const }
-}
-
-async function printConsultationReceipt(patient: Patient, detail?: PatientDetail | null) {
-  printingPatientId.value = patient.id
-  try {
-    const loaded = detail === undefined ? await loadPatientDetail(patient.id) : detail
-    const result = printConsultationReceiptFromDetail(patient, loaded)
-    if (!result.ok && result.reason === 'missing-visit') {
-      await showApiErrorModal(
-        null,
-        uiText(
-          'Aucune consultation en cours à imprimer. Ouvrez le dossier, vérifiez le médecin et le montant, puis enregistrez à nouveau.',
-        ),
-      )
-      return
-    }
-    if (!result.ok) {
-      await showApiErrorModal(null, uiText('Aucun montant de consultation à imprimer.'))
-    }
-  } catch (error) {
-    await showApiErrorModal(error, uiText("Impossible d'imprimer le reçu."))
-  } finally {
-    printingPatientId.value = null
-  }
-}
-
-async function collectConsultationFromReception() {
-  const invoiceId = paymentSnapshot.value?.invoiceId
-  const patient = paymentPatient.value
-  const amounts = paymentCollectAmounts.value
-  if (!invoiceId || !patient || !canCollectConsultation.value || !amounts || amounts.remaining <= 0) {
-    return
-  }
-  payingConsultation.value = true
-  try {
-    const payload: {
-      action: 'pay_consultation'
-      invoiceId: string
-      reductionFcfa?: number
-    } = {
-      action: 'pay_consultation',
-      invoiceId,
-    }
-    if (canApplyConsultationReduction.value) {
-      payload.reductionFcfa = amounts.reduction
-    }
-    const { data } = await api.post<{
-      amountFcfa: number
-      reductionFcfa?: number
-      invoiceNumber?: string
-      grossFcfa?: number
-    }>('/comptabilite', payload)
-    const doctor = paymentDetail.value?.waitingVisit?.doctor
-    const reduction = data.reductionFcfa ?? amounts.reduction
-    openPrintDocument(
-      translateTemplate('Reçu {code}', { code: patient.code }),
-      buildConsultationReceiptHtml({
-        patientName: fullName(patient.firstName, patient.lastName),
-        patientCode: patient.code,
-        doctorName: doctor ? `Dr ${fullName(doctor.firstName, doctor.lastName)}` : '—',
-        amount: data.grossFcfa ?? amounts.fee,
-        reduction,
-        total: data.amountFcfa,
-        invoiceNumber: data.invoiceNumber ?? paymentSnapshot.value?.invoiceNumber,
-        date: new Date().toISOString(),
-        processedBy: auth.user ? fullName(auth.user.firstName, auth.user.lastName) : undefined,
-      }),
-      { pageSize: '80mm', autoPrint: true },
-    )
-    const reductionNote =
-      reduction > 0 ? ` (${uiText('Réduction')} ${formatFcfa(reduction)})` : ''
-    await showSuccessModal(
-      uiText('Consultation encaissée'),
-      `${uiText('Montant')} : ${formatFcfa(data.amountFcfa)}${reductionNote}`,
-    )
-    closePaymentModal()
-    await Promise.all([loadPatients(), loadReceptionStats()])
-  } catch (error) {
-    await showApiErrorModal(error, uiText("Impossible d'encaisser cette consultation."))
-  } finally {
-    payingConsultation.value = false
-  }
-}
-
-const sortedDoctors = computed(() => sortDoctorsForReception(doctors.value))
 function filteredDoctorsByService(serviceName: string) {
   if (!serviceName) return sortedDoctors.value
-  return sortDoctorsForReception(
-    sortedDoctors.value.filter((doctor) => doctorMatchesService(doctor, serviceName)),
-  )
+  return sortedDoctors.value.filter((doctor) => doctorMatchesService(doctor, serviceName))
 }
 const formServiceDoctors = computed(() => filteredDoctorsByService(form.value.service))
 const editServiceDoctors = computed(() => filteredDoctorsByService(editForm.value.service))
-
-function doctorOptionLabel(doctor: DoctorOption) {
-  return `Dr ${fullName(doctor.firstName, doctor.lastName)}`
-}
 const stats = ref<ReceptionStats>({
   registeredToday: 0,
   femalePatients: 0,
   malePatients: 0,
-  examPatientsCount: 0,
   visitsToday: 0,
-  externalPatientsToday: 0,
   revenueTodayFcfa: 0,
 })
 const loadingStats = ref(false)
-const showDaySummary = ref(false)
+const dayClosure = ref<DayClosureStatus | null>(null)
+const closingDay = ref(false)
+const loadingDayClosure = ref(false)
 const search = ref('')
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
@@ -438,6 +264,7 @@ const deletingPatientId = ref<string | null>(null)
 
 const reconsultForm = ref({
   doctorId: '',
+  consultationAmount: '',
 })
 const renewalPreview = ref<ConsultationRenewalPreview | null>(null)
 const loadingRenewalPreview = ref(false)
@@ -452,6 +279,8 @@ const editForm = ref({
   category: 'STANDARD' as PatientCategory,
   doctorId: '',
   treatingDoctorId: '',
+  consultationAmount: '',
+  reduction: '0',
 })
 
 const form = ref({
@@ -464,6 +293,8 @@ const form = ref({
   category: 'STANDARD' as PatientCategory,
   doctorId: '',
   treatingDoctorId: '',
+  consultationAmount: '',
+  reduction: '0',
 })
 
 const formParsedName = computed(() => splitPatientFullName(form.value.fullName))
@@ -471,31 +302,53 @@ const editParsedName = computed(() => splitPatientFullName(editForm.value.fullNa
 const formAge = computed(() => parsePatientAge(form.value.age, form.value.ageUnit))
 const editAge = computed(() => parsePatientAge(editForm.value.age, editForm.value.ageUnit))
 
+const formAmount = computed(() => Number(form.value.consultationAmount) || 0)
+const formReduction = computed(() => Math.max(0, Number(form.value.reduction) || 0))
+const formEffectiveAmount = computed(() => {
+  if (formBillingExempt.value) return 0
+  return resolveConsultationAmountForDoctor(formDoctor.value, formAmount.value)
+})
+const formTotal = computed(() => Math.max(0, formEffectiveAmount.value - formReduction.value))
+
+const editAmount = computed(() => Number(editForm.value.consultationAmount) || 0)
+const editReduction = computed(() => Math.max(0, Number(editForm.value.reduction) || 0))
+const editEffectiveAmount = computed(() => {
+  if (editBillingExempt.value) return 0
+  return resolveConsultationAmountForDoctor(editDoctor.value, editAmount.value)
+})
+const editTotal = computed(() => Math.max(0, editEffectiveAmount.value - editReduction.value))
+
+const formBillingExempt = computed(() => isExemptCategory(form.value.category))
+const editBillingExempt = computed(() => isExemptCategory(editForm.value.category))
+
 const formDoctor = computed(() => findDoctor(form.value.doctorId))
 const editDoctor = computed(() => findDoctor(editForm.value.doctorId))
+const reconsultDoctor = computed(() => findDoctor(reconsultForm.value.doctorId))
 
-const formConsultationPrice = computed(() => {
-  const doctor = formDoctor.value
-  if (!doctor) return 0
-  if (doctorShowsFixedConsultationPrice(doctor)) {
-    return defaultConsultationAmountForDoctor(doctor)
-  }
-  return Math.max(0, Number(doctor.consultationTotalFcfa) || 0)
-})
+const formDoctorQuotaHint = computed(() => doctorQuotaHint(formDoctor.value, formEffectiveAmount.value))
+const editDoctorQuotaHint = computed(() => doctorQuotaHint(editDoctor.value, editEffectiveAmount.value))
+const reconsultDoctorQuotaHint = computed(() =>
+  doctorQuotaHint(
+    reconsultDoctor.value,
+    resolveConsultationAmountForDoctor(
+      reconsultDoctor.value,
+      Number(reconsultForm.value.consultationAmount) || 0,
+    ),
+  ),
+)
 
-const editConsultationPrice = computed(() => {
-  const doctor = editDoctor.value
-  if (!doctor) return 0
-  if (doctorShowsFixedConsultationPrice(doctor)) {
-    return defaultConsultationAmountForDoctor(doctor)
-  }
-  return Math.max(0, Number(doctor.consultationTotalFcfa) || 0)
-})
-
-const reconsultConsultationPrice = computed(() => {
-  if (renewalPreview.value?.withinValidity) return 0
-  return Math.max(0, Number(renewalPreview.value?.amountFcfa) || 0)
-})
+const showFormConsultationBilling = computed(
+  () =>
+    showConsultationBillingSummary(form.value.category) &&
+    !formBillingExempt.value &&
+    showDoctorConsultationBilling(formDoctor.value),
+)
+const showEditConsultationBilling = computed(
+  () =>
+    showConsultationBillingSummary(editForm.value.category) &&
+    !editBillingExempt.value &&
+    showDoctorConsultationBilling(editDoctor.value),
+)
 
 function collectNewPatientValidationErrors(): string[] {
   const issues: string[] = []
@@ -532,6 +385,19 @@ function collectNewPatientValidationErrors(): string[] {
     issues.push('Sélectionnez un médecin.')
   }
 
+  if (
+    !formBillingExempt.value &&
+    showDoctorConsultationBilling(formDoctor.value)
+  ) {
+    if (formEffectiveAmount.value <= 0) {
+      issues.push('Indiquez un montant de consultation supérieur à 0.')
+    } else if (formReduction.value > formEffectiveAmount.value) {
+      issues.push('La réduction ne peut pas dépasser le montant de la consultation.')
+    } else if (formTotal.value <= 0) {
+      issues.push('Le total à payer doit être supérieur à 0.')
+    }
+  }
+
   return issues
 }
 
@@ -562,6 +428,19 @@ function collectEditPatientValidationErrors(): string[] {
     issues.push('Sélectionnez un médecin.')
   }
 
+  if (
+    !editBillingExempt.value &&
+    showDoctorConsultationBilling(editDoctor.value)
+  ) {
+    if (editEffectiveAmount.value <= 0) {
+      issues.push('Indiquez un montant de consultation supérieur à 0.')
+    } else if (editReduction.value > editEffectiveAmount.value) {
+      issues.push('La réduction ne peut pas dépasser le montant de la consultation.')
+    } else if (editTotal.value <= 0) {
+      issues.push('Le total à payer doit être supérieur à 0.')
+    }
+  }
+
   return issues
 }
 
@@ -570,6 +449,20 @@ function collectReconsultValidationErrors(): string[] {
   if (!reconsultForm.value.doctorId) {
     issues.push('Sélectionnez un médecin.')
   }
+  const patient = selectedPatient.value
+  if (patient?.category && isExemptCategory(patient.category)) return issues
+  if (renewalPreview.value?.withinValidity) return issues
+
+  const amount =
+    renewalPreview.value?.amountFcfa ?? (Number(reconsultForm.value.consultationAmount) || 0)
+
+  if (
+    !doctorShowsFixedConsultationPrice(reconsultDoctor.value) &&
+    !(doctorConsultationBillingValid(reconsultDoctor.value, amount) || amount === 0)
+  ) {
+    issues.push('Indiquez un montant de consultation valide.')
+  }
+
   return issues
 }
 
@@ -600,20 +493,11 @@ const listDateLabel = computed(() => {
   })
 })
 
-const canFilterByReceptionist = computed(() => !isReceptionist.value)
-
-const selectedReceptionistName = computed(() => {
-  if (!filterReceptionistId.value) return ''
-  return receptionists.value.find((item) => item.id === filterReceptionistId.value)?.name ?? ''
-})
-
 const patientsPanelSubtitle = computed(() => {
   const scope =
     auth.user?.role === 'RECEPTIONNISTE'
       ? uiText('Vos dossiers créés à la réception')
-      : selectedReceptionistName.value
-        ? translateTemplate('Dossiers enregistrés par {name}', { name: selectedReceptionistName.value })
-        : uiText('Liste des dossiers créés à la réception')
+      : uiText('Liste des dossiers créés à la réception')
   return translateTemplate('{scope} — {date}', {
     scope,
     date: listDateLabel.value,
@@ -625,8 +509,7 @@ const isListDateToday = computed(() => {
   return listFrom.value === today && listTo.value === today
 })
 
-const dashboardStats = computed(() => {
-  const base = [
+const dashboardStats = computed(() => [
   {
     id: 'today',
     label: 'Inscrits aujourd\'hui',
@@ -636,70 +519,129 @@ const dashboardStats = computed(() => {
     variant: 'amber' as const,
   },
   {
-    id: 'gender',
-    label: 'Féminin / Masculin',
-    value: `${stats.value.femalePatients} / ${stats.value.malePatients}`,
+    id: 'female',
+    label: 'Féminin',
+    value: stats.value.femalePatients,
     hint: 'Dossiers patients',
     icon: Users,
     variant: 'rose' as const,
   },
   {
-    id: 'exams',
-    label: 'Patients examens',
-    value: stats.value.examPatientsCount ?? 0,
-    hint: 'Ont reçu des examens',
-    icon: ClipboardList,
+    id: 'male',
+    label: 'Masculin',
+    value: stats.value.malePatients,
+    hint: 'Dossiers patients',
+    icon: Users,
     variant: 'blue' as const,
   },
   {
-    id: 'external',
-    label: 'Patients externes',
-    value: stats.value.externalPatientsToday ?? 0,
-    hint: 'Examens sans consultation — aujourd’hui',
-    icon: FlaskConical,
-    variant: 'teal' as const,
+    id: 'revenue',
+    label: stats.value.isPersonalScope ? 'Mes encaissements (jour)' : 'Recettes du jour',
+    value: formatFcfaCompact(stats.value.netTodayFcfa ?? stats.value.revenueTodayFcfa),
+    hint: stats.value.isPersonalScope
+      ? stats.value.expensesTodayFcfa
+        ? translateTemplate('Brut {gross} − dépenses {expenses}', {
+            gross: formatFcfaCompact(stats.value.revenueTodayFcfa),
+            expenses: formatFcfaCompact(stats.value.expensesTodayFcfa ?? 0),
+          })
+        : 'Uniquement vos encaissements'
+      : 'Consultations, examens, opérations, hospitalisation (hors associés)',
+    icon: Banknote,
+    variant: 'violet' as const,
   },
-  ]
-  if (isReceptionist.value) return base
-  return [
-    ...base,
-    {
-      id: 'revenue',
-      label: stats.value.isPersonalScope ? 'Mes encaissements (jour)' : 'Recettes du jour',
-      value: formatFcfaCompact(stats.value.netTodayFcfa ?? stats.value.revenueTodayFcfa),
-      hint: stats.value.isPersonalScope
-        ? stats.value.expensesTodayFcfa
-          ? translateTemplate('Brut {gross} − dépenses {expenses}', {
-              gross: formatFcfaCompact(stats.value.revenueTodayFcfa),
-              expenses: formatFcfaCompact(stats.value.expensesTodayFcfa ?? 0),
-            })
-          : 'Uniquement vos encaissements'
-        : 'Consultations, examens, opérations, hospitalisation (hors associés)',
-      icon: Banknote,
-      variant: 'violet' as const,
-    },
-  ]
-})
+])
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
 async function loadReceptionStats() {
   loadingStats.value = true
   try {
-    const { data } = await api.get<ReceptionStats>('/patients/reception-stats', {
-      params: {
-        createdById: canFilterByReceptionist.value ? filterReceptionistId.value || undefined : undefined,
-      },
-    })
+    const { data } = await api.get<ReceptionStats>('/patients/reception-stats')
     stats.value = data
   } finally {
     loadingStats.value = false
   }
 }
 
-async function openDaySummary() {
-  await loadReceptionStats()
-  showDaySummary.value = true
+async function loadDayClosure() {
+  loadingDayClosure.value = true
+  try {
+    const { data } = await api.get<DayClosureStatus>('/cash-desk/day-closure')
+    dayClosure.value = data
+  } catch {
+    dayClosure.value = null
+  } finally {
+    loadingDayClosure.value = false
+  }
+}
+
+function printDayClosure(data: DayClosureStatus) {
+  const closedAt = data.closure?.closedAt ?? new Date().toISOString()
+  openPrintDocument(
+    'Clôture de journée',
+    buildDayClosureReceiptHtml({
+      businessDate: data.businessDate,
+      closedAt,
+      receptionistName: data.receptionistName || currentReceptionistName() || '—',
+      shiftLabel: data.shiftLabel,
+      collectedFcfa: data.closure?.collectedFcfa ?? data.collectedFcfa,
+      expensesFcfa: data.closure?.expensesFcfa ?? data.expensesFcfa,
+      netFcfa: data.closure?.netFcfa ?? data.netFcfa,
+      visitsToday: data.visitsToday,
+      registeredToday: data.registeredToday,
+      consultationsFcfa: data.consultationsFcfa,
+      examsFcfa: data.examsFcfa,
+      surgeryFcfa: data.surgeryFcfa,
+      hospitalizationFcfa: data.hospitalizationFcfa,
+    }),
+    { pageSize: '80mm' },
+  )
+}
+
+async function closeReceptionDay() {
+  if (dayClosure.value?.closed || closingDay.value) return
+
+  const snapshot = dayClosure.value
+  const collected = snapshot?.collectedFcfa ?? stats.value.revenueTodayFcfa
+  const expenses = snapshot?.expensesFcfa ?? stats.value.expensesTodayFcfa ?? 0
+  const net = snapshot?.netFcfa ?? stats.value.netTodayFcfa ?? collected
+  const shiftHint = snapshot?.shiftLabel
+    ? ` ${translateTemplate('Créneau : {slot}', { slot: snapshot.shiftLabel })}`
+    : ''
+
+  const confirmed = await confirmAppModal({
+    type: 'WARNING',
+    title: 'Clôturer la journée',
+    message: translateTemplate(
+      'Confirmer la clôture de la journée ? Encaissements : {collected} Dépenses : {expenses} Net à remettre : {net}{shiftHint} Remettez ensuite la caisse à la comptabilité.',
+      {
+        collected: formatFcfa(collected),
+        expenses: formatFcfa(expenses),
+        net: formatFcfa(net),
+        shiftHint,
+      },
+    ),
+    confirmLabel: 'Clôturer',
+    cancelLabel: 'Annuler',
+  })
+  if (!confirmed) return
+
+  closingDay.value = true
+  try {
+    const { data } = await api.post<DayClosureStatus & { message?: string }>('/cash-desk/day-closure')
+    dayClosure.value = data
+    await showSuccessModal(
+      'Journée clôturée',
+      'Remettez la caisse à la comptabilité.',
+    )
+    printDayClosure(data)
+    await loadReceptionStats()
+  } catch (error) {
+    await showApiErrorModal(error, 'Impossible de clôturer la journée.')
+    await loadDayClosure()
+  } finally {
+    closingDay.value = false
+  }
 }
 
 async function loadPatients() {
@@ -717,7 +659,6 @@ async function loadPatients() {
         q: search.value.trim() || undefined,
         from,
         to,
-        createdById: canFilterByReceptionist.value ? filterReceptionistId.value || undefined : undefined,
       },
     })
     patients.value = sortPatientsNewestFirst(data)
@@ -734,19 +675,6 @@ async function loadDoctors() {
     syncDoctorForService('edit')
   } catch {
     doctors.value = []
-  }
-}
-
-async function loadReceptionists() {
-  if (!canFilterByReceptionist.value) {
-    receptionists.value = []
-    return
-  }
-  try {
-    const { data } = await api.get<ReceptionistOption[]>('/patients/receptionists')
-    receptionists.value = Array.isArray(data) ? data : []
-  } catch {
-    receptionists.value = []
   }
 }
 
@@ -767,9 +695,9 @@ async function refreshAll() {
   await Promise.all([
     loadPatients(),
     loadReceptionStats(),
+    loadDayClosure(),
     loadDoctors(),
     loadServices(),
-    loadReceptionists(),
   ])
 }
 
@@ -784,6 +712,8 @@ function resetForm() {
     category: 'STANDARD',
     doctorId: '',
     treatingDoctorId: '',
+    consultationAmount: '',
+    reduction: '0',
   }
   syncDoctorForService('form')
 }
@@ -802,12 +732,15 @@ async function refreshReconsultFee() {
       {
         params: {
           doctorId: reconsultForm.value.doctorId,
+          amount: reconsultForm.value.consultationAmount || undefined,
         },
       },
     )
     renewalPreview.value = data
+    reconsultForm.value.consultationAmount = String(data.amountFcfa)
   } catch {
     renewalPreview.value = null
+    applyDoctorBillingDefaults('reconsult')
   } finally {
     loadingRenewalPreview.value = false
   }
@@ -821,14 +754,77 @@ function syncDoctorForService(target: 'form' | 'edit') {
     if (state.treatingDoctorId && !findDoctor(state.treatingDoctorId)) state.treatingDoctorId = ''
     return
   }
-  state.doctorId = preferredDoctorId(allowed, state.doctorId)
+  if (!allowed.some((doctor) => doctor.id === state.doctorId)) {
+    state.doctorId = allowed[0]?.id ?? ''
+  }
   if (state.treatingDoctorId && !allowed.some((doctor) => doctor.id === state.treatingDoctorId)) {
     state.treatingDoctorId = ''
   }
 }
 
+function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
+  if (target === 'form' || target === 'edit') syncDoctorForService(target)
+  if (target === 'form') {
+    const doctor = findDoctor(form.value.doctorId)
+    if (isExemptCategory(form.value.category)) {
+      form.value.consultationAmount = '0'
+      form.value.reduction = '0'
+      return
+    }
+    if (doctorShowsFixedConsultationPrice(doctor)) {
+      form.value.consultationAmount = String(defaultConsultationAmountForDoctor(doctor))
+      return
+    }
+    if (doctorNeedsConsultationAmountInput(doctor)) {
+      form.value.consultationAmount = ''
+      return
+    }
+    form.value.consultationAmount = '0'
+    form.value.reduction = '0'
+    return
+  }
+  if (target === 'edit') {
+    const doctor = findDoctor(editForm.value.doctorId)
+    if (isExemptCategory(editForm.value.category)) {
+      editForm.value.consultationAmount = '0'
+      editForm.value.reduction = '0'
+      return
+    }
+    if (doctorShowsFixedConsultationPrice(doctor)) {
+      editForm.value.consultationAmount = String(defaultConsultationAmountForDoctor(doctor))
+      return
+    }
+    if (doctorNeedsConsultationAmountInput(doctor)) {
+      editForm.value.consultationAmount = ''
+      return
+    }
+    editForm.value.consultationAmount = '0'
+    editForm.value.reduction = '0'
+    return
+  }
+  const doctor = findDoctor(reconsultForm.value.doctorId)
+  if (doctorShowsFixedConsultationPrice(doctor)) {
+    reconsultForm.value.consultationAmount = String(defaultConsultationAmountForDoctor(doctor))
+    return
+  }
+  if (doctorNeedsConsultationAmountInput(doctor)) {
+    reconsultForm.value.consultationAmount = ''
+    return
+  }
+  reconsultForm.value.consultationAmount = '0'
+}
+
+function applyCategoryBillingDefaults(target: 'form' | 'edit') {
+  const state = target === 'form' ? form.value : editForm.value
+  if (isExemptCategory(state.category)) {
+    state.consultationAmount = '0'
+    state.reduction = '0'
+  }
+  applyDoctorBillingDefaults(target)
+}
+
 async function openModal() {
-  await Promise.all([loadServices(), loadDoctors()])
+  await loadServices()
   resetForm()
   showModal.value = true
 }
@@ -836,6 +832,60 @@ async function openModal() {
 function closeModal() {
   showModal.value = false
   resetForm()
+}
+
+function getDoctorName(doctorId: string) {
+  const doctor = doctors.value.find((d) => d.id === doctorId)
+  return doctor ? `Dr ${fullName(doctor.firstName, doctor.lastName)}` : '—'
+}
+
+function printReceipt(r: ReceiptData) {
+  openPrintDocument(translateTemplate('Reçu {code}', { code: r.patientCode }), buildConsultationReceiptHtml(r), {
+    pageSize: '80mm',
+    autoPrint: true,
+  })
+}
+
+function printDetailReceipt(detail: PatientDetail) {
+  if (!detail.waitingVisit) {
+    showAlert(
+      'Aucune consultation en cours à imprimer. Ouvrez le dossier, vérifiez le médecin et le montant, puis enregistrez à nouveau.',
+      'error',
+    )
+    return
+  }
+
+  const visit = detail.waitingVisit
+  const amount = visit.consultationFeeFcfa ?? visit.consultationAmountFcfa ?? 0
+  const reduction = visit.reductionFcfa ?? 0
+  const total = visit.totalFcfa ?? Math.max(0, amount - reduction)
+
+  if (amount <= 0 && !isExemptCategory(detail.category ?? 'STANDARD')) {
+    showAlert('Aucun montant de consultation à imprimer.', 'error')
+    return
+  }
+
+  const doctorName = visit.doctor
+    ? `Dr ${fullName(visit.doctor.firstName, visit.doctor.lastName)}`
+    : '—'
+
+  const invoiceNumber = visit.invoiceNumber ?? undefined
+
+  printReceipt({
+    patientCode: detail.code,
+    patientName: fullName(detail.firstName, detail.lastName),
+    doctorName,
+    amount: isExemptCategory(detail.category ?? 'STANDARD') ? 0 : amount,
+    reduction: isExemptCategory(detail.category ?? 'STANDARD') ? 0 : reduction,
+    total: isExemptCategory(detail.category ?? 'STANDARD') ? 0 : total,
+    invoiceNumber,
+    date: new Date().toLocaleString('fr-FR'),
+    age: detail.age,
+    ageUnit: normalizePatientAgeUnit(detail.ageUnit),
+    gender: detail.gender,
+    phone: detail.phone,
+    processedBy: currentReceptionistName(),
+  })
 }
 
 async function createPatientAndVisit() {
@@ -848,6 +898,9 @@ async function createPatientAndVisit() {
   submitting.value = true
   try {
     const { firstName, lastName } = formParsedName.value
+    const amount = formEffectiveAmount.value
+    const reduction = formBillingExempt.value ? 0 : formReduction.value
+    const total = formBillingExempt.value ? 0 : formTotal.value
 
     const { data } = await api.post<{
       patient: Patient
@@ -866,9 +919,31 @@ async function createPatientAndVisit() {
       category: 'STANDARD',
       doctorId: form.value.doctorId,
       treatingDoctorId: form.value.treatingDoctorId || null,
+      consultationAmountFcfa: formBillingExempt.value ? 0 : amount,
+      reductionFcfa: reduction,
     })
 
     const patient = data.patient
+    printReceipt({
+      patientCode: patient.code,
+      patientName: fullName(patient.firstName, patient.lastName),
+      doctorName: getDoctorName(form.value.doctorId),
+      amount,
+      reduction,
+      total,
+      invoiceNumber: data.invoiceNumber
+        ?? (formBillingExempt.value
+          ? uiText('Exonéré')
+          : data.billingDeferred
+            ? uiText('Facturation différée')
+            : undefined),
+      date: new Date().toLocaleString('fr-FR'),
+      age: formAge.value,
+      ageUnit: form.value.ageUnit,
+      gender: form.value.gender,
+      phone: form.value.phone.trim() || undefined,
+      processedBy: currentReceptionistName(),
+    })
     showAlert(
       translateTemplate(
         'Dossier {code} enregistré — {name} est en attente de consultation.',
@@ -892,6 +967,15 @@ async function createPatientAndVisit() {
 async function loadPatientDetail(patientId: string) {
   const { data } = await api.get<PatientDetail>(`/patients/${patientId}`)
   return data
+}
+
+function printPatientReceipt(patient: Patient) {
+  clearAlert()
+  loadPatientDetail(patient.id)
+    .then(printDetailReceipt)
+    .catch(() => {
+      showAlert('Impossible d\'imprimer le reçu.', 'error')
+    })
 }
 
 async function deletePatient(patient: Patient) {
@@ -948,8 +1032,15 @@ async function openEditModal(patient: Patient) {
       category: detail.category === 'ONG' ? 'STANDARD' : (detail.category ?? 'STANDARD'),
       doctorId: detail.waitingVisit?.doctorId ?? doctors.value[0]?.id ?? '',
       treatingDoctorId: detail.treatingDoctorId ?? '',
+      consultationAmount: detail.waitingVisit?.consultationAmountFcfa
+        ? String(detail.waitingVisit.consultationAmountFcfa)
+        : '',
+      reduction: detail.waitingVisit?.reductionFcfa != null
+        ? String(detail.waitingVisit.reductionFcfa)
+        : '0',
     }
     syncDoctorForService('edit')
+    applyCategoryBillingDefaults('edit')
   } catch {
     showAlert('Impossible de charger le dossier patient.', 'error')
     closeEditModal()
@@ -973,6 +1064,12 @@ function resetEditForm() {
         : (selectedPatient.value.category ?? 'STANDARD'),
     doctorId: selectedPatient.value.waitingVisit?.doctorId ?? doctors.value[0]?.id ?? '',
     treatingDoctorId: selectedPatient.value.treatingDoctorId ?? '',
+    consultationAmount: selectedPatient.value.waitingVisit?.consultationAmountFcfa
+      ? String(selectedPatient.value.waitingVisit.consultationAmountFcfa)
+      : '',
+    reduction: selectedPatient.value.waitingVisit?.reductionFcfa != null
+      ? String(selectedPatient.value.waitingVisit.reductionFcfa)
+      : '0',
   }
   syncDoctorForService('edit')
 }
@@ -986,8 +1083,10 @@ function openReconsultModal(patient: Patient) {
   selectedPatient.value = patient
   reconsultForm.value = {
     doctorId: doctors.value[0]?.id ?? '',
+    consultationAmount: '',
   }
   renewalPreview.value = null
+  applyDoctorBillingDefaults('reconsult')
   showReconsultModal.value = true
   void refreshReconsultFee()
 }
@@ -995,7 +1094,7 @@ function openReconsultModal(patient: Patient) {
 function closeReconsultModal() {
   showReconsultModal.value = false
   selectedPatient.value = null
-  reconsultForm.value = { doctorId: '' }
+  reconsultForm.value = { doctorId: '', consultationAmount: '' }
   renewalPreview.value = null
 }
 
@@ -1009,9 +1108,19 @@ async function submitReconsultation() {
   clearAlert()
   submittingReconsult.value = true
   try {
+    const amount =
+      renewalPreview.value?.amountFcfa ??
+      (selectedPatient.value.category && isExemptCategory(selectedPatient.value.category)
+        ? 0
+        : resolveConsultationAmountForDoctor(
+            reconsultDoctor.value,
+            Number(reconsultForm.value.consultationAmount) || 0,
+          ))
+
     const { data } = await api.post('/visits', {
       patientId: selectedPatient.value.id,
       doctorId: reconsultForm.value.doctorId,
+      consultationAmountFcfa: amount,
     })
     const hint = (data as { renewalHint?: string }).renewalHint
     const patientName = fullName(selectedPatient.value.firstName, selectedPatient.value.lastName)
@@ -1043,6 +1152,8 @@ async function saveEdit() {
   savingEdit.value = true
   try {
     const { firstName, lastName } = editParsedName.value
+    const amount = editEffectiveAmount.value
+    const reduction = editBillingExempt.value ? 0 : editReduction.value
     const { data } = await api.patch(`/patients/${selectedPatient.value.id}`, {
       firstName,
       lastName,
@@ -1054,6 +1165,8 @@ async function saveEdit() {
       category: 'STANDARD',
       doctorId: editForm.value.doctorId,
       treatingDoctorId: editForm.value.treatingDoctorId || null,
+      consultationAmountFcfa: amount || undefined,
+      reductionFcfa: reduction,
     })
     showAlert(translateTemplate('Dossier {code} mis à jour.', { code: data.code }))
     closeEditModal()
@@ -1081,18 +1194,24 @@ watch(search, () => {
   searchTimer = setTimeout(loadPatients, 300)
 })
 
-watch([listFrom, listTo, filterReceptionistId], () => {
+watch([listFrom, listTo], () => {
   loadPatients()
-  void loadReceptionStats()
 })
 
 watch(() => form.value.service, () => {
   syncDoctorForService('form')
+  applyDoctorBillingDefaults('form')
 })
 watch(() => editForm.value.service, () => {
   syncDoctorForService('edit')
+  applyDoctorBillingDefaults('edit')
 })
+watch(() => form.value.category, () => applyCategoryBillingDefaults('form'))
+watch(() => editForm.value.category, () => applyCategoryBillingDefaults('edit'))
+watch(() => form.value.doctorId, () => applyDoctorBillingDefaults('form'))
+watch(() => editForm.value.doctorId, () => applyDoctorBillingDefaults('edit'))
 watch(() => reconsultForm.value.doctorId, () => {
+  applyDoctorBillingDefaults('reconsult')
   void refreshReconsultFee()
 })
 
@@ -1105,51 +1224,50 @@ onUnmounted(clearAlert)
     <section class="dashboard-sticky">
       <UiPageHeader
         title="Dashboard"
-        subtitle="Enregistrement des patients uniquement — le paiement est géré par le gestionnaire"
+        subtitle="Vue d'ensemble et enregistrement des patients"
         :icon="LayoutDashboard"
       >
         <template #actions>
           <UiButton
-            variant="ghost"
-            :icon="CalendarDays"
-            :loading="loadingStats"
-            @click="openDaySummary"
+            v-if="dayClosure?.closed"
+            variant="success"
+            :icon="CheckCircle2"
+            :disabled="loadingDayClosure"
+            @click="dayClosure && printDayClosure(dayClosure)"
           >
-            Bilan du jour
+            Journée clôturée
+          </UiButton>
+          <UiButton
+            v-else
+            variant="dark"
+            :icon="Lock"
+            :loading="closingDay || loadingDayClosure"
+            @click="closeReceptionDay"
+          >
+            Clôturer la journée
           </UiButton>
         </template>
       </UiPageHeader>
 
-      <div class="reception-toolbar">
-        <div
-          v-if="canSeeDoctorSharesTab"
-          class="reception-page-tabs"
-          role="tablist"
-          :aria-label="uiText('Sections réception')"
+      <div
+        v-if="canSeeDoctorSharesTab"
+        class="reception-page-tabs"
+        role="tablist"
+        :aria-label="uiText('Sections réception')"
+      >
+        <button
+          v-for="tab in receptionTabs"
+          :key="tab.id"
+          type="button"
+          role="tab"
+          class="reception-page-tabs__btn"
+          :class="{ 'reception-page-tabs__btn--active': activeReceptionTab === tab.id }"
+          :aria-selected="activeReceptionTab === tab.id"
+          @click="activeReceptionTab = tab.id"
         >
-          <button
-            v-for="tab in receptionTabs"
-            :key="tab.id"
-            type="button"
-            role="tab"
-            class="reception-page-tabs__btn"
-            :class="{ 'reception-page-tabs__btn--active': activeReceptionTab === tab.id }"
-            :aria-selected="activeReceptionTab === tab.id"
-            @click="activeReceptionTab = tab.id"
-          >
-            <component :is="tab.icon" :size="16" />
-            {{ tab.label }}
-          </button>
-        </div>
-
-        <div
-          v-if="!canSeeDoctorSharesTab || activeReceptionTab === 'enregistrement'"
-          class="page-create-bar"
-        >
-          <UiButton variant="primary" :icon="UserPlus" ui-action="reception.create_patient" @click="openModal">
-            Nouveau
-          </UiButton>
-        </div>
+          <component :is="tab.icon" :size="16" />
+          {{ tab.label }}
+        </button>
       </div>
 
       <DoctorSharesReceivablePanel
@@ -1159,23 +1277,23 @@ onUnmounted(clearAlert)
       <template v-if="!canSeeDoctorSharesTab || activeReceptionTab === 'enregistrement'">
       <UiAlert v-if="message" :type="messageType" :message="message" class="page-alert" />
 
-      <div class="stats-grid" :class="{ 'stats-grid--loading': loadingStats && dashboardStats.length }">
+      <div class="stats-grid" :class="{ 'stats-grid--loading': loadingStats }">
         <article
           v-for="item in dashboardStats"
           :key="item.id"
-          class="dash-stat card-accent card-accent--green dash-stat--direct"
+          class="dash-stat card-accent card-accent--green"
           :class="`dash-stat--${item.variant}`"
         >
+          <div class="dash-stat__icon">
+            <component :is="item.icon" :size="18" />
+          </div>
           <div class="dash-stat__body">
+            <span class="dash-stat__label">{{ uiText(item.label) }}</span>
             <strong class="dash-stat__value">
               {{ item.value }}
               <small v-if="item.id === 'revenue'" class="dash-stat__unit">FCFA</small>
             </strong>
-            <span class="dash-stat__label">{{ uiText(item.label) }}</span>
             <span class="dash-stat__hint">{{ uiText(item.hint) }}</span>
-          </div>
-          <div class="dash-stat__icon">
-            <component :is="item.icon" :size="18" />
           </div>
         </article>
       </div>
@@ -1209,19 +1327,6 @@ onUnmounted(clearAlert)
                   :aria-label="uiText('Au')"
                 />
               </label>
-              <label v-if="canFilterByReceptionist" class="date-filter">
-                <span class="date-filter__label">{{ uiText('Réceptionniste') }}</span>
-                <select
-                  v-model="filterReceptionistId"
-                  class="date-filter__input"
-                  :aria-label="uiText('Réceptionniste')"
-                >
-                  <option value="">{{ uiText('Tous les réceptionnistes') }}</option>
-                  <option v-for="item in receptionists" :key="item.id" :value="item.id">
-                    {{ item.name }}
-                  </option>
-                </select>
-              </label>
               <button
                 v-if="!isListDateToday"
                 type="button"
@@ -1229,14 +1334,6 @@ onUnmounted(clearAlert)
                 @click="resetListDateToToday"
               >
                 {{ uiText("Aujourd'hui") }}
-              </button>
-              <button
-                type="button"
-                class="date-filter__today payment-filter-btn"
-                :class="{ 'payment-filter-btn--active': paymentFilter === 'pending' }"
-                @click="togglePaymentFilter"
-              >
-                {{ uiText('À payer') }}
               </button>
             </div>
 
@@ -1260,9 +1357,13 @@ onUnmounted(clearAlert)
                   <X :size="14" />
                 </button>
               </div>
-            <span class="search-count">{{ searchLabel }}</span>
+              <span class="search-count">{{ searchLabel }}</span>
+            </div>
           </div>
-          </div>
+
+          <UiButton variant="primary" class="table-toolbar__new" @click="openModal">
+            Nouveau
+          </UiButton>
         </div>
       </div>
       </template>
@@ -1276,150 +1377,22 @@ onUnmounted(clearAlert)
         <div class="table-wrap">
           <PatientsDataTable
             fill
-            :patients="displayedPatients"
+            :patients="patients"
             :loading="loadingPatients || !!deletingPatientId"
-            :show-receptionist="canFilterByReceptionist"
-            :show-pay="canCollectConsultation"
-            show-print
-            :printing-patient-id="printingPatientId"
+            @print="printPatientReceipt"
             @edit="openEditModal"
             @reconsult="openReconsultModal"
             @delete="deletePatient"
-            @pay="openPaymentModal"
-            @print="printConsultationReceipt"
           />
         </div>
       </div>
     </section>
 
     <UiFormModal
-      v-if="showDaySummary"
-      title="Bilan du jour"
-      :subtitle="
-        selectedReceptionistName
-          ? translateTemplate('Enregistrements de {name} aujourd’hui', { name: selectedReceptionistName })
-          : uiText('Patients enregistrés aujourd’hui — sans encaissement à la réception')
-      "
-      :icon="CalendarDays"
-      @close="showDaySummary = false"
-    >
-      <div class="day-summary">
-        <div class="day-summary__grid">
-          <div class="day-summary__item">
-            <span>{{ uiText('Inscrits aujourd\'hui') }}</span>
-            <strong>{{ stats.registeredToday }}</strong>
-          </div>
-          <div class="day-summary__item">
-            <span>{{ uiText('Passages') }}</span>
-            <strong>{{ stats.visitsToday }}</strong>
-          </div>
-          <div class="day-summary__item">
-            <span>{{ uiText('Féminin / Masculin') }}</span>
-            <strong>{{ stats.femalePatients }} / {{ stats.malePatients }}</strong>
-          </div>
-          <div class="day-summary__item">
-            <span>{{ uiText('Patients examens') }}</span>
-            <strong>{{ stats.examPatientsCount ?? 0 }}</strong>
-          </div>
-          <div class="day-summary__item">
-            <span>{{ uiText('Patients externes') }}</span>
-            <strong>{{ stats.externalPatientsToday ?? 0 }}</strong>
-          </div>
-        </div>
-        <p class="day-summary__hint">
-          {{ uiText('Le paiement des consultations et examens se fait chez le gestionnaire.') }}
-        </p>
-      </div>
-      <template #footer>
-        <UiButton variant="primary" @click="showDaySummary = false">Fermer</UiButton>
-      </template>
-    </UiFormModal>
-
-    <UiFormModal
-      v-if="paymentPatient"
-      title="Paiement consultation"
-      :subtitle="`${fullName(paymentPatient.firstName, paymentPatient.lastName)} — ${paymentPatient.code}`"
-      :icon="Banknote"
-      @close="closePaymentModal"
-    >
-      <div v-if="paymentLoading" class="reception-modal-loading">{{ uiText('Chargement…') }}</div>
-      <div v-else class="payment-sheet">
-        <template v-if="paymentSnapshot">
-          <div class="payment-sheet__line">
-            <span>{{ uiText('Facture') }}</span>
-            <strong>{{ paymentSnapshot.invoiceNumber }}</strong>
-          </div>
-          <div class="payment-sheet__line">
-            <span>{{ uiText('Prix consultation') }}</span>
-            <strong>{{ formatFcfa(paymentCollectAmounts?.fee ?? paymentSnapshot.amountFcfa) }}</strong>
-          </div>
-          <div v-if="(paymentCollectAmounts?.reduction ?? 0) > 0" class="payment-sheet__line">
-            <span>{{ uiText('Réduction') }}</span>
-            <strong>− {{ formatFcfa(paymentCollectAmounts?.reduction ?? 0) }}</strong>
-          </div>
-          <div class="payment-sheet__line">
-            <span>{{ uiText('Déjà payé') }}</span>
-            <strong>{{ formatFcfa(paymentSnapshot.paidAmountFcfa) }}</strong>
-          </div>
-          <div class="payment-sheet__line payment-sheet__line--net">
-            <span>{{ uiText('Reste à payer') }}</span>
-            <strong>{{ formatFcfa(paymentCollectAmounts?.remaining ?? paymentSnapshot.remainingFcfa) }}</strong>
-          </div>
-          <UiInput
-            v-if="canApplyConsultationReduction"
-            v-model="paymentReductionFcfa"
-            :label="uiText('Réduction (FCFA)')"
-            type="number"
-            min="0"
-            :max="paymentCollectAmounts?.fee ?? undefined"
-            placeholder="0"
-          />
-          <p v-if="canApplyConsultationReduction" class="payment-sheet__hint">
-            {{ uiText('Le gestionnaire peut appliquer une réduction avant l’encaissement.') }}
-          </p>
-          <p v-else-if="paymentSnapshot.payable" class="payment-sheet__hint">
-            {{ uiText('Le patient règle cette consultation chez le gestionnaire.') }}
-          </p>
-          <p v-else class="payment-sheet__hint">
-            {{ uiText('Consultation soldée.') }}
-          </p>
-        </template>
-        <p v-else class="payment-sheet__hint">
-          {{ uiText('Aucun paiement en attente pour ce dossier.') }}
-        </p>
-      </div>
-      <template #footer>
-        <UiButton type="button" variant="ghost" @click="closePaymentModal">Fermer</UiButton>
-        <UiButton
-          v-if="paymentPatient"
-          type="button"
-          variant="secondary"
-          :icon="Printer"
-          :loading="printingPatientId === paymentPatient.id"
-          :disabled="paymentLoading"
-          @click="printConsultationReceipt(paymentPatient, paymentDetail)"
-        >
-          {{ uiText('Imprimer le reçu') }}
-        </UiButton>
-        <UiButton
-          v-if="canCollectConsultation && paymentSnapshot?.payable && paymentSnapshot.invoiceId"
-          type="button"
-          variant="primary"
-          :icon="Banknote"
-          :loading="payingConsultation"
-          :disabled="!paymentCollectAmounts || paymentCollectAmounts.remaining <= 0"
-          @click="collectConsultationFromReception"
-        >
-          Encaisser
-        </UiButton>
-      </template>
-    </UiFormModal>
-
-    <UiFormModal
       v-if="showModal && (!canSeeDoctorSharesTab || activeReceptionTab === 'enregistrement')"
       title-id="modal-title"
       title="Nouveau patient"
-      subtitle="Enregistrement — paiement chez le gestionnaire"
+      subtitle="Enregistrement et consultation"
       :icon="UserPlus"
       @close="closeModal"
     >
@@ -1441,7 +1414,6 @@ onUnmounted(clearAlert)
             v-model="form.service"
             label="Service"
             required
-            :key="`form-service-${localeCode}`"
           >
             <option value="" disabled>
               {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
@@ -1450,10 +1422,10 @@ onUnmounted(clearAlert)
               v-if="form.service && !services.some((s) => s.name === form.service)"
               :value="form.service"
             >
-              {{ uiText(form.service) }}
+              {{ form.service }}
             </option>
             <option v-for="service in services" :key="service.id" :value="service.name">
-              {{ uiText(service.name) }}
+              {{ service.name }}
             </option>
           </UiSelect>
           <UiSelect v-model="form.doctorId" label="Médecin" required>
@@ -1461,7 +1433,7 @@ onUnmounted(clearAlert)
               formServiceDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin sur ce service')
             }}</option>
             <option v-for="doctor in formServiceDoctors" :key="doctor.id" :value="doctor.id">
-              {{ doctorOptionLabel(doctor) }}
+              Dr {{ fullName(doctor.firstName, doctor.lastName) }}
             </option>
           </UiSelect>
         </div>
@@ -1473,18 +1445,45 @@ onUnmounted(clearAlert)
           <RouterLink to="/admin/employes">{{ uiText('Employés') }}</RouterLink>
         </p>
 
-        <div v-if="formDoctor && formConsultationPrice > 0" class="consultation-price-box">
-          <div class="total-preview total-preview--compact">
+        <div class="form-grid-2">
+          <UiInput
+            v-if="!formBillingExempt && doctorNeedsConsultationAmountInput(formDoctor)"
+            v-model="form.consultationAmount"
+            label="Montant consultation (FCFA)"
+            type="number"
+            min="0"
+            placeholder="5000"
+            :icon="Banknote"
+            required
+          />
+          <div
+            v-else-if="!formBillingExempt && doctorShowsFixedConsultationPrice(formDoctor)"
+            class="total-preview total-preview--compact"
+          >
             <span>{{ uiText('Prix consultation') }}</span>
-            <strong>{{ formatFcfa(formConsultationPrice) }}</strong>
+            <strong>{{ formatFcfa(formEffectiveAmount) }}</strong>
           </div>
-          <p class="doctor-hint doctor-hint--compact doctor-hint--pay">
-            {{ uiText('À payer chez le gestionnaire.') }}
-          </p>
         </div>
-        <p v-else-if="formDoctor" class="doctor-hint doctor-hint--compact doctor-hint--pay">
-          {{ uiText('Tarif selon le gestionnaire — à régler chez le gestionnaire.') }}
+
+        <p v-if="formDoctorQuotaHint" class="doctor-hint doctor-hint--compact">{{ formDoctorQuotaHint }}</p>
+        <p v-else-if="doctorIsFixedSalary(formDoctor)" class="doctor-hint doctor-hint--compact">
+          {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
         </p>
+
+        <div v-if="showFormConsultationBilling" class="form-grid-2">
+          <UiInput
+            v-model="form.reduction"
+            label="Réduction (FCFA)"
+            type="number"
+            min="0"
+            placeholder="0"
+            :icon="Percent"
+          />
+          <div class="total-preview total-preview--compact">
+            <span>{{ uiText('Total à payer') }}</span>
+            <strong>{{ formatFcfa(formTotal) }}</strong>
+          </div>
+        </div>
       </form>
 
       <template #footer>
@@ -1494,7 +1493,7 @@ onUnmounted(clearAlert)
           type="submit"
           form="reception-new-patient-form"
           variant="primary"
-          :icon="UserPlus"
+          :icon="Printer"
           :loading="submitting"
         >
           Valider
@@ -1509,7 +1508,7 @@ onUnmounted(clearAlert)
       :icon="Pencil"
       @close="closeEditModal"
     >
-      <div v-if="loadingEdit" class="reception-modal-loading">{{ uiText('Chargement…') }}</div>
+      <div v-if="loadingEdit" class="reception-modal-loading">Chargement…</div>
 
       <form
         v-else
@@ -1530,7 +1529,6 @@ onUnmounted(clearAlert)
             v-model="editForm.service"
             label="Service"
             required
-            :key="`edit-service-${localeCode}`"
           >
             <option value="" disabled>
               {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
@@ -1539,10 +1537,10 @@ onUnmounted(clearAlert)
               v-if="editForm.service && !services.some((s) => s.name === editForm.service)"
               :value="editForm.service"
             >
-              {{ uiText(editForm.service) }}
+              {{ editForm.service }}
             </option>
             <option v-for="service in services" :key="service.id" :value="service.name">
-              {{ uiText(service.name) }}
+              {{ service.name }}
             </option>
           </UiSelect>
           <UiSelect v-model="editForm.doctorId" label="Médecin" required>
@@ -1550,7 +1548,7 @@ onUnmounted(clearAlert)
               editServiceDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin sur ce service')
             }}</option>
             <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
-              {{ doctorOptionLabel(doctor) }}
+              Dr {{ fullName(doctor.firstName, doctor.lastName) }}
             </option>
           </UiSelect>
         </div>
@@ -1558,7 +1556,7 @@ onUnmounted(clearAlert)
         <UiSelect v-model="editForm.treatingDoctorId" label="Médecin traitant (dossier)">
           <option value="">{{ uiText('Aucun (optionnel)') }}</option>
           <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
-            {{ doctorOptionLabel(doctor) }}
+            Dr {{ fullName(doctor.firstName, doctor.lastName) }}
           </option>
         </UiSelect>
 
@@ -1577,14 +1575,44 @@ onUnmounted(clearAlert)
           <RouterLink to="/admin/employes">{{ uiText('Employés') }}</RouterLink>
         </p>
 
-        <div v-if="editDoctor && editConsultationPrice > 0" class="consultation-price-box">
-          <div class="total-preview total-preview--compact">
+        <div class="form-grid-2">
+          <UiInput
+            v-if="!editBillingExempt && doctorNeedsConsultationAmountInput(editDoctor)"
+            v-model="editForm.consultationAmount"
+            label="Montant consultation (FCFA)"
+            type="number"
+            min="0"
+            placeholder="5000"
+            :icon="Banknote"
+            required
+          />
+          <div
+            v-else-if="!editBillingExempt && doctorShowsFixedConsultationPrice(editDoctor)"
+            class="total-preview total-preview--compact"
+          >
             <span>{{ uiText('Prix consultation') }}</span>
-            <strong>{{ formatFcfa(editConsultationPrice) }}</strong>
+            <strong>{{ formatFcfa(editEffectiveAmount) }}</strong>
           </div>
-          <p class="doctor-hint doctor-hint--compact doctor-hint--pay">
-            {{ uiText('À payer chez le gestionnaire.') }}
-          </p>
+        </div>
+
+        <p v-if="editDoctorQuotaHint" class="doctor-hint doctor-hint--compact">{{ editDoctorQuotaHint }}</p>
+        <p v-else-if="doctorIsFixedSalary(editDoctor)" class="doctor-hint doctor-hint--compact">
+          {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
+        </p>
+
+        <div v-if="showEditConsultationBilling" class="form-grid-2">
+          <UiInput
+            v-model="editForm.reduction"
+            label="Réduction (FCFA)"
+            type="number"
+            min="0"
+            placeholder="0"
+            :icon="Percent"
+          />
+          <div class="total-preview total-preview--compact">
+            <span>{{ uiText('Total à payer') }}</span>
+            <strong>{{ formatFcfa(editTotal) }}</strong>
+          </div>
         </div>
       </form>
 
@@ -1627,7 +1655,7 @@ onUnmounted(clearAlert)
         <p class="reconsult-hint">
           {{
             uiText(
-              "Nouvelle visite de consultation — examens, opérations et hospitalisation peuvent être prescrits à chaque passage. Si la validité du médecin est encore active, la consultation est gratuite (0 FCFA). L'historique précédent reste enregistré dans le dossier patient.",
+              'Nouvelle visite de consultation — examens, opérations et hospitalisation peuvent être prescrits à chaque passage. Si la validité du médecin est encore active, la consultation est gratuite (0 FCFA). L\'historique précédent reste enregistré dans le dossier patient.',
             )
           }}
         </p>
@@ -1635,37 +1663,52 @@ onUnmounted(clearAlert)
         <p v-if="renewalPreview" class="renewal-banner" :class="{ 'renewal-banner--free': renewalPreview.withinValidity }">
           {{ renewalPreview.message }}
         </p>
-        <p v-else-if="loadingRenewalPreview" class="doctor-hint">{{ uiText('Vérification de la validité…') }}</p>
+        <p v-else-if="loadingRenewalPreview" class="doctor-hint">{{ uiText('Calcul du tarif…') }}</p>
 
         <section class="form-panel">
           <h3 class="form-panel__title">
             <Stethoscope :size="14" />
             {{ uiText('Consultation') }}
           </h3>
-          <UiSelect v-model="reconsultForm.doctorId" label="Médecin" required>
-            <option value="" disabled>{{ sortedDoctors.length ? uiText('Sélectionner un médecin') : uiText('Aucun médecin disponible') }}</option>
-            <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
-              {{ doctorOptionLabel(doctor) }}
-            </option>
-          </UiSelect>
-
-          <div
-            v-if="reconsultForm.doctorId && !loadingRenewalPreview && reconsultConsultationPrice > 0"
-            class="consultation-price-box"
-          >
-            <div class="total-preview total-preview--compact">
+          <div class="form-grid-2">
+            <UiSelect v-model="reconsultForm.doctorId" label="Médecin" required>
+              <option value="" disabled>{{ sortedDoctors.length ? uiText('Sélectionner un médecin') : uiText('Aucun médecin disponible') }}</option>
+              <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
+                Dr {{ fullName(doctor.firstName, doctor.lastName) }}
+              </option>
+            </UiSelect>
+            <UiInput
+              v-if="
+                (!selectedPatient?.category || !isExemptCategory(selectedPatient.category)) &&
+                doctorNeedsConsultationAmountInput(reconsultDoctor)
+              "
+              v-model="reconsultForm.consultationAmount"
+              label="Montant consultation (FCFA)"
+              type="number"
+              min="1"
+              placeholder="Ex. 5000"
+              :icon="Banknote"
+              required
+            />
+            <div
+              v-else-if="
+                (!selectedPatient?.category || !isExemptCategory(selectedPatient.category)) &&
+                doctorShowsFixedConsultationPrice(reconsultDoctor)
+              "
+              class="total-preview total-preview--compact"
+            >
               <span>{{ uiText('Prix consultation') }}</span>
-              <strong>{{ formatFcfa(reconsultConsultationPrice) }}</strong>
+              <strong>{{
+                formatFcfa(renewalPreview?.amountFcfa ?? resolveConsultationAmountForDoctor(
+                  reconsultDoctor,
+                  Number(reconsultForm.consultationAmount) || 0,
+                ))
+              }}</strong>
             </div>
-            <p class="doctor-hint doctor-hint--compact doctor-hint--pay">
-              {{ uiText('À payer chez le gestionnaire.') }}
-            </p>
           </div>
-          <p
-            v-else-if="reconsultForm.doctorId && renewalPreview?.withinValidity"
-            class="doctor-hint doctor-hint--compact"
-          >
-            {{ uiText('Consultation gratuite (validité en cours).') }}
+          <p v-if="reconsultDoctorQuotaHint" class="doctor-hint">{{ reconsultDoctorQuotaHint }}</p>
+          <p v-else-if="doctorIsFixedSalary(reconsultDoctor)" class="doctor-hint">
+            {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
           </p>
         </section>
       </form>
@@ -1710,25 +1753,11 @@ onUnmounted(clearAlert)
   margin-bottom: 0.625rem;
 }
 
-.reception-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem 0.75rem;
-  margin: 0 0 0.85rem;
-}
-
-.reception-toolbar .page-create-bar {
-  margin: 0;
-  margin-left: auto;
-}
-
 .reception-page-tabs {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 0.35rem;
-  margin: 0;
+  margin: 0 0 0.85rem;
   padding: 0.25rem;
   background: #f1f5f9;
   border: 1px solid var(--border);
@@ -1786,16 +1815,10 @@ onUnmounted(clearAlert)
 }
 
 .stats-grid {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  gap: 0.5rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.625rem;
   margin: 0;
-}
-
-.stats-grid > * {
-  flex: 1 1 0;
-  min-width: 0;
 }
 
 .stats-grid--loading {
@@ -1811,33 +1834,6 @@ onUnmounted(clearAlert)
   min-width: 0;
   border-radius: var(--radius-sm);
   overflow: hidden;
-}
-
-.dash-stat--direct {
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.45rem 0.55rem;
-}
-
-.dash-stat--direct .dash-stat__body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.08rem;
-  min-width: 0;
-}
-
-.dash-stat--direct .dash-stat__value {
-  font-size: 1.05rem;
-  line-height: 1.1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.dash-stat--direct .dash-stat__hint {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .dash-stat__icon {
@@ -1886,9 +1882,6 @@ onUnmounted(clearAlert)
   font-weight: 600;
   color: var(--text-muted);
   line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .dash-stat__value {
@@ -1964,16 +1957,15 @@ onUnmounted(clearAlert)
 }
 
 .table-toolbar {
-  display: flex;
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 28rem) auto;
   align-items: center;
-  gap: 0.65rem 0.85rem;
+  gap: 0.75rem 1rem;
   margin-bottom: 0;
 }
 
 .table-toolbar__title {
   min-width: 0;
-  flex: 0 1 13.5rem;
 }
 
 .table-toolbar__title h3 {
@@ -1996,31 +1988,29 @@ onUnmounted(clearAlert)
 
 .table-toolbar__new {
   flex-shrink: 0;
-  margin-inline-start: auto;
+  justify-self: end;
 }
 
 .table-toolbar__filters {
   display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: flex-end;
   gap: 0.5rem;
   min-width: 0;
-  flex: 1 1 auto;
 }
 
 .date-range-filter {
   display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: flex-end;
   gap: 0.4rem;
   flex-shrink: 0;
 }
 
 .date-filter {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 0.35rem;
+  flex-direction: column;
+  gap: 0.2rem;
   flex-shrink: 0;
 }
 
@@ -2030,32 +2020,21 @@ onUnmounted(clearAlert)
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
-  white-space: nowrap;
 }
 
 .date-filter__input {
   height: 2.25rem;
-  padding: 0 0.55rem;
+  padding: 0 0.65rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-card);
   color: var(--text);
   font: inherit;
   font-size: 0.8125rem;
-  min-width: 8.25rem;
-}
-
-.date-filter__input[type='date'] {
-  width: 8.75rem;
-}
-
-.date-filter select.date-filter__input {
-  min-width: 11.5rem;
-  width: auto;
-  max-width: 14rem;
 }
 
 .date-filter__today {
+  margin-bottom: 0.35rem;
   padding: 0;
   border: none;
   background: none;
@@ -2071,34 +2050,12 @@ onUnmounted(clearAlert)
   text-decoration: underline;
 }
 
-.payment-filter-btn {
-  height: 2.25rem;
-  padding: 0 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-card);
-  color: var(--text);
-  text-decoration: none;
-}
-
-.payment-filter-btn:hover {
-  text-decoration: none;
-  border-color: #34d399;
-  color: #047857;
-}
-
-.payment-filter-btn--active {
-  background: #ecfdf5;
-  border-color: #34d399;
-  color: #047857;
-}
-
 .table-toolbar__search {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 0.45rem;
-  flex: 1 1 12rem;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.2rem;
+  flex: 1;
   min-width: 10rem;
   padding: 0;
 }
@@ -2339,18 +2296,6 @@ onUnmounted(clearAlert)
   line-height: 1.35;
 }
 
-.doctor-hint--pay {
-  color: #b45309;
-  font-weight: 700;
-}
-
-.consultation-price-box {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  margin-top: 0.15rem;
-}
-
 .doctors-empty-alert__links {
   margin: -0.25rem 0 0;
   font-size: 0.8125rem;
@@ -2359,68 +2304,6 @@ onUnmounted(clearAlert)
 .doctors-empty-alert__links a {
   color: var(--primary-700, #4b5d2a);
   font-weight: 600;
-}
-
-.day-summary {
-  display: grid;
-  gap: 0.85rem;
-}
-
-.day-summary__grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.65rem;
-}
-
-.day-summary__item {
-  display: grid;
-  gap: 0.2rem;
-  padding: 0.7rem 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #f8fafc;
-}
-
-.payment-sheet {
-  display: grid;
-  gap: 0.55rem;
-}
-
-.payment-sheet__line {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  font-size: 0.875rem;
-}
-
-.payment-sheet__line--net {
-  padding-top: 0.35rem;
-  border-top: 1px solid var(--border);
-  font-weight: 700;
-}
-
-.payment-sheet__hint {
-  margin: 0.35rem 0 0;
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-
-.day-summary__item span {
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  font-weight: 600;
-}
-
-.day-summary__item strong {
-  font-size: 1.25rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.day-summary__hint {
-  margin: 0;
-  font-size: 0.8125rem;
-  color: var(--text-muted);
 }
 
 .total-preview--compact {
@@ -2436,13 +2319,9 @@ onUnmounted(clearAlert)
   font-size: 1rem;
 }
 
-@media (max-width: 639px) {
+@media (max-width: 1100px) {
   .stats-grid {
-    flex-wrap: wrap;
-  }
-
-  .stats-grid > * {
-    flex: 1 1 calc(50% - 0.5rem);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -2457,12 +2336,8 @@ onUnmounted(clearAlert)
   }
 
   .stats-grid {
-    flex-wrap: wrap;
+    grid-template-columns: 1fr 1fr;
     gap: 0.5rem;
-  }
-
-  .stats-grid > * {
-    flex: 1 1 calc(50% - 0.5rem);
   }
 
   .dash-stat__value {
@@ -2488,7 +2363,8 @@ onUnmounted(clearAlert)
   }
 
   .table-toolbar {
-    flex-wrap: wrap;
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
   }
 
   .table-toolbar__new {

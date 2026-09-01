@@ -28,8 +28,10 @@ api.interceptors.response.use(
                 ? 'locked'
                 : code === 'SESSION_REPLACED'
                   ? 'replaced'
-                  : 'expired'
-          window.location.assign(`/login?session=${reason}`)
+                  : code === 'NO_SESSION'
+                    ? null
+                    : 'expired'
+          window.location.assign(reason ? `/login?session=${reason}` : '/login')
         }
       }
     }

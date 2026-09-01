@@ -45,7 +45,12 @@ import {
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
 import { serializeDoctorFields, selectableDoctorIncludingPausedWhere, selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
 import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
-import { resolveConsultationBilling, isComptabiliteBillablePatient, comptabilitePatientWhere } from "../lib/patient-billing.js";
+import {
+  resolveConsultationBilling,
+  isComptabiliteBillablePatient,
+  comptabilitePatientWhere,
+  shouldCreateImmediateInvoice,
+} from "../lib/patient-billing.js";
 import { consultationInvoiceCreateData, consultationInvoiceUpdateData } from "../lib/consultation-invoice.js";
 import { planReconsultation, archiveVisitsForReconsultation } from "../lib/reconsultation.js";
 import {
@@ -824,7 +829,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
           invoiceNumber,
           totalFcfa: billing.billableAmountFcfa,
           patientCategory: patient.category,
-          billingDeferred: true,
+          billingDeferred: !shouldCreateImmediateInvoice(patient.category),
           renewalHint,
         };
       }
@@ -870,7 +875,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
           invoiceNumber: invoice.invoiceNumber,
           totalFcfa: billing.billableAmountFcfa,
           patientCategory: patient.category,
-          billingDeferred: true,
+          billingDeferred: !shouldCreateImmediateInvoice(patient.category),
           renewalHint,
         };
       }
@@ -879,7 +884,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
         ...createdVisit,
         totalFcfa: billing.billableAmountFcfa,
         patientCategory: patient.category,
-        billingDeferred: true,
+        billingDeferred: !shouldCreateImmediateInvoice(patient.category),
         renewalHint,
       };
     });

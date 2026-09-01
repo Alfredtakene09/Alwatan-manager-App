@@ -56,6 +56,10 @@ async function main() {
       role: UserRole.ADMIN,
       employeeId,
       active: true,
+      failedLoginAttempts: 0,
+      lockedAt: null,
+      sessionTokenId: null,
+      lastActivityAt: null,
     },
     create: {
       username: SUPERADMIN_USERNAME,

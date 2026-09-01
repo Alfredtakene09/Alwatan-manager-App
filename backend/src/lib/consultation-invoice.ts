@@ -1,15 +1,15 @@
 import { InvoiceStatus, InvoiceType, type PatientCategory, type Prisma } from "@prisma/client";
 import { shouldCreateImmediateInvoice } from "./patient-billing.js";
 
-/**
- * Facture consultation à l'enregistrement réception :
- * toujours PENDING — l'encaissement est réservé au gestionnaire / direction.
- */
-export function consultationInvoicePaymentData(_category: PatientCategory): {
+/** Données facture consultation lors d'un encaissement immédiat à la réception. */
+export function consultationInvoicePaymentData(category: PatientCategory): {
   status: InvoiceStatus;
   paidAt: Date | null;
 } {
-  return { status: InvoiceStatus.PENDING, paidAt: null };
+  if (!shouldCreateImmediateInvoice(category)) {
+    return { status: InvoiceStatus.PENDING, paidAt: null };
+  }
+  return { status: InvoiceStatus.PAID, paidAt: new Date() };
 }
 
 export function consultationInvoiceUpdateData(
@@ -43,9 +43,4 @@ export function consultationInvoiceCreateData(
     status: payment.status,
     paidAt: payment.paidAt,
   };
-}
-
-/** Indique si une facture consultation doit être créée pour cette catégorie. */
-export function shouldCreateConsultationInvoice(category: PatientCategory) {
-  return shouldCreateImmediateInvoice(category);
 }
