@@ -26,6 +26,7 @@ export default {
     'Consultation enregistrée — ordonnance sauvegardée (impression manuelle).':
       'Consultation enregistrée — ordonnance sauvegardée (impression manuelle).',
     'Modifier la prescription': 'Modifier la prescription',
+    'Modifier la consultation': 'Modifier la consultation',
     'Enregistrer la prescription': 'Enregistrer la prescription',
     'Des résultats labo sont déjà enregistrés. Pour ajouter des examens, utilisez « Ajouter des examens ». Vous pouvez modifier l’ordonnance pharmacie ici.':
       'Des résultats labo sont déjà enregistrés. Pour ajouter des examens, utilisez « Ajouter des examens ». Vous pouvez modifier l’ordonnance pharmacie ici.',
@@ -247,6 +248,8 @@ export default {
     "Impossible d'imprimer le reçu.": "Impossible d'imprimer le reçu.",
     'Imprimer le reçu': 'Imprimer le reçu',
     'Imprimer le reçu de consultation': 'Imprimer le reçu de consultation',
+    'Réimprimer le reçu': 'Réimprimer le reçu',
+    'Réimprimer le reçu de consultation': 'Réimprimer le reçu de consultation',
     'Reçu {code}': 'Reçu {code}',
     'Dossier {code} supprimé.': 'Dossier {code} supprimé.',
     '{name} remis en consultation — {hint}': '{name} remis en consultation — {hint}',
@@ -2319,9 +2322,9 @@ export default {
       generic: 'Erreur de connexion. Réessayez dans un instant.',
       sessionExpired:
         'Session expirée ou cookie non accepté sur ce poste. Reconnectez-vous (vérifiez l’URL Wi‑Fi du serveur, pas une ancienne IP).',
-      sessionIdle: 'Session expirée après 30 minutes sans activité. Veuillez vous reconnecter.',
+      sessionIdle: 'Session expirée après 12 heures sans activité. Veuillez vous reconnecter.',
       sessionActive:
-        "Une session est déjà active pour cet utilisateur sur un autre poste. Déconnectez-vous d'abord sur l'autre appareil, ou attendez 30 minutes d'inactivité.",
+        "Une session est déjà active pour cet utilisateur sur un autre poste. Déconnectez-vous d'abord sur l'autre appareil, ou attendez la fin de la session inactive.",
       sessionReplaced: 'Cette session a été invalidée. Veuillez vous reconnecter.',
       lastAttempt:
         'Mot de passe incorrect. Attention : dernière tentative avant verrouillage du compte.',
@@ -2350,6 +2353,13 @@ export default {
     syncShortcutHint:
       'L’adresse réseau a changé. Téléchargez un nouveau raccourci (Ethernet actuel), puis exécutez le fichier — les anciens raccourcis seront remplacés.',
     syncShortcutButton: 'Télécharger le nouveau raccourci',
+    updateShortcutButton: 'Mettre à jour le raccourci Bureau',
+    updateShortcutHint:
+      'Met à jour automatiquement le raccourci déjà installé (sans nouveau fichier à télécharger).',
+    updateShortcutDone: 'Raccourci mis à jour automatiquement. Vous pouvez l’utiliser tout de suite.',
+    updateShortcutFirstInstall:
+      'Premier passage : un fichier .cmd a été téléchargé — exécutez-le une seule fois. Ensuite les mises à jour seront automatiques.',
+    updatingShortcut: 'Mise à jour…',
     androidStep1: 'Ouvrez cette page dans Chrome (pas un autre navigateur).',
     androidStep2: 'Appuyez sur le menu ⋮ en haut à droite.',
     androidStep3: 'Choisissez « Installer l’application » ou « Ajouter à l’écran d’accueil ».',
@@ -2401,6 +2411,7 @@ export default {
     'Examens & paiements': 'Examens & paiements',
     'Paiement examens': 'Paiement examens',
     'En attente de paiement': 'En attente de paiement',
+    'Examens prescrits à encaisser': 'Examens prescrits à encaisser',
     'Ajouter examen en cours de paiement': 'Ajouter examen en cours de paiement',
     'Examens payés': 'Examens payés',
     Réclamations: 'Réclamations',
@@ -2625,8 +2636,9 @@ export default {
     Trichiasis: 'Trichiasis',
     'Aucune nomenclature liée pour l’instant. Ajoutez des examens (nomenclature médecin) ou des types d’opérations pour ce service.':
       'Aucune nomenclature liée pour l’instant. Ajoutez des examens (nomenclature médecin) ou des types d’opérations pour ce service.',
-    'Choisissez le service puis les examens ou opérations. Sélectionnez le médecin du service si disponible.':
-      'Choisissez le service puis les examens ou opérations. Sélectionnez le médecin du service si disponible.',
+    'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.':
+      'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.',
+    'Médecin (optionnel)': 'Médecin (optionnel)',
     'Sélectionner un médecin…': 'Sélectionner un médecin…',
     'Aucun médecin lié à ce service': 'Aucun médecin lié à ce service',
     'Médecin — {service}': 'Médecin — {service}',

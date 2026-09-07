@@ -102,12 +102,18 @@ export function isDirectionOrGestionnaire(role: AppUserRole) {
 
 /**
  * Catalogue pharmacie (catégories / fournisseurs / écriture produits).
- * Réservé admin et gestionnaire. Le pharmacien consulte le stock sans ces menus.
+ * Tous les rôles ayant accès au module pharmacie.
  */
-export const PHARMACY_CATALOG_ROLES: AppUserRole[] = ['ADMIN', 'GESTIONNAIRE']
+export const PHARMACY_CATALOG_ROLES: AppUserRole[] = MODULE_ACCESS.pharmacie
 
 export function canManagePharmacyCatalog(role: AppUserRole) {
   return PHARMACY_CATALOG_ROLES.includes(role)
+}
+
+/** Écriture catalogue pharmacie (aligné sur le backend — sans filtre UI granulaire). */
+export function canWritePharmacyCatalog(user: SessionUser | null | undefined) {
+  if (!user?.role) return false
+  return canManagePharmacyCatalog(user.role)
 }
 
 /**

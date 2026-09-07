@@ -77,7 +77,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     if (!dbUser.sessionTokenId || dbUser.sessionTokenId !== sessionUser.sid) {
       await clearAuthCookie(req, res);
       return res.status(401).json({
-        error: "Session invalide ou remplacée. Reconnectez-vous.",
+        error: "Session fermée — connexion ouverte sur un autre poste.",
         code: "SESSION_REPLACED",
       });
     }
@@ -89,7 +89,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       });
       await clearAuthCookie(req, res);
       return res.status(401).json({
-        error: "Session expirée pour inactivité (30 minutes).",
+        error: "Session expiree pour inactivite (12 heures).",
         code: "SESSION_IDLE",
       });
     }
@@ -104,7 +104,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       });
     }
 
-    // Toujours reprendre le rôle / identité depuis la DB (évite JWT périmé → Accès refusé).
+    // Toujours reprendre le role / identite depuis la DB (evite JWT perime -> Acces refuse).
     req.user = {
       id: dbUser.id,
       username: dbUser.username,
@@ -114,7 +114,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       role: dbUser.role,
     };
 
-    // Renouvelle le cookie à chaque requête authentifiée (fenêtre glissante 30 min).
+    // Renouvelle le cookie a chaque requete authentifiee (fenetre glissante 12 h).
     try {
       const freshToken = await createSessionToken(req.user, sessionUser.sid);
       res.cookie(COOKIE_NAME, freshToken, sessionCookieOptions(req));
@@ -159,7 +159,7 @@ export function requirePharmacyCatalogAccess(req: Request, res: Response, next: 
     return res.status(401).json({ error: "Non autorisé" });
   }
   if (!canManagePharmacyCatalog(req.user.role as AppUserRole)) {
-    return res.status(403).json({ error: "Accès refusé — catalogue pharmacie réservé à la direction / gestion" });
+    return res.status(403).json({ error: "Accès refusé — droits catalogue pharmacie insuffisants" });
   }
   next();
 }

@@ -58,6 +58,12 @@ $filesFromScripts = @(
 foreach ($file in $filesFromScripts) {
     Copy-Item (Join-Path $PSScriptRoot $file) (Join-Path $packageDir $file) -Force
 }
+# PowerShell 5.1 (Windows) lit UTF-8 seulement avec BOM, sinon l'install plante.
+$utf8Bom = New-Object System.Text.UTF8Encoding $true
+Get-ChildItem -LiteralPath $packageDir -Filter '*.ps1' | ForEach-Object {
+    $text = [System.IO.File]::ReadAllText($_.FullName)
+    [System.IO.File]::WriteAllText($_.FullName, $text, $utf8Bom)
+}
 Copy-Item $icon (Join-Path $packageDir 'alwatan.ico') -Force
 
 Write-AlwatanServerConfig -ServerIp $ServerIp -TailscaleIp $TailscaleIp -Path (Join-Path $packageDir 'alwatan-server.txt')
@@ -113,19 +119,22 @@ cd /d "%~dp0"
 echo.
 echo   Clinique Alwatan - Installation poste client
 echo.
+del /q "%~dp0INSTALL-OK.txt" 2>nul
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -LiteralPath '%~dp0' -Filter *.ps1 -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Sta -File "%~dp0installer-poste-client.ps1" > "%~dp0INSTALL-LOG.txt" 2>&1
-if errorlevel 1 (
+if exist "%~dp0INSTALL-OK.txt" (
     echo.
-    echo Installation echouee.
-    echo Ouvrez INSTALL-LOG.txt ou lancez DIAGNOSTIC.bat
-    echo puis rapportez RAPPORT-ALWATAN-CLIENT.txt sur le serveur.
-    start "" notepad.exe "%~dp0INSTALL-LOG.txt"
+    echo Installation OK. Raccourcis : Alwatan Manager + Alwatan Manager (direct)
     pause
-    exit /b 1
+    exit /b 0
 )
 echo.
-echo Installation OK. Raccourcis : Alwatan Manager + Alwatan Manager (direct)
+echo Installation echouee.
+echo Ouvrez INSTALL-LOG.txt ou lancez DIAGNOSTIC.bat
+echo puis rapportez RAPPORT-ALWATAN-CLIENT.txt sur le serveur.
+start "" notepad.exe "%~dp0INSTALL-LOG.txt"
 pause
+exit /b 1
 "@
 Set-Content -Path (Join-Path $packageDir 'INSTALLER.bat') -Value $installerBat -Encoding ASCII
 
@@ -153,22 +162,22 @@ Sur ce PC (reception, medecin, etc.) - pas le serveur :
 
 1. Copiez tout le dossier $packageName (cle USB ou reseau).
 2. Double-cliquez sur INSTALLER.bat
-3. Validez l'IP Wi-Fi du serveur si demandee (defaut : $ServerIp)
+3. Validez l'IP Ethernet du serveur si demandee (defaut : $ServerIp)
 4. Utilisez le raccourci Bureau Alwatan Manager
-   (teste Wi-Fi puis Tailscale automatiquement)
+   (teste Ethernet puis Tailscale automatiquement)
 
 SECOURS immediat (sans installation) :
-  Ouvrir Alwatan.bat  -> Wi-Fi puis Tailscale
+  Ouvrir Alwatan.bat  -> Ethernet puis Tailscale
   Ouvrir Alwatan (rechargement force).bat  -> purge cache + URL anti-cache
-  Ouvrir Alwatan (Wi-Fi).url
+  Ouvrir Alwatan (Wi-Fi).url  -> reseau local (Ethernet)
   Ouvrir Alwatan (Tailscale).url (si disponible)
 
-Wi-Fi      : $url
+Ethernet   : $url
 Tailscale  : $(if ($tsUrl) { $tsUrl } else { '(non detecte)' })
 
 Prerequis : Windows 10/11, Edge ou Chrome.
 Le serveur doit etre allume (port $Port).
-Acces possible via le Wi-Fi clinique ET/OU via Tailscale.
+Les postes cabinet se connectent en Ethernet (meme reseau / DHCP).
 "@
 Set-Content -Path (Join-Path $packageDir 'LISEZMOI.txt') -Value $lisezMoi -Encoding UTF8
 

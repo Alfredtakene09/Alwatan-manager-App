@@ -216,9 +216,9 @@ export function emptyExamCommentsByKind(): ExamCommentsByKind {
 
 
 export function flattenExamsByKind(examsByKind: ExamsByKind): string[] {
-
-  return EXAM_KIND_ORDER.flatMap((kind) => examsByKind[kind])
-
+  return EXAM_KIND_ORDER.flatMap((kind) => examsByKind[kind] ?? []).filter(
+    (label): label is string => typeof label === 'string' && label.trim().length > 0,
+  )
 }
 
 

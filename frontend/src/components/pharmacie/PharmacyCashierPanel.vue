@@ -19,7 +19,7 @@ import {
 import api from '@/api/client'
 import { CLINIC } from '@/lib/clinic'
 import { formatFcfa, fullName } from '@/lib/roles'
-import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, openPrintDocument, thermalMetaRow } from '@/lib/print-document'
+import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, cancelPrintWindow, openPrintDocument, reservePrintWindow, thermalMetaRow } from '@/lib/print-document'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiSelect from '@/components/ui/UiSelect.vue'
@@ -343,7 +343,7 @@ function saleSuccessMessage(data: {
   return 'Ordonnance enregistrée — prise en charge gratuite'
 }
 
-function printReceipt(data: {
+function buildPharmacyBrowserTicketHtml(data: {
   items: PrescriptionPrintLine[]
   notes?: string
   invoiceNumber: string
@@ -355,22 +355,17 @@ function printReceipt(data: {
   reductionPercent?: number
   coveredByName?: string | null
   isFree?: boolean
+  paymentModeLabel: string
+  reductionLabel: string
 }) {
   const clinic = CLINIC
   const grossTotal = data.grossTotal ?? data.total
   const reductionFcfa = data.reductionFcfa ?? 0
-  const reductionPercent = data.reductionPercent
-  let paymentModeLabel = 'Payé'
-  if (data.isFree) paymentModeLabel = 'Gratuit'
-  else if (reductionFcfa > 0) {
-    paymentModeLabel = reductionPercent ? `Réduc. ${reductionPercent}%` : 'Réduction'
-  }
   const coveredByBlock =
     data.coveredByName && (data.isFree || reductionFcfa > 0)
       ? thermalMetaRow('Par', data.coveredByName, '')
       : ''
   const internalBlock = !data.isExternal ? thermalMetaRow('Type', 'Interne', '') : ''
-  const reductionLabel = reductionPercent ? `Réduc. ${reductionPercent}%` : 'Réduction'
   const itemsTable = buildPharmacyTicketItemsTableHtml({
     lines: data.items.map((item) => ({
       name: item.name,
@@ -381,12 +376,10 @@ function printReceipt(data: {
     totalFcfa: data.total,
     grossTotalFcfa: grossTotal,
     reductionFcfa,
-    reductionLabel,
+    reductionLabel: data.reductionLabel,
   })
 
-  openPrintDocument(
-    `Ticket ${data.invoiceNumber}`,
-    `
+  return `
 <div class="thermal-receipt thermal-receipt--ticket thermal-receipt--pharmacy">
   ${buildThermalTicketHeadHtml({
     title: 'Clinique Alwatan Pharmacie',
@@ -399,7 +392,7 @@ function printReceipt(data: {
   <div class="thermal-receipt__fields">
     ${thermalMetaRow('Date', data.date, '')}
     ${internalBlock}
-    ${thermalMetaRow('Paiement', paymentModeLabel, '')}
+    ${thermalMetaRow('Paiement', data.paymentModeLabel, '')}
     ${coveredByBlock}
   </div>
 
@@ -413,9 +406,40 @@ function printReceipt(data: {
   <hr class="thermal-receipt__rule" />
   <p class="thermal-receipt__thanks">Merci</p>
 </div>
-`,
+`
+}
+
+async function printReceipt(
+  data: {
+    items: PrescriptionPrintLine[]
+    notes?: string
+    invoiceNumber: string
+    total: number
+    date: string
+    isExternal?: boolean
+    grossTotal?: number
+    reductionFcfa?: number
+    reductionPercent?: number
+    coveredByName?: string | null
+    isFree?: boolean
+  },
+) {
+  const reductionFcfa = data.reductionFcfa ?? 0
+  const reductionPercent = data.reductionPercent
+  let paymentModeLabel = 'Payé'
+  if (data.isFree) paymentModeLabel = 'Gratuit'
+  else if (reductionFcfa > 0) {
+    paymentModeLabel = reductionPercent ? `Réduc. ${reductionPercent}%` : 'Réduction'
+  }
+  const reductionLabel = reductionPercent ? `Réduc. ${reductionPercent}%` : 'Réduction'
+
+  // Impression via navigateur + pilote Windows (POS-80)
+  openPrintDocument(
+    `Ticket ${data.invoiceNumber}`,
+    buildPharmacyBrowserTicketHtml({ ...data, paymentModeLabel, reductionLabel }),
     { pageSize: '80mm', autoPrint: true, thermalTight: true },
   )
+  return { ok: true as const, mode: 'browser' as const }
 }
 
 function resetBuyerFields() {
@@ -684,6 +708,8 @@ async function submitSale() {
     lineTotal: row.lineTotal,
   }))
 
+  // Réserver synchrone au clic (repli navigateur) ; fermée si l'agent ESC/POS réussit.
+  if (printItems.length) reservePrintWindow('80mm')
   submitting.value = true
   message.value = ''
 
@@ -710,12 +736,21 @@ async function submitSale() {
     message.value = saleSuccessMessage(data)
     messageType.value = 'success'
 
-    if (printItems.length && data.invoice) {
+    if (printItems.length) {
       const isExternal = buyerType.value === 'external'
-      printReceipt({
+      const invoiceNumber =
+        data.invoice?.invoiceNumber
+        ?? (data.isFree
+          ? 'GRATUIT'
+          : data.billingDeferred
+            ? 'DIFFÉRÉ'
+            : data.prescription?.id
+              ? `RX-${String(data.prescription.id).slice(-6).toUpperCase()}`
+              : 'TICKET')
+      await printReceipt({
         items: printItems,
         notes: isExternal ? undefined : notes.value.trim(),
-        invoiceNumber: data.invoice.invoiceNumber,
+        invoiceNumber,
         total: data.total,
         grossTotal: data.grossTotal,
         reductionFcfa: data.reductionFcfa,
@@ -725,6 +760,8 @@ async function submitSale() {
         date: new Date().toLocaleString('fr-FR'),
         isExternal,
       })
+    } else {
+      cancelPrintWindow()
     }
 
     clearCart()
@@ -735,6 +772,7 @@ async function submitSale() {
     void loadTodayReturnableSales()
     void nextTick(() => searchRef.value?.focus())
   } catch (error: unknown) {
+    cancelPrintWindow()
     const apiMessage =
       error && typeof error === 'object' && 'response' in error
         ? (error as { response?: { data?: { error?: string } } }).response?.data?.error

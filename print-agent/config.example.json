@@ -1,0 +1,13 @@
+{
+  "port": 19100,
+  "host": "127.0.0.1",
+  "interface": "usb",
+  "printMode": "Auto",
+  "directPort": "",
+  "printerName": "Alwatan-Ticket-RAW",
+  "paperWidthChars": 48,
+  "cut": true,
+  "openCashDrawer": false,
+  "codePage": "cp850",
+  "logDir": "logs"
+}

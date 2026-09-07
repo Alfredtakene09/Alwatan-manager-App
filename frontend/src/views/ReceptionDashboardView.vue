@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import {
   LayoutDashboard,
   Search,
@@ -17,6 +17,7 @@ import {
   Lock,
   CheckCircle2,
   CircleDollarSign,
+  Clock,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal, showSuccessModal, showValidationErrorModal } from '@/lib/api-modal-helper'
@@ -49,7 +50,9 @@ import {
 import {
   buildConsultationReceiptHtml,
   buildDayClosureReceiptHtml,
+  cancelPrintWindow,
   openPrintDocument,
+  reservePrintWindow,
 } from '@/lib/print-document'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import { useAuthStore } from '@/stores/auth'
@@ -63,6 +66,7 @@ import UiFormModal from '@/components/ui/UiFormModal.vue'
 import PatientsDataTable from '@/components/ui/PatientsDataTable.vue'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
 import DoctorSharesReceivablePanel from '@/components/reception/DoctorSharesReceivablePanel.vue'
+import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
 
 type ReceptionStats = {
   registeredToday: number
@@ -160,6 +164,10 @@ type DayClosureStatus = {
 
 const { uiText, dateText, localeCode } = useAppI18n()
 const auth = useAuthStore()
+const router = useRouter()
+const { canSeeUiAction } = useUiActionVisibility()
+const canReprintReceipt = computed(() => canSeeUiAction('reception.print_receipt'))
+const printingPatientId = ref<string | null>(null)
 
 type ReceptionPageTab = 'enregistrement' | 'doctor-shares'
 const canSeeDoctorSharesTab = computed(() =>
@@ -367,9 +375,7 @@ function collectNewPatientValidationErrors(): string[] {
     }
   }
 
-  if (!phoneRaw) {
-    issues.push('Le téléphone est obligatoire (au moins 6 chiffres).')
-  } else if (phoneDigits.length < 6) {
+  if (phoneRaw && phoneDigits.length < 6) {
     issues.push('Le téléphone doit contenir au moins 6 chiffres.')
   }
 
@@ -627,16 +633,18 @@ async function closeReceptionDay() {
   if (!confirmed) return
 
   closingDay.value = true
+  reservePrintWindow('80mm')
   try {
     const { data } = await api.post<DayClosureStatus & { message?: string }>('/cash-desk/day-closure')
     dayClosure.value = data
+    printDayClosure(data)
     await showSuccessModal(
       'Journée clôturée',
       'Remettez la caisse à la comptabilité.',
     )
-    printDayClosure(data)
     await loadReceptionStats()
   } catch (error) {
+    cancelPrintWindow()
     await showApiErrorModal(error, 'Impossible de clôturer la journée.')
     await loadDayClosure()
   } finally {
@@ -839,15 +847,17 @@ function getDoctorName(doctorId: string) {
   return doctor ? `Dr ${fullName(doctor.firstName, doctor.lastName)}` : '—'
 }
 
-function printReceipt(r: ReceiptData) {
+async function printReceipt(r: ReceiptData) {
+  // Impression via navigateur + pilote Windows
   openPrintDocument(translateTemplate('Reçu {code}', { code: r.patientCode }), buildConsultationReceiptHtml(r), {
     pageSize: '80mm',
     autoPrint: true,
   })
 }
 
-function printDetailReceipt(detail: PatientDetail) {
+async function printDetailReceipt(detail: PatientDetail) {
   if (!detail.waitingVisit) {
+    cancelPrintWindow()
     showAlert(
       'Aucune consultation en cours à imprimer. Ouvrez le dossier, vérifiez le médecin et le montant, puis enregistrez à nouveau.',
       'error',
@@ -861,6 +871,7 @@ function printDetailReceipt(detail: PatientDetail) {
   const total = visit.totalFcfa ?? Math.max(0, amount - reduction)
 
   if (amount <= 0 && !isExemptCategory(detail.category ?? 'STANDARD')) {
+    cancelPrintWindow()
     showAlert('Aucun montant de consultation à imprimer.', 'error')
     return
   }
@@ -871,7 +882,7 @@ function printDetailReceipt(detail: PatientDetail) {
 
   const invoiceNumber = visit.invoiceNumber ?? undefined
 
-  printReceipt({
+  await printReceipt({
     patientCode: detail.code,
     patientName: fullName(detail.firstName, detail.lastName),
     doctorName,
@@ -895,6 +906,7 @@ async function createPatientAndVisit() {
     return
   }
   clearAlert()
+  reservePrintWindow('80mm')
   submitting.value = true
   try {
     const { firstName, lastName } = formParsedName.value
@@ -913,7 +925,7 @@ async function createPatientAndVisit() {
       lastName,
       age: formAge.value ?? undefined,
       ageUnit: form.value.ageUnit,
-      phone: form.value.phone.trim(),
+      phone: form.value.phone.trim() || undefined,
       service: form.value.service || undefined,
       gender: form.value.gender,
       category: 'STANDARD',
@@ -924,7 +936,7 @@ async function createPatientAndVisit() {
     })
 
     const patient = data.patient
-    printReceipt({
+    await printReceipt({
       patientCode: patient.code,
       patientName: fullName(patient.firstName, patient.lastName),
       doctorName: getDoctorName(form.value.doctorId),
@@ -958,6 +970,7 @@ async function createPatientAndVisit() {
     listTo.value = todayInputValue()
     await refreshAll()
   } catch (error) {
+    cancelPrintWindow()
     await showApiErrorModal(error, 'Erreur lors de la création du dossier.')
   } finally {
     submitting.value = false
@@ -970,16 +983,24 @@ async function loadPatientDetail(patientId: string) {
 }
 
 function printPatientReceipt(patient: Patient) {
+  if (printingPatientId.value) return
   clearAlert()
+  printingPatientId.value = patient.id
+  reservePrintWindow('80mm')
   loadPatientDetail(patient.id)
     .then(printDetailReceipt)
     .catch(() => {
+      cancelPrintWindow()
       showAlert('Impossible d\'imprimer le reçu.', 'error')
+    })
+    .finally(() => {
+      printingPatientId.value = null
     })
 }
 
 async function deletePatient(patient: Patient) {
-  if (patient.canDelete === false) {
+  const isAdmin = auth.user?.role === 'ADMIN'
+  if (patient.canDelete === false && !isAdmin) {
     showAlert(
       'Impossible de supprimer : ce patient a déjà été envoyé et consulté.',
       'error',
@@ -988,13 +1009,19 @@ async function deletePatient(patient: Patient) {
   }
 
   const patientName = fullName(patient.firstName, patient.lastName)
+  const forceDelete = isAdmin && patient.canDelete === false
   const confirmed = await confirmAppModal({
     type: 'DELETE',
-    title: 'Supprimer le patient',
-    message: translateTemplate(
-      'Supprimer le dossier {code} — {name} ? Cette action est irréversible.',
-      { code: patient.code, name: patientName },
-    ),
+    title: forceDelete ? 'Supprimer le patient (admin)' : 'Supprimer le patient',
+    message: forceDelete
+      ? translateTemplate(
+          'Supprimer le dossier {code} — {name} même s’il a déjà été consulté ? Visites, consultations, factures et documents liés seront aussi supprimés. Cette action est irréversible.',
+          { code: patient.code, name: patientName },
+        )
+      : translateTemplate(
+          'Supprimer le dossier {code} — {name} ? Cette action est irréversible.',
+          { code: patient.code, name: patientName },
+        ),
     confirmLabel: 'Supprimer',
   })
   if (!confirmed) return
@@ -1106,24 +1133,53 @@ async function submitReconsultation() {
     return
   }
   clearAlert()
+  reservePrintWindow('80mm')
   submittingReconsult.value = true
   try {
+    const patient = selectedPatient.value
+    const exempt = Boolean(patient.category && isExemptCategory(patient.category))
     const amount =
       renewalPreview.value?.amountFcfa ??
-      (selectedPatient.value.category && isExemptCategory(selectedPatient.value.category)
+      (exempt
         ? 0
         : resolveConsultationAmountForDoctor(
             reconsultDoctor.value,
             Number(reconsultForm.value.consultationAmount) || 0,
           ))
 
-    const { data } = await api.post('/visits', {
-      patientId: selectedPatient.value.id,
+    const { data } = await api.post<{
+      invoiceNumber?: string | null
+      totalFcfa?: number
+      billingDeferred?: boolean
+      renewalHint?: string
+    }>('/visits', {
+      patientId: patient.id,
       doctorId: reconsultForm.value.doctorId,
       consultationAmountFcfa: amount,
     })
-    const hint = (data as { renewalHint?: string }).renewalHint
-    const patientName = fullName(selectedPatient.value.firstName, selectedPatient.value.lastName)
+    const hint = data.renewalHint
+    const patientName = fullName(patient.firstName, patient.lastName)
+    const total = data.totalFcfa ?? (exempt ? 0 : amount)
+    await printReceipt({
+      patientCode: patient.code,
+      patientName,
+      doctorName: getDoctorName(reconsultForm.value.doctorId),
+      amount: exempt ? 0 : amount,
+      reduction: 0,
+      total: exempt ? 0 : total,
+      invoiceNumber: data.invoiceNumber
+        ?? (exempt
+          ? uiText('Exonéré')
+          : data.billingDeferred
+            ? uiText('Facturation différée')
+            : undefined),
+      date: new Date().toLocaleString('fr-FR'),
+      age: patient.age,
+      ageUnit: normalizePatientAgeUnit(patient.ageUnit),
+      gender: patient.gender,
+      phone: patient.phone ?? undefined,
+      processedBy: currentReceptionistName(),
+    })
     showAlert(
       hint
         ? translateTemplate('{name} remis en consultation — {hint}', {
@@ -1135,6 +1191,7 @@ async function submitReconsultation() {
     closeReconsultModal()
     await refreshAll()
   } catch (error) {
+    cancelPrintWindow()
     await showApiErrorModal(error, 'Impossible de créer la reconsultation.')
   } finally {
     submittingReconsult.value = false
@@ -1215,7 +1272,9 @@ watch(() => reconsultForm.value.doctorId, () => {
   void refreshReconsultFee()
 })
 
-onMounted(refreshAll)
+onMounted(() => {
+  void refreshAll()
+})
 onUnmounted(clearAlert)
 </script>
 
@@ -1228,6 +1287,13 @@ onUnmounted(clearAlert)
         :icon="LayoutDashboard"
       >
         <template #actions>
+          <UiButton
+            variant="outline"
+            :icon="Clock"
+            @click="router.push('/reception/en-attente-paiement')"
+          >
+            En attente de paiement
+          </UiButton>
           <UiButton
             v-if="dayClosure?.closed"
             variant="success"
@@ -1379,6 +1445,8 @@ onUnmounted(clearAlert)
             fill
             :patients="patients"
             :loading="loadingPatients || !!deletingPatientId"
+            show-print
+            :printing-patient-id="printingPatientId"
             @print="printPatientReceipt"
             @edit="openEditModal"
             @reconsult="openReconsultModal"
@@ -1618,6 +1686,17 @@ onUnmounted(clearAlert)
 
       <template #footer>
         <UiButton type="button" variant="ghost" @click="closeEditModal">Annuler</UiButton>
+        <UiButton
+          v-if="!loadingEdit && canReprintReceipt && selectedPatient"
+          type="button"
+          variant="ghost"
+          :icon="Printer"
+          :loading="printingPatientId === selectedPatient.id"
+          :disabled="!!printingPatientId"
+          @click="printPatientReceipt(selectedPatient)"
+        >
+          Réimprimer le reçu
+        </UiButton>
         <UiButton
           v-if="!loadingEdit"
           type="button"

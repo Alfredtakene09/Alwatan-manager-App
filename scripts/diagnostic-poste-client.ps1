@@ -1,4 +1,4 @@
-# Diagnostic poste client Alwatan — ecrit un rapport a rapporter sur le serveur.
+# Diagnostic poste client Alwatan - ecrit un rapport a rapporter sur le serveur.
 # Double-clic via DIAGNOSTIC.bat (pas besoin de copier les erreurs a la main).
 param(
     [string]$ServerIp = ''

@@ -289,8 +289,61 @@ function buildAndroidShortcutHtml(opts: {
 </html>`;
 }
 
-/** Révision du lanceur Bureau — incrémenter pour proposer un nouveau téléchargement. */
-const LAUNCHER_REVISION = "2026-08-27-shortcut-fix2";
+/** Révision du lanceur Bureau — incrémenter pour forcer une resynchro des raccourcis réseau. */
+const LAUNCHER_REVISION = "2026-09-07-auto-sync-net";
+
+/** Découverte serveur sur le sous-réseau local (IP DHCP du serveur peut changer). */
+const FIND_SERVER_ON_LAN_PS1 = [
+  "function Test-AlwatanHostPort {",
+  "  param([string]$HostIp, [int]$PortNum = 4000)",
+  "  if (-not $HostIp) { return $false }",
+  "  try {",
+  "    $r = Invoke-WebRequest -Uri ('http://' + $HostIp + ':' + $PortNum + '/api/health') -UseBasicParsing -TimeoutSec 1",
+  "    return ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400)",
+  "  } catch { return $false }",
+  "}",
+  "function Find-AlwatanServerOnLan {",
+  "  param([int]$PortNum = 4000)",
+  "  $local = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |",
+  "    Where-Object {",
+  "      $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' -and",
+  "      $_.AddressState -eq 'Preferred' -and",
+  "      $_.InterfaceAlias -notmatch '(?i)tailscale|bluetooth|virtual' -and",
+  "      $_.IPAddress -notmatch '^100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.'",
+  "    } | Sort-Object @{ Expression = { if ($_.InterfaceAlias -match '(?i)^Ethernet') { 0 } else { 1 } } } | Select-Object -First 1",
+  "  if (-not $local) { return $null }",
+  "  $parts = $local.IPAddress.Split('.')",
+  "  if ($parts.Count -ne 4) { return $null }",
+  "  $prefix = $parts[0] + '.' + $parts[1] + '.' + $parts[2]",
+  "  $self = $local.IPAddress",
+  "  $try = [System.Collections.Generic.List[string]]::new()",
+  "  $cfg = Join-Path $env:LOCALAPPDATA 'CliniqueAlwatan\\alwatan-server.txt'",
+  "  if (Test-Path -LiteralPath $cfg) {",
+  "    foreach ($line in Get-Content -LiteralPath $cfg -ErrorAction SilentlyContinue) {",
+  "      if ($line -match 'SERVER_IP\\s*=\\s*(\\d+\\.\\d+\\.\\d+\\.\\d+)') { [void]$try.Add($Matches[1]) }",
+  "    }",
+  "  }",
+  "  Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue |",
+  "    Where-Object { $_.IPAddress -like ($prefix + '.*') -and $_.State -match 'Reachable|Stale|Permanent' } |",
+  "    ForEach-Object { [void]$try.Add($_.IPAddress) }",
+  "  $seen = @{}",
+  "  foreach ($ip in $try) {",
+  "    if (-not $ip -or $seen.ContainsKey($ip) -or $ip -eq $self) { continue }",
+  "    $seen[$ip] = $true",
+    "    if (Test-AlwatanHostPort -HostIp $ip -PortNum $PortNum) { return ('http://' + $ip + ':' + $PortNum + '/') }",
+  "  }",
+  "  # Scan rapide limité (évite 45 s sur tout le sous-réseau) — .1 gateway + plages courantes",
+  "  $quick = @([int]$parts[3])",
+  "  foreach ($n in @(1,2,10,50,54,100,150,200,254)) { if ($quick -notcontains $n) { $quick += $n } }",
+  "  foreach ($i in $quick) {",
+  "    $ip = $prefix + '.' + $i",
+  "    if ($ip -eq $self -or $seen.ContainsKey($ip)) { continue }",
+  "    $seen[$ip] = $true",
+  "    if (Test-AlwatanHostPort -HostIp $ip -PortNum $PortNum) { return ('http://' + $ip + ':' + $PortNum + '/') }",
+  "  }",
+  "  return $null",
+  "}",
+].join("\r\n");
 
 /** Lanceur client : Ethernet/LAN d’abord, Tailscale en secours (un seul raccourci). */
 function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
@@ -307,7 +360,7 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "  if (-not $Url) { return $false }",
     "  try {",
     "    $base = $Url.TrimEnd('/')",
-    "    $r = Invoke-WebRequest -Uri ($base + '/api/health') -UseBasicParsing -TimeoutSec 3",
+    "    $r = Invoke-WebRequest -Uri ($base + '/api/health') -UseBasicParsing -TimeoutSec 1",
     "    return ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400)",
     "  } catch { return $false }",
     "}",
@@ -321,6 +374,8 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "    return ($n -ge 64 -and $n -le 127)",
     "  } catch { return $false }",
     "}",
+    "",
+    FIND_SERVER_ON_LAN_PS1,
     "",
     "function Sync-AlwatanLauncherFromServer([string]$BaseUrl) {",
     "  if (-not $BaseUrl) { return }",
@@ -339,6 +394,17 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "        try { $tsHost = ([uri]$script:ts).Host; if ($tsHost -and $tsHost -ne $wifiHost) { $lines += ('TAILSCALE_IP=' + $tsHost) } } catch {}",
     "      }",
     '      [System.IO.File]::WriteAllText($cfg, (($lines -join "`r`n") + "`r`n"), [System.Text.UTF8Encoding]::new($false))',
+    "      $desk = [Environment]::GetFolderPath('Desktop')",
+    "      $lanUrl = $script:wifi.TrimEnd('/') + '/'",
+    "      @('Alwatan Manager (Wi-Fi).url','Ouvrir Alwatan (reseau).url') | ForEach-Object {",
+    "        $p = Join-Path $desk $_",
+    "        if (Test-Path -LiteralPath $p) { Set-Content -LiteralPath $p -Value ('[InternetShortcut]' + \"`r`n\" + 'URL=' + $lanUrl) -Encoding ASCII }",
+    "      }",
+    "      if ($script:ts) {",
+    "        $tsUrl = $script:ts.TrimEnd('/') + '/'",
+    "        $tp = Join-Path $desk 'Alwatan Manager (Tailscale).url'",
+    "        if (Test-Path -LiteralPath $tp) { Set-Content -LiteralPath $tp -Value ('[InternetShortcut]' + \"`r`n\" + 'URL=' + $tsUrl) -Encoding ASCII }",
+    "      }",
     "    } catch {}",
     "    $out = Join-Path $store 'lancer-alwatan-bureau.ps1'",
     "    $tmp = $out + '.new'",
@@ -356,6 +422,45 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "      Invoke-WebRequest -Uri ($base + '/api/client-setup/bootstrap-alwatan.ps1?_=' + [guid]::NewGuid().ToString('N')) -OutFile $bootTmp -UseBasicParsing -TimeoutSec 8",
     "      if ((Get-Item -LiteralPath $bootTmp).Length -gt 50) { Move-Item -LiteralPath $bootTmp -Destination $boot -Force }",
     "    } catch {}",
+    "    try {",
+    "      $upd = Join-Path $store 'update-desktop-shortcut.ps1'",
+    "      $updTmp = $upd + '.new'",
+    "      Invoke-WebRequest -Uri ($base + '/api/client-setup/update-desktop-shortcut.ps1?_=' + [guid]::NewGuid().ToString('N')) -OutFile $updTmp -UseBasicParsing -TimeoutSec 8",
+    "      if ((Get-Item -LiteralPath $updTmp).Length -gt 50) { Move-Item -LiteralPath $updTmp -Destination $upd -Force }",
+    "    } catch {}",
+    "    try {",
+    "      $protoVbs = Join-Path $store 'alwatan-protocol.vbs'",
+    "      $protoTmp = $protoVbs + '.new'",
+    "      Invoke-WebRequest -Uri ($base + '/api/client-setup/alwatan-protocol.vbs?_=' + [guid]::NewGuid().ToString('N')) -OutFile $protoTmp -UseBasicParsing -TimeoutSec 8",
+    "      if ((Get-Item -LiteralPath $protoTmp).Length -gt 20) { Move-Item -LiteralPath $protoTmp -Destination $protoVbs -Force }",
+    "      $protoKey = 'HKCU:\\Software\\Classes\\alwatan'",
+    "      New-Item -Path $protoKey -Force | Out-Null",
+    "      Set-ItemProperty -Path $protoKey -Name '(Default)' -Value 'URL:Alwatan Protocol'",
+    "      Set-ItemProperty -Path $protoKey -Name 'URL Protocol' -Value ''",
+    "      New-Item -Path ($protoKey + '\\shell\\open\\command') -Force | Out-Null",
+    "      Set-ItemProperty -Path ($protoKey + '\\shell\\open\\command') -Name '(Default)' -Value ('wscript.exe \"' + $protoVbs + '\" \"%1\"')",
+    "    } catch {}",
+    "    try {",
+    "      $desk = [Environment]::GetFolderPath('Desktop')",
+    "      $icoStore = Join-Path $store 'alwatan.ico'",
+    "      $icoDesk = Join-Path $desk 'alwatan.ico'",
+    "      if (-not (Test-Path -LiteralPath $icoStore)) {",
+    "        Invoke-WebRequest -Uri ($base + '/api/client-setup/alwatan.ico') -OutFile $icoStore -UseBasicParsing -TimeoutSec 8",
+    "      }",
+    "      if (Test-Path -LiteralPath $icoStore) { Copy-Item -LiteralPath $icoStore -Destination $icoDesk -Force -ErrorAction SilentlyContinue }",
+    "      $launcherVbs = Join-Path $store 'lancer-alwatan-bureau.vbs'",
+    "      if (Test-Path -LiteralPath $launcherVbs) {",
+    "        $shell = New-Object -ComObject WScript.Shell",
+    "        $lnkPath = Join-Path $desk 'Alwatan Manager.lnk'",
+    "        $s = $shell.CreateShortcut($lnkPath)",
+    "        $s.TargetPath = $launcherVbs",
+    "        $s.WorkingDirectory = $store",
+    "        $s.WindowStyle = 1",
+    "        $s.Description = 'Clinique Alwatan - Ethernet puis Tailscale'",
+    "        if (Test-Path -LiteralPath $icoDesk) { $s.IconLocation = $icoDesk + ',0' }",
+    "        $s.Save()",
+    "      }",
+    "    } catch {}",
     "  } catch {}",
     "}",
     "",
@@ -364,8 +469,19 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "  $openUrl = $Url",
     "  try {",
     "    $base = $Url.TrimEnd('/')",
+    "    $store = Join-Path $env:LOCALAPPDATA 'CliniqueAlwatan'",
+    "    $revFile = Join-Path $store 'launcher-revision.txt'",
+    "    $localRev = ''",
+    "    if (Test-Path -LiteralPath $revFile) {",
+    "      try { $localRev = ([string](Get-Content -LiteralPath $revFile -TotalCount 1 -ErrorAction SilentlyContinue)).Trim() } catch {}",
+    "    }",
+    "    $launcherPs1 = Join-Path $store 'lancer-alwatan-bureau.ps1'",
     "    Sync-AlwatanLauncherFromServer $base",
-    "    $ver = Invoke-RestMethod -Uri ($base + '/api/app-version?_=' + [guid]::NewGuid().ToString('N')) -TimeoutSec 3",
+    "    try {",
+    "      if (-not (Test-Path -LiteralPath $store)) { New-Item -ItemType Directory -Path $store -Force | Out-Null }",
+    "      Set-Content -LiteralPath $revFile -Value $launcherRevision -Encoding ASCII",
+    "    } catch {}",
+    "    $ver = Invoke-RestMethod -Uri ($base + '/api/app-version?_=' + [guid]::NewGuid().ToString('N')) -TimeoutSec 1",
     "    if ($ver -and $ver.buildId) {",
     "      $q = [uri]::EscapeDataString([string]$ver.buildId)",
     "      $openUrl = $Url.TrimEnd('/') + '/?v=' + $q",
@@ -375,6 +491,8 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "  $defaultDir = Join-Path $profileRoot 'Default'",
     "  if (-not (Test-Path -LiteralPath $defaultDir)) { New-Item -ItemType Directory -Path $defaultDir -Force | Out-Null }",
     "  $prefsPath = Join-Path $defaultDir 'Preferences'",
+    "  $prefsMarker = Join-Path $defaultDir '.alwatan-print-ok'",
+    "  if (-not (Test-Path -LiteralPath $prefsMarker)) {",
     "  try {",
     "    $ticketSticky = '{\"version\":2,\"isHeaderFooterEnabled\":false,\"isCssBackgroundEnabled\":true,\"isLandscapeEnabled\":false,\"marginsType\":1,\"scaling\":\"100\",\"scalingType\":0,\"scalingTypePdf\":0,\"mediaSize\":{\"width_microns\":80000,\"height_microns\":120000,\"custom_display_name\":\"Alwatan Ticket 80mm\",\"is_default\":true}}'",
     "    $prefs = @{ printing = @{ print_header_footer = $false; print_preview_sticky_settings = @{ appState = $ticketSticky } } }",
@@ -389,7 +507,9 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "    } else { $prefsJson = ($prefs | ConvertTo-Json -Depth 10) }",
     "    $utf8 = New-Object System.Text.UTF8Encoding $false",
     "    [System.IO.File]::WriteAllText($prefsPath, $prefsJson, $utf8)",
+    "    Set-Content -LiteralPath $prefsMarker -Value '1' -Encoding ASCII",
     "  } catch { }",
+    "  }",
     "  $browserArgs = @('--user-data-dir=' + $profileRoot, '--no-first-run', '--no-default-browser-check', '--start-maximized')",
     "  $bounds = $null",
     "  try {",
@@ -439,10 +559,25 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "}",
     "",
     "$candidates = New-Object System.Collections.Generic.List[string]",
-    "# Wi-Fi d'abord — ne jamais placer Tailscale en tête même si $wifi est vide/erroné",
-    "if ($wifi -and -not (Test-IsTailscaleUrl $wifi)) { [void]$candidates.Add($wifi) }",
-    "if ($ts -and $ts -ne $wifi) { [void]$candidates.Add($ts) }",
-    "if ($wifi -and (Test-IsTailscaleUrl $wifi) -and -not $candidates.Contains($wifi)) { [void]$candidates.Add($wifi) }",
+    "function Add-CandidateUrl([string]$Url) {",
+    "  if (-not $Url) { return }",
+    "  $u = $Url.TrimEnd('/') + '/'",
+    "  if (-not $candidates.Contains($u)) { [void]$candidates.Add($u) }",
+    "}",
+    "$cfgPath = Join-Path $env:LOCALAPPDATA 'CliniqueAlwatan\\alwatan-server.txt'",
+    "if (Test-Path -LiteralPath $cfgPath) {",
+    "  foreach ($line in Get-Content -LiteralPath $cfgPath -ErrorAction SilentlyContinue) {",
+    "    if ($line -match 'SERVER_IP\\s*=\\s*(\\d+\\.\\d+\\.\\d+\\.\\d+)') {",
+    "      Add-CandidateUrl ('http://' + $Matches[1] + ':4000/')",
+    "    }",
+    "    if ($line -match 'TAILSCALE_IP\\s*=\\s*(\\d+\\.\\d+\\.\\d+\\.\\d+)') {",
+    "      Add-CandidateUrl ('http://' + $Matches[1] + ':4000/')",
+    "    }",
+    "  }",
+    "}",
+    "if ($wifi -and -not (Test-IsTailscaleUrl $wifi)) { Add-CandidateUrl $wifi }",
+    "if ($ts -and $ts -ne $wifi) { Add-CandidateUrl $ts }",
+    "if ($wifi -and (Test-IsTailscaleUrl $wifi) -and -not $candidates.Contains($wifi.TrimEnd('/') + '/')) { Add-CandidateUrl $wifi }",
     "",
     "$opened = $false",
     "foreach ($url in $candidates) {",
@@ -454,10 +589,19 @@ function buildClientLauncherPs1(wifiUrl: string, tailscaleUrl: string): string {
     "}",
     "",
     "if (-not $opened) {",
+    "  $found = Find-AlwatanServerOnLan -PortNum 4000",
+    "  if ($found -and (Test-AlwatanUrl $found)) {",
+    "    Open-AlwatanUrl $found",
+    "    $opened = $true",
+    "  }",
+    "}",
+    "",
+    "if (-not $opened) {",
     "  $fallback = $null",
     "  if ($wifi -and -not (Test-IsTailscaleUrl $wifi)) { $fallback = $wifi }",
     "  elseif ($wifi) { $fallback = $wifi }",
     "  elseif ($ts) { $fallback = $ts }",
+    "  elseif ($candidates.Count -gt 0) { $fallback = $candidates[0] }",
     "  if ($fallback) { Open-AlwatanUrl $fallback }",
     "}",
   ].join("\r\n");
@@ -470,21 +614,54 @@ function buildBootstrapPs1(wifiUrl: string, tailscaleUrl: string): string {
   return [
     "$ErrorActionPreference = 'Continue'",
     `$seeds = @('${wifi}','${ts}') | Where-Object { $_ }`,
+    FIND_SERVER_ON_LAN_PS1,
     "$store = Join-Path $env:LOCALAPPDATA 'CliniqueAlwatan'",
     "New-Item -ItemType Directory -Force -Path $store | Out-Null",
     "$ps1 = Join-Path $store 'lancer-alwatan-bureau.ps1'",
     "$vbs = Join-Path $store 'lancer-alwatan-bureau.vbs'",
-    "foreach ($b in $seeds) {",
+    "$cfgPath = Join-Path $store 'alwatan-server.txt'",
+    "if (Test-Path -LiteralPath $cfgPath) {",
+    "  foreach ($line in Get-Content -LiteralPath $cfgPath -ErrorAction SilentlyContinue) {",
+    "    if ($line -match 'SERVER_IP\\s*=\\s*(\\d+\\.\\d+\\.\\d+\\.\\d+)') {",
+    "      $seedUrl = 'http://' + $Matches[1] + ':4000/'",
+    "      if ($seeds -notcontains $seedUrl) { $seeds = @($seedUrl) + $seeds }",
+    "    }",
+    "    if ($line -match 'TAILSCALE_IP\\s*=\\s*(\\d+\\.\\d+\\.\\d+\\.\\d+)') {",
+    "      $seedUrl = 'http://' + $Matches[1] + ':4000/'",
+    "      if ($seeds -notcontains $seedUrl) { $seeds += $seedUrl }",
+    "    }",
+    "  }",
+    "}",
+    "function Test-SeedReachable([string]$Base) {",
+    "  if (-not $Base) { return $false }",
     "  try {",
-    "    $base = $b.TrimEnd('/')",
+    "    $r = Invoke-WebRequest -Uri ($Base.TrimEnd('/') + '/api/health') -UseBasicParsing -TimeoutSec 3",
+    "    return ($r.StatusCode -ge 200 -and $r.StatusCode -lt 400)",
+    "  } catch { return $false }",
+    "}",
+    "function Download-AlwatanLauncher([string]$Base) {",
+    "  if (-not $Base) { return $false }",
+    "  try {",
+    "    $base = $Base.TrimEnd('/')",
     "    Invoke-WebRequest -Uri ($base + '/api/client-setup/client-launcher.ps1?_=' + [guid]::NewGuid().ToString('N')) -OutFile $ps1 -UseBasicParsing -TimeoutSec 6",
     "    if ((Get-Item -LiteralPath $ps1).Length -gt 200) {",
     "      try {",
     "        Invoke-WebRequest -Uri ($base + '/api/client-setup/client-launcher.vbs?_=' + [guid]::NewGuid().ToString('N')) -OutFile $vbs -UseBasicParsing -TimeoutSec 6",
     "      } catch {}",
-    "      break",
+    "      return $true",
     "    }",
     "  } catch {}",
+    "  return $false",
+    "}",
+    "$downloaded = $false",
+    "foreach ($b in $seeds) {",
+    "  if (Test-SeedReachable $b) {",
+    "    if (Download-AlwatanLauncher $b) { $downloaded = $true; break }",
+    "  }",
+    "}",
+    "if (-not $downloaded) {",
+    "  $found = Find-AlwatanServerOnLan -PortNum 4000",
+    "  if ($found -and (Download-AlwatanLauncher $found)) { $downloaded = $true }",
     "}",
     "if (Test-Path -LiteralPath $ps1) { & $ps1 }",
   ].join("\r\n");
@@ -502,6 +679,59 @@ function buildSilentVbs(): string {
     'ElseIf fso.FileExists(ps1) Then',
     '  sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & ps1 & """", 0, False',
     'End If',
+  ].join("\r\n");
+}
+
+function buildProtocolHandlerVbs(): string {
+  return [
+    'On Error Resume Next',
+    'Set sh = CreateObject("WScript.Shell")',
+    'store = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\\CliniqueAlwatan"',
+    'updatePs1 = store & "\\update-desktop-shortcut.ps1"',
+    'installPs1 = store & "\\install-desktop-shortcut-cached.ps1"',
+    'Set fso = CreateObject("Scripting.FileSystemObject")',
+    'If fso.FileExists(updatePs1) Then',
+    '  sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & updatePs1 & """", 0, False',
+    'ElseIf fso.FileExists(installPs1) Then',
+    '  sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & installPs1 & """", 0, False',
+    'End If',
+  ].join("\r\n");
+}
+
+/** Script local : met à jour le raccourci Bureau sans nouveau téléchargement utilisateur. */
+function buildUpdateShortcutPs1(apiBase: string): string {
+  const api = escapePsSingleQuoted(apiBase.replace(/\/$/, ""));
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `$api = '${api}'`,
+    "$cfg = Join-Path $env:LOCALAPPDATA 'CliniqueAlwatan\\alwatan-server.txt'",
+    "if (Test-Path -LiteralPath $cfg) {",
+    "  foreach ($line in Get-Content -LiteralPath $cfg -ErrorAction SilentlyContinue) {",
+    "    if ($line -match 'SERVER_IP\\s*=\\s*(\\d+\\.\\d+\\.\\d+\\.\\d+)') {",
+    "      $api = 'http://' + $Matches[1] + ':4000'",
+    "      break",
+    "    }",
+    "  }",
+    "}",
+    "$tmp = Join-Path $env:TEMP ('alwatan-auto-update-' + [guid]::NewGuid().ToString('N') + '.ps1')",
+    "try {",
+    "  Invoke-WebRequest -Uri ($api.TrimEnd('/') + '/api/client-setup/install-desktop-shortcut.ps1?_=' + [guid]::NewGuid().ToString('N')) -OutFile $tmp -UseBasicParsing -TimeoutSec 30",
+    "  & $tmp",
+    "} finally {",
+    "  Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue",
+    "}",
+  ].join("\r\n");
+}
+
+function buildRegisterProtocolPs1Snippet(): string {
+  return [
+    "$protoVbs = Join-Path $store 'alwatan-protocol.vbs'",
+    "$protoKey = 'HKCU:\\Software\\Classes\\alwatan'",
+    "New-Item -Path $protoKey -Force | Out-Null",
+    "Set-ItemProperty -Path $protoKey -Name '(Default)' -Value 'URL:Alwatan Protocol'",
+    "Set-ItemProperty -Path $protoKey -Name 'URL Protocol' -Value ''",
+    "New-Item -Path ($protoKey + '\\shell\\open\\command') -Force | Out-Null",
+    "Set-ItemProperty -Path ($protoKey + '\\shell\\open\\command') -Name '(Default)' -Value ('wscript.exe \"' + $protoVbs + '\" \"%1\"')",
   ].join("\r\n");
 }
 
@@ -524,6 +754,10 @@ function buildDesktopShortcutPs1(opts: {
     "utf8",
   ).toString("base64");
   const vbsB64 = Buffer.from(buildSilentVbs(), "utf8").toString("base64");
+  const protocolVbsB64 = Buffer.from(buildProtocolHandlerVbs(), "utf8").toString("base64");
+  const updatePs1B64 = Buffer.from(buildUpdateShortcutPs1(opts.apiBase), "utf8").toString(
+    "base64",
+  );
 
   return `
 $ErrorActionPreference = 'Stop'
@@ -550,9 +784,20 @@ $launcherVbs = Join-Path $store 'lancer-alwatan-bureau.vbs'
 $vbsBytes = [Convert]::FromBase64String('${vbsB64}')
 [System.IO.File]::WriteAllBytes($launcherVbs, $vbsBytes)
 
+$protoVbsPath = Join-Path $store 'alwatan-protocol.vbs'
+$protoBytes = [Convert]::FromBase64String('${protocolVbsB64}')
+[System.IO.File]::WriteAllBytes($protoVbsPath, $protoBytes)
+
+$updatePs1 = Join-Path $store 'update-desktop-shortcut.ps1'
+$updateBytes = [Convert]::FromBase64String('${updatePs1B64}')
+[System.IO.File]::WriteAllBytes($updatePs1, $updateBytes)
+Copy-Item -LiteralPath $launcherPs1 -Destination (Join-Path $store 'install-desktop-shortcut-cached.ps1') -Force -ErrorAction SilentlyContinue
+
 try {
   Set-Content -LiteralPath (Join-Path $store 'launcher-revision.txt') -Value '${LAUNCHER_REVISION}' -Encoding ASCII
 } catch {}
+
+${buildRegisterProtocolPs1Snippet()}
 
 @(
   'Alwatan Manager (Tailscale).lnk',
@@ -659,6 +904,7 @@ router.get("/info", (req, res) => {
       ? "/api/client-setup/install-desktop-shortcut.cmd"
       : null,
     syncShortcutUrl: "/api/client-setup/sync-desktop-shortcut.cmd",
+    autoUpdateProtocol: "alwatan:sync",
     androidShortcutUrl: "/api/client-setup/android-shortcut.html",
     launcherUrl: "/api/client-setup/launcher.cmd",
     packageUrl: findSetupZip() ? "/api/client-setup/package.zip" : null,
@@ -741,6 +987,29 @@ router.get("/bootstrap-alwatan.ps1", (req, res) => {
   res.setHeader(
     "Content-Disposition",
     'inline; filename="bootstrap-alwatan.ps1"',
+  );
+  res.setHeader("Cache-Control", "no-store");
+  res.send(body);
+});
+
+router.get("/update-desktop-shortcut.ps1", (req, res) => {
+  const { apiBase } = resolveWifiAndTailscaleUrls(req);
+  const body = buildUpdateShortcutPs1(apiBase);
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    'inline; filename="update-desktop-shortcut.ps1"',
+  );
+  res.setHeader("Cache-Control", "no-store");
+  res.send(body);
+});
+
+router.get("/alwatan-protocol.vbs", (_req, res) => {
+  const body = buildProtocolHandlerVbs();
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    'inline; filename="alwatan-protocol.vbs"',
   );
   res.setHeader("Cache-Control", "no-store");
   res.send(body);

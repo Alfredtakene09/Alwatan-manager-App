@@ -9,6 +9,8 @@ const DISMISS_KEY = 'alwatan-pwa-install-dismissed'
 /** Une fois le raccourci Bureau / tablette téléchargé, ne plus proposer le bandeau. */
 const SHORTCUT_DONE_KEY = 'alwatan-desktop-shortcut-done'
 const LAUNCHER_REV_KEY = 'alwatan-launcher-revision'
+/** Protocole Windows alwatan: enregistré (mise à jour sans nouveau .cmd). */
+const PROTOCOL_READY_KEY = 'alwatan-protocol-ready'
 
 function readFlag(key: string): boolean {
   try {
@@ -69,6 +71,7 @@ export function usePwaInstall() {
   const deferredPrompt = ref<BeforeInstallPromptEvent | null>(null)
   const dismissed = ref(readFlag(DISMISS_KEY))
   const shortcutDone = ref(readFlag(SHORTCUT_DONE_KEY))
+  const protocolReady = ref(readFlag(PROTOCOL_READY_KEY))
   const isStandalone = ref(false)
   const showAndroidHelp = ref(false)
   const launcherNeedsSync = ref(false)
@@ -85,6 +88,16 @@ export function usePwaInstall() {
   const isIos = computed(() => platform.isIos)
   const isMobile = computed(() => platform.isMobile)
   const isWindows = computed(() => platform.isWindows)
+
+  /** Bouton mise à jour raccourci : visible seulement si besoin, disparaît après update. */
+  const showUpdateShortcutButton = computed(() => {
+    if (isStandalone.value) return false
+    if (isAndroid.value) return !shortcutDone.value
+    if (!isWindows.value && (isIos.value)) return false
+    if (!isWindows.value) return !shortcutDone.value
+    // Windows : afficher si nouvelle révision OU protocole pas encore installé
+    return launcherNeedsSync.value || !protocolReady.value
+  })
 
   const shouldShowBanner = computed(() => {
     if (isStandalone.value) return false
@@ -168,22 +181,51 @@ export function usePwaInstall() {
 
   function downloadShortcut() {
     markShortcutDownloaded()
+    protocolReady.value = true
+    writeFlag(PROTOCOL_READY_KEY, true)
+    // Première installation : télécharge le .cmd une fois (enregistre aussi le protocole auto).
     window.location.assign(
       `/api/client-setup/install-desktop-shortcut.cmd?_=${Date.now()}`,
     )
   }
 
-  /** Toujours un téléchargement neuf (pas une simple mise à jour du raccourci). */
-  function syncDesktopShortcut() {
-    markShortcutDownloaded()
-    window.location.assign(
-      `/api/client-setup/install-desktop-shortcut.cmd?_=${Date.now()}`,
-    )
+  function triggerProtocolSync() {
+    try {
+      const iframe = document.createElement('iframe')
+      iframe.style.display = 'none'
+      iframe.setAttribute('aria-hidden', 'true')
+      iframe.src = 'alwatan:sync'
+      document.body.appendChild(iframe)
+      window.setTimeout(() => iframe.remove(), 3000)
+    } catch {
+      window.location.assign('alwatan:sync')
+    }
+  }
+
+  /**
+   * Mise à jour automatique du raccourci (protocole alwatan:).
+   * Sans nouveau téléchargement si le protocole a déjà été installé une fois.
+   */
+  async function syncDesktopShortcut(): Promise<'auto' | 'download'> {
+    if (typeof window === 'undefined') return 'download'
+
+    if (readFlag(PROTOCOL_READY_KEY) || protocolReady.value) {
+      markShortcutDownloaded()
+      protocolReady.value = true
+      writeFlag(PROTOCOL_READY_KEY, true)
+      triggerProtocolSync()
+      return 'auto'
+    }
+
+    // Première fois (protocole pas encore enregistré) : un seul .cmd à exécuter.
+    downloadShortcut()
+    return 'download'
   }
 
   function downloadAndroidShortcut() {
     // Téléchargement serveur (Content-Disposition) — plus fiable qu’un blob sur Android.
-    // Ne pas masquer le bandeau tant que l’utilisateur n’a pas confirmé (« Plus tard »).
+    shortcutDone.value = true
+    writeFlag(SHORTCUT_DONE_KEY, true)
     const url = `/api/client-setup/android-shortcut.html?_=${Date.now()}`
     window.location.assign(url)
   }
@@ -206,6 +248,7 @@ export function usePwaInstall() {
     isWindows,
     canNativeInstall,
     shouldShowBanner,
+    showUpdateShortcutButton,
     showAndroidHelp,
     launcherNeedsSync,
     dismissBanner,

@@ -31,7 +31,7 @@ import medecinOperationTypesRoutes from "./routes/medecin-operation-types.js";
 import patientDossiersRoutes, { initPatientDossiers } from "./routes/patient-dossiers.js";
 import laboratoireRoutes from "./routes/laboratoire.js";
 import labPanelsRoutes from "./routes/lab-panels.js";
-import { seedLabPanelsIfEmpty } from "./lib/lab-panels-seed.js";
+import { seedLabPanelsIfEmpty, ensureRoutineClassicSheetFields } from "./lib/lab-panels-seed.js";
 import { refreshLabPanelRegistry } from "./lib/lab-panels-registry.js";
 import { syncAllExamLabPanelLinks, syncAllLabPanelExamLinks } from "./lib/exam-lab-panel.js";
 import surgeriesRoutes from "./routes/surgeries.js";
@@ -94,6 +94,15 @@ app.use(
 app.use(compression());
 app.use(express.json());
 app.use(cookieParser());
+
+/** Autorise le navigateur (page LAN) à joindre l’agent d’impression sur 127.0.0.1 */
+app.use((_req, res, next) => {
+  res.setHeader(
+    "Permissions-Policy",
+    'local-network-access=(self), private-state-token-redemption=(), private-state-token-issuance=()',
+  );
+  next();
+});
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", service: "alwatan-api" });
@@ -178,6 +187,12 @@ seedLabPanelsIfEmpty()
   .then((created) => {
     if (created > 0) {
       console.log(`${created} formulaire(s) de résultats laboratoire initialisé(s).`);
+    }
+    return ensureRoutineClassicSheetFields();
+  })
+  .then((patched) => {
+    if (patched > 0) {
+      console.log(`Formulaire Routine : ${patched} champ(s) selles/urine aligné(s) sur la feuille classique.`);
     }
     return refreshLabPanelRegistry();
   })

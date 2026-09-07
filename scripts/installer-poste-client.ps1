@@ -9,6 +9,20 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $SourceDir '_alwatan-common.ps1')
 
+try {
+    Get-ChildItem -LiteralPath $SourceDir -Filter '*.ps1' -ErrorAction SilentlyContinue |
+        Unblock-File -ErrorAction SilentlyContinue
+    Get-ChildItem -LiteralPath $SourceDir -Filter '*.bat' -ErrorAction SilentlyContinue |
+        Unblock-File -ErrorAction SilentlyContinue
+} catch { }
+
+trap {
+    Write-Host ''
+    Write-Host "ERREUR installation : $($_.Exception.Message)" -ForegroundColor Red
+    if ($_.ScriptStackTrace) { Write-Host $_.ScriptStackTrace }
+    exit 1
+}
+
 function New-ShortcutFile {
     param(
         [Parameter(Mandatory = $true)][string]$ShortcutPath,
@@ -130,17 +144,21 @@ URL=$tsUrl
 }
 
 $shortcutName = 'Alwatan Manager'
-$shortcutDescription = "Clinique Alwatan — Wi-Fi + Tailscale ($url)"
+$shortcutDescription = "Clinique Alwatan - Wi-Fi + Tailscale ($url)"
 
 # Bureau de l'utilisateur courant
 $userDesktop = [Environment]::GetFolderPath('Desktop')
 $desktopShortcut = Join-Path $userDesktop "$shortcutName.lnk"
-New-ShortcutFile `
-    -ShortcutPath $desktopShortcut `
-    -TargetPath $launcherVbs `
-    -WorkingDirectory $installDir `
-    -Description $shortcutDescription `
-    -IconPath $iconPath
+try {
+    New-ShortcutFile `
+        -ShortcutPath $desktopShortcut `
+        -TargetPath $launcherVbs `
+        -WorkingDirectory $installDir `
+        -Description $shortcutDescription `
+        -IconPath $iconPath
+} catch {
+    Write-Host "Raccourci Bureau .lnk ignore : $($_.Exception.Message)" -ForegroundColor Yellow
+}
 
 # Raccourcis URL directs (Wi-Fi + Tailscale)
 $desktopUrl = Join-Path $userDesktop 'Alwatan Manager (Wi-Fi).url'
@@ -172,25 +190,29 @@ $programs = [Environment]::GetFolderPath('Programs')
 $startMenuDir = Join-Path $programs 'Clinique Alwatan'
 New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null
 $startLnk = Join-Path $startMenuDir "$shortcutName.lnk"
-New-ShortcutFile `
-    -ShortcutPath $startLnk `
-    -TargetPath $launcherVbs `
-    -WorkingDirectory $installDir `
-    -Description "Ouvrir Alwatan Manager (Wi-Fi $ServerIp / Tailscale)" `
-    -IconPath $iconPath
+try {
+    New-ShortcutFile `
+        -ShortcutPath $startLnk `
+        -TargetPath $launcherVbs `
+        -WorkingDirectory $installDir `
+        -Description "Ouvrir Alwatan Manager (Wi-Fi $ServerIp / Tailscale)" `
+        -IconPath $iconPath
+} catch {
+    Write-Host "Raccourci menu Demarrer ignore : $($_.Exception.Message)" -ForegroundColor Yellow
+}
 
 $readme = @"
-Clinique Alwatan — Manager Pro (poste client)
-Installé : $installDir
-Wi-Fi    : $url
-Tailscale: $(if ($tsUrl) { $tsUrl } else { '(non configuré)' })
+Clinique Alwatan - Manager Pro (poste client)
+Installe : $installDir
+Ethernet : $url
+Tailscale: $(if ($tsUrl) { $tsUrl } else { '(non configure)' })
 
-Le raccourci principal teste d'abord le Wi-Fi, puis Tailscale.
+Le raccourci principal teste d'abord Ethernet, puis Tailscale.
 Secours Bureau :
-  « Alwatan Manager (Wi-Fi) »
-  « Alwatan Manager (Tailscale) » (si disponible)
-  « Alwatan Manager (direct) »
-  « Alwatan Manager (rechargement force) »  (purge cache + URL anti-cache)
+  Alwatan Manager (Wi-Fi)
+  Alwatan Manager (Tailscale) (si disponible)
+  Alwatan Manager (direct)
+  Alwatan Manager (rechargement force)  (purge cache + URL anti-cache)
 "@
 Set-Content -Path (Join-Path $installDir 'LISEZMOI.txt') -Value $readme -Encoding UTF8
 
@@ -206,7 +228,20 @@ if (-not $Quiet) {
     Write-Host "  Menu Démarrer : $startLnk"
     Write-Host ''
     $msgTs = if ($tsUrl) { "`nTailscale : $tsUrl" } else { '' }
-    Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Installation client terminée.`n`nRaccourci : $shortcutName`nWi-Fi : $url$msgTs"
+    try {
+        Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Installation client terminee.`n`nRaccourci : $shortcutName`nEthernet : $url$msgTs"
+    } catch {
+        Write-Host "Installation client terminee. Ethernet : $url$msgTs"
+    }
 }
 
-Open-AlwatanBrowser -Url $url
+try {
+    Open-AlwatanBrowser -Url $url
+} catch {
+    Write-Host "Navigateur non ouvert automatiquement. Ouvrez : $url" -ForegroundColor Yellow
+}
+
+$okMarker = Join-Path $SourceDir 'INSTALL-OK.txt'
+Set-Content -LiteralPath $okMarker -Value ("OK " + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + "`r`n$url") -Encoding ASCII
+$global:LASTEXITCODE = 0
+exit 0

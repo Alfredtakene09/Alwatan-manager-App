@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { Comment, Fragment, Text, computed, useSlots, type Component, type VNode } from 'vue'
+import { Comment, Fragment, Text, computed, useAttrs, useSlots, type Component, type VNode } from 'vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
+
+defineOptions({ inheritAttrs: false })
+
+const attrs = useAttrs()
 
 type Variant = 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger' | 'success' | 'dark'
 type Size = 'sm' | 'md' | 'lg'
@@ -58,6 +62,7 @@ const plainLabel = computed(() => {
 <template>
   <button
     v-if="uiActionAllowed"
+    v-bind="attrs"
     :type="type"
     class="ui-btn"
     :class="[`ui-btn--${variant}`, `ui-btn--${size}`, { 'ui-btn--block': block, 'lang-ar': isArabic && plainLabel !== null }]"

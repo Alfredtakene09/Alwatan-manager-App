@@ -15,7 +15,6 @@ import { requireAuth } from "../middleware/auth.js";
 import { doctorCanAccessOperationsMenu } from "../lib/clinic-service-exam.js";
 import { getEffectiveHiddenUiActions } from "../lib/role-ui-settings.js";
 import {
-  hasActiveConcurrentSession,
   isAccountLocked,
   isSessionIdle,
   LAST_ATTEMPT_WARNING_AT,
@@ -174,14 +173,6 @@ router.post("/login", async (req, res) => {
       });
     }
 
-    if (hasActiveConcurrentSession(user.sessionTokenId, user.lastActivityAt)) {
-      return res.status(409).json({
-        error:
-          "Une session est déjà active pour cet utilisateur sur un autre poste. Déconnectez-vous d'abord sur l'autre appareil, ou attendez 30 minutes d'inactivité.",
-        code: "SESSION_ACTIVE",
-      });
-    }
-
     const sessionId = newSessionId();
     const now = new Date();
     await prisma.user.update({
@@ -261,7 +252,7 @@ router.get("/me", async (req, res) => {
     if (!dbUser.sessionTokenId || dbUser.sessionTokenId !== sessionUser.sid) {
       await clearSessionCookie(req, res);
       return res.status(401).json({
-        error: "Session invalide ou remplacée.",
+        error: "Session fermée — connexion ouverte sur un autre poste.",
         code: "SESSION_REPLACED",
       });
     }
@@ -272,7 +263,7 @@ router.get("/me", async (req, res) => {
       });
       await clearSessionCookie(req, res);
       return res.status(401).json({
-        error: "Session expirée pour inactivité (30 minutes).",
+        error: "Session expiree pour inactivite (12 heures).",
         code: "SESSION_IDLE",
       });
     }

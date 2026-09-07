@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <title>Alwatan — Mise à jour</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+        margin: 0;
+        background: #0f2744;
+        color: #f4f7fb;
+      }
+      p {
+        max-width: 28rem;
+        text-align: center;
+        line-height: 1.45;
+      }
+    </style>
+  </head>
+  <body>
+    <p>Mise à jour d’Alwatan…<br />Effacement du cache navigateur, puis rechargement.</p>
+    <script>
+      ;(async function () {
+        try {
+          if ('serviceWorker' in navigator) {
+            const regs = await navigator.serviceWorker.getRegistrations()
+            await Promise.all(regs.map((r) => r.unregister()))
+          }
+        } catch (_) {}
+        try {
+          if ('caches' in window) {
+            const keys = await caches.keys()
+            await Promise.all(keys.map((k) => caches.delete(k)))
+          }
+        } catch (_) {}
+        try {
+          localStorage.removeItem('alwatan-app-build-id')
+          localStorage.removeItem('alwatan.printMode')
+        } catch (_) {}
+        var q = '?maj=' + Date.now()
+        window.location.replace('/' + q)
+      })()
+    </script>
+  </body>
+</html>

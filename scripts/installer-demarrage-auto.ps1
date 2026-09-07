@@ -4,18 +4,23 @@
 # Usage :
 #   .\scripts\installer-demarrage-auto.ps1
 #   .\scripts\installer-demarrage-auto.ps1 -Uninstall
+#   .\scripts\installer-demarrage-auto.ps1 -DelaySeconds 5
 
 param(
     [switch]$Uninstall,
-    # Délai après ouverture de session (laisse PostgreSQL démarrer)
-    [int]$DelaySeconds = 30
+    # Delai minimal apres login (PostgreSQL / pile reseau). Eviter 30s — trop long sur Ethernet.
+    [int]$DelaySeconds = 5
 )
 
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\_alwatan-common.ps1"
 
+if ($DelaySeconds -lt 0) { $DelaySeconds = 0 }
+if ($DelaySeconds -gt 60) { $DelaySeconds = 60 }
+
 $TaskName = 'Alwatan-Demarrage-Serveur'
-$silentVbs = Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-serveur' -ExtraArgs '-Production'
+# -Boot : demarrage rapide (pas de rebuild / pare-feu / navigateur)
+$silentVbs = Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-serveur' -ExtraArgs '-Production -Boot'
 $launcherCmd = Join-Path $PSScriptRoot 'lancer-serveur.cmd'
 $startupLnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Alwatan Manager (Serveur).lnk'
 
@@ -40,7 +45,7 @@ $action = New-ScheduledTaskAction `
     -WorkingDirectory $PSScriptRoot
 
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-# Décalage pour laisser le réseau / PostgreSQL démarrer
+# Decalage court uniquement (polling PostgreSQL/Ethernet dans -Boot)
 $trigger.Delay = "PT${DelaySeconds}S"
 
 $settings = New-ScheduledTaskSettingsSet `
@@ -60,18 +65,19 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description 'Démarre Alwatan Manager (API + interface) à l''ouverture de session — sans fenêtre console' `
+    -Description 'Démarre Alwatan Manager rapidement à l''ouverture de session (mode -Boot Ethernet)' `
     -Force | Out-Null
 
 Write-Host ''
-Write-Host 'Démarrage automatique installé (mode cabinet, port 4000, sans terminal).' -ForegroundColor Green
+Write-Host 'Démarrage automatique installé (mode cabinet rapide, port 4000).' -ForegroundColor Green
 Write-Host "  Tâche planifiée : $TaskName"
 Write-Host "  Déclencheur     : ouverture de session ($env:USERNAME)"
-Write-Host "  Délai           : ${DelaySeconds}s (PostgreSQL / réseau)"
+Write-Host "  Délai           : ${DelaySeconds}s (puis attente active PostgreSQL)"
+Write-Host "  Mode            : -Production -Boot (sans navigateur / sans rebuild)"
 Write-Host "  Lanceur         : $silentVbs"
 Write-Host "  Journal         : $env:LOCALAPPDATA\CliniqueAlwatan\server.log"
 Write-Host ''
-Write-Host 'Au prochain redémarrage, le serveur Alwatan démarrera tout seul.' -ForegroundColor Cyan
-Write-Host 'Relance manuelle : raccourci Bureau « Alwatan Manager (Serveur) » (pas Serveur Auto).' -ForegroundColor Cyan
+Write-Host 'Au prochain redémarrage, le serveur Alwatan démarrera plus vite.' -ForegroundColor Cyan
+Write-Host 'Relance manuelle : raccourci Bureau « Alwatan Manager (Serveur) » (ouvre le navigateur).' -ForegroundColor Cyan
 Write-Host 'Pour désinstaller : .\scripts\installer-demarrage-auto.ps1 -Uninstall' -ForegroundColor DarkGray
 Write-Host ''

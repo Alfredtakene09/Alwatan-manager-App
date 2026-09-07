@@ -96,9 +96,9 @@ export function canViewClinicalConsultationDetails(role: AppUserRole) {
 
 /**
  * Catalogue pharmacie (catégories / fournisseurs / écriture produits).
- * Réservé admin et gestionnaire.
+ * Tous les rôles ayant accès au module pharmacie.
  */
-export const PHARMACY_CATALOG_ROLES: AppUserRole[] = ["ADMIN", "GESTIONNAIRE"];
+export const PHARMACY_CATALOG_ROLES: AppUserRole[] = MODULE_ACCESS.pharmacie;
 
 export function canManagePharmacyCatalog(role: AppUserRole) {
   return PHARMACY_CATALOG_ROLES.includes(role);

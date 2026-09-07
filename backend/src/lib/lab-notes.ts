@@ -699,8 +699,13 @@ export function parsePrescribedExamCommentsByKind(notes?: string | null): Record
   return result;
 }
 
-export function flattenPrescribedExams(examsByKind: Record<ExamKindSlug, string[]>) {
-  return EXAM_KIND_ORDER.flatMap((kind) => examsByKind[kind]);
+export function flattenPrescribedExams(
+  examsByKind?: Partial<Record<ExamKindSlug, string[]>> | null,
+) {
+  if (!examsByKind) return [];
+  return EXAM_KIND_ORDER.flatMap((kind) => examsByKind[kind] ?? []).filter(
+    (label): label is string => typeof label === "string" && label.trim().length > 0,
+  );
 }
 
 export function mergeExamsByKind(

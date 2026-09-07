@@ -66,7 +66,11 @@ const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 
 const visitId = computed(() => String(route.params.visitId ?? ''))
-const activePanelConfig = computed(() => (activePanel.value ? getLabFormPanel(activePanel.value) : null))
+const activePanelConfig = computed(() => {
+  void labPanels.panels
+  if (!activePanel.value) return null
+  return labPanels.getPanel(activePanel.value) ?? getLabFormPanel(activePanel.value) ?? null
+})
 
 const patientLabel = computed(() => {
   if (!visit.value) return ''

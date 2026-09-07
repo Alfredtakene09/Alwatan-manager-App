@@ -128,7 +128,7 @@ export const UI_ACTIONS: UiActionDef[] = [
   {
     id: 'reception.print_receipt',
     group: 'reception',
-    label: 'Imprimer le reçu de consultation',
+    label: 'Réimprimer le reçu de consultation',
     defaultRoles: ['GESTIONNAIRE', 'RECEPTIONNISTE'],
   },
   {
@@ -173,7 +173,7 @@ export const UI_ACTIONS: UiActionDef[] = [
     group: 'accounting',
     label: 'Paiement examens',
     hint: 'Examens payés, réclamations, en attente de paiement.',
-    defaultRoles: DIRECTION_STAFF,
+    defaultRoles: ['GESTIONNAIRE', 'RECEPTIONNISTE'],
   },
   {
     id: 'comptabilite.reduction',

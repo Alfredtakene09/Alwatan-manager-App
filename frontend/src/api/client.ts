@@ -7,15 +7,22 @@ const api = axios.create({
   timeout: 25_000,
 })
 
+function isAuthCheckRequest(url: string, method: string) {
+  const m = method.toLowerCase()
+  if (url.includes('/auth/login') || url.includes('/auth/me')) return true
+  // Ne pas expulser silencieusement après Enregistrer : laisser l’UI afficher l’erreur.
+  return m !== 'get' && m !== 'head'
+}
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     const status = error?.response?.status
     const url = String(error?.config?.url ?? '')
-    const isAuthEndpoint = url.includes('/auth/login') || url.includes('/auth/me')
+    const method = String(error?.config?.method ?? 'get')
     const code = String(error?.response?.data?.code ?? '')
     // Session cookie absente / invalide après ouverture via raccourci LAN → retour login.
-    if (status === 401 && !isAuthEndpoint && typeof window !== 'undefined') {
+    if (status === 401 && !isAuthCheckRequest(url, method) && typeof window !== 'undefined') {
       const path = window.location.pathname
       if (path !== '/login' && !path.startsWith('/login')) {
         const authRaw = sessionStorage.getItem('alwatan-auth-redirect')

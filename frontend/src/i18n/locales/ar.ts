@@ -26,6 +26,7 @@ export default {
     'Consultation enregistrée — ordonnance sauvegardée (impression manuelle).':
       'تم حفظ الاستشارة — الوصفة محفوظة (الطباعة يدوية).',
     'Modifier la prescription': 'تعديل الوصفة',
+    'Modifier la consultation': 'تعديل الاستشارة',
     'Enregistrer la prescription': 'حفظ الوصفة',
     'Des résultats labo sont déjà enregistrés. Pour ajouter des examens, utilisez « Ajouter des examens ». Vous pouvez modifier l’ordonnance pharmacie ici.':
       'نتائج المختبر مسجّلة مسبقاً. لإضافة فحوصات، استخدم « إضافة فحوصات ». يمكنك تعديل وصفة الصيدلية هنا.',
@@ -898,6 +899,8 @@ export default {
     Reçu: 'إيصال',
     'Imprimer le reçu': 'طباعة الإيصال',
     'Imprimer le reçu de consultation': 'طباعة إيصال الاستشارة',
+    'Réimprimer le reçu': 'إعادة طباعة الإيصال',
+    'Réimprimer le reçu de consultation': 'إعادة طباعة إيصال الاستشارة',
     'Total payé': 'المجموع المدفوع',
     'Merci de votre confiance': 'شكراً لثقتكم',
     'Tél.': 'هاتف',
@@ -2349,9 +2352,9 @@ export default {
       generic: 'خطأ في تسجيل الدخول. حاول مرة أخرى بعد لحظات.',
       sessionExpired:
         'انتهت الجلسة أو رُفض ملف تعريف الارتباط على هذا الجهاز. سجّل الدخول مجددًا (استخدم عنوان Wi‑Fi الحالي للخادم وليس عنوانًا قديمًا).',
-      sessionIdle: 'انتهت الجلسة بعد 30 دقيقة دون نشاط. يرجى تسجيل الدخول مجددًا.',
+      sessionIdle: 'انتهت الجلسة بعد 12 ساعة دون نشاط. يرجى تسجيل الدخول مجددًا.',
       sessionActive:
-        'جلسة نشطة موجودة بالفعل لهذا المستخدم على جهاز آخر. سجّل الخروج أولاً من الجهاز الآخر، أو انتظر 30 دقيقة من عدم النشاط.',
+        'جلسة نشطة موجودة بالفعل لهذا المستخدم على جهاز آخر. سجّل الخروج أولاً من الجهاز الآخر، أو انتظر انتهاء الجلسة غير النشطة.',
       sessionReplaced: 'تم إلغاء هذه الجلسة. يرجى تسجيل الدخول مجددًا.',
       lastAttempt: 'كلمة المرور غير صحيحة. تنبيه: هذه آخر محاولة قبل قفل الحساب.',
       locked:
@@ -2378,6 +2381,13 @@ export default {
     syncShortcutHint:
       'تغيّر عنوان الشبكة. حمّل اختصاراً جديداً (Ethernet الحالي) ثم نفّذ الملف — ستُستبدل الاختصارات القديمة.',
     syncShortcutButton: 'تحميل الاختصار الجديد',
+    updateShortcutButton: 'تحديث اختصار سطح المكتب',
+    updateShortcutHint:
+      'يحدّث تلقائياً الاختصار المثبت مسبقاً (بدون تنزيل ملف جديد).',
+    updateShortcutDone: 'تم تحديث الاختصار تلقائياً. يمكنك استخدامه مباشرة.',
+    updateShortcutFirstInstall:
+      'أول مرة: تم تنزيل ملف .cmd — نفّذه مرة واحدة. التحديثات التالية ستكون تلقائية.',
+    updatingShortcut: 'جاري التحديث…',
     androidStep1: 'افتح هذه الصفحة في Chrome (وليس متصفحاً آخر).',
     androidStep2: 'اضغط على القائمة ⋮ في أعلى اليمين.',
     androidStep3: 'اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».',
@@ -2429,6 +2439,7 @@ export default {
     'Examens & paiements': 'الفحوصات والمدفوعات',
     'Paiement examens': 'دفع الفحوصات',
     'En attente de paiement': 'في انتظار الدفع',
+    'Examens prescrits à encaisser': 'فحوصات موصوفة بانتظار التحصيل',
     'Ajouter examen en cours de paiement': 'إضافة فحص قيد الدفع',
     'Examens payés': 'فحوصات مدفوعة',
     Réclamations: 'الشكاوى',
@@ -2666,8 +2677,9 @@ export default {
     Trichiasis: 'أهداب داخلية',
     'Aucune nomenclature liée pour l’instant. Ajoutez des examens (nomenclature médecin) ou des types d’opérations pour ce service.':
       'لا توجد تسمية مرتبطة حالياً. أضف فحوصات (تسمية الطبيب) أو أنواع عمليات لهذه الخدمة.',
-    'Choisissez le service puis les examens ou opérations. Sélectionnez le médecin du service si disponible.':
-      'اختر الخدمة ثم الفحوصات أو العمليات. حدّد طبيب الخدمة إن وُجد.',
+    'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.':
+      'اختر الخدمة ثم الفحوصات أو العمليات. الطبيب اختياري.',
+    'Médecin (optionnel)': 'الطبيب (اختياري)',
     'Sélectionner un médecin…': 'اختر طبيباً…',
     'Aucun médecin lié à ce service': 'لا يوجد طبيب مرتبط بهذه الخدمة',
     'Médecin — {service}': 'الطبيب — {service}',

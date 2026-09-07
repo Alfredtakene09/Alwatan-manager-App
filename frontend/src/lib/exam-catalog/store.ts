@@ -306,9 +306,11 @@ async function buildExamenFromLabPanels(): Promise<CatalogExam[] | null> {
  * Onglet Labo = uniquement les formulaires de saisie actifs.
  * Les examens catalogue sans formulaire ne sont pas proposés.
  */
-async function mergeActiveLabPanelsIntoExamen(_examen: CatalogExam[]): Promise<CatalogExam[]> {
+async function mergeActiveLabPanelsIntoExamen(examen: CatalogExam[]): Promise<CatalogExam[]> {
   const fromPanels = await buildExamenFromLabPanels()
-  return fromPanels ?? []
+  if (fromPanels?.length) return fromPanels
+  // API panels indisponible (ex. 403) : garder le catalogue déjà chargé.
+  return examen
 }
 
 

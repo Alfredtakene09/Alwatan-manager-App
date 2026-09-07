@@ -11,6 +11,7 @@ import api from '@/api/client'
 import UiButton from '@/components/ui/UiButton.vue'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 import InstallAppBanner from '@/components/pwa/InstallAppBanner.vue'
+import UpdateDesktopShortcutButton from '@/components/pwa/UpdateDesktopShortcutButton.vue'
 import SidebarNavSections from '@/components/layout/SidebarNavSections.vue'
 import ProfileAccountModal from '@/components/ProfileAccountModal.vue'
 import GlobalAlertsBell from '@/components/layout/GlobalAlertsBell.vue'
@@ -252,6 +253,7 @@ watch(
         </div>
 
         <div class="topbar__right">
+          <UpdateDesktopShortcutButton compact />
           <DoctorOvertimeSubmitButton />
           <GlobalAlertsBell />
           <LanguageSwitcher />

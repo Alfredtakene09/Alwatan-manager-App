@@ -51,6 +51,9 @@ function Get-TailscaleIpv4 {
         $trimmed = "$ip".Trim()
         if ($trimmed -match '^\d{1,3}(\.\d{1,3}){3}$') { return $trimmed }
     } catch { }
+    finally {
+        $global:LASTEXITCODE = 0
+    }
     return $null
 }
 
@@ -124,6 +127,98 @@ function Get-LocalLanIpv4 {
 
 function Get-AlwatanServerConfigPath {
     Join-Path $PSScriptRoot 'alwatan-server.txt'
+}
+
+function Set-AlwatanInternetShortcut {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Url
+    )
+
+    $dir = Split-Path $Path -Parent
+    if ($dir -and -not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    Set-Content -LiteralPath $Path -Value "[InternetShortcut]`r`nURL=$Url" -Encoding ASCII
+}
+
+function Update-AlwatanClientShortcutUrls {
+    param(
+        [Parameter(Mandatory = $true)][string]$ServerIp,
+        [string]$TailscaleIp = $null,
+        [int]$Port = 4000,
+        [string]$InstallDir = $null
+    )
+
+    if (-not $InstallDir) {
+        $InstallDir = Join-Path $env:LOCALAPPDATA 'CliniqueAlwatan\Alwatan Manager'
+    }
+
+    $url = "http://${ServerIp}:${Port}/"
+    $tsUrl = if ($TailscaleIp -and $TailscaleIp -ne $ServerIp) { "http://${TailscaleIp}:${Port}/" } else { $null }
+    $desc = "Clinique Alwatan - Ethernet puis Tailscale ($url)"
+
+    $configPaths = @(
+        (Join-Path $InstallDir 'alwatan-server.txt'),
+        (Join-Path $env:LOCALAPPDATA 'CliniqueAlwatan\alwatan-server.txt')
+    ) | Select-Object -Unique
+
+    foreach ($cfg in $configPaths) {
+        Write-AlwatanServerConfig -ServerIp $ServerIp -TailscaleIp $TailscaleIp -Path $cfg
+    }
+
+    if (Test-Path $InstallDir) {
+        $lienLines = @("Ethernet : $($url.TrimEnd('/'))")
+        if ($tsUrl) { $lienLines += "Tailscale : $($tsUrl.TrimEnd('/'))" }
+        [System.IO.File]::WriteAllText(
+            (Join-Path $InstallDir 'LIEN-SERVEUR.txt'),
+            ($lienLines -join "`r`n"),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+
+        Set-AlwatanInternetShortcut -Path (Join-Path $InstallDir 'Ouvrir Alwatan.url') -Url $url
+        Set-AlwatanInternetShortcut -Path (Join-Path $InstallDir 'Ouvrir Alwatan (Wi-Fi).url') -Url $url
+        if ($tsUrl) {
+            Set-AlwatanInternetShortcut -Path (Join-Path $InstallDir 'Ouvrir Alwatan (Tailscale).url') -Url $tsUrl
+        }
+    }
+
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $desktopUrlNames = @(
+        'Alwatan Manager (Wi-Fi).url',
+        'Ouvrir Alwatan (reseau).url'
+    )
+    foreach ($name in $desktopUrlNames) {
+        $path = Join-Path $desktop $name
+        if (Test-Path $path) {
+            Set-AlwatanInternetShortcut -Path $path -Url $url
+        }
+    }
+    if ($tsUrl) {
+        $tsDesk = Join-Path $desktop 'Alwatan Manager (Tailscale).url'
+        if (Test-Path $tsDesk) {
+            Set-AlwatanInternetShortcut -Path $tsDesk -Url $tsUrl
+        }
+    }
+
+    $lnkPaths = @(
+        (Join-Path $desktop 'Alwatan Manager.lnk'),
+        (Join-Path $env:PUBLIC 'Desktop\Alwatan Manager.lnk'),
+        (Join-Path ([Environment]::GetFolderPath('Programs')) 'Clinique Alwatan\Alwatan Manager.lnk')
+    )
+    foreach ($lnkPath in $lnkPaths) {
+        if (-not (Test-Path $lnkPath)) { continue }
+        try {
+            $shell = New-Object -ComObject WScript.Shell
+            $lnk = $shell.CreateShortcut($lnkPath)
+            $lnk.Description = $desc
+            $lnk.Save()
+        } catch {
+            Write-AlwatanClientLaunchLog "WARN: could not update shortcut description ($lnkPath)"
+        }
+    }
+
+    Write-AlwatanClientLaunchLog "Updated client shortcuts -> $ServerIp"
 }
 
 function Write-AlwatanServerConfig {
@@ -494,6 +589,37 @@ function Wait-AlwatanProductionUrl {
     return $null
 }
 
+<#
+  Attente courte au reboot : PostgreSQL d'abord (bloque le serveur).
+  Ne bloque pas longtemps sur Ethernet — le serveur ecoute 0.0.0.0 des le demarrage.
+#>
+function Wait-AlwatanBootPrerequisites {
+    param(
+        [Parameter(Mandatory = $true)][int]$DbPort,
+        [int]$TimeoutSec = 18
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    $dbOk = $false
+    while ((Get-Date) -lt $deadline) {
+        if (Test-AlwatanQuickTcp -HostName '127.0.0.1' -Port $DbPort -TimeoutMs 250) {
+            $dbOk = $true
+            break
+        }
+        Start-Sleep -Milliseconds 350
+    }
+
+    $ethIp = $null
+    if (Get-Command Get-AlwatanEthernetIpv4 -ErrorAction SilentlyContinue) {
+        $ethIp = Get-AlwatanEthernetIpv4
+    }
+
+    return @{
+        DbOk  = [bool]$dbOk
+        EthIp = $ethIp
+    }
+}
+
 function Test-AlwatanServerListening {
     param([int]$Port = 4000)
     return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1)
@@ -683,6 +809,54 @@ Si le Wi-Fi clinique bloque les PC entre eux :
     Copy-Item -LiteralPath (Join-Path $outDir 'Ouvrir Alwatan.url') -Destination (Join-Path $desktop 'Ouvrir Alwatan (reseau).url') -Force
 
     return $outDir
+}
+
+function Test-AlwatanClientAccessStale {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$ExpectedIp,
+        [string]$TailscaleIp = $null
+    )
+
+    $clientDir = Join-Path $Root 'acces-client'
+    if (-not (Test-Path (Join-Path $clientDir 'INSTALLER.bat'))) { return $true }
+
+    $clientCfg = Join-Path $clientDir 'alwatan-server.txt'
+    if (-not (Test-Path $clientCfg)) { return $true }
+
+    $currentIp = Read-AlwatanConfigValue -Key 'SERVER_IP' -Path $clientCfg
+    if ($currentIp -ne $ExpectedIp) { return $true }
+
+    if ($TailscaleIp) {
+        $currentTs = Read-AlwatanConfigValue -Key 'TAILSCALE_IP' -Path $clientCfg
+        if ($currentTs -ne $TailscaleIp) { return $true }
+    }
+
+    return $false
+}
+
+function Ensure-AlwatanClientAccessPublished {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$ServerIps,
+        [int]$Port = 4000,
+        [string]$Root = (Get-AlwatanRoot)
+    )
+
+    $primary = $ServerIps | Where-Object {
+        $_ -and $_ -ne '192.168.137.1' -and -not (Test-AlwatanTailscaleIpv4 $_)
+    } | Select-Object -First 1
+    if (-not $primary) { $primary = ($ServerIps | Select-Object -First 1) }
+    if (-not $primary) { return $null }
+
+    $tsIp = $ServerIps | Where-Object { Test-AlwatanTailscaleIpv4 $_ } | Select-Object -First 1
+    if (-not $tsIp) { $tsIp = Get-TailscaleIpv4 }
+
+    if (Test-AlwatanClientAccessStale -Root $Root -ExpectedIp $primary -TailscaleIp $tsIp) {
+        Write-Host "Mise a jour du package client (IP $primary)..." -ForegroundColor Cyan
+        return Publish-AlwatanClientAccess -ServerIps $ServerIps -Port $Port -Root $Root
+    }
+
+    return Join-Path $Root 'acces-client'
 }
 
 function Show-AlwatanCabinetHelp {
@@ -977,17 +1151,20 @@ function Open-AlwatanBrowser {
     $appUrl = $Url.Trim()
     if ($appUrl -notmatch '/$') { $appUrl += '/' }
 
-    try {
-        $base = $appUrl.TrimEnd('/')
-        $ver = Invoke-RestMethod -Uri ("{0}/api/app-version?_={1}" -f $base, [guid]::NewGuid().ToString('N')) -TimeoutSec 2
-        if ($ver -and $ver.buildId) {
-            $q = [uri]::EscapeDataString([string]$ver.buildId)
-            $appUrl = "{0}?v={1}" -f $appUrl, $q
-        }
-    } catch { }
     if ($ForceHardReload) {
-        $sep = if ($appUrl.Contains('?')) { '&' } else { '?' }
-        $appUrl = "{0}{1}hardReloadTs={2}" -f $appUrl, $sep, ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+        # Page speciale : desenregistre le service worker + purge caches, puis redirige
+        $base = $appUrl.TrimEnd('/')
+        $appUrl = "{0}/maj.html?t={1}" -f $base, ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+        Write-AlwatanClientLaunchLog "ForceHardReload via maj.html: $appUrl"
+    } else {
+        try {
+            $base = $appUrl.TrimEnd('/')
+            $ver = Invoke-RestMethod -Uri ("{0}/api/app-version?_={1}" -f $base, [guid]::NewGuid().ToString('N')) -TimeoutSec 2
+            if ($ver -and $ver.buildId) {
+                $q = [uri]::EscapeDataString([string]$ver.buildId)
+                $appUrl = "{0}?v={1}" -f $appUrl, $q
+            }
+        } catch { }
     }
 
     $profileDir = Ensure-AlwatanAppBrowserProfile
@@ -1093,6 +1270,7 @@ function Open-AlwatanBrowser {
         Start-Process $appUrl
     } catch {
         cmd.exe /c start "" "$appUrl" | Out-Null
+        $global:LASTEXITCODE = 0
     }
 }
 
@@ -1185,6 +1363,31 @@ function Ensure-AlwatanLanFirewallNetsh {
         }
     }
     Ensure-AlwatanNodeFirewall
+}
+
+function Ensure-AlwatanServerStayAwake {
+    <#
+    Empêche la mise en veille / hibernation du serveur Alwatan (secteur AC).
+    L'ecran peut s'eteindre ; le PC reste joignable sur le LAN.
+    #>
+    try {
+        # 0 = jamais
+        powercfg /change standby-timeout-ac 0 2>$null | Out-Null
+        powercfg /change hibernate-timeout-ac 0 2>$null | Out-Null
+        powercfg /change disk-timeout-ac 0 2>$null | Out-Null
+        # Ecran : 20 min OK (economie, sans couper le reseau)
+        powercfg /change monitor-timeout-ac 20 2>$null | Out-Null
+        # Desactive hibernation fichier (optionnel, ignore si droits insuffisants)
+        powercfg /hibernate off 2>$null | Out-Null
+        # Garde le reseau actif en veille moderne si jamais activee
+        powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_NONE CONNECTIVITYINSTANDBY 1 2>$null | Out-Null
+        powercfg /SETACTIVE SCHEME_CURRENT 2>$null | Out-Null
+        Write-Host 'Alimentation : veille/hibernation AC desactivees (serveur reste allume).' -ForegroundColor DarkGray
+        return $true
+    } catch {
+        Write-Host ("Alimentation : impossible d'ajuster powercfg ({0})" -f $_.Exception.Message) -ForegroundColor Yellow
+        return $false
+    }
 }
 
 function Ensure-AlwatanLanFirewall {
@@ -1703,12 +1906,18 @@ function Show-AlwatanMessage {
         [string]$Type = 'Information'
     )
 
-    Add-Type -AssemblyName System.Windows.Forms
-    $icon = switch ($Type) {
-        'Warning' { [System.Windows.Forms.MessageBoxIcon]::Warning }
-        'Error' { [System.Windows.Forms.MessageBoxIcon]::Error }
-        default { [System.Windows.Forms.MessageBoxIcon]::Information }
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        $icon = switch ($Type) {
+            'Warning' { [System.Windows.Forms.MessageBoxIcon]::Warning }
+            'Error' { [System.Windows.Forms.MessageBoxIcon]::Error }
+            default { [System.Windows.Forms.MessageBoxIcon]::Information }
+        }
+        [void][System.Windows.Forms.MessageBox]::Show($Message, $Title, [System.Windows.Forms.MessageBoxButtons]::OK, $icon)
+    } catch {
+        Write-Host ''
+        Write-Host $Title -ForegroundColor Cyan
+        Write-Host $Message
+        Write-Host ''
     }
-
-    [void][System.Windows.Forms.MessageBox]::Show($Message, $Title, [System.Windows.Forms.MessageBoxButtons]::OK, $icon)
 }

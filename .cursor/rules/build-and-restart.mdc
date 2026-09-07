@@ -1,0 +1,14 @@
+---
+description: Après chaque modification de code, compiler et relancer le serveur cabinet
+alwaysApply: true
+---
+
+# Build + relance automatique
+
+Dès qu’un changement frontend ou backend est appliqué (fichiers enregistrés par l’agent), **ne pas attendre** que l’utilisateur demande un rebuild.
+
+1. Compiler : `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/lancer-serveur.ps1 -Production` depuis la racine du dépôt (le script recompile `dist` si les sources ont changé, puis redémarre le port 4000).
+2. Si seul le frontend a bougé et qu’un build Vite est déjà lancé à part : `npm run build` dans `frontend`, puis le même script serveur.
+3. Annoncer brièvement que le build et le redémarrage sont faits (ou l’erreur si ça échoue).
+
+Ne pas lancer ce cycle pour un simple changement de règle Cursor, de doc, ou une question sans modification de code.

@@ -3,8 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
 import { Tags, Plus, RefreshCw, Save } from '@lucide/vue'
 import api from '@/api/client'
-import { canManagePharmacyCatalog } from '@/lib/roles'
-import { isUiActionAllowed } from '@/lib/ui-actions'
+import { canWritePharmacyCatalog } from '@/lib/roles'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -28,9 +27,7 @@ const emit = defineEmits<{ changed: [] }>()
 
 const { uiText, localeCode } = useAppI18n()
 const auth = useAuthStore()
-const canManageCatalog = computed(() =>
-  auth.user ? canManagePharmacyCatalog(auth.user.role) && isUiActionAllowed(auth.user, 'pharmacie.catalog') : false,
-)
+const canManageCatalog = computed(() => canWritePharmacyCatalog(auth.user))
 
 const items = ref<PharmacyCategoryRecord[]>([])
 const loading = ref(false)

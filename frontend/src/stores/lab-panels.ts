@@ -45,7 +45,7 @@ export function panelDtoToFormPanel(dto: LabPanelDto): LabFormPanel {
   const sections: LabFormSection[] = []
   const byTitle = new Map<string, LabFormSection>()
 
-  for (const field of [...dto.fields].sort((a, b) => a.sortOrder - b.sortOrder)) {
+  for (const field of [...(dto.fields ?? [])].sort((a, b) => a.sortOrder - b.sortOrder)) {
     const key = field.section ?? ''
     let section = byTitle.get(key)
     if (!section) {

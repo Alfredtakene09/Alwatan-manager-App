@@ -299,8 +299,8 @@ router.get("/", async (req, res) => {
 
     const slug = KIND_TO_SLUG[item.kind];
     if (slug === "radio" || slug === "echo" || slug === "odonto") {
-      // Ne pas mélanger les nomenclatures de spécialité dans Radio/Écho/Odonto
-      if (!isExamVisibleOnKindTab(item, item.kind)) continue;
+      // Les examens de spécialité sont déjà détournés ci-dessus.
+      // Ne pas masquer Radio/Écho/Odonto si le service lié n’est pas « canonique ».
       grouped[slug].push(dto);
     } else if (slug === "examen") {
       // Autres EXAMEN non-labo non-spécialité (visibles quand même dans Labo)

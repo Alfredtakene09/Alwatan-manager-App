@@ -46,9 +46,10 @@ function Open-ConfiguredServer {
                 try { $tsHost = ([uri]$info.tailscaleUrl).Host } catch {}
             }
             if (-not $wifiHost) { $wifiHost = $Ip }
-            Write-AlwatanServerConfig -ServerIp $wifiHost -TailscaleIp $tsHost -Path (Join-Path $PSScriptRoot 'alwatan-server.txt')
-            Write-AlwatanClientLaunchLog "Synced alwatan-server.txt WIFI=$wifiHost TS=$tsHost"
+            Update-AlwatanClientShortcutUrls -ServerIp $wifiHost -TailscaleIp $tsHost -InstallDir $PSScriptRoot
+            Write-AlwatanClientLaunchLog "Synced alwatan-server.txt LAN=$wifiHost TS=$tsHost"
         } catch {
+            Update-AlwatanClientShortcutUrls -ServerIp $Ip -TailscaleIp (Read-AlwatanTailscaleIp) -InstallDir $PSScriptRoot
             Write-AlwatanClientLaunchLog "WARN: could not sync server info ($($_.Exception.Message))"
         }
         Open-AlwatanBrowser -Url $url -ForceHardReload:$ForceHardReload
@@ -75,7 +76,7 @@ $discovered = Find-AlwatanServerOnEthernetSubnet -Port 4000
 if ($discovered) {
     Write-AlwatanClientLaunchLog "Auto-discovered server on LAN: $discovered"
     $tsHost = Read-AlwatanTailscaleIp
-    Write-AlwatanServerConfig -ServerIp $discovered -TailscaleIp $tsHost -Path (Join-Path $PSScriptRoot 'alwatan-server.txt')
+    Update-AlwatanClientShortcutUrls -ServerIp $discovered -TailscaleIp $tsHost -InstallDir $PSScriptRoot
     if (Open-ConfiguredServer -Ip $discovered -Label 'Ethernet-auto') { exit 0 }
 }
 

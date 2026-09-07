@@ -6,7 +6,7 @@ import { formatFcfa, fullName } from '@/lib/roles'
 import { CLINIC } from '@/lib/clinic'
 import { formatPatientTableDate } from '@/lib/patient-datatable-columns'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
-import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, openPrintDocument, thermalMetaRow } from '@/lib/print-document'
+import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, openPrintDocument, reservePrintWindow, thermalMetaRow } from '@/lib/print-document'
 import { translateUi } from '@/i18n/translate'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -162,10 +162,13 @@ async function loadItems() {
   }
 }
 
-function printSale(sale: SaleRecord) {
+async function printSale(sale: SaleRecord) {
   const invoiceNumber = sale.invoiceNumber ?? sale.id.slice(0, 8).toUpperCase()
   const date = new Date(sale.createdAt).toLocaleString('fr-FR')
   const isInternal = sale.buyerType === 'patient' || Boolean(sale.patient)
+
+  reservePrintWindow('80mm')
+
   const internalBlock = isInternal ? thermalMetaRow('Type', 'Interne', '') : ''
   const itemsTable = buildPharmacyTicketItemsTableHtml({
     lines: sale.lines.map((line) => ({
@@ -353,7 +356,9 @@ function exportExcel() {
   exportTableExcel(uiText('Historique des ventes pharmacie'), exportColumns.value, tableRows.value)
 }
 
-onMounted(loadItems)
+onMounted(() => {
+  void loadItems()
+})
 
 defineExpose({ reload: loadItems })
 </script>

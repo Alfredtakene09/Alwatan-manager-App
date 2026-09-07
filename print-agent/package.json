@@ -1,0 +1,15 @@
+{
+  "name": "alwatan-print-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent d'impression ESC/POS silencieuse (Syntalsol ECO250 USB) pour postes Réception / Pharmacie",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "list-printers": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/list-printers.ps1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

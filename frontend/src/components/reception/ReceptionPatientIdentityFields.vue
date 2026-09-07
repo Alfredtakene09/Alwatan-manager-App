@@ -31,7 +31,7 @@ const labels = computed(() => {
   void localeCode.value
   return {
     fullName: uiText('Nom et prénom'),
-    phone: uiText('Téléphone'),
+    phone: uiText('Téléphone (optionnel)'),
     age: uiText('Âge'),
     ageUnit: uiText("Unité d'âge"),
     gender: uiText('Genre'),
@@ -66,7 +66,6 @@ const phoneHint = computed(() => {
           :label="labels.phone"
           :placeholder="uiText('06 XX XX XX XX')"
           :icon="Phone"
-          required
         />
         <p v-if="phoneHint" class="phone-field__hint">{{ phoneHint }}</p>
       </div>

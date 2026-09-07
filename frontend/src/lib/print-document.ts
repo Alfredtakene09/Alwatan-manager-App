@@ -1078,6 +1078,69 @@ export const CLINIC_PRINT_STYLES = `
     font-size: 9px;
   }
 
+  /* Reçu patient réception — textes ×2 (logo inchangé) */
+  body.print-thermal .thermal-receipt--reception.thermal-receipt--ticket {
+    font-size: 22px;
+    line-height: 1.3;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__title,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__title--fr {
+    font-size: 24px;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__subtitle-no {
+    font-size: 22px;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__contact {
+    font-size: 18px;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__row,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__line {
+    font-size: 20px;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__value {
+    font-size: 20px;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__line--total,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__row--total {
+    font-size: 24px;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__thanks {
+    font-size: 22px;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__note {
+    font-size: 18px;
+  }
+
+  /* Ticket clôture de journée (réception) — textes un peu plus grands */
+  body.print-thermal .thermal-receipt--day-closure.thermal-receipt--ticket {
+    font-size: 14px;
+    line-height: 1.35;
+  }
+  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__title,
+  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__title--fr {
+    font-size: 16px;
+  }
+  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__subtitle-no {
+    font-size: 14px;
+  }
+  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__contact {
+    font-size: 12px;
+  }
+  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__row,
+  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__line {
+    font-size: 14px;
+  }
+  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__value {
+    font-size: 14px;
+  }
+  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__line--total,
+  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__row--total {
+    font-size: 16px;
+  }
+  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__thanks {
+    font-size: 14px;
+  }
+
   /* Tableau pharmacie : Produit | Qté | PU | PT + Total en pied */
   body.print-thermal .thermal-receipt__items-table {
     width: 100%;
@@ -1470,7 +1533,7 @@ export function buildConsultationReceiptHtml(data: ConsultationReceiptData): str
   ].join('')
 
   return `
-<div class="thermal-receipt thermal-receipt--ticket">
+<div class="thermal-receipt thermal-receipt--ticket thermal-receipt--reception">
   ${buildThermalTicketHeadHtml({ title: 'Reçu de consultation', number: consultNo })}
   <hr class="thermal-receipt__rule" />
 
@@ -1536,7 +1599,7 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
     .join('')
 
   return `
-<div class="thermal-receipt thermal-receipt--ticket">
+<div class="thermal-receipt thermal-receipt--ticket thermal-receipt--day-closure">
   ${buildThermalTicketHeadHtml({ title: 'Clinique Alwatan Clôture', number: dateShort })}
   <hr class="thermal-receipt__rule" />
 
@@ -1853,6 +1916,67 @@ export type OpenPrintOptions = {
   forceLtr?: boolean
   /** Ticket court (pharmacie) : hauteur page serrée après le contenu. */
   thermalTight?: boolean
+  /**
+   * Fenêtre déjà ouverte pendant le clic utilisateur (avant un await API).
+   * Sans cela, Chrome/Edge --app bloquent souvent print() après une requête réseau.
+   */
+  targetWindow?: Window | null
+}
+
+/** Fenêtre d’impression réservée pendant le geste clic (avant await). */
+let reservedPrintWindow: Window | null = null
+
+function printWindowFeatures(pageSize?: OpenPrintOptions['pageSize']): string {
+  if (pageSize === 'A5') return 'width=520,height=740'
+  if (pageSize === 'A4') return 'width=850,height=1100'
+  if (pageSize === '80mm') return 'width=320,height=520'
+  return 'width=820,height=900'
+}
+
+/**
+ * À appeler synchrone au début du clic (avant tout await).
+ * Ouvre une fenêtre blanche pour que print() reste autorisé après l’API.
+ */
+export function reservePrintWindow(pageSize: OpenPrintOptions['pageSize'] = '80mm'): boolean {
+  cancelPrintWindow()
+  if (typeof window === 'undefined') return false
+  const win = window.open('', '_blank', printWindowFeatures(pageSize))
+  if (!win) {
+    reservedPrintWindow = null
+    return false
+  }
+  try {
+    win.document.open()
+    win.document.write(
+      '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Impression…</title></head>' +
+        '<body style="font-family:system-ui,sans-serif;padding:1.25rem;color:#334155">' +
+        '<p style="margin:0">Préparation du ticket…</p></body></html>',
+    )
+    win.document.close()
+  } catch {
+    /* ignore */
+  }
+  reservedPrintWindow = win
+  return true
+}
+
+/** Annule une réserve si l’enregistrement échoue ou qu’il n’y a rien à imprimer. */
+export function cancelPrintWindow() {
+  const win = reservedPrintWindow
+  reservedPrintWindow = null
+  if (!win || win.closed) return
+  try {
+    win.close()
+  } catch {
+    /* ignore */
+  }
+}
+
+function takeReservedPrintWindow(): Window | null {
+  const win = reservedPrintWindow
+  reservedPrintWindow = null
+  if (!win || win.closed) return null
+  return win
 }
 
 /** Hauteur page thermique (mm) — toujours portrait (> 80 mm de largeur). */
@@ -1956,8 +2080,11 @@ function printHtmlInHiddenFrame(
   const iframe = document.createElement('iframe')
   iframe.setAttribute('aria-hidden', 'true')
   iframe.setAttribute('title', 'print')
+  // Visible (presque transparent) dans le viewport : hors écran / opacity:0 → print() ignoré
+  // sous Edge/Chrome en mode --app sur plusieurs postes clients.
   iframe.style.cssText =
-    `position:fixed;left:-10000px;top:0;width:${widthPx}px;height:${heightPx}px;border:0;opacity:0;pointer-events:none;`
+    `position:fixed;right:0;bottom:0;width:${widthPx}px;height:${Math.min(heightPx, 640)}px;` +
+    'border:0;opacity:0.02;z-index:2147483646;pointer-events:none;background:#fff;'
   document.body.appendChild(iframe)
 
   const frameDoc = iframe.contentDocument
@@ -2047,12 +2174,24 @@ function printHtmlInNewWindow(
   html: string,
   windowSize: string,
   onBeforePrint?: (doc: Document) => void,
+  existingWindow?: Window | null,
 ): boolean {
-  const printWindow = window.open('', '_blank', windowSize)
+  const printWindow = existingWindow && !existingWindow.closed
+    ? existingWindow
+    : window.open('', '_blank', windowSize)
   if (!printWindow) return false
-  printWindow.document.open()
-  printWindow.document.write(html)
-  printWindow.document.close()
+  try {
+    printWindow.document.open()
+    printWindow.document.write(html)
+    printWindow.document.close()
+  } catch {
+    try {
+      printWindow.close()
+    } catch {
+      /* ignore */
+    }
+    return false
+  }
   setTimeout(() => {
     try {
       onBeforePrint?.(printWindow.document)
@@ -2065,7 +2204,7 @@ function printHtmlInNewWindow(
     } catch {
       /* ignore */
     }
-  }, 300)
+  }, 350)
   return true
 }
 
@@ -2197,23 +2336,25 @@ ${contentHtml}
   }
 
   const autoPrint = options.autoPrint !== false
-
-  const windowSize = isA5
-    ? 'width=520,height=740'
-    : isA4
-      ? 'width=850,height=1100'
-      : isThermal
-        ? 'width=320,height=520'
-        : 'width=820,height=900'
+  const windowSize = printWindowFeatures(options.pageSize)
+  const beforePrint = isThermal ? runThermalFit : undefined
+  const preparedWindow =
+    (options.targetWindow && !options.targetWindow.closed ? options.targetWindow : null)
+    ?? takeReservedPrintWindow()
 
   if (autoPrint && typeof document !== 'undefined') {
-    const beforePrint = isThermal ? runThermalFit : undefined
+    // Priorité : fenêtre réservée au clic (fiable après await API sur postes clients).
+    if (preparedWindow) {
+      printHtmlInNewWindow(html, windowSize, beforePrint, preparedWindow)
+      return
+    }
+
     const printed = printHtmlInHiddenFrame(
       html,
       beforePrint,
       isThermal
-        ? { widthPx: 302, heightPx: 1200, delayMs: 450, waitImages: true }
-        : undefined,
+        ? { widthPx: 302, heightPx: 1200, delayMs: 500, waitImages: true }
+        : { delayMs: 300 },
     )
     if (!printed) {
       printHtmlInNewWindow(html, windowSize, beforePrint)
@@ -2221,7 +2362,8 @@ ${contentHtml}
     return
   }
 
-  const printWindow = window.open('', '_blank', windowSize)
+  const printWindow =
+    preparedWindow ?? window.open('', '_blank', windowSize)
   if (!printWindow) return
   printWindow.document.write(html)
   printWindow.document.close()

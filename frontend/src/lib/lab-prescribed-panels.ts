@@ -310,6 +310,60 @@ export function summarizePrescribedExamFieldNames(
 }
 
 /**
+ * Pour une ligne prescrite : nom de section s’il y en a une, sinon nom complet de l’examen.
+ * « Panel (Hématologie: WBC) » → Hématologie
+ * « Panel (WBC) » ou « Panel » → Panel
+ */
+function prescribedSectionOrExamNames(prescribed: string): string[] {
+  const panel = extractBasePanelLabel(prescribed).trim() || prescribed.trim()
+  const untitledKey = normalizeLabLabelKey(UNTITLED_SECTION_LABEL)
+  const forms = extractSelectedFormLabels(prescribed)
+  if (!forms?.length) return panel ? [panel] : []
+
+  const names: string[] = []
+  for (const form of forms) {
+    const colon = form.indexOf(':')
+    if (colon >= 0) {
+      const section = form.slice(0, colon).trim()
+      if (section && normalizeLabLabelKey(section) !== untitledKey) {
+        names.push(section)
+        continue
+      }
+    }
+    if (panel) names.push(panel)
+  }
+  return names.length ? names : panel ? [panel] : []
+}
+
+/** Noms uniques : section si présente, sinon nom complet de l’examen. */
+export function extractPrescribedSectionOrExamNames(
+  labels: string[],
+  t: (label: string) => string = translateExamName,
+): string[] {
+  const seen = new Set<string>()
+  const parts: string[] = []
+  for (const raw of labels) {
+    for (const name of prescribedSectionOrExamNames(raw)) {
+      const trimmed = name.trim()
+      const key = normalizeLabLabelKey(trimmed)
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      parts.push(t(trimmed))
+    }
+  }
+  return parts
+}
+
+/** Résumé compact tableaux : sections ou noms d’examens (pas la liste des champs). */
+export function summarizePrescribedExamSectionOrName(
+  labels: string[],
+  t: (label: string) => string = translateExamName,
+): string {
+  const parts = extractPrescribedSectionOrExamNames(labels, t)
+  return parts.length ? parts.join(', ') : '—'
+}
+
+/**
  * Détail pour tooltip :
  * « Biochimie (2): Enzymes · NFS (1) ».
  */

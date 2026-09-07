@@ -9,6 +9,11 @@ import {
   type LabFormPanel,
   type LabPanelSlug,
 } from '@/lib/lab-form-panels'
+import {
+  renderClassicStoolUrineTable,
+  LAB_CLASSIC_SHEET_STYLES,
+  valuesHaveClassicStoolOrUrine,
+} from '@/lib/lab-classic-sheet-print'
 
 type PrintContext = {
   patientName: string
@@ -225,6 +230,10 @@ function canCombinePanelsOnOnePage(
   return total <= MAX_COMBINED_PRINT_ROWS
 }
 
+function shouldPrintClassicStoolUrine(slug: LabPanelSlug, values: Record<string, string>) {
+  return slug === 'routine' && valuesHaveClassicStoolOrUrine(values)
+}
+
 export function buildLabPanelPrintHtml(
   slug: LabPanelSlug,
   values: Record<string, string>,
@@ -241,6 +250,13 @@ export function buildLabPanelPrintHtml(
   const showNrColumn = sectionsHaveReference(prepared.sections)
   const validator = context.validatedBy?.trim() || '—'
 
+  const useClassicTable = shouldPrintClassicStoolUrine(slug, values)
+  const bodyHtml = useClassicTable
+    ? renderClassicStoolUrineTable(slug, values)
+    : renderPanelTables(prepared.sections, values, densityClass, showNrColumn)
+
+  if (!bodyHtml.trim()) return ''
+
   return `
     <article
       class="lab-result-print lab-result-print--single-page"
@@ -251,7 +267,7 @@ export function buildLabPanelPrintHtml(
         ${renderPatientBand(context, date)}
         <h2 class="lab-result-print__form-name">${escapeHtml(prepared.formTitle)}</h2>
         <div class="lab-result-print__body">
-          ${renderPanelTables(prepared.sections, values, densityClass, showNrColumn)}
+          ${bodyHtml}
         </div>
         <footer class="lab-result-print__footer">
           <div class="lab-result-print__footer-print">
@@ -741,12 +757,26 @@ export function printLabVisitPanelResults(
   const slugs = resolvePrintSlugs(panelResults, options?.preferSlugs)
   if (!slugs.length) return false
 
-  const body = canCombinePanelsOnOnePage(slugs, panelResults)
-    ? buildCombinedLabPanelsPrintHtml(slugs, panelResults, context)
-    : slugs
-        .map((slug) => buildLabPanelPrintHtml(slug, panelResults[slug]!, context))
-        .filter(Boolean)
-        .join('')
+  const classicSlugs = slugs.filter((slug) =>
+    shouldPrintClassicStoolUrine(slug, panelResults[slug] ?? {}),
+  )
+  const tableSlugs = slugs.filter((slug) => !classicSlugs.includes(slug))
+
+  const classicBody = classicSlugs
+    .map((slug) => buildLabPanelPrintHtml(slug, panelResults[slug]!, context))
+    .filter(Boolean)
+    .join('')
+
+  const tableBody = tableSlugs.length
+    ? canCombinePanelsOnOnePage(tableSlugs, panelResults)
+      ? buildCombinedLabPanelsPrintHtml(tableSlugs, panelResults, context)
+      : tableSlugs
+          .map((slug) => buildLabPanelPrintHtml(slug, panelResults[slug]!, context))
+          .filter(Boolean)
+          .join('')
+    : ''
+
+  const body = `${classicBody}${tableBody}`
 
   if (!body) return false
 
@@ -757,7 +787,7 @@ export function printLabVisitPanelResults(
 
   openPrintDocument(
     title,
-    `<style>${LAB_PANEL_PRINT_STYLES}</style>${body}${LAB_PANEL_FIT_SCRIPT}`,
+    `<style>${LAB_PANEL_PRINT_STYLES}${LAB_CLASSIC_SHEET_STYLES}</style>${body}${LAB_PANEL_FIT_SCRIPT}`,
     { pageSize: 'A4', autoPrint: false, forceLtr: true },
   )
 
@@ -775,7 +805,7 @@ export function printLabPanelResult(
   const panel = getLabFormPanel(slug)
   openPrintDocument(
     `${panel?.label ?? 'Résultat'} — ${context.patientCode}`,
-    `<style>${LAB_PANEL_PRINT_STYLES}</style>${body}${LAB_PANEL_FIT_SCRIPT}`,
+    `<style>${LAB_PANEL_PRINT_STYLES}${LAB_CLASSIC_SHEET_STYLES}</style>${body}${LAB_PANEL_FIT_SCRIPT}`,
     { pageSize: 'A4', autoPrint: false, forceLtr: true },
   )
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   UserRound,
   FlaskConical,
@@ -24,10 +24,12 @@ import {
   type ExamKindSlug,
   type ExamsByKind,
 } from '@/lib/exam-catalog'
-import {
-  doctorClinicServiceNames,
-  type DoctorOption,
-} from '@/lib/doctor-compensation'
+import { emptyExamReductionsByKind, examsByKindFromLines } from '@/lib/exam-billing'
+import { printAllPendingLabExamInvoices } from '@/lib/lab-exam-invoice'
+import type { LabExamLine } from '@/lib/lab-exam-pending'
+import { getLabExamPriceFcfa } from '@/lib/lab-exams'
+import { cancelPrintWindow, reservePrintWindow } from '@/lib/print-document'
+import { type DoctorOption } from '@/lib/doctor-compensation'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -134,59 +136,11 @@ const activeServiceContext = ref<{
   clinicServiceName: string | null
 }>({ kind: null, clinicServiceId: null, clinicServiceName: null })
 
-const KIND_SERVICE_ALIASES: Partial<Record<ExamKindSlug, string[]>> = {
-  examen: ['Laboratoire', 'Labo'],
-  radio: ['Imagerie', 'Radio'],
-  echo: ['Echographie', 'Échographie', 'Écho', 'Echo'],
-  odonto: ['Odontologie', 'Odonto'],
-  operation: ['Bloc opératoire', 'Opération', 'Ophtalmologie', 'Tromatologie', 'Traumatologie'],
-}
-
-function doctorMatchesActiveService(doctor: DoctorOption): boolean {
-  const ctx = activeServiceContext.value
-  if (ctx.clinicServiceId) {
-    const ids = doctor.clinicServiceIds ?? []
-    if (ids.includes(ctx.clinicServiceId) || doctor.clinicServiceId === ctx.clinicServiceId) {
-      return true
-    }
-  }
-  const names = doctorClinicServiceNames(doctor).map((n) => n.toLowerCase())
-  if (ctx.clinicServiceName) {
-    const target = ctx.clinicServiceName.toLowerCase()
-    if (names.some((n) => n === target || n.includes(target) || target.includes(n))) return true
-  }
-  const kind = ctx.kind
-  if (kind && kind !== 'consultation' && kind !== 'specialty') {
-    const aliases = KIND_SERVICE_ALIASES[kind as ExamKindSlug] ?? []
-    if (
-      aliases.some((alias) =>
-        names.some((n) => n === alias.toLowerCase() || n.includes(alias.toLowerCase())),
-      )
-    ) {
-      return true
-    }
-  }
-  return false
-}
-
-const doctorsForActiveService = computed(() => {
-  const list = doctors.value.filter((d) => doctorMatchesActiveService(d))
-  // Si aucun médecin lié au service, ne pas bloquer : liste vide → message
-  return list.sort((a, b) =>
+const doctorsSorted = computed(() =>
+  [...doctors.value].sort((a, b) =>
     fullName(a.firstName, a.lastName).localeCompare(fullName(b.firstName, b.lastName), 'fr'),
-  )
-})
-
-const doctorSelectRequired = computed(() => doctorsForActiveService.value.length > 0)
-
-const activeServiceLabel = computed(() => {
-  void localeCode.value
-  const name = activeServiceContext.value.clinicServiceName
-  if (name) return uiText(name)
-  const kind = activeServiceContext.value.kind
-  if (kind && kind !== 'consultation') return uiText(EXAM_KIND_LABELS[kind as ExamKindSlug] ?? kind)
-  return uiText('Service')
-})
+  ),
+)
 
 function onActiveServiceChange(payload: {
   kind: ExamKindSlug | 'consultation' | null
@@ -195,16 +149,6 @@ function onActiveServiceChange(payload: {
 }) {
   activeServiceContext.value = payload
 }
-
-watch(doctorsForActiveService, (list) => {
-  if (!list.length) {
-    selectedDoctorId.value = ''
-    return
-  }
-  if (!list.some((d) => d.id === selectedDoctorId.value)) {
-    selectedDoctorId.value = list.length === 1 ? list[0].id : ''
-  }
-})
 
 async function loadDoctors() {
   try {
@@ -227,12 +171,9 @@ const canConfirmNewPatient = computed(() => {
   return firstName.length >= 2 && lastName.length >= 2 && parsedAge.value !== null
 })
 
-/** Enregistrement + prescription directe en une étape (sans encaissement). */
+/** Enregistrement + prescription directe en une étape (sans encaissement ni médecin). */
 const canConfirmNewPatientWithExams = computed(
-  () =>
-    canConfirmNewPatient.value &&
-    newPatientExamCount.value > 0 &&
-    (!doctorSelectRequired.value || !!selectedDoctorId.value),
+  () => canConfirmNewPatient.value && newPatientExamCount.value > 0,
 )
 
 const canSaveEdit = computed(() => {
@@ -241,10 +182,7 @@ const canSaveEdit = computed(() => {
 })
 
 const canSubmitExams = computed(
-  () =>
-    !!activeRow.value &&
-    countExamsByKind(examsByKind.value) > 0 &&
-    (!doctorSelectRequired.value || !!selectedDoctorId.value),
+  () => !!activeRow.value && countExamsByKind(examsByKind.value) > 0,
 )
 
 const externalExamKinds = EXTERNAL_PATIENT_EXAM_KINDS
@@ -355,6 +293,60 @@ function examsPayload() {
         : {}
     ),
   }
+}
+
+function buildExamLinesFromForm(): LabExamLine[] {
+  const lines: LabExamLine[] = []
+  for (const kind of EXTERNAL_PATIENT_EXAM_KINDS) {
+    const labels = examsByKind.value[kind] ?? []
+    for (const label of labels) {
+      const unitPriceFcfa =
+        kind === 'operation' && operationAmountFcfa.value != null
+          ? operationAmountFcfa.value
+          : getLabExamPriceFcfa(label)
+      lines.push({ label, unitPriceFcfa, kind })
+    }
+  }
+  return lines
+}
+
+function printExternalExamTickets(patient: {
+  code: string
+  firstName: string
+  lastName: string
+  phone?: string | null
+  age?: number | null
+  ageUnit?: PatientAgeUnit | null
+  gender?: string | null
+}) {
+  const examLines = buildExamLinesFromForm()
+  if (!examLines.length) return
+  const doctor = doctors.value.find((d) => d.id === selectedDoctorId.value)
+  printAllPendingLabExamInvoices(
+    {
+      id: patient.code,
+      updatedAt: new Date().toISOString(),
+      examLines,
+      examsByKind: examsByKindFromLines(examLines),
+      grossFcfa: 0,
+      visit: {
+        patient: {
+          code: patient.code,
+          firstName: patient.firstName,
+          lastName: patient.lastName,
+          phone: patient.phone,
+          age: patient.age,
+          ageUnit: normalizePatientAgeUnit(patient.ageUnit),
+          gender: patient.gender,
+        },
+      },
+      doctor: doctor
+        ? { firstName: doctor.firstName, lastName: doctor.lastName }
+        : null,
+    },
+    emptyExamReductionsByKind(),
+    'En attente',
+  )
 }
 
 function openExamsModal(row: ExternalQueueRow) {
@@ -499,20 +491,38 @@ async function confirmNewPatient() {
 
   if (newPatientExamCount.value > 0) {
     if (!canConfirmNewPatientWithExams.value) return
+    reservePrintWindow('80mm')
     registering.value = true
     message.value = ''
     try {
-      const { data } = await api.post('/visits/external-lab-order', {
+      const { data } = await api.post<{
+        visit?: { patient?: QueuePatient }
+        invoice?: { invoiceNumber?: string } | null
+      }>('/visits/external-lab-order', {
         ...basePayload,
         service: serviceFromExams(examsByKind.value),
         ...examsPayload(),
         doctorId: selectedDoctorId.value || undefined,
       })
       const destination = destinationServicesLabel(examsByKind.value)
+      const printedPatient = data.visit?.patient ?? {
+        code: '—',
+        firstName,
+        lastName,
+        age: age ?? null,
+        ageUnit: patientForm.value.ageUnit,
+        phone: patientForm.value.phone.trim() || null,
+        gender: patientForm.value.gender,
+      }
+      try {
+        printExternalExamTickets(printedPatient)
+      } catch {
+        // L’enregistrement a réussi : ne pas afficher une erreur d’impression.
+      }
       message.value = data.invoice
         ? translateTemplate(
             'Enregistré — {invoice}. Paiement à faire par le gestionnaire / admin. Patient envoyé vers {destination}.',
-            { invoice: data.invoice.invoiceNumber, destination },
+            { invoice: data.invoice.invoiceNumber ?? '', destination },
           )
         : translateTemplate(
             'Examens enregistrés — en attente de paiement (gestionnaire / admin). Patient envoyé vers {destination}.',
@@ -524,6 +534,7 @@ async function confirmNewPatient() {
       resetExamsForm()
       await loadQueue()
     } catch (error: unknown) {
+      cancelPrintWindow()
       const shown = await showDuplicateModalFromError(error)
       if (shown) return
       const apiMessage =
@@ -552,20 +563,29 @@ async function selectPatient(patient: PatientRow) {
 
 async function submitExams() {
   if (!canSubmitExams.value || !activeRow.value) return
+  reservePrintWindow('80mm')
   submitting.value = true
   message.value = ''
   const destination = destinationServicesLabel(examsByKind.value)
   try {
-    const { data } = await api.post('/visits/external-lab-order', {
+    const patientForPrint = activeRow.value.patient
+    const { data } = await api.post<{
+      invoice?: { invoiceNumber?: string } | null
+    }>('/visits/external-lab-order', {
       patientId: activeRow.value.patientId,
       ...examsPayload(),
       service: serviceFromExams(examsByKind.value) ?? activeRow.value.service ?? undefined,
       doctorId: selectedDoctorId.value || undefined,
     })
+    try {
+      printExternalExamTickets(patientForPrint)
+    } catch {
+      // L’enregistrement a réussi : ne pas afficher une erreur d’impression.
+    }
     message.value = data.invoice
       ? translateTemplate(
           'Enregistré — {invoice}. Paiement à faire par le gestionnaire / admin. Patient envoyé vers {destination}.',
-          { invoice: data.invoice.invoiceNumber, destination },
+          { invoice: data.invoice.invoiceNumber ?? '', destination },
         )
       : translateTemplate(
           'Examens enregistrés — en attente de paiement (gestionnaire / admin). Patient envoyé vers {destination}.',
@@ -576,6 +596,7 @@ async function submitExams() {
     resetExamsForm()
     await loadQueue()
   } catch (error: unknown) {
+    cancelPrintWindow()
     const apiMessage =
       error && typeof error === 'object' && 'response' in error
         ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
@@ -766,7 +787,7 @@ onMounted(() => {
           <p class="form-panel__hint">
             {{
               uiText(
-                'Choisissez le service puis les examens ou opérations. Sélectionnez le médecin du service si disponible.',
+                'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.',
               )
             }}
           </p>
@@ -778,21 +799,13 @@ onMounted(() => {
             :show-consultation="false"
             @active-service-change="onActiveServiceChange"
           />
-          <div v-if="activeServiceContext.kind || activeServiceContext.clinicServiceId" class="doctor-service-row">
+          <div class="doctor-service-row">
             <UiSelect
               v-model="selectedDoctorId"
-              :label="translateTemplate('Médecin — {service}', { service: activeServiceLabel })"
-              :required="doctorSelectRequired"
-              :disabled="!doctorsForActiveService.length"
+              :label="uiText('Médecin (optionnel)')"
             >
-              <option value="">
-                {{
-                  doctorsForActiveService.length
-                    ? uiText('Sélectionner un médecin…')
-                    : uiText('Aucun médecin lié à ce service')
-                }}
-              </option>
-              <option v-for="doctor in doctorsForActiveService" :key="doctor.id" :value="doctor.id">
+              <option value="">{{ uiText('Aucun (optionnel)') }}</option>
+              <option v-for="doctor in doctorsSorted" :key="doctor.id" :value="doctor.id">
                 {{ fullName(doctor.firstName, doctor.lastName) }}
               </option>
             </UiSelect>
@@ -880,7 +893,7 @@ onMounted(() => {
         <p class="form-panel__hint">
           {{
             uiText(
-              'Choisissez le service puis les examens ou opérations. Sélectionnez le médecin du service si disponible.',
+              'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.',
             )
           }}
         </p>
@@ -892,21 +905,13 @@ onMounted(() => {
           :show-consultation="false"
           @active-service-change="onActiveServiceChange"
         />
-        <div v-if="activeServiceContext.kind || activeServiceContext.clinicServiceId" class="doctor-service-row">
+        <div class="doctor-service-row">
           <UiSelect
             v-model="selectedDoctorId"
-            :label="translateTemplate('Médecin — {service}', { service: activeServiceLabel })"
-            :required="doctorSelectRequired"
-            :disabled="!doctorsForActiveService.length"
+            :label="uiText('Médecin (optionnel)')"
           >
-            <option value="">
-              {{
-                doctorsForActiveService.length
-                  ? uiText('Sélectionner un médecin…')
-                  : uiText('Aucun médecin lié à ce service')
-              }}
-            </option>
-            <option v-for="doctor in doctorsForActiveService" :key="doctor.id" :value="doctor.id">
+            <option value="">{{ uiText('Aucun (optionnel)') }}</option>
+            <option v-for="doctor in doctorsSorted" :key="doctor.id" :value="doctor.id">
               {{ fullName(doctor.firstName, doctor.lastName) }}
             </option>
           </UiSelect>

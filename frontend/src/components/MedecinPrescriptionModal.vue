@@ -68,6 +68,8 @@ const props = withDefaults(
     mode: 'edit' | 'append'
     /** Affiche l’onglet résumé (comme l’ancien « Voir ») en premier. */
     showResumeTab?: boolean
+    /** Onglet d’ouverture : résumé (Voir) ou formulaire d’édition (Modifier). */
+    startTab?: 'resume' | 'edit'
   }>(),
   {
     showResumeTab: false,
@@ -277,7 +279,12 @@ const existingExamsFlat = computed(() =>
 
 function resetForm() {
   workingMode.value = props.mode
-  consultModalTab.value = props.showResumeTab && props.mode === 'edit' ? 'resume' : 'exams'
+  const startOnEdit = props.startTab === 'edit' || (!props.showResumeTab && props.mode === 'edit')
+  if (startOnEdit) {
+    consultModalTab.value = isLabLocked.value ? 'pharmacy' : 'exams'
+  } else {
+    consultModalTab.value = props.showResumeTab && props.mode === 'edit' ? 'resume' : 'exams'
+  }
   if (!sessionVisit.value) {
     selectedExamsByKind.value = emptyExamsByKind()
     examCommentsByKind.value = emptyExamCommentsByKind()

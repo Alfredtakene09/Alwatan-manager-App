@@ -52,11 +52,11 @@ async function requestServiceWorkerUpdate() {
   }
 }
 
-async function unregisterStaleWorkers() {
+async function unregisterAllWorkers() {
   if (!('serviceWorker' in navigator)) return
   try {
     const regs = await navigator.serviceWorker.getRegistrations()
-    await Promise.all(regs.map((reg) => reg.update()))
+    await Promise.all(regs.map((reg) => reg.unregister()))
   } catch {
     /* ignore */
   }
@@ -96,7 +96,13 @@ async function applyUpdateInternal(knownBuildId?: string | null) {
   }
 
   await requestServiceWorkerUpdate()
+  await unregisterAllWorkers()
   await clearAppCaches()
+  try {
+    localStorage.removeItem(BUILD_KEY)
+  } catch {
+    /* ignore */
+  }
   hardReload(buildId)
 }
 
@@ -160,7 +166,6 @@ function ensureStarted() {
     },
   })
 
-  void unregisterStaleWorkers()
   void checkServerBuild()
   setInterval(() => {
     void checkServerBuild()

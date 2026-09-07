@@ -27,14 +27,18 @@ const panelInclude = {
 const router = Router();
 router.use(requireAuth);
 
-/** Lecture des formulaires : labo + médecins (consultation des résultats). */
-router.get("/", requireAnyModule("laboratoire", "consultation", "comptabilite", "dossier-patient"), async (_req, res) => {
-  const panels = await prisma.labPanel.findMany({
-    include: panelInclude,
-    orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
-  });
-  return res.json(panels);
-});
+/** Lecture des formulaires : prescription (réception / médecin) + saisie labo. */
+router.get(
+  "/",
+  requireAnyModule("laboratoire", "consultation", "reception", "comptabilite", "dossier-patient"),
+  async (_req, res) => {
+    const panels = await prisma.labPanel.findMany({
+      include: panelInclude,
+      orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
+    });
+    return res.json(panels);
+  },
+);
 
 /** Écriture réservée au module laboratoire. */
 router.use(requireModule("laboratoire"));

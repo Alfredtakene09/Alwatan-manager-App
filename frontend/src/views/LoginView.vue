@@ -11,6 +11,7 @@ import UiInput from '@/components/ui/UiInput.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue'
 import InstallAppBanner from '@/components/pwa/InstallAppBanner.vue'
+import UpdateDesktopShortcutButton from '@/components/pwa/UpdateDesktopShortcutButton.vue'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -88,6 +89,7 @@ onMounted(async () => {
 
     <div class="login__stack">
       <InstallAppBanner />
+      <UpdateDesktopShortcutButton />
 
       <form
         class="login__card"

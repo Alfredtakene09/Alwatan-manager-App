@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { InvoiceStatus, InvoiceType } from "@prisma/client";
+import { InvoiceStatus, InvoiceType, Prisma } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { generateInvoiceNumber } from "../lib/patient-code.js";
 import { generatePharmacyExternalClientCode, splitPharmacyExternalClientName } from "../lib/pharmacy-external-client.js";
@@ -174,6 +174,25 @@ const externalClientSchema = z.object({
   active: z.boolean().optional(),
 });
 
+const fcfaInt = z.preprocess(
+  (value) => Math.round(Number(value)),
+  z.number().int().positive(),
+);
+
+const fcfaIntOptional = z.preprocess(
+  (value) => {
+    if (value === null || value === undefined || value === "") return null;
+    const rounded = Math.round(Number(value));
+    return Number.isFinite(rounded) && rounded > 0 ? rounded : null;
+  },
+  z.number().int().positive().nullable(),
+);
+
+const stockInt = z.preprocess(
+  (value) => Math.round(Number(value)),
+  z.number().int().min(0),
+);
+
 const productSchema = z.object({
   name: z.string().min(2),
   sku: z.string().min(2).optional(),
@@ -184,12 +203,15 @@ const productSchema = z.object({
   supplierId: z.string().optional().nullable(),
   expiryDate: z.string().optional().nullable(),
   noExpiry: z.boolean().optional(),
-  quantity: z.number().int().min(0).optional(),
-  unitPriceFcfa: z.number().int().positive(),
-  purchasePriceFcfa: z.number().int().positive().optional().nullable(),
-  minStock: z.number().int().min(0).optional(),
-  sachetsPerBox: z.number().int().positive().optional(),
-  sachetPriceFcfa: z.number().int().positive().optional().nullable(),
+  quantity: stockInt.optional(),
+  unitPriceFcfa: fcfaInt,
+  purchasePriceFcfa: fcfaIntOptional.optional(),
+  minStock: stockInt.optional(),
+  sachetsPerBox: z.preprocess(
+    (value) => Math.round(Number(value)),
+    z.number().int().positive(),
+  ).optional(),
+  sachetPriceFcfa: fcfaIntOptional.optional(),
   sellBySachet: z.boolean().optional(),
   active: z.boolean().optional(),
 });
@@ -197,8 +219,6 @@ const productSchema = z.object({
 function resolveProductSku(input: { sku?: string; barcode?: string; name: string }) {
   const sku = input.sku?.trim();
   if (sku && sku.length >= 2) return sku;
-  const barcode = input.barcode?.trim();
-  if (barcode && barcode.length >= 2) return barcode;
   const slug = input.name
     .trim()
     .toUpperCase()
@@ -206,6 +226,29 @@ function resolveProductSku(input: { sku?: string; barcode?: string; name: string
     .replace(/^-|-$/g, "")
     .slice(0, 24);
   return `MED-${slug || "PRODUIT"}-${Date.now().toString(36).toUpperCase()}`;
+}
+
+function mapProductCatalogError(error: unknown, res: import("express").Response) {
+  if (error instanceof z.ZodError) {
+    const field = error.issues[0]?.path.join(".") || "champ";
+    return res.status(400).json({ error: `Données invalides — vérifiez le ${field}.` });
+  }
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2002") {
+      const target = String(error.meta?.target ?? "");
+      if (target.includes("barcode")) {
+        return res.status(409).json({ error: "Ce code-barres est déjà utilisé par un autre produit." });
+      }
+      if (target.includes("sku")) {
+        return res.status(409).json({ error: "Ce code produit (SKU) existe déjà." });
+      }
+      return res.status(409).json({ error: "Référence produit déjà utilisée." });
+    }
+    if (error.code === "P2003") {
+      return res.status(400).json({ error: "Catégorie ou fournisseur invalide." });
+    }
+  }
+  return res.status(400).json({ error: "Enregistrement impossible — vérifiez les données saisies." });
 }
 
 function parseExpiryDate(value: string | null | undefined) {
@@ -949,8 +992,7 @@ router.post("/products", ...catalogAccess, async (req, res) => {
     });
     return res.status(201).json(item);
   } catch (error) {
-    if (error instanceof z.ZodError) return res.status(400).json({ error: "Données invalides" });
-    return res.status(400).json({ error: "Création impossible — code-barres peut-être déjà utilisé" });
+    return mapProductCatalogError(error, res);
   }
 });
 
@@ -983,8 +1025,8 @@ router.put("/products/:id", ...catalogAccess, async (req, res) => {
       include: productInclude,
     });
     return res.json(item);
-  } catch {
-    return res.status(400).json({ error: "Mise à jour impossible" });
+  } catch (error) {
+    return mapProductCatalogError(error, res);
   }
 });
 

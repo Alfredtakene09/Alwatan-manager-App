@@ -18,7 +18,7 @@ import {
   FileDown,
 } from '@lucide/vue'
 import api from '@/api/client'
-import { confirmAppModal } from '@/lib/api-modal-helper'
+import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
 import { useAuthStore } from '@/stores/auth'
 import { fullName, canWriteDossierDocuments, isDirectionOrGestionnaire } from '@/lib/roles'
 import { matchesPatientSearch } from '@/lib/patient-search'
@@ -120,6 +120,7 @@ const canDeleteDocuments = computed(
 )
 
 const isMedecin = computed(() => auth.user?.role === 'MEDECIN')
+const isAdmin = computed(() => auth.user?.role === 'ADMIN')
 const isManagementDossier = computed(() =>
   auth.user ? isDirectionOrGestionnaire(auth.user.role) : false,
 )
@@ -152,6 +153,7 @@ const uploadForm = ref({
   file: null as File | null,
 })
 const reconsulting = ref(false)
+const deletingPatient = ref(false)
 const preserveTabOnReload = ref(false)
 
 const canReconsult = computed(
@@ -430,6 +432,38 @@ function openDocument(documentId: string) {
   window.open(`/api/patient-dossiers/${selectedPatientId.value}/documents/${documentId}/file`, '_blank')
 }
 
+async function deletePatientDossier() {
+  if (!isAdmin.value || !dossier.value) return
+  const patient = dossier.value.patient
+  const patientName = fullName(patient.firstName, patient.lastName)
+  const confirmed = await confirmAppModal({
+    type: 'DELETE',
+    title: uiText('Supprimer le patient (admin)'),
+    message: translateTemplate(
+      'Supprimer le dossier {code} — {name} même s’il a déjà été consulté ? Visites, consultations, factures et documents liés seront aussi supprimés. Cette action est irréversible.',
+      { code: patient.code, name: patientName },
+    ),
+    confirmLabel: uiText('Supprimer'),
+  })
+  if (!confirmed) return
+
+  deletingPatient.value = true
+  dossierError.value = ''
+  try {
+    await api.delete(`/patients/${patient.id}`)
+    dossier.value = null
+    selectedPatientId.value = null
+    searchQuery.value = ''
+    searchResults.value = []
+    await router.replace({ query: {} })
+    await Promise.all([loadMedecinPatients(), loadManagementPatients()])
+  } catch (error: unknown) {
+    await showApiErrorModal(error, 'Impossible de supprimer ce patient.')
+  } finally {
+    deletingPatient.value = false
+  }
+}
+
 async function deleteDocument(doc: PatientDocument) {
   if (!selectedPatientId.value || !canDeleteDocuments.value) return
   const confirmed = await confirmAppModal({
@@ -645,6 +679,17 @@ onMounted(async () => {
                 @click="showUpload = true"
               >
                 {{ uiText('Joindre un fichier') }}
+              </UiButton>
+              <UiButton
+                v-if="isAdmin"
+                variant="danger"
+                size="sm"
+                :icon="Trash2"
+                :disabled="deletingPatient"
+                :loading="deletingPatient"
+                @click="deletePatientDossier"
+              >
+                {{ uiText('Supprimer le patient') }}
               </UiButton>
               <UiButton
                 variant="ghost"

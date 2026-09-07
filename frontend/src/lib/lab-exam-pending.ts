@@ -7,7 +7,8 @@ import { examsByKindFromLines } from '@/lib/exam-billing'
 import { translateUi } from '@/i18n/translate'
 import {
   countGroupedPrescribedPanels,
-  summarizePrescribedExamFieldNames,
+  extractPrescribedSectionOrExamNames,
+  summarizePrescribedExamSectionOrName,
 } from '@/lib/lab-prescribed-panels'
 
 export type LabExamLine = {
@@ -131,14 +132,17 @@ export function formatExamLinesSummary(lines: LabExamLine[]): string {
   const parts = EXAM_KIND_ORDER.flatMap((kind) => {
     const blockLines = blocks[kind]?.lines ?? []
     if (!blockLines.length) return []
-    // Réception / caisse : résumé compact « Laboratoire: Biochimie (1), NFS (1) »
-    // — sans détail « Formulaire principal ».
-    const summary = summarizePrescribedExamFieldNames(blockLines.map((line) => line.label))
+    // Cellule caisse : section si présente, sinon nom complet de l’examen — pas les champs.
+    const summary = summarizePrescribedExamSectionOrName(blockLines.map((line) => line.label))
     if (summary === '—') return []
     return [`${translateUi(EXAM_KIND_LABELS[kind])}: ${summary}`]
   })
   if (!parts.length) return '—'
   return parts.join(' · ')
+}
+
+export function examLinesSectionOrNameList(lines: LabExamLine[]): string[] {
+  return extractPrescribedSectionOrExamNames(normalizeLabExamLines(lines).map((line) => line.label))
 }
 
 function truncateExamText(text: string, maxLength: number): string {
@@ -161,7 +165,7 @@ export function formatExamLinesSummaryShort(
   const parts = EXAM_KIND_ORDER.flatMap((kind) => {
     const blockLines = blocks[kind]?.lines ?? []
     if (!blockLines.length) return []
-    const summary = summarizePrescribedExamFieldNames(blockLines.map((line) => line.label))
+    const summary = summarizePrescribedExamSectionOrName(blockLines.map((line) => line.label))
     if (summary === '—') return []
     return [
       `${translateUi(EXAM_KIND_LABELS[kind])}: ${truncateExamText(summary, maxLabelChars * 2)}`,

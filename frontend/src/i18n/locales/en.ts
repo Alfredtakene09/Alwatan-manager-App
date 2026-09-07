@@ -26,6 +26,7 @@ export default {
     'Consultation enregistrée — ordonnance sauvegardée (impression manuelle).':
       'Consultation saved — prescription saved (print manually).',
     'Modifier la prescription': 'Edit prescription',
+    'Modifier la consultation': 'Edit consultation',
     'Enregistrer la prescription': 'Save prescription',
     'Des résultats labo sont déjà enregistrés. Pour ajouter des examens, utilisez « Ajouter des examens ». Vous pouvez modifier l’ordonnance pharmacie ici.':
       'Lab results are already recorded. To add exams, use “Add exams”. You can still edit the pharmacy prescription here.',
@@ -897,6 +898,8 @@ export default {
     Reçu: 'Receipt',
     'Imprimer le reçu': 'Print receipt',
     'Imprimer le reçu de consultation': 'Print consultation receipt',
+    'Réimprimer le reçu': 'Reprint receipt',
+    'Réimprimer le reçu de consultation': 'Reprint consultation receipt',
     'Total payé': 'Total paid',
     'Merci de votre confiance': 'Thank you for your trust',
     'Tél.': 'Tel.',
@@ -2347,9 +2350,9 @@ export default {
       generic: 'Sign-in error. Please try again shortly.',
       sessionExpired:
         'Session expired or cookie rejected on this PC. Sign in again (use the current Wi‑Fi server URL, not an old IP).',
-      sessionIdle: 'Session expired after 30 minutes of inactivity. Please sign in again.',
+      sessionIdle: 'Session expired after 12 hours of inactivity. Please sign in again.',
       sessionActive:
-        'A session is already active for this user on another device. Sign out on the other device first, or wait 30 minutes of inactivity.',
+        'A session is already active for this user on another device. Sign out on the other device first, or wait until the inactive session ends.',
       sessionReplaced: 'This session was invalidated. Please sign in again.',
       lastAttempt: 'Incorrect password. Warning: this is your last attempt before the account is locked.',
       locked:
@@ -2377,6 +2380,13 @@ export default {
     syncShortcutHint:
       'The network address changed. Download a new shortcut (current Ethernet), then run the file — old shortcuts will be replaced.',
     syncShortcutButton: 'Download new shortcut',
+    updateShortcutButton: 'Update desktop shortcut',
+    updateShortcutHint:
+      'Automatically updates the already installed shortcut (no new file to download).',
+    updateShortcutDone: 'Shortcut updated automatically. You can use it right away.',
+    updateShortcutFirstInstall:
+      'First time: a .cmd file was downloaded — run it once. Later updates will be automatic.',
+    updatingShortcut: 'Updating…',
     androidStep1: 'Open this page in Chrome (not another browser).',
     androidStep2: 'Tap the ⋮ menu at the top right.',
     androidStep3: 'Choose “Install app” or “Add to Home screen”.',
@@ -2428,6 +2438,7 @@ export default {
     'Examens & paiements': 'Exams & payments',
     'Paiement examens': 'Exam payment',
     'En attente de paiement': 'Awaiting payment',
+    'Examens prescrits à encaisser': 'Prescribed exams to collect',
     'Ajouter examen en cours de paiement': 'Add exam pending payment',
     'Examens payés': 'Paid exams',
     Réclamations: 'Claims',
@@ -2666,8 +2677,9 @@ export default {
     Trichiasis: 'Trichiasis',
     'Aucune nomenclature liée pour l’instant. Ajoutez des examens (nomenclature médecin) ou des types d’opérations pour ce service.':
       'No catalog linked yet. Add exams (doctor nomenclature) or operation types for this service.',
-    'Choisissez le service puis les examens ou opérations. Sélectionnez le médecin du service si disponible.':
-      'Choose the service then exams or operations. Select the service doctor when available.',
+    'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.':
+      'Choose the service then exams or operations. The doctor is optional.',
+    'Médecin (optionnel)': 'Doctor (optional)',
     'Sélectionner un médecin…': 'Select a doctor…',
     'Aucun médecin lié à ce service': 'No doctor linked to this service',
     'Médecin — {service}': 'Doctor — {service}',

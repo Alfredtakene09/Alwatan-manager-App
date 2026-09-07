@@ -81,7 +81,6 @@ const backRouteName = computed(() => {
   if (route.query.from === 'termines') return 'laboratoire-termines'
   return 'laboratoire'
 })
-const activePanelConfig = computed(() => (activePanel.value ? getLabFormPanel(activePanel.value) : null))
 
 const patientLabel = computed(() => {
   if (!visit.value) return ''
@@ -172,6 +171,17 @@ const listedPanels = computed(() => {
   })
 })
 
+const activePanelConfig = computed(() => {
+  void labPanels.panels
+  if (!activePanel.value) return null
+  return (
+    listedPanels.value.find((panel) => panel.slug === activePanel.value) ??
+    labPanels.getPanel(activePanel.value) ??
+    getLabFormPanel(activePanel.value) ??
+    null
+  )
+})
+
 const savedPanelCount = computed(
   () => listedPanels.value.filter((panel) => isPanelFilled(panel.slug)).length,
 )
@@ -218,10 +228,14 @@ const canFinalize = computed(() => {
   return savedPanelCount.value > 0
 })
 
+function resolvePanel(slug: LabPanelSlug) {
+  return labPanels.getPanel(slug) ?? getLabFormPanel(slug)
+}
+
 function panelOptionLabel(slug: LabPanelSlug) {
   void localeCode.value
   const apiItem = apiPrescribedPanels.value.find((item) => item.slug === slug)
-  const base = examNameText(apiItem?.examLabel || getLabFormPanel(slug)?.label || slug)
+  const base = examNameText(apiItem?.examLabel || resolvePanel(slug)?.label || slug)
   if (isPanelFilled(slug)) {
     return `${base} (${uiText('Enregistré')})`
   }
@@ -296,7 +310,7 @@ function printAllPanels(
 }
 
 function loadFormValues(slug: LabPanelSlug) {
-  const panel = getLabFormPanel(slug)
+  const panel = resolvePanel(slug)
   if (!panel) return
   const defaults = emptyPanelValues(panel)
   const saved = panelResults.value[slug] ?? {}

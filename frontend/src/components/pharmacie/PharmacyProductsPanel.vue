@@ -3,8 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
 import { Package, Plus, RefreshCw, Save, Search } from '@lucide/vue'
 import api from '@/api/client'
-import { canManagePharmacyCatalog, formatFcfa } from '@/lib/roles'
-import { isUiActionAllowed } from '@/lib/ui-actions'
+import { canAccessModule, formatFcfa } from '@/lib/roles'
 import { defaultExpiryDateInput, PHARMACEUTICAL_FORMS } from '@/lib/pharmacy-product-forms'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
@@ -17,7 +16,7 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import StCatalogActions from '@/components/ui/StCatalogActions.vue'
-import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
+import { confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -52,8 +51,10 @@ const emit = defineEmits<{ changed: [] }>()
 const { uiText, localeCode } = useAppI18n()
 const auth = useAuthStore()
 const canManageCatalog = computed(() =>
-  auth.user ? canManagePharmacyCatalog(auth.user.role) && isUiActionAllowed(auth.user, 'pharmacie.catalog') : false,
+  auth.user ? canAccessModule(auth.user.role, 'pharmacie') : false,
 )
+const formFeedback = ref('')
+const formFeedbackType = ref<'error' | 'success' | 'info'>('error')
 
 const items = ref<PharmacyProductRecord[]>([])
 const categories = ref<PharmacyCategoryOption[]>([])
@@ -96,7 +97,7 @@ const activeCategories = computed(() => categories.value.filter((c) => c.active 
 const filterFormOptions = computed(() => forms.value.filter((f) => f.active))
 const activeForms = computed(() => {
   const active = forms.value.filter((f) => f.active)
-  const selected = formPharmaceuticalForm.value.trim()
+  const selected = asTrimmedText(formPharmaceuticalForm.value)
   if (selected && !active.some((f) => f.name === selected)) {
     const orphan = forms.value.find((f) => f.name === selected)
     if (orphan) return [...active, orphan]
@@ -160,6 +161,22 @@ const tableRows = computed(() => {
   })
 })
 
+function setFormFeedback(text: string, type: 'error' | 'success' | 'info' = 'error') {
+  formFeedback.value = text
+  formFeedbackType.value = type
+  message.value = text
+  messageType.value = type === 'success' ? 'success' : 'error'
+}
+
+function clearFormFeedback() {
+  formFeedback.value = ''
+}
+
+function asTrimmedText(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  return String(value).trim()
+}
+
 function applyFilters() {
   appliedQuery.value = filterQuery.value.trim()
   appliedForm.value = filterForm.value
@@ -167,11 +184,20 @@ function applyFilters() {
 }
 
 function apiErrorMessage(error: unknown, fallback: string) {
-  if (axios.isAxiosError(error) && typeof error.response?.data?.error === 'string') {
-    return error.response.data.error
-  }
-  if (axios.isAxiosError(error) && typeof error.response?.data?.message === 'string') {
-    return error.response.data.message
+  if (axios.isAxiosError(error)) {
+    const code = String(error.response?.data?.code ?? '')
+    if (code === 'SESSION_REPLACED') {
+      return 'Session fermée — ce compte est ouvert sur un autre poste ou une autre adresse (127.0.0.1 vs 192.168…). Fermez les autres onglets, reconnectez-vous ici, puis réessayez.'
+    }
+    if (code === 'SESSION_IDLE') {
+      return 'Session expirée (inactivité). Reconnectez-vous puis réessayez.'
+    }
+    if (typeof error.response?.data?.error === 'string') {
+      return error.response.data.error
+    }
+    if (typeof error.response?.data?.message === 'string') {
+      return error.response.data.message
+    }
   }
   return fallback
 }
@@ -223,9 +249,9 @@ async function loadCatalogLookups() {
   await Promise.all([loadCategories(), loadForms(), loadSuppliers()])
 }
 
-async function loadItems() {
+async function loadItems(options?: { clearMessage?: boolean }) {
   loading.value = true
-  message.value = ''
+  if (options?.clearMessage !== false) message.value = ''
   try {
     await Promise.all([loadCategories(), loadForms()])
     const { data } = await api.get<PharmacyProductRecord[]>('/pharmacie/products')
@@ -258,19 +284,23 @@ function resetForm() {
 }
 
 async function openCreateModal() {
-  if (!canManageCatalog.value) return
+  if (!canManageCatalog.value) {
+    void showApiErrorModal(null, "Accès refusé — module pharmacie requis.")
+    return
+  }
   editingId.value = null
-  await loadCatalogLookups()
   resetForm()
-  modalOpen.value = true
+  clearFormFeedback()
   message.value = ''
+  modalOpen.value = true
+  void loadCatalogLookups()
 }
 
 async function openEditModal(id: string) {
   if (!canManageCatalog.value) return
   const item = itemsById.value.get(id)
   if (!item) return
-  await loadCatalogLookups()
+  void loadCatalogLookups()
   editingId.value = id
   formName.value = item.name
   formDosage.value = item.dosage ?? ''
@@ -298,13 +328,13 @@ function closeModal() {
 }
 
 function buildPayload() {
-  const unitPriceFcfa = Number(formUnitPrice.value)
-  const purchasePriceFcfa = Number(formPurchasePrice.value)
-  const sachetPrice = Number(formSachetPrice.value)
+  const unitPriceFcfa = Math.round(Number(formUnitPrice.value))
+  const purchasePriceFcfa = Math.round(Number(formPurchasePrice.value))
+  const sachetPrice = Math.round(Number(formSachetPrice.value))
   return {
-    name: formName.value.trim(),
-    barcode: formBarcode.value.trim() || undefined,
-    dosage: formDosage.value.trim() || undefined,
+    name: asTrimmedText(formName.value),
+    barcode: asTrimmedText(formBarcode.value) || undefined,
+    dosage: asTrimmedText(formDosage.value) || undefined,
     pharmaceuticalForm: formPharmaceuticalForm.value || undefined,
     categoryId: formCategoryId.value || null,
     supplierId: formSupplierId.value || undefined,
@@ -312,55 +342,57 @@ function buildPayload() {
     noExpiry: formNoExpiry.value,
     unitPriceFcfa,
     purchasePriceFcfa: Number.isFinite(purchasePriceFcfa) && purchasePriceFcfa > 0 ? purchasePriceFcfa : null,
-    minStock: Number(formMinStock.value) || 10,
-    sachetsPerBox: Number(formSachetsPerBox.value) || 1,
+    minStock: Math.round(Number(formMinStock.value)) || 10,
+    sachetsPerBox: Math.round(Number(formSachetsPerBox.value)) || 1,
     sachetPriceFcfa: Number.isFinite(sachetPrice) && sachetPrice > 0 ? sachetPrice : null,
     sellBySachet: formSellBySachet.value,
-    ...(!isEditing.value ? { quantity: Number(formQuantity.value) || 0 } : {}),
+    ...(!isEditing.value ? { quantity: Math.round(Number(formQuantity.value)) || 0 } : {}),
   }
 }
 
 async function saveItem() {
-  if (!canManageCatalog.value) return
-  const name = formName.value.trim()
-  const unitPriceFcfa = Number(formUnitPrice.value)
-  const purchasePriceFcfa = Number(formPurchasePrice.value)
+  const name = asTrimmedText(formName.value)
+  const unitPriceFcfa = Math.round(Number(formUnitPrice.value))
+  const purchasePriceFcfa = Math.round(Number(formPurchasePrice.value))
+  const issues: string[] = []
 
-  if (name.length < 2) {
-    message.value = 'Le nom du médicament est requis.'
-    messageType.value = 'error'
-    return
-  }
+  if (name.length < 2) issues.push('Le nom du médicament est requis (2 caractères minimum).')
   if (!Number.isFinite(unitPriceFcfa) || unitPriceFcfa <= 0) {
-    message.value = 'Prix de vente invalide.'
-    messageType.value = 'error'
-    return
+    issues.push('Indiquez un prix de vente en FCFA (nombre entier > 0).')
   }
-  if (formPurchasePrice.value.trim() && (!Number.isFinite(purchasePriceFcfa) || purchasePriceFcfa <= 0)) {
-    message.value = "Prix d'achat invalide."
-    messageType.value = 'error'
+  if (
+    asTrimmedText(formPurchasePrice.value) &&
+    (!Number.isFinite(purchasePriceFcfa) || purchasePriceFcfa <= 0)
+  ) {
+    issues.push("Le prix d'achat doit être un nombre entier positif.")
+  }
+
+  if (issues.length) {
+    setFormFeedback(issues.join(' '), 'error')
     return
   }
 
   saving.value = true
-  message.value = ''
+  clearFormFeedback()
   const payload = buildPayload()
+  const successText = isEditing.value ? 'Produit modifié.' : 'Produit ajouté.'
 
   try {
     if (isEditing.value && editingId.value) {
       await api.put(`/pharmacie/products/${editingId.value}`, payload)
-      message.value = 'Produit modifié.'
     } else {
       await api.post('/pharmacie/products', payload)
-      message.value = 'Produit ajouté.'
     }
-    messageType.value = 'success'
     emit('changed')
+    message.value = successText
+    messageType.value = 'success'
     closeModal()
-    await loadItems()
+    await loadItems({ clearMessage: false })
+    void showSuccessModal('Catalogue pharmacie', successText)
   } catch (error) {
-    message.value = apiErrorMessage(error, 'Enregistrement impossible — code-barres peut-être déjà utilisé.')
-    messageType.value = 'error'
+    const errorText = apiErrorMessage(error, 'Enregistrement impossible — vérifiez les données saisies.')
+    setFormFeedback(errorText, 'error')
+    void showApiErrorModal(error, errorText)
   } finally {
     saving.value = false
   }
@@ -477,7 +509,6 @@ defineExpose({ reload: loadItems })
         variant="primary"
         size="sm"
         :icon="Plus"
-        ui-action="table.create"
         @click="openCreateModal"
       >
         {{ uiText('Nouveau produit') }}
@@ -554,11 +585,11 @@ defineExpose({ reload: loadItems })
     :icon="Package"
     @close="closeModal"
   >
-    <UiAlert v-if="message && modalOpen" :type="messageType" :message="message" />
+    <UiAlert v-if="(message || formFeedback) && modalOpen" :type="formFeedback ? formFeedbackType === 'success' ? 'success' : 'error' : messageType" :message="formFeedback || message" />
 
-    <section class="product-form">
+    <form id="pharmacy-product-form" class="product-form" novalidate @submit.prevent="saveItem">
       <div class="product-form__row product-form__row--name">
-        <UiInput v-model="formName" label="Nom du médicament" placeholder="Ex. Paracétamol" required />
+        <UiInput v-model="formName" label="Nom du médicament" placeholder="Ex. Paracétamol" />
         <UiInput v-model="formDosage" label="Dosage" placeholder="Ex. 500 mg" />
       </div>
 
@@ -627,7 +658,7 @@ defineExpose({ reload: loadItems })
               class="amount-field__input"
               type="number"
               min="1"
-              required
+              step="1"
               placeholder="0"
             />
             <span class="amount-field__suffix">FCFA</span>
@@ -659,14 +690,21 @@ defineExpose({ reload: loadItems })
         <input v-model="formSellBySachet" type="checkbox" />
         <span>{{ uiText('Vente par sachet') }}</span>
       </label>
-    </section>
 
-    <template #footer>
-      <UiButton variant="ghost" @click="closeModal">{{ uiText('Annuler') }}</UiButton>
-      <UiButton variant="primary" :icon="Save" :disabled="saving" @click="saveItem">
-        {{ saving ? uiText('Enregistrement…') : uiText('Enregistrer') }}
-      </UiButton>
-    </template>
+      <div class="product-form__actions">
+        <UiButton variant="ghost" type="button" @click="closeModal">{{ uiText('Annuler') }}</UiButton>
+        <UiButton
+          variant="primary"
+          type="button"
+          :icon="Save"
+          :loading="saving"
+          :disabled="saving"
+          @click="saveItem"
+        >
+          {{ saving ? uiText('Enregistrement…') : uiText('Enregistrer') }}
+        </UiButton>
+      </div>
+    </form>
   </UiFormModal>
 </template>
 
@@ -708,6 +746,37 @@ defineExpose({ reload: loadItems })
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+.product-form-feedback {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.product-form-feedback--error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+}
+
+.product-form-feedback--success {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #15803d;
+}
+
+.product-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
 }
 
 .product-form__row {

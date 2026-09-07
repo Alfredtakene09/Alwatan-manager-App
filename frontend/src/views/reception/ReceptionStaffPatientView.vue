@@ -21,7 +21,7 @@ import {
   type DoctorOption,
 } from '@/lib/doctor-compensation'
 import { CLINIC } from '@/lib/clinic'
-import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
+import { buildClinicPrintHeader, cancelPrintWindow, openPrintDocument, reservePrintWindow } from '@/lib/print-document'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
@@ -190,6 +190,7 @@ async function loadQueue() {
 
 async function registerStaffPatient() {
   if (!canRegister.value || registering.value) return
+  reservePrintWindow('A4')
   registering.value = true
   message.value = ''
   try {
@@ -225,6 +226,7 @@ async function registerStaffPatient() {
     resetForm()
     await loadQueue()
   } catch (error: unknown) {
+    cancelPrintWindow()
     const shown = await showDuplicateModalFromError(error)
     if (shown) return
     const apiMessage =

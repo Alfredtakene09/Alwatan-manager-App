@@ -905,6 +905,7 @@ const examsByKindSchema = z.object({
   echo: z.array(z.string().min(1)).default([]),
   odonto: z.array(z.string().min(1)).default([]),
   operation: z.array(z.string().min(1)).default([]),
+  hospitalisation: z.array(z.string().min(1)).default([]),
 });
 
 const externalLabOrderSchema = z

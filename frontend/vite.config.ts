@@ -49,27 +49,13 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,jpeg,svg,woff,woff2}'],
         navigateFallback: '/index.html',
-        navigateFallbackDenylist: [/^\/api\//],
+        navigateFallbackDenylist: [/^\/api\//, /^\/maj\.html$/],
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
-        runtimeCaching: [
-          {
-            urlPattern: ({ url }) => url.pathname.startsWith('/assets/'),
-            handler: 'StaleWhileRevalidate',
-            options: {
-              cacheName: 'alwatan-assets',
-              expiration: {
-                maxEntries: 200,
-                maxAgeSeconds: 60 * 60 * 24 * 7,
-              },
-            },
-          },
-          {
-            urlPattern: ({ url }) => url.pathname.startsWith('/api/'),
-            handler: 'NetworkOnly',
-          },
-        ],
+        cacheId: 'alwatan-sw-v4-browser-print',
+        // Ne pas intercepter /api ni /assets : évite les erreurs Workbox « no-response » sur le LAN.
+        runtimeCaching: [],
       },
       devOptions: {
         enabled: false,

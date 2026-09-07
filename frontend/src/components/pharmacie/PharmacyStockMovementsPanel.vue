@@ -3,8 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { Plus, RefreshCw, Save, ArrowDownUp } from '@lucide/vue'
 import api from '@/api/client'
-import { formatFcfa, fullName, canManagePharmacyCatalog } from '@/lib/roles'
-import { isUiActionAllowed } from '@/lib/ui-actions'
+import { canWritePharmacyCatalog, formatFcfa, fullName } from '@/lib/roles'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import type { PharmacyProductRecord } from '@/components/pharmacie/PharmacyProductsPanel.vue'
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
@@ -40,9 +39,7 @@ const emit = defineEmits<{ changed: [] }>()
 
 const { uiText, localeCode } = useAppI18n()
 const auth = useAuthStore()
-const canManageCatalog = computed(() =>
-  auth.user ? canManagePharmacyCatalog(auth.user.role) && isUiActionAllowed(auth.user, 'pharmacie.catalog') : false,
-)
+const canManageCatalog = computed(() => canWritePharmacyCatalog(auth.user))
 
 const movements = ref<StockMovementRecord[]>([])
 const products = ref<PharmacyProductRecord[]>([])

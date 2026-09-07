@@ -144,7 +144,8 @@ export async function refreshExamPriceCache() {
  * - examen entier (« Panel ») → tarif catalogue ;
  * - champs partiels (« Panel (Section: champ) ») → somme des prix champs (sinon tarif examen / champ).
  */
-export function getLabExamPriceFcfa(label: string): number {
+export function getLabExamPriceFcfa(label: string | null | undefined): number {
+  if (typeof label !== "string") return 0;
   const trimmed = label.trim();
   if (!trimmed) return DEFAULT_EXAM_PRICE_FCFA;
 

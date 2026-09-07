@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Eye, ArrowLeftRight } from '@lucide/vue'
+import { Eye, Pencil, ArrowLeftRight } from '@lucide/vue'
 import { fullName } from '@/lib/roles'
 import {
   formatPrescribedExamsPreview,
@@ -51,6 +51,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   view: [id: string]
+  edit: [id: string]
   transfer: [id: string]
 }>()
 
@@ -143,6 +144,16 @@ const rows = computed(() => {
                     @click="emit('view', row.id)"
                   >
                     <Eye :size="15" />
+                  </button>
+                  <button
+                    type="button"
+                    class="st-btn st-btn--text st-btn--accent"
+                    :title="uiText('Modifier la consultation')"
+                    :aria-label="uiText('Modifier la consultation')"
+                    @click="emit('edit', row.id)"
+                  >
+                    <Pencil :size="15" />
+                    {{ uiText('Modifier') }}
                   </button>
                   <button
                     type="button"

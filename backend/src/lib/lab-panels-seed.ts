@@ -54,41 +54,49 @@ export const LAB_PANELS_SEED: LabPanelSeed[] = [
       { key: "widalBrucellaA", label: "Widdall Brucelle (A) titer" },
       { key: "widalBrucellaM", label: "Brucella (M) titer" },
       { key: "brucellaComment", label: "Comment", type: "textarea" },
-      { section: "Urine General — Macro Exam", key: "urineColor", label: "Color" },
-      { section: "Urine General — Macro Exam", key: "urineReaction", label: "Reaction" },
-      { section: "Urine General — Macro Exam", key: "urinePh", label: "PH" },
-      { section: "Urine General — Macro Exam", key: "urineGlucose", label: "Glucose" },
-      { section: "Urine General — Macro Exam", key: "urineSugar", label: "Sugar" },
-      { section: "Urine General — Macro Exam", key: "urineAlbumin", label: "Albumin" },
-      { section: "Urine General — Macro Exam", key: "urineProtein", label: "Protein" },
-      { section: "Urine General — Macro Exam", key: "urineBilirubin", label: "Bilirubin" },
-      { section: "Urine General — Macro Exam", key: "urineBile", label: "Bile" },
-      { section: "Urine General — Macro Exam", key: "urineKetones", label: "Ketones" },
-      { section: "Urine General — Macro Exam", key: "urineAcetone", label: "Acetone" },
-      { section: "Urine General — Macro Exam", key: "urineBlood", label: "Blood" },
-      { section: "Urine General — Macro Exam", key: "urineUrobilinogen", label: "Urobillinogen" },
-      { section: "Urine General — Macro Exam", key: "urineGravity", label: "S.Grafity" },
-      { section: "Urine General — Macro Exam", key: "urinePusCells", label: "Pus Cells" },
-      { section: "Urine General — Macro Exam", key: "urinePus", label: "Pus" },
-      { section: "Urine General — Macro Exam", key: "urineRbcs", label: "RBCs" },
-      { section: "Urine General — Macro Exam", key: "urineNitrites", label: "Nitrites" },
-      { section: "Urine General — Macro Exam", key: "urineEpithelial", label: "Epithelial cells" },
-      { section: "Urine General — Macro Exam", key: "urineCasts", label: "Casts" },
-      { section: "Urine General — Macro Exam", key: "urineCrystals", label: "Crytals" },
-      { section: "Urine General — Macro Exam", key: "urineOva", label: "OVA" },
-      { section: "Urine General — Macro Exam", key: "urineOthers", label: "Others" },
-      { section: "Stool General — Macro Exam", key: "stoolColor", label: "Color" },
-      { section: "Stool General — Macro Exam", key: "stoolConsistency", label: "Consistency" },
-      { section: "Stool General — Macro Exam", key: "stoolMucus", label: "Mucus" },
-      { section: "Stool General — Macro Exam", key: "stoolBlood", label: "Blood" },
-      { section: "Stool General — Macro Exam", key: "stoolWorm", label: "Worm" },
-      { section: "Stool General — Macro Exam", key: "stoolPh", label: "PH" },
-      { section: "Stool General — Macro Exam", key: "stoolPusCells", label: "Pus Cells" },
-      { section: "Stool General — Macro Exam", key: "stoolRbcs", label: "RBCs" },
-      { section: "Stool General — Macro Exam", key: "stoolCysts", label: "Cysts" },
-      { section: "Stool General — Macro Exam", key: "stoolTrophozoite", label: "Trophozoite" },
-      { section: "Stool General — Macro Exam", key: "stoolOva", label: "OVA" },
-      { section: "Stool General — Macro Exam", key: "stoolOthers", label: "Others" },
+      { section: "Stool General", key: "stoolColor", label: "Colour" },
+      { section: "Stool General", key: "stoolReaction", label: "Reaction" },
+      { section: "Stool General", key: "stoolConsistency", label: "Consistancy" },
+      { section: "Stool General", key: "stoolMucus", label: "Mucus" },
+      { section: "Stool General", key: "stoolBlood", label: "Blood" },
+      { section: "Stool General", key: "stoolWorm", label: "Worms" },
+      { section: "Stool General", key: "stoolPh", label: "PH" },
+      { section: "Stool General — Microscopic", key: "stoolPusCells", label: "Pus cells" },
+      { section: "Stool General — Microscopic", key: "stoolRbcs", label: "RBCs" },
+      { section: "Stool General — Microscopic", key: "stoolCysts", label: "Cysts" },
+      { section: "Stool General — Microscopic", key: "stoolOva", label: "Ova" },
+      { section: "Stool General — Microscopic", key: "stoolFlagellate", label: "Flagellate" },
+      { section: "Stool General — Microscopic", key: "stoolGiardia", label: "Gardia.L" },
+      { section: "Stool General — Microscopic", key: "stoolWormsMicro", label: "Worms" },
+      { section: "Stool General — Microscopic", key: "stoolTrophozoite", label: "E.Hist" },
+      { section: "Stool General — Microscopic", key: "stoolUndigested", label: "Udigested Food" },
+      { section: "Stool General — Microscopic", key: "stoolYeast", label: "Yeast cells" },
+      { section: "Stool General — Microscopic", key: "stoolOthers", label: "Other" },
+      { section: "Urine General", key: "urineColor", label: "Colour" },
+      { section: "Urine General", key: "urineReaction", label: "Reaction" },
+      { section: "Urine General", key: "urineAlbumin", label: "Albumin" },
+      { section: "Urine General", key: "urineSugar", label: "Sugar" },
+      { section: "Urine General", key: "urineAcetone", label: "Acetone" },
+      { section: "Urine General", key: "urineBile", label: "Bile" },
+      { section: "Urine General", key: "urinePh", label: "PH" },
+      { section: "Urine General", key: "urineGlucose", label: "Glucose" },
+      { section: "Urine General", key: "urineProtein", label: "Protein" },
+      { section: "Urine General", key: "urineBilirubin", label: "Bilirubin" },
+      { section: "Urine General", key: "urineKetones", label: "Ketones" },
+      { section: "Urine General", key: "urineBlood", label: "Blood" },
+      { section: "Urine General", key: "urineUrobilinogen", label: "Urobillinogen" },
+      { section: "Urine General", key: "urineGravity", label: "S.Grafity" },
+      { section: "Urine General — Deposit", key: "urinePusCells", label: "Pus cells" },
+      { section: "Urine General — Deposit", key: "urinePus", label: "Pus" },
+      { section: "Urine General — Deposit", key: "urineRbcs", label: "RBCs" },
+      { section: "Urine General — Deposit", key: "urineEpithelial", label: "Epith.cell" },
+      { section: "Urine General — Deposit", key: "urineCrystals", label: "Crystals" },
+      { section: "Urine General — Deposit", key: "urineCasts", label: "Casts" },
+      { section: "Urine General — Deposit", key: "urineOva", label: "Ova" },
+      { section: "Urine General — Deposit", key: "urineTvaginalis", label: "T.Vaginalis" },
+      { section: "Urine General — Deposit", key: "urineYeast", label: "Yeast" },
+      { section: "Urine General — Deposit", key: "urineNitrites", label: "Nitrites" },
+      { section: "Urine General — Deposit", key: "urineOthers", label: "Other" },
     ],
   },
   {
@@ -311,4 +319,65 @@ export async function seedLabPanelsIfEmpty() {
     created += 1;
   }
   return created;
+}
+
+/** Ajoute / réordonne les champs selles-urine du formulaire Routine pour coller à la feuille classique. */
+export async function ensureRoutineClassicSheetFields() {
+  const routine = LAB_PANELS_SEED.find((panel) => panel.slug === "routine");
+  if (!routine) return 0;
+
+  const panel = await prisma.labPanel.findUnique({
+    where: { slug: "routine" },
+    include: { fields: { orderBy: { sortOrder: "asc" } } },
+  });
+  if (!panel) return 0;
+
+  const classicFields = routine.fields.filter((field) => {
+    if (field.key === "urineHcg" || field.key === "stoolTrypanosoma") return false;
+    return field.key.startsWith("stool") || field.key.startsWith("urine");
+  });
+  if (!classicFields.length) return 0;
+
+  const existing = new Map(panel.fields.map((field) => [field.key, field]));
+  const extraMax = panel.fields.reduce((max, field) => {
+    if (field.key === "urineHcg" || field.key === "stoolTrypanosoma") return Math.max(max, field.sortOrder);
+    if (field.key.startsWith("stool") || field.key.startsWith("urine")) return max;
+    return Math.max(max, field.sortOrder);
+  }, -1);
+
+  let changed = 0;
+  let sortOrder = extraMax + 1;
+  for (const spec of classicFields) {
+    const found = existing.get(spec.key);
+    const nextSection = spec.section ?? null;
+    const nextLabel = spec.label;
+    if (!found) {
+      await prisma.labPanelField.create({
+        data: {
+          panelId: panel.id,
+          section: nextSection,
+          key: spec.key,
+          label: nextLabel,
+          unit: spec.unit ?? null,
+          reference: spec.reference ?? null,
+          defaultValue: spec.defaultValue ?? null,
+          type: spec.type ?? "text",
+          sortOrder,
+        },
+      });
+      changed += 1;
+    } else if (
+      found.section !== nextSection ||
+      found.label !== nextLabel ||
+      found.sortOrder !== sortOrder
+    ) {
+      await prisma.labPanelField.update({
+        where: { id: found.id },
+        data: { section: nextSection, label: nextLabel, sortOrder },
+      });
+      changed += 1;
+    }
+    sortOrder += 1;
+  }
+  return changed;
 }

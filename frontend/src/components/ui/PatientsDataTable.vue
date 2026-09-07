@@ -27,7 +27,7 @@ export type PatientRow = {
   service?: string | null
   gender?: string
   createdAt?: string
-  /** false = déjà envoyé / consulté (ou données liées) — pas de bouton supprimer */
+  /** false = déjà envoyé / consulté (ou données liées) — bouton masqué sauf pour l’admin */
   canDelete?: boolean
   createdBy?: { id: string; firstName: string; lastName: string } | null
   consultationPayment?: ConsultationPaymentInfo | null
@@ -68,6 +68,7 @@ const showPrintButton = computed(
 )
 const showEditButton = computed(() => canSeeUiAction('reception.edit_patient'))
 const showReconsultButton = computed(() => canSeeUiAction('reception.reconsult'))
+const isAdmin = computed(() => auth.user?.role === 'ADMIN')
 const allowDelete = computed(() => props.showDelete && canSeeUiAction('reception.delete_patient'))
 
 const rows = computed(() =>
@@ -82,7 +83,8 @@ const rows = computed(() =>
     receptionistName: p.createdBy
       ? fullName(p.createdBy.firstName, p.createdBy.lastName)
       : '',
-    canDelete: allowDelete.value && p.canDelete !== false,
+    canDelete: allowDelete.value && (isAdmin.value || p.canDelete !== false),
+    forceDelete: isAdmin.value && p.canDelete === false,
     payable: Boolean(p.consultationPayment?.payable),
     paid: p.consultationPayment?.status === 'PAID',
     payment: consultationPaymentMark(p.consultationPayment),
@@ -215,8 +217,8 @@ function genderClass(gender?: string) {
                     type="button"
                     class="st-btn st-btn--accent"
                     :disabled="printingPatientId === row.patient.id"
-                    :title="uiText('Imprimer le reçu de consultation')"
-                    :aria-label="uiText('Imprimer le reçu de consultation')"
+                    :title="uiText('Réimprimer le reçu')"
+                    :aria-label="uiText('Réimprimer le reçu')"
                     @click="emit('print', row.patient)"
                   >
                     <Printer :size="15" />
@@ -263,8 +265,16 @@ function genderClass(gender?: string) {
                     <button
                       type="button"
                       class="st-btn st-btn--delete"
-                      title="Supprimer le dossier"
-                      aria-label="Supprimer le dossier"
+                      :title="
+                        row.forceDelete
+                          ? uiText('Supprimer le dossier (admin, même après consultation)')
+                          : uiText('Supprimer le dossier')
+                      "
+                      :aria-label="
+                        row.forceDelete
+                          ? uiText('Supprimer le dossier (admin, même après consultation)')
+                          : uiText('Supprimer le dossier')
+                      "
                       @click="emit('delete', row.patient)"
                     >
                       <Trash2 :size="15" />

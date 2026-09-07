@@ -20,6 +20,7 @@ import ConsultedPatientsDataTable, {
 
 const visits = ref<ConsultedVisitRow[]>([])
 const prescriptionVisit = ref<PrescriptionVisit | null>(null)
+const prescriptionStartTab = ref<'resume' | 'edit'>('resume')
 const transferVisitId = ref<string | null>(null)
 const transferServices = ref<{ id: string; name: string; doctorCount: number }[]>([])
 const selectedServiceId = ref('')
@@ -90,12 +91,20 @@ function openTransferModal(id: string) {
   void loadTransferServices()
 }
 
-/** Un seul bouton Voir → même modal que la consultation, résumé d’abord. */
-function openViewModal(id: string) {
+function openPrescriptionModal(id: string, startTab: 'resume' | 'edit') {
   const visit = visits.value.find((v) => v.id === id)
   if (!visit) return
+  prescriptionStartTab.value = startTab
   prescriptionVisit.value = visit
   message.value = ''
+}
+
+function openViewModal(id: string) {
+  openPrescriptionModal(id, 'resume')
+}
+
+function openEditModal(id: string) {
+  openPrescriptionModal(id, 'edit')
 }
 
 function closePrescriptionModal() {
@@ -194,15 +203,18 @@ onMounted(async () => {
           :selected-id="prescriptionVisit?.id"
           :loading="loading"
           @view="openViewModal"
+          @edit="openEditModal"
           @transfer="openTransferModal"
         />
       </UiCard>
     </section>
 
     <MedecinPrescriptionModal
+      :key="`${prescriptionVisit?.id ?? 'closed'}-${prescriptionStartTab}`"
       :visit="prescriptionVisit"
       mode="edit"
       :show-resume-tab="true"
+      :start-tab="prescriptionStartTab"
       @close="closePrescriptionModal"
       @saved="onPrescriptionSaved"
     />

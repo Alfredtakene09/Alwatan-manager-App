@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { Banknote, BedDouble, Eye, AlertCircle, Printer } from '@lucide/vue'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
-import { formatExamLinesSummary, type LabExamPendingItem } from '@/lib/lab-exam-pending'
+import { examLinesSectionOrNameList, type LabExamPendingItem } from '@/lib/lab-exam-pending'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import '@/assets/simple-table.css'
 
@@ -61,8 +61,8 @@ const rows = computed<TableRow[]>(() => {
   ).map((item) => {
     const referenceDate = new Date(isPaidMode.value ? (item.paidAt ?? item.updatedAt) : item.updatedAt)
     const netFcfa = item.grossFcfa - (item.labExamReductionFcfa ?? 0)
-    const examCount = item.examLines?.length ?? 0
-    const examsFull = formatExamLinesSummary(item.examLines ?? [])
+    const examNames = examLinesSectionOrNameList(item.examLines ?? [])
+    const examCount = examNames.length
     const collectedFromPartials = Object.values(item.partialPaymentsByKind ?? {}).reduce(
       (sum, row) => sum + Math.max(0, row?.paidFcfa ?? 0),
       0,
@@ -122,7 +122,7 @@ const rows = computed<TableRow[]>(() => {
       doctorName: item.doctor
         ? `Dr ${fullName(item.doctor.firstName, item.doctor.lastName)}`
         : uiText('Patient externe — Réception'),
-      examLines: (examsFull || '—').split(' · ').filter(Boolean),
+      examLines: examNames.length ? examNames : ['—'],
       examCount,
       gross: formatFcfa(displayNetFcfa),
       collected: showPartialBreakdown ? formatFcfa(collectedFcfa) : '',

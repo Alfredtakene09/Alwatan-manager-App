@@ -27,6 +27,7 @@ import {
   assertPatientDeletable,
   findPatientIdsDeletionLocked,
 } from "../lib/patient-payment-guard.js";
+import { forceDeletePatientCascade } from "../lib/patient-admin-delete.js";
 import {
   findDuplicatePatient,
   serializePatientForDuplicate,
@@ -508,10 +509,11 @@ const registerConsultationSchema = patientSchema
     doctorId: z.string(),
     consultationAmountFcfa: z.number().int().min(0).optional(),
     reductionFcfa: z.number().int().min(0).optional(),
-    phone: z.string().trim().min(1, "Téléphone obligatoire"),
+    phone: z.string().trim().optional(),
   })
   .superRefine((data, ctx) => {
-    if (!isUsablePatientPhone(data.phone)) {
+    const phone = data.phone?.trim() ?? "";
+    if (phone && !isUsablePatientPhone(phone)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["phone"],
@@ -551,7 +553,7 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
           lastName: body.lastName,
           age: body.age,
           ageUnit: body.ageUnit,
-          phone: body.phone.trim(),
+          phone: body.phone?.trim() || null,
           service: body.service?.trim() || null,
           gender: body.gender,
           address: body.address,
@@ -812,8 +814,12 @@ router.delete("/:id", requireModule("reception"), async (req, res) => {
     const existing = await prisma.patient.findUnique({ where: { id: patientId } });
     if (!existing) return res.status(404).json({ error: "Patient introuvable" });
 
-    await assertPatientDeletable(patientId);
-    await prisma.patient.delete({ where: { id: patientId } });
+    if (req.user!.role === UserRole.ADMIN) {
+      await forceDeletePatientCascade(patientId);
+    } else {
+      await assertPatientDeletable(patientId);
+      await prisma.patient.delete({ where: { id: patientId } });
+    }
 
     return res.json({ success: true });
   } catch (error) {

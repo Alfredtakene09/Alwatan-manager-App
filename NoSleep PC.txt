@@ -1,0 +1,24 @@
+Alwatan — Empêcher veille PC + extinction écran
+================================================
+
+UTILISATION
+-----------
+Double-cliquez sur :  NoSleep PC.bat
+
+Laissez la fenêtre ouverte.
+Fermez-la (ou Ctrl+C) pour arrêter.
+
+EFFET
+-----
+- Bloque la mise en veille du PC
+- Bloque l'extinction de l'écran
+- Désactive l'hibernation (sur secteur)
+
+TECHNIQUE
+---------
+Utilise l'API Windows SetThreadExecutionState
+(+ powercfg), pas un simple ping.
+
+Fichiers :
+  NoSleep PC.bat     <- à lancer
+  NoSleep-PC.ps1     <- script PowerShell

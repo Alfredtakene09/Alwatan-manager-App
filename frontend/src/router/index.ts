@@ -25,11 +25,23 @@ const router = createRouter({
           path: 'reception/comptabilite',
           redirect: { path: '/comptabilite/tableau-de-bord', query: { tab: 'historique' } },
         },
-        { path: 'reception/en-attente-paiement', redirect: '/comptabilite/en-attente-paiement' },
-        { path: 'reception/examens-payes', redirect: '/comptabilite/examens-payes' },
+        {
+          path: 'reception/en-attente-paiement',
+          name: 'reception-en-attente-paiement',
+          component: () => import('@/views/comptabilite/ComptabiliteAttentePaiementView.vue'),
+          meta: { module: 'reception' },
+        },
+        {
+          path: 'reception/examens-payes',
+          name: 'reception-examens-payes',
+          component: () => import('@/views/comptabilite/ComptabiliteExamensPayesView.vue'),
+          meta: { module: 'reception' },
+        },
         {
           path: 'reception/examens-payes/reclamations',
-          redirect: '/comptabilite/examens-payes/reclamations',
+          name: 'reception-examens-reclamations',
+          component: () => import('@/views/comptabilite/ComptabiliteExamReclamationsView.vue'),
+          meta: { module: 'reception' },
         },
         {
           path: 'reception/patient-externe',

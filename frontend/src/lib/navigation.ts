@@ -268,6 +268,32 @@ const receptionNav: NavSection[] = [
           },
         ],
       },
+      {
+        label: 'Paiement examens',
+        icon: Banknote,
+        module: 'reception',
+        children: [
+          {
+            to: '/reception/en-attente-paiement',
+            label: 'En attente de paiement',
+            icon: Clock,
+            module: 'reception',
+            description: 'Examens prescrits à encaisser',
+          },
+          {
+            to: '/reception/examens-payes',
+            label: 'Examens payés',
+            icon: CheckCircle2,
+            module: 'reception',
+          },
+          {
+            to: '/reception/examens-payes/reclamations',
+            label: 'Réclamations',
+            icon: ClipboardList,
+            module: 'reception',
+          },
+        ],
+      },
     ],
   },
 ]
@@ -512,14 +538,6 @@ const directionAdminNav: NavSection[] = [
   {
     label: 'Clinique',
     items: [
-      {
-        to: '/bloc-salles',
-        label: 'Bloc & salles',
-        icon: Scissors,
-        module: 'bloc-salles',
-        description: 'Gestion des chambres et du bloc opératoire',
-        uiAction: 'hospitalisation.rooms',
-      },
       {
         label: 'Supervision',
         icon: Stethoscope,
