@@ -146,7 +146,7 @@ function mappedRows(defs: ClassicRow[], values: Record<string, string>, extras: 
   return [
     ...defs.map((row) => ({ label: row.label, value: fieldValue(values, row.key) })),
     ...extras,
-  ]
+  ].filter((row) => row.value.trim().length > 0)
 }
 
 function renderRows(rows: Array<{ label: string; value: string }>) {
@@ -163,6 +163,7 @@ function renderRows(rows: Array<{ label: string; value: string }>) {
 }
 
 function renderSection(title: string, rows: Array<{ label: string; value: string }>, sub = false) {
+  if (!rows.length) return ''
   const titleClass = sub
     ? 'lab-classic-sheet__title lab-classic-sheet__title--sub'
     : 'lab-classic-sheet__title'
@@ -197,7 +198,7 @@ export const LAB_CLASSIC_SHEET_STYLES = `
     background: #fff;
   }
   .lab-classic-sheet__table td {
-    width: 33.33%;
+    width: calc(100% / var(--classic-cols, 3));
     vertical-align: top;
     padding: 8px 10px 10px;
     border: 1.5px solid #0f172a;
@@ -278,23 +279,27 @@ export function renderClassicStoolUrineTable(slug: string, values: Record<string
         .join('')}</div>`
     : ''
 
+  const urineGeneralHtml = renderSection('Urine General', urineGeneral)
+  const columns = [
+    renderSection('Stool General', stoolGeneral),
+    renderSection('Microscopic', stoolMicro),
+    [urineGeneralHtml, renderSection('Diposite', urineDeposit, Boolean(urineGeneralHtml))]
+      .filter(Boolean)
+      .join(''),
+  ].filter(Boolean)
+
+  const tableHtml = columns.length
+    ? `<table class="lab-classic-sheet__table" style="--classic-cols: ${columns.length}">
+        <tr>
+          ${columns.map((html) => `<td>${html}</td>`).join('')}
+        </tr>
+      </table>`
+    : ''
+
   return `
     <div class="lab-classic-sheet">
       ${extrasHtml}
-      <table class="lab-classic-sheet__table">
-        <tr>
-          <td>
-            ${renderSection('Stool General', stoolGeneral)}
-          </td>
-          <td>
-            ${renderSection('Microscopic', stoolMicro)}
-          </td>
-          <td>
-            ${renderSection('Urine General', urineGeneral)}
-            ${renderSection('Diposite', urineDeposit, true)}
-          </td>
-        </tr>
-      </table>
+      ${tableHtml}
     </div>
   `
 }

@@ -13,6 +13,7 @@ import {
 import { patientCategoryLabel, type PatientCategory } from '@/lib/patient-category'
 import {
   emptyPanelValues,
+  getFilledLabPanelSections,
   getLabFormPanel,
   labFieldCommentKey,
   type LabFormField,
@@ -219,6 +220,16 @@ const isActivePanelReadOnly = computed(() => {
   if (!activePanel.value) return true
   // Flux principal : éditable jusqu'à la clôture (même si déjà enregistré partiellement)
   return false
+})
+
+/** En consultation, n’afficher que les champs réellement renseignés. */
+const displayedSections = computed(() => {
+  const panel = activePanelConfig.value
+  if (!panel) return []
+  if (isActivePanelReadOnly.value) {
+    return getFilledLabPanelSections(panel, formValues)
+  }
+  return panel.sections
 })
 
 const canFinalize = computed(() => {
@@ -674,7 +685,16 @@ onMounted(async () => {
         <template v-if="activePanelConfig">
           <div v-if="showPanelSwitcher" class="form-divider" />
 
-          <p v-if="!activePanelConfig.sections.some((s) => s.fields.length)" class="saved-hint">
+          <p
+            v-if="isActivePanelReadOnly && !displayedSections.length"
+            class="saved-hint"
+          >
+            {{ uiText('Aucune valeur enregistrée pour ce formulaire.') }}
+          </p>
+          <p
+            v-else-if="!displayedSections.some((s) => s.fields.length)"
+            class="saved-hint"
+          >
             {{
               uiText(
                 'Ce formulaire n’a pas encore de champs — complétez-le dans Formulaires laboratoire.',
@@ -683,7 +703,7 @@ onMounted(async () => {
           </p>
 
           <div
-            v-for="section in activePanelConfig.sections"
+            v-for="section in displayedSections"
             :key="section.title ?? 'main'"
             class="form-section"
           >
