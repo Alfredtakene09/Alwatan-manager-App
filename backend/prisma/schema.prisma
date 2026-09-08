@@ -408,6 +408,8 @@ model Visit {
 
   @@index([patientId])
   @@index([status])
+  @@index([createdAt])
+  @@index([status, createdAt])
   @@index([assignedClinicServiceId, status])
 }
 
@@ -689,11 +691,11 @@ model Invoice {
   paidAt            DateTime?
   createdAt         DateTime      @default(now())
 
-  patient            Patient?                @relation(fields: [patientId], references: [id])
+  patient            Patient?                @relation(fields: [patientId], references: [id], onDelete: Cascade)
   externalClient     PharmacyExternalClient? @relation(fields: [externalClientId], references: [id])
-  visit              Visit?                  @relation(fields: [visitId], references: [id])
-  surgeryCase        SurgeryCase?            @relation(fields: [surgeryCaseId], references: [id])
-  hospitalization    Hospitalization?        @relation(fields: [hospitalizationId], references: [id])
+  visit              Visit?                  @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  surgeryCase        SurgeryCase?            @relation(fields: [surgeryCaseId], references: [id], onDelete: Cascade)
+  hospitalization    Hospitalization?        @relation(fields: [hospitalizationId], references: [id], onDelete: Cascade)
   issuedBy           User                    @relation(fields: [issuedById], references: [id])
   pharmacyLines      PharmacySaleLine[]
   cashSettlementLine ReceptionCashSettlementLine?
@@ -703,6 +705,8 @@ model Invoice {
   @@index([patientId])
   @@index([externalClientId])
   @@index([visitId, billingExamKind])
+  @@index([status, paidAt])
+  @@index([type, status, paidAt])
 }
 
 model InvoicePayment {
@@ -800,6 +804,7 @@ model Product {
 
   @@index([categoryId])
   @@index([supplierId])
+  @@index([active, quantity])
 }
 
 model StockMovement {
@@ -818,7 +823,7 @@ model StockMovement {
 
   product      Product           @relation(fields: [productId], references: [id])
   supplier     PharmacySupplier? @relation(fields: [supplierId], references: [id])
-  prescription Prescription?     @relation(fields: [prescriptionId], references: [id])
+  prescription Prescription?     @relation(fields: [prescriptionId], references: [id], onDelete: SetNull)
   user         User              @relation(fields: [userId], references: [id])
 
   @@index([productId, createdAt])
@@ -838,9 +843,9 @@ model Prescription {
   netTotalFcfa     Int?
   createdAt        DateTime @default(now())
 
-  patient        Patient?                @relation(fields: [patientId], references: [id])
+  patient        Patient?                @relation(fields: [patientId], references: [id], onDelete: Cascade)
   externalClient PharmacyExternalClient? @relation(fields: [externalClientId], references: [id])
-  visit          Visit?                  @relation(fields: [visitId], references: [id])
+  visit          Visit?                  @relation(fields: [visitId], references: [id], onDelete: Cascade)
   pharmacist     User                    @relation(fields: [pharmacistId], references: [id])
   saleLines      PharmacySaleLine[]
   stockMovements StockMovement[]
@@ -878,7 +883,7 @@ model PharmacySaleLine {
 
   prescription Prescription         @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
   product      Product              @relation(fields: [productId], references: [id])
-  invoice      Invoice?             @relation(fields: [invoiceId], references: [id])
+  invoice      Invoice?             @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   returns      PharmacySaleReturn[]
 
   @@index([prescriptionId])
@@ -967,7 +972,7 @@ model ReceptionCashSettlementLine {
   invoiceId    String @unique
 
   settlement ReceptionCashSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
-  invoice      Invoice               @relation(fields: [invoiceId], references: [id])
+  invoice      Invoice               @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@index([settlementId])
 }

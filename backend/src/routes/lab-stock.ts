@@ -2,10 +2,10 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/db.js";
 import { applyLabStockMovement } from "../lib/lab-stock.js";
-import { requireAuth, requireLabStockAccess } from "../middleware/auth.js";
+import { requireAuth, requireLabStockAccess, requireUiAction } from "../middleware/auth.js";
 
 const router = Router();
-router.use(requireAuth, requireLabStockAccess);
+router.use(requireAuth, requireLabStockAccess, requireUiAction("lab.stock"));
 
 function mapLabStockError(error: unknown, res: import("express").Response) {
   if (error instanceof z.ZodError) return res.status(400).json({ error: "Données invalides" });
@@ -178,13 +178,32 @@ router.put("/items/:id", async (req, res) => {
     if (body.categoryId !== undefined) data.categoryId = body.categoryId || null;
     if (body.unitCostFcfa !== undefined) data.unitCostFcfa = body.unitCostFcfa;
     if (body.minStock !== undefined) data.minStock = body.minStock;
-    if (body.quantity !== undefined) data.quantity = body.quantity;
     if (body.noExpiry !== undefined) data.noExpiry = body.noExpiry;
     if (body.noExpiry === true) data.expiryDate = null;
     else if (body.expiryDate !== undefined) data.expiryDate = parseExpiryDate(body.expiryDate);
     if (body.active !== undefined) data.active = body.active;
 
-    const item = await prisma.labStockItem.update({ where: { id: req.params.id }, data, include: itemInclude });
+    const requestedQuantity = body.quantity;
+    const item = await prisma.$transaction(async (tx) => {
+      const updated = await tx.labStockItem.update({
+        where: { id: req.params.id },
+        data,
+        include: itemInclude,
+      });
+      if (requestedQuantity !== undefined && requestedQuantity !== existing.quantity) {
+        await applyLabStockMovement(tx, {
+          itemId: existing.id,
+          type: "ADJUSTMENT",
+          targetQuantity: requestedQuantity,
+          userId: req.user!.id,
+        });
+        return tx.labStockItem.findUniqueOrThrow({
+          where: { id: existing.id },
+          include: itemInclude,
+        });
+      }
+      return updated;
+    });
     return res.json(item);
   } catch {
     return res.status(400).json({ error: "Mise à jour impossible" });

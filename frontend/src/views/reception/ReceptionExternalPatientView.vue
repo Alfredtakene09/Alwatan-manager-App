@@ -9,6 +9,7 @@ import {
   UserPlus,
   Pencil,
   CheckCircle2,
+  Printer,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { showDuplicateModalFromError } from '@/lib/api-modal-helper'
@@ -21,13 +22,14 @@ import {
   countExamsByKind,
   EXTERNAL_PATIENT_EXAM_KINDS,
   EXAM_KIND_LABELS,
+  loadExamCatalog,
   type ExamKindSlug,
   type ExamsByKind,
 } from '@/lib/exam-catalog'
-import { emptyExamReductionsByKind, examsByKindFromLines } from '@/lib/exam-billing'
-import { printAllPendingLabExamInvoices } from '@/lib/lab-exam-invoice'
+import { examsByKindFromLines } from '@/lib/exam-billing'
+import { printExternalPatientReceipt } from '@/lib/lab-exam-invoice'
 import type { LabExamLine } from '@/lib/lab-exam-pending'
-import { getLabExamPriceFcfa } from '@/lib/lab-exams'
+import { buildLabExamLinesFromNotes, getLabExamPriceFcfa } from '@/lib/lab-exams'
 import { cancelPrintWindow, reservePrintWindow } from '@/lib/print-document'
 import { type DoctorOption } from '@/lib/doctor-compensation'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
@@ -80,6 +82,7 @@ type ExternalQueueRow = {
   labSentToLabAt: string | null
   service?: string | null
   clinicalNotes?: string | null
+  doctor?: { firstName: string; lastName: string } | null
   patient: QueuePatient
 }
 
@@ -126,7 +129,7 @@ const operationAmountFcfa = ref<number | null>(null)
 const submitting = ref(false)
 const savingEdit = ref(false)
 const message = ref('')
-const messageType = ref<'success' | 'error'>('success')
+const messageType = ref<'success' | 'error' | 'warning'>('success')
 
 const doctors = ref<DoctorOption[]>([])
 const selectedDoctorId = ref('')
@@ -310,25 +313,41 @@ function buildExamLinesFromForm(): LabExamLine[] {
   return lines
 }
 
-function printExternalExamTickets(patient: {
-  code: string
-  firstName: string
-  lastName: string
-  phone?: string | null
-  age?: number | null
-  ageUnit?: PatientAgeUnit | null
-  gender?: string | null
-}) {
-  const examLines = buildExamLinesFromForm()
-  if (!examLines.length) return
-  const doctor = doctors.value.find((d) => d.id === selectedDoctorId.value)
-  printAllPendingLabExamInvoices(
+function printExternalExamTickets(
+  patient: {
+    code: string
+    firstName: string
+    lastName: string
+    phone?: string | null
+    age?: number | null
+    ageUnit?: PatientAgeUnit | null
+    gender?: string | null
+  },
+  extra?: {
+    examLines?: LabExamLine[]
+    invoiceNumber?: string | null
+    status?: string
+    date?: string
+    doctor?: { firstName: string; lastName: string } | null
+    grossFcfa?: number
+    reductionFcfa?: number
+    totalFcfa?: number
+  },
+) {
+  const examLines = extra?.examLines ?? buildExamLinesFromForm()
+  if (!examLines.length) return false
+  const doctor =
+    extra?.doctor !== undefined
+      ? extra.doctor
+      : doctors.value.find((d) => d.id === selectedDoctorId.value) ?? null
+  return printExternalPatientReceipt(
     {
       id: patient.code,
-      updatedAt: new Date().toISOString(),
+      updatedAt: extra?.date ?? new Date().toISOString(),
       examLines,
       examsByKind: examsByKindFromLines(examLines),
-      grossFcfa: 0,
+      grossFcfa: extra?.grossFcfa ?? 0,
+      labExamReductionFcfa: extra?.reductionFcfa ?? 0,
       visit: {
         patient: {
           code: patient.code,
@@ -344,9 +363,74 @@ function printExternalExamTickets(patient: {
         ? { firstName: doctor.firstName, lastName: doctor.lastName }
         : null,
     },
-    emptyExamReductionsByKind(),
-    'En attente',
+    {
+      status: extra?.status,
+      invoiceNumber: extra?.invoiceNumber,
+      grossFcfa: extra?.grossFcfa,
+      reductionFcfa: extra?.reductionFcfa,
+      totalFcfa: extra?.totalFcfa,
+    },
   )
+}
+
+function tryPrintExternalExamTickets(
+  ...args: Parameters<typeof printExternalExamTickets>
+): boolean {
+  try {
+    return printExternalExamTickets(...args)
+  } catch {
+    return false
+  }
+}
+
+function notifyExternalOrderResult(printed: boolean, successText: string) {
+  if (printed) {
+    message.value = successText
+    messageType.value = 'success'
+    return
+  }
+  message.value = uiText(
+    'Prescription enregistrée, mais le reçu n’a pas pu être imprimé. Utilisez « Réimprimer le reçu ».',
+  )
+  messageType.value = 'warning'
+}
+
+async function reprintExternalReceipt(row: ExternalQueueRow) {
+  if (!row.hasExams) {
+    message.value = uiText('Aucun examen à imprimer')
+    messageType.value = 'error'
+    return
+  }
+  reservePrintWindow('80mm')
+  try {
+    await loadExamCatalog()
+  } catch {
+    /* tarifs catalogue facultatifs — le total de la ligne reste affiché */
+  }
+  const examLines = buildLabExamLinesFromNotes(row.clinicalNotes)
+  if (!examLines.length) {
+    cancelPrintWindow()
+    message.value = uiText('Aucun examen à imprimer')
+    messageType.value = 'error'
+    return
+  }
+  try {
+    const printed = printExternalExamTickets(row.patient, {
+      examLines,
+      invoiceNumber: row.invoiceNumber,
+      status: row.invoiced ? 'Payé' : undefined,
+      date: row.updatedAt,
+      doctor: row.doctor ?? null,
+      grossFcfa: row.grossFcfa,
+      reductionFcfa: Math.max(0, row.grossFcfa - row.netFcfa),
+      totalFcfa: row.netFcfa,
+    })
+    if (!printed) cancelPrintWindow()
+  } catch {
+    cancelPrintWindow()
+    message.value = uiText("Impossible d'imprimer le reçu.")
+    messageType.value = 'error'
+  }
 }
 
 function openExamsModal(row: ExternalQueueRow) {
@@ -402,6 +486,13 @@ function externalRowActions(row: ExternalQueueRow): QueueRowAction[] {
       disabled: row.hasExams,
       disabledReason: row.hasExams ? uiText('Examens déjà prescrits') : undefined,
     },
+    {
+      key: 'print',
+      label: uiText('Réimprimer le reçu'),
+      icon: Printer,
+      disabled: !row.hasExams,
+      disabledReason: !row.hasExams ? uiText('Aucun examen à imprimer') : undefined,
+    },
     { key: 'edit', label: uiText('Modifier'), icon: Pencil },
   ]
 }
@@ -423,6 +514,7 @@ function serviceDisplayLabel(service: string | null | undefined) {
 
 function onExternalRowAction(key: string, row: ExternalQueueRow) {
   if (key === 'exams') openExamsModal(row)
+  if (key === 'print') void reprintExternalReceipt(row)
   if (key === 'edit') openEditModal(row)
 }
 
@@ -431,6 +523,9 @@ async function loadQueue() {
   try {
     const { data } = await api.get<ExternalQueueRow[]>('/visits/external-queue')
     queue.value = data
+  } catch {
+    message.value = uiText("Impossible de charger la file des patients externes.")
+    messageType.value = 'error'
   } finally {
     loadingQueue.value = false
   }
@@ -441,10 +536,16 @@ async function searchPatients() {
     searchResults.value = []
     return
   }
-  const { data } = await api.get<PatientRow[]>('/patients', {
-    params: { q: search.value.trim(), category: 'STANDARD' },
-  })
-  searchResults.value = data
+  try {
+    const { data } = await api.get<PatientRow[]>('/patients', {
+      params: { q: search.value.trim(), category: 'STANDARD' },
+    })
+    searchResults.value = data
+  } catch {
+    searchResults.value = []
+    message.value = uiText('Impossible de rechercher les patients.')
+    messageType.value = 'error'
+  }
 }
 
 function clearSearch() {
@@ -453,6 +554,7 @@ function clearSearch() {
 }
 
 async function registerPatient(payload: Record<string, unknown>) {
+  if (registering.value) return
   registering.value = true
   message.value = ''
   try {
@@ -477,6 +579,7 @@ async function registerPatient(payload: Record<string, unknown>) {
 }
 
 async function confirmNewPatient() {
+  if (registering.value) return
   if (!canConfirmNewPatient.value) return
   const { firstName, lastName } = parsedName.value
   const age = parsePatientAge(patientForm.value.age, patientForm.value.ageUnit)
@@ -514,21 +617,22 @@ async function confirmNewPatient() {
         phone: patientForm.value.phone.trim() || null,
         gender: patientForm.value.gender,
       }
-      try {
-        printExternalExamTickets(printedPatient)
-      } catch {
-        // L’enregistrement a réussi : ne pas afficher une erreur d’impression.
-      }
-      message.value = data.invoice
-        ? translateTemplate(
-            'Enregistré — {invoice}. Paiement à faire par le gestionnaire / admin. Patient envoyé vers {destination}.',
-            { invoice: data.invoice.invoiceNumber ?? '', destination },
-          )
-        : translateTemplate(
-            'Examens enregistrés — en attente de paiement (gestionnaire / admin). Patient envoyé vers {destination}.',
-            { destination },
-          )
-      messageType.value = 'success'
+      const printed = tryPrintExternalExamTickets(printedPatient, {
+        invoiceNumber: data.invoice?.invoiceNumber,
+        status: data.invoice ? 'Payé' : undefined,
+      })
+      notifyExternalOrderResult(
+        printed,
+        data.invoice
+          ? translateTemplate(
+              'Paiement validé — {invoice}. Patient envoyé vers {destination} (sans consultation médecin).',
+              { invoice: data.invoice.invoiceNumber ?? '', destination },
+            )
+          : translateTemplate(
+              'Examens enregistrés. Patient envoyé vers {destination} (sans consultation médecin).',
+              { destination },
+            ),
+      )
       closeNewPatientModal()
       resetPatientForm()
       resetExamsForm()
@@ -562,6 +666,7 @@ async function selectPatient(patient: PatientRow) {
 }
 
 async function submitExams() {
+  if (submitting.value) return
   if (!canSubmitExams.value || !activeRow.value) return
   reservePrintWindow('80mm')
   submitting.value = true
@@ -577,21 +682,22 @@ async function submitExams() {
       service: serviceFromExams(examsByKind.value) ?? activeRow.value.service ?? undefined,
       doctorId: selectedDoctorId.value || undefined,
     })
-    try {
-      printExternalExamTickets(patientForPrint)
-    } catch {
-      // L’enregistrement a réussi : ne pas afficher une erreur d’impression.
-    }
-    message.value = data.invoice
-      ? translateTemplate(
-          'Enregistré — {invoice}. Paiement à faire par le gestionnaire / admin. Patient envoyé vers {destination}.',
-          { invoice: data.invoice.invoiceNumber ?? '', destination },
-        )
-      : translateTemplate(
-          'Examens enregistrés — en attente de paiement (gestionnaire / admin). Patient envoyé vers {destination}.',
-          { destination },
-        )
-    messageType.value = 'success'
+    const printed = tryPrintExternalExamTickets(patientForPrint, {
+      invoiceNumber: data.invoice?.invoiceNumber,
+      status: data.invoice ? 'Payé' : undefined,
+    })
+    notifyExternalOrderResult(
+      printed,
+      data.invoice
+        ? translateTemplate(
+            'Paiement validé — {invoice}. Patient envoyé vers {destination} (sans consultation médecin).',
+            { invoice: data.invoice.invoiceNumber ?? '', destination },
+          )
+        : translateTemplate(
+            'Examens enregistrés. Patient envoyé vers {destination} (sans consultation médecin).',
+            { destination },
+          ),
+    )
     closeExamsModal()
     resetExamsForm()
     await loadQueue()

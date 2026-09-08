@@ -57,7 +57,7 @@ export const authorizedSurgeonsInclude = {
     },
     orderBy: [{ user: { lastName: "asc" as const } }, { user: { firstName: "asc" as const } }],
   },
-} as const;
+};
 
 export function serializeAuthorizedSurgeons(
   rows:

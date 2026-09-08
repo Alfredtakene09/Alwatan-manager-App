@@ -873,8 +873,27 @@ async function saveEmployee() {
     }
     let employeeId = editingId.value
     if (editingId.value) {
-      await api.put(`${apiBase.value}/employees/${editingId.value}`, payload)
-      message.value = 'Employé mis à jour.'
+      const { data } = await api.put<{
+        compensationRecalc?: {
+          pendingConsultationInvoices: number
+          unpaidSurgeryShares: number
+          pendingShareClaims: number
+          pendingPayrolls: number
+          pendingOvertime: number
+        }
+      }>(`${apiBase.value}/employees/${editingId.value}`, payload)
+      const recalc = data.compensationRecalc
+      const recalcCount = recalc
+        ? recalc.pendingConsultationInvoices +
+          recalc.unpaidSurgeryShares +
+          recalc.pendingShareClaims +
+          recalc.pendingPayrolls +
+          recalc.pendingOvertime
+        : 0
+      message.value =
+        recalcCount > 0
+          ? 'Employé mis à jour. Les montants non réglés (parts médecin, factures en attente, paie, heures sup) ont été recalculés.'
+          : 'Employé mis à jour.'
     } else {
       const { data } = await api.post<Employee>(`${apiBase.value}/employees`, payload)
       employeeId = data.id

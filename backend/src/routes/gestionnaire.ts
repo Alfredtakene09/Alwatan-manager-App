@@ -26,8 +26,9 @@ import {
   syncClinicServiceDoctors,
   syncEmployeeClinicServices,
 } from "../lib/clinic-service-doctors.js";
-import { requireAuth, requireModule } from "../middleware/auth.js";
+import { requireAuth, requireModule, requireUiAction } from "../middleware/auth.js";
 import { employeeCompensationData } from "../lib/doctor-compensation.js";
+import { recalculateAfterEmployeeFicheChangeSafe } from "../lib/recalculate-employee-compensation.js";
 import {
   countEmployeesForJobTitle,
   serializeJobTitlesWithUsage,
@@ -571,7 +572,7 @@ router.get("/expenses", async (req, res) => {
   return res.json(rows.map(serializeGestionnaireExpense));
 });
 
-router.post("/expenses", expenseUpload.single("receipt"), async (req, res) => {
+router.post("/expenses", requireUiAction("comptabilite.depenses"), expenseUpload.single("receipt"), async (req, res) => {
   const user = req.user!;
   try {
     const body = expenseSchema.parse(req.body);
@@ -603,7 +604,7 @@ router.post("/expenses", expenseUpload.single("receipt"), async (req, res) => {
   }
 });
 
-router.put("/expenses/:id", expenseUpload.single("receipt"), async (req, res) => {
+router.put("/expenses/:id", requireUiAction("comptabilite.depenses"), expenseUpload.single("receipt"), async (req, res) => {
   const user = req.user!;
   const row = await prisma.clinicExpense.findUnique({
     where: { id: String(req.params.id) },
@@ -641,8 +642,8 @@ router.put("/expenses/:id", expenseUpload.single("receipt"), async (req, res) =>
   }
 });
 
-router.delete("/expenses/:id", async (req, res) => {
-  const row = await prisma.clinicExpense.findUnique({ where: { id: req.params.id } });
+router.delete("/expenses/:id", requireUiAction("comptabilite.depenses"), async (req, res) => {
+  const row = await prisma.clinicExpense.findUnique({ where: { id: String(req.params.id) } });
   if (!row) return res.status(404).json({ error: "Dépense introuvable" });
 
   if (row.receiptPath) {
@@ -658,7 +659,7 @@ router.delete("/expenses/:id", async (req, res) => {
   return res.status(204).send();
 });
 
-router.patch("/expenses/:id/validate", async (req, res) => {
+router.patch("/expenses/:id/validate", requireUiAction("comptabilite.depenses"), async (req, res) => {
   const user = req.user!;
   const row = await prisma.clinicExpense.findUnique({
     where: { id: String(req.params.id) },
@@ -680,7 +681,7 @@ router.patch("/expenses/:id/validate", async (req, res) => {
   return res.json(serializeGestionnaireExpense(updated));
 });
 
-router.patch("/expenses/:id/reject", async (req, res) => {
+router.patch("/expenses/:id/reject", requireUiAction("comptabilite.depenses"), async (req, res) => {
   const user = req.user!;
   const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
   if (reason.length < 3) {
@@ -840,7 +841,7 @@ router.get("/employees/:id", async (req, res) => {
   return res.json(employee);
 });
 
-router.post("/employees", async (req, res) => {
+router.post("/employees", requireUiAction("employees.create"), async (req, res) => {
   try {
     const body = gestionnaireEmployeeSchema.parse(req.body);
     const jobTitle = body.jobTitle?.trim() || null;
@@ -1048,7 +1049,11 @@ router.put("/employees/:id", async (req, res) => {
       where: { id: employeeId },
       select: employeeSelect,
     });
-    return res.json(serializeEmployee(refreshed ?? row));
+    const compensationRecalc = await recalculateAfterEmployeeFicheChangeSafe(employeeId);
+    return res.json({
+      ...serializeEmployee(refreshed ?? row),
+      compensationRecalc,
+    });
   } catch (error) {
     return res.status(400).json({ error: employeeValidationMessage(error) });
   }

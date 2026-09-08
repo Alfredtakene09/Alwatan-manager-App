@@ -74,7 +74,7 @@ export function medecinDejaConsulteVisitWhere(doctorId: string): Prisma.VisitWhe
   return {
     status: { notIn: [VisitStatus.COMPLETED, VisitStatus.CANCELLED] },
     AND: [
-      medecinMatchWhere(doctorId),
+      { assignedDoctorId: doctorId },
       {
         patient: { category: { in: [PatientCategory.STANDARD, PatientCategory.ONG] } },
         consultation: {
@@ -99,7 +99,7 @@ export function medecinDejaConsulteListVisitWhere(
 ): Prisma.VisitWhereInput {
   return {
     AND: [
-      medecinMatchWhere(doctorId),
+      { assignedDoctorId: doctorId },
       {
         patient: { category: { in: [PatientCategory.STANDARD, PatientCategory.ONG] } },
         OR: [
@@ -147,6 +147,25 @@ export function medecinPrescribedTodayVisitWhere(
   };
 }
 
+/**
+ * File médecin : uniquement les visites encore assignées à ce compte
+ * (pas l’historique via consultation.doctorId — sinon un transfert ne quitte pas la file).
+ */
+function medecinAssignedQueueWhere(
+  doctorId: string,
+  clinicServiceIds: string[] = [],
+): Prisma.VisitWhereInput {
+  const or: Prisma.VisitWhereInput[] = [{ assignedDoctorId: doctorId }];
+  if (clinicServiceIds.length > 0) {
+    or.push({
+      assignedDoctorId: null,
+      assignedClinicServiceId: { in: clinicServiceIds },
+      status: VisitStatus.WAITING_CONSULTATION,
+    });
+  }
+  return { OR: or };
+}
+
 /** File de consultation — patients assignés, ou en attente sur un service du médecin. */
 export function medecinPendingConsultationVisitWhere(
   doctorId: string,
@@ -159,6 +178,6 @@ export function medecinPendingConsultationVisitWhere(
         clinicalNotes: { contains: EXAMS_PRESCRIBED_PREFIX },
       },
     },
-    AND: [medecinMatchWhere(doctorId, clinicServiceIds)],
+    AND: [medecinAssignedQueueWhere(doctorId, clinicServiceIds)],
   };
 }

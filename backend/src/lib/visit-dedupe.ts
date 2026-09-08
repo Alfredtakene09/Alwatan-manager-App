@@ -1,6 +1,3 @@
-import { VisitStatus } from "@prisma/client";
-import { prisma } from "./db.js";
-
 type VisitWithPatient = {
   id: string;
   patientId: string;
@@ -18,31 +15,10 @@ export function keepLatestVisitPerPatient<T extends VisitWithPatient>(visits: T[
   return Array.from(byPatient.values());
 }
 
-/** Annule les visites actives en double — conserve la plus récente par patient. */
+/**
+ * Ne plus annuler en masse : un patient peut avoir une consultation ET un passage labo/externe
+ * le même jour. L'affichage « une ligne par patient » passe par keepLatestVisitPerPatient.
+ */
 export async function cancelDuplicateActiveVisits(): Promise<number> {
-  const active = await prisma.visit.findMany({
-    where: { status: { notIn: [VisitStatus.COMPLETED, VisitStatus.CANCELLED] } },
-    select: { id: true, patientId: true, updatedAt: true },
-    orderBy: { updatedAt: "desc" },
-  });
-
-  const keepIds = new Set<string>();
-  const cancelIds: string[] = [];
-
-  for (const visit of active) {
-    if (keepIds.has(visit.patientId)) {
-      cancelIds.push(visit.id);
-    } else {
-      keepIds.add(visit.patientId);
-    }
-  }
-
-  if (!cancelIds.length) return 0;
-
-  await prisma.visit.updateMany({
-    where: { id: { in: cancelIds } },
-    data: { status: VisitStatus.CANCELLED },
-  });
-
-  return cancelIds.length;
+  return 0;
 }

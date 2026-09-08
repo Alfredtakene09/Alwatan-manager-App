@@ -162,7 +162,7 @@ type DayClosureStatus = {
   } | null
 }
 
-const { uiText, dateText, localeCode } = useAppI18n()
+const { uiText, clinicServiceText, dateText, localeCode } = useAppI18n()
 const auth = useAuthStore()
 const router = useRouter()
 const { canSeeUiAction } = useUiActionVisibility()
@@ -999,8 +999,8 @@ function printPatientReceipt(patient: Patient) {
 }
 
 async function deletePatient(patient: Patient) {
-  const isAdmin = auth.user?.role === 'ADMIN'
-  if (patient.canDelete === false && !isAdmin) {
+  const canForceDelete = Boolean(auth.user && isDirectionOrGestionnaire(auth.user.role))
+  if (patient.canDelete === false && !canForceDelete) {
     showAlert(
       'Impossible de supprimer : ce patient a déjà été envoyé et consulté.',
       'error',
@@ -1009,7 +1009,7 @@ async function deletePatient(patient: Patient) {
   }
 
   const patientName = fullName(patient.firstName, patient.lastName)
-  const forceDelete = isAdmin && patient.canDelete === false
+  const forceDelete = canForceDelete && patient.canDelete === false
   const confirmed = await confirmAppModal({
     type: 'DELETE',
     title: forceDelete ? 'Supprimer le patient (admin)' : 'Supprimer le patient',
@@ -1019,7 +1019,7 @@ async function deletePatient(patient: Patient) {
           { code: patient.code, name: patientName },
         )
       : translateTemplate(
-          'Supprimer le dossier {code} — {name} ? Cette action est irréversible.',
+          'Supprimer le dossier {code} — {name} ? Les factures, visites et documents liés seront aussi supprimés. Cette action est irréversible.',
           { code: patient.code, name: patientName },
         ),
     confirmLabel: 'Supprimer',
@@ -1490,10 +1490,10 @@ onUnmounted(clearAlert)
               v-if="form.service && !services.some((s) => s.name === form.service)"
               :value="form.service"
             >
-              {{ form.service }}
+              {{ clinicServiceText(form.service) }}
             </option>
             <option v-for="service in services" :key="service.id" :value="service.name">
-              {{ service.name }}
+              {{ clinicServiceText(service.name) }}
             </option>
           </UiSelect>
           <UiSelect v-model="form.doctorId" label="Médecin" required>
@@ -1605,10 +1605,10 @@ onUnmounted(clearAlert)
               v-if="editForm.service && !services.some((s) => s.name === editForm.service)"
               :value="editForm.service"
             >
-              {{ editForm.service }}
+              {{ clinicServiceText(editForm.service) }}
             </option>
             <option v-for="service in services" :key="service.id" :value="service.name">
-              {{ service.name }}
+              {{ clinicServiceText(service.name) }}
             </option>
           </UiSelect>
           <UiSelect v-model="editForm.doctorId" label="Médecin" required>

@@ -68,6 +68,13 @@ export default {
     'Supervision clinique — aucune action médicale depuis ce compte Direction':
       'Supervision clinique — aucune action médicale depuis ce compte Direction',
     'Aucun patient en attente': 'Aucun patient en attente',
+    'Nouveau patient en attente': 'Nouveau patient en attente',
+    'Nouveaux patients en attente': 'Nouveaux patients en attente',
+    '{name} ({code}) a été enregistré à la réception et attend votre consultation.':
+      '{name} ({code}) a été enregistré à la réception et attend votre consultation.',
+    '{count} nouveaux patients ont été enregistrés pour votre consultation :':
+      '{count} nouveaux patients ont été enregistrés pour votre consultation :',
+    'Voir la file': 'Voir la file',
     'En pause': 'En pause',
     'Vous êtes disponible pour de nouveaux patients.':
       'Vous êtes disponible pour de nouveaux patients.',
@@ -199,6 +206,12 @@ export default {
     'Service destinataire': 'Service destinataire',
     'Choisir un service…': 'Choisir un service…',
     'aucun médecin rattaché': 'aucun médecin rattaché',
+    'Médecin destinataire': 'Médecin destinataire',
+    'Choisir un médecin…': 'Choisir un médecin…',
+    'Aucun médecin rattaché à ce service. Affectez un médecin dans la page Services.':
+      'Aucun médecin rattaché à ce service. Affectez un médecin dans la page Services.',
+    'Le patient quittera votre file et apparaîtra chez le médecin choisi.':
+      'Le patient quittera votre file et apparaîtra chez le médecin choisi.',
     'Aucun service disponible. Créez-en un dans la page Services.':
       'Aucun service disponible. Créez-en un dans la page Services.',
     'Le patient apparaîtra en attente de consultation chez le(s) médecin(s) de ce service.':
@@ -250,7 +263,23 @@ export default {
     'Imprimer le reçu de consultation': 'Imprimer le reçu de consultation',
     'Réimprimer le reçu': 'Réimprimer le reçu',
     'Réimprimer le reçu de consultation': 'Réimprimer le reçu de consultation',
+    'Aucun examen à imprimer': 'Aucun examen à imprimer',
     'Reçu {code}': 'Reçu {code}',
+    'Reçu examens': 'Reçu examens',
+    'Reçu de consultation': 'Reçu de consultation',
+    'Reçu pharmacie': 'Reçu pharmacie',
+    'Clôture de journée': 'Clôture de journée',
+    'Remettre à la comptabilité': 'Remettre à la comptabilité',
+    Interne: 'Interne',
+    Merci: 'Merci',
+    Qté: 'Qté',
+    PU: 'PU',
+    PT: 'PT',
+    Radio: 'Radio',
+    "Impossible de charger la file des patients externes.":
+      "Impossible de charger la file des patients externes.",
+    'Prescription enregistrée, mais le reçu n’a pas pu être imprimé. Utilisez « Réimprimer le reçu ».':
+      'Prescription enregistrée, mais le reçu n’a pas pu être imprimé. Utilisez « Réimprimer le reçu ».',
     'Dossier {code} supprimé.': 'Dossier {code} supprimé.',
     '{name} remis en consultation — {hint}': '{name} remis en consultation — {hint}',
     '{name} remis en consultation.': '{name} remis en consultation.',
@@ -268,6 +297,10 @@ export default {
     'Créneau : {slot}': 'Créneau : {slot}',
     'Supprimer le dossier {code} — {name} ? Cette action est irréversible.':
       'Supprimer le dossier {code} — {name} ? Cette action est irréversible.',
+    'Supprimer le dossier {code} — {name} ? Les factures, visites et documents liés seront aussi supprimés. Cette action est irréversible.':
+      'Supprimer le dossier {code} — {name} ? Les factures, visites et documents liés seront aussi supprimés. Cette action est irréversible.',
+    'Supprimer le dossier {code} — {name} même s’il a déjà été consulté ? Visites, consultations, factures et documents liés seront aussi supprimés. Cette action est irréversible.':
+      'Supprimer le dossier {code} — {name} même s’il a déjà été consulté ? Visites, consultations, factures et documents liés seront aussi supprimés. Cette action est irréversible.',
     'Aucun médecin lié à ce service. Affectez les médecins au service depuis la page Services.':
       'Aucun médecin lié à ce service. Affectez les médecins au service depuis la page Services.',
     Exonéré: 'Exonéré',
@@ -1291,6 +1324,8 @@ export default {
       'Définit le tarif affiché à la réception et la part reversée au médecin.',
     'Type de rémunération': 'Type de rémunération',
     'Employé mis à jour.': 'Employé mis à jour.',
+    'Employé mis à jour. Les montants non réglés (parts médecin, factures en attente, paie, heures sup) ont été recalculés.':
+      'Employé mis à jour. Les montants non réglés (parts médecin, factures en attente, paie, heures sup) ont été recalculés.',
     'Employé créé avec succès.': 'Employé créé avec succès.',
     'Impossible de mettre à jour cet employé.': 'Impossible de mettre à jour cet employé.',
     'Impossible de créer cet employé.': 'Impossible de créer cet employé.',
@@ -2590,6 +2625,12 @@ export default {
     Opérations: 'Opérations',
     Opération: 'Opération',
     Ophtalmologie: 'Ophtalmologie',
+    Généraliste: 'Généraliste',
+    'Médecine interne': 'Médecine interne',
+    Urologie: 'Urologie',
+    Orthopédie: 'Orthopédie',
+    ORTHOPEDIE: 'ORTHOPEDIE',
+    'Kinésithérapetie': 'Kinésithérapetie',
     Tromatologie: 'Tromatologie',
     Traumatologie: 'Traumatologie',
     Urgences: 'Urgences',

@@ -1,4 +1,4 @@
-import { buildLabExamThermalReceiptHtml, openPrintDocument } from '@/lib/print-document'
+import { buildExternalPatientThermalReceiptHtml, buildLabExamThermalReceiptHtml, openPrintDocument } from '@/lib/print-document'
 import { fullName } from '@/lib/roles'
 import { normalizePatientAgeUnit } from '@/lib/patient-age'
 import type { ExamKindSlug } from '@/lib/exam-catalog/types'
@@ -136,6 +136,45 @@ export function printLabQueueVisit(visit: LabQueuePrintVisit) {
     hasPaidInvoices ? 'Payé' : 'Transféré',
     invoicesByKind,
   )
+}
+
+export function printExternalPatientReceipt(
+  item: LabExamPendingItem,
+  options?: {
+    status?: string
+    invoiceNumber?: string | null
+    grossFcfa?: number
+    reductionFcfa?: number
+    totalFcfa?: number
+  },
+) {
+  const normalized = normalizeLabExamPendingItem(item)
+  if (!normalized.examLines.length) return false
+  const grossFcfa = options?.grossFcfa ?? normalized.grossFcfa
+  const reductionFcfa = Math.max(
+    0,
+    options?.reductionFcfa ?? normalized.labExamReductionFcfa ?? 0,
+  )
+  const totalFcfa =
+    options?.totalFcfa ?? Math.max(0, grossFcfa - reductionFcfa)
+  openPrintDocument(
+    `Reçu examens — ${normalized.visit.patient.code}`,
+    buildExternalPatientThermalReceiptHtml({
+      ...buildPatientContext(normalized),
+      examLines: normalized.examLines.map((line) => ({
+        label: line.label,
+        amountFcfa: line.unitPriceFcfa,
+        kind: line.kind,
+      })),
+      grossFcfa,
+      reductionFcfa,
+      totalFcfa,
+      status: options?.status,
+      invoiceNumber: options?.invoiceNumber?.trim() || undefined,
+    }),
+    { pageSize: '80mm' },
+  )
+  return true
 }
 
 export type ExamKindInvoiceMeta = {

@@ -22,6 +22,7 @@ const error = ref('')
 const usernameInputRef = ref<{ focus: () => void } | null>(null)
 
 async function submit() {
+  if (auth.loading) return
   error.value = ''
   try {
     const redirect = await auth.login(username.value, password.value)

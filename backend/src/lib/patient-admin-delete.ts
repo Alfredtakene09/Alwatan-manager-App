@@ -3,8 +3,8 @@ import { prisma } from "./db.js";
 import { deleteDocumentFile, patientUploadDir } from "./patient-dossier.js";
 
 /**
- * Suppression admin : enlève le dossier même après consultation
- * (visites, factures, prescriptions, documents).
+ * Suppression définitive d’un patient : factures, paiements, visites, consultations,
+ * prescriptions, documents et tout le reste lié au dossier.
  */
 export async function forceDeletePatientCascade(patientId: string): Promise<void> {
   const documents = await prisma.patientDocument.findMany({
@@ -70,7 +70,19 @@ export async function forceDeletePatientCascade(patientId: string): Promise<void
       });
       const invoiceIds = invoices.map((row) => row.id);
 
+      if (surgeryIds.length) {
+        await tx.doctorShareClaim.deleteMany({
+          where: { surgeryCaseId: { in: surgeryIds } },
+        });
+      }
+
       if (invoiceIds.length) {
+        await tx.doctorShareClaim.deleteMany({
+          where: { invoiceId: { in: invoiceIds } },
+        });
+        await tx.invoicePayment.deleteMany({
+          where: { invoiceId: { in: invoiceIds } },
+        });
         await tx.pharmacySaleLine.updateMany({
           where: { invoiceId: { in: invoiceIds } },
           data: { invoiceId: null },
@@ -81,6 +93,9 @@ export async function forceDeletePatientCascade(patientId: string): Promise<void
         await tx.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
       }
 
+      await tx.examReclamation.deleteMany({ where: { patientId } });
+      await tx.patientDocument.deleteMany({ where: { patientId } });
+      await tx.patientDossier.deleteMany({ where: { patientId } });
       await tx.patient.delete({ where: { id: patientId } });
     },
     { timeout: 60_000 },

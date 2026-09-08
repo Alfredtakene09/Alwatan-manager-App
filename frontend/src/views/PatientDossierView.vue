@@ -120,7 +120,6 @@ const canDeleteDocuments = computed(
 )
 
 const isMedecin = computed(() => auth.user?.role === 'MEDECIN')
-const isAdmin = computed(() => auth.user?.role === 'ADMIN')
 const isManagementDossier = computed(() =>
   auth.user ? isDirectionOrGestionnaire(auth.user.role) : false,
 )
@@ -433,7 +432,7 @@ function openDocument(documentId: string) {
 }
 
 async function deletePatientDossier() {
-  if (!isAdmin.value || !dossier.value) return
+  if (!isManagementDossier.value || !dossier.value) return
   const patient = dossier.value.patient
   const patientName = fullName(patient.firstName, patient.lastName)
   const confirmed = await confirmAppModal({
@@ -681,7 +680,7 @@ onMounted(async () => {
                 {{ uiText('Joindre un fichier') }}
               </UiButton>
               <UiButton
-                v-if="isAdmin"
+                v-if="isManagementDossier"
                 variant="danger"
                 size="sm"
                 :icon="Trash2"

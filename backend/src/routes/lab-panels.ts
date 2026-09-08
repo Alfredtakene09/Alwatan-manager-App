@@ -7,7 +7,7 @@ import {
   ensureExamLinkedToLabPanel,
 } from "../lib/exam-lab-panel.js";
 import { refreshLabPanelRegistry } from "../lib/lab-panels-registry.js";
-import { requireAuth, requireAnyModule, requireModule } from "../middleware/auth.js";
+import { requireAuth, requireAnyModule, requireModule, requireUiAction } from "../middleware/auth.js";
 
 const panelInclude = {
   fields: { orderBy: { sortOrder: "asc" as const } },
@@ -41,7 +41,7 @@ router.get(
 );
 
 /** Écriture réservée au module laboratoire. */
-router.use(requireModule("laboratoire"));
+router.use(requireModule("laboratoire"), requireUiAction("lab.result_forms"));
 
 const optionalFieldPrice = z.preprocess((value) => {
   if (value === "" || value === undefined || value === null) return null;

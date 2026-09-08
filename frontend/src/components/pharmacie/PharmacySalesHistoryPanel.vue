@@ -6,8 +6,8 @@ import { formatFcfa, fullName } from '@/lib/roles'
 import { CLINIC } from '@/lib/clinic'
 import { formatPatientTableDate } from '@/lib/patient-datatable-columns'
 import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
-import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, openPrintDocument, reservePrintWindow, thermalMetaRow } from '@/lib/print-document'
-import { translateUi } from '@/i18n/translate'
+import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, openPrintDocument, reservePrintWindow, thermalIsRtl, thermalLocaleMetaRow, thermalThanksHtml, thermalTicketDirAttrs, thermalTicketRootClass } from '@/lib/print-document'
+import { formatAppDateTime } from '@/i18n/locale-format'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
@@ -65,7 +65,7 @@ function saleBuyerLabel(item: SaleRecord) {
       item.externalClient.firstName === item.externalClient.lastName
         ? item.externalClient.firstName
         : fullName(item.externalClient.firstName, item.externalClient.lastName)
-    return `${item.externalClient.code} — ${name} ${translateUi('(externe)')}`
+    return `${item.externalClient.code} — ${name} ${uiText('(externe)')}`
   }
   if (item.patient) {
     return `${item.patient.code} — ${fullName(item.patient.firstName, item.patient.lastName)}`
@@ -164,12 +164,12 @@ async function loadItems() {
 
 async function printSale(sale: SaleRecord) {
   const invoiceNumber = sale.invoiceNumber ?? sale.id.slice(0, 8).toUpperCase()
-  const date = new Date(sale.createdAt).toLocaleString('fr-FR')
+  const date = formatAppDateTime(sale.createdAt)
   const isInternal = sale.buyerType === 'patient' || Boolean(sale.patient)
 
   reservePrintWindow('80mm')
 
-  const internalBlock = isInternal ? thermalMetaRow('Type', 'Interne', '') : ''
+  const internalBlock = isInternal ? thermalLocaleMetaRow('Type', uiText('Interne')) : ''
   const itemsTable = buildPharmacyTicketItemsTableHtml({
     lines: sale.lines.map((line) => ({
       name: line.productName,
@@ -183,17 +183,18 @@ async function printSale(sale: SaleRecord) {
   openPrintDocument(
     `Ticket ${invoiceNumber}`,
     `
-<div class="thermal-receipt thermal-receipt--ticket thermal-receipt--pharmacy">
+<div class="${thermalTicketRootClass('thermal-receipt--pharmacy')}"${thermalTicketDirAttrs()}>
   ${buildThermalTicketHeadHtml({
-    title: 'Clinique Alwatan Pharmacie',
+    title: uiText('Reçu pharmacie'),
     number: invoiceNumber,
     contact: `${CLINIC.city} · ${CLINIC.phones}`,
     logo: CLINIC.logo,
+    rtl: thermalIsRtl(),
   })}
   <hr class="thermal-receipt__rule" />
 
   <div class="thermal-receipt__fields">
-    ${thermalMetaRow('Date', date, '')}
+    ${thermalLocaleMetaRow('Date', date)}
     ${internalBlock}
   </div>
 
@@ -205,7 +206,7 @@ async function printSale(sale: SaleRecord) {
       : ''
   }
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks">Merci</p>
+  ${thermalThanksHtml()}
 </div>
 `,
     { pageSize: '80mm', autoPrint: true, thermalTight: true },

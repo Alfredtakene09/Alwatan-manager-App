@@ -87,6 +87,13 @@ export default {
     'Supervision clinique — aucune action médicale depuis ce compte Direction':
       'Clinical supervision — no medical actions from this Direction account',
     'Aucun patient en attente': 'No patients waiting',
+    'Nouveau patient en attente': 'New patient waiting',
+    'Nouveaux patients en attente': 'New patients waiting',
+    '{name} ({code}) a été enregistré à la réception et attend votre consultation.':
+      '{name} ({code}) has been registered at reception and is waiting for your consultation.',
+    '{count} nouveaux patients ont été enregistrés pour votre consultation :':
+      '{count} new patients have been registered for your consultation:',
+    'Voir la file': 'View queue',
     'En pause': 'On break',
     'Vous êtes disponible pour de nouveaux patients.':
       'You are available for new patients.',
@@ -219,6 +226,12 @@ export default {
     'Service destinataire': 'Destination service',
     'Choisir un service…': 'Choose a service…',
     'aucun médecin rattaché': 'no doctor linked',
+    'Médecin destinataire': 'Destination doctor',
+    'Choisir un médecin…': 'Choose a doctor…',
+    'Aucun médecin rattaché à ce service. Affectez un médecin dans la page Services.':
+      'No doctor is linked to this service. Assign a doctor on the Services page.',
+    'Le patient quittera votre file et apparaîtra chez le médecin choisi.':
+      'The patient will leave your queue and appear with the selected doctor.',
     'Aucun service disponible. Créez-en un dans la page Services.':
       'No service available. Create one on the Services page.',
     'Le patient apparaîtra en attente de consultation chez le(s) médecin(s) de ce service.':
@@ -266,6 +279,9 @@ export default {
       'Record {code} saved — {name} is waiting for consultation.',
     'Erreur lors de la création du dossier.': 'Error while creating the record.',
     "Impossible d'imprimer le reçu.": 'Unable to print the receipt.',
+    "Impossible de charger la file des patients externes.": 'Unable to load the external patient queue.',
+    'Prescription enregistrée, mais le reçu n’a pas pu être imprimé. Utilisez « Réimprimer le reçu ».':
+      'Prescription saved, but the receipt could not be printed. Use “Reprint receipt”.',
     'Dossier {code} supprimé.': 'Record {code} deleted.',
     '{name} remis en consultation — {hint}': '{name} sent back to consultation — {hint}',
     '{name} remis en consultation.': '{name} sent back to consultation.',
@@ -283,6 +299,10 @@ export default {
     'Créneau : {slot}': 'Shift: {slot}',
     'Supprimer le dossier {code} — {name} ? Cette action est irréversible.':
       'Delete record {code} — {name}? This action cannot be undone.',
+    'Supprimer le dossier {code} — {name} ? Les factures, visites et documents liés seront aussi supprimés. Cette action est irréversible.':
+      'Delete record {code} — {name}? Related invoices, visits and documents will also be deleted. This cannot be undone.',
+    'Supprimer le dossier {code} — {name} même s’il a déjà été consulté ? Visites, consultations, factures et documents liés seront aussi supprimés. Cette action est irréversible.':
+      'Delete record {code} — {name} even if already consulted? Related visits, consultations, invoices and documents will also be deleted. This cannot be undone.',
     'Aucun médecin lié à ce service. Affectez les médecins au service depuis la page Services.':
       'No doctor linked to this service. Assign doctors to the service from the Services page.',
     Exonéré: 'Exempt',
@@ -894,12 +914,21 @@ export default {
 
     // —— Reçus / factures imprimés ——
     'Reçu de consultation': 'Consultation receipt',
+    'Reçu examens': 'Exams receipt',
+    'Reçu pharmacie': 'Pharmacy receipt',
+    'Remettre à la comptabilité': 'Hand over to accounting',
+    Interne: 'Internal',
+    Merci: 'Thank you',
+    PU: 'UP',
+    PT: 'LT',
+    Radio: 'X-ray',
     'Reçu {code}': 'Receipt {code}',
     Reçu: 'Receipt',
     'Imprimer le reçu': 'Print receipt',
     'Imprimer le reçu de consultation': 'Print consultation receipt',
     'Réimprimer le reçu': 'Reprint receipt',
     'Réimprimer le reçu de consultation': 'Reprint consultation receipt',
+    'Aucun examen à imprimer': 'No exam to print',
     'Total payé': 'Total paid',
     'Merci de votre confiance': 'Thank you for your trust',
     'Tél.': 'Tel.',
@@ -1371,6 +1400,8 @@ export default {
       'Sets the rate shown at reception and the doctor share.',
     'Type de rémunération': 'Compensation type',
     'Employé mis à jour.': 'Employee updated.',
+    'Employé mis à jour. Les montants non réglés (parts médecin, factures en attente, paie, heures sup) ont été recalculés.':
+      'Employee updated. Unsettled amounts (doctor shares, pending invoices, payroll, overtime) were recalculated.',
     'Employé créé avec succès.': 'Employee created successfully.',
     'Impossible de mettre à jour cet employé.': 'Unable to update this employee.',
     'Impossible de créer cet employé.': 'Unable to create this employee.',
@@ -2631,6 +2662,12 @@ export default {
     Opérations: 'Operations',
     Opération: 'Operation',
     Ophtalmologie: 'Ophthalmology',
+    Généraliste: 'General practice',
+    'Médecine interne': 'Internal medicine',
+    Urologie: 'Urology',
+    Orthopédie: 'Orthopedics',
+    ORTHOPEDIE: 'Orthopedics',
+    'Kinésithérapetie': 'Physiotherapy',
     Tromatologie: 'Traumatology',
     Traumatologie: 'Traumatology',
     Urgences: 'Emergency',

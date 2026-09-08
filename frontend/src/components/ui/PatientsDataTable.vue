@@ -56,7 +56,7 @@ const emit = defineEmits<{
   print: [patient: PatientRow]
 }>()
 
-const { uiText, localeCode, dateText } = useAppI18n()
+const { uiText, clinicServiceText, localeCode, dateText } = useAppI18n()
 const auth = useAuthStore()
 const { canSeeUiAction } = useUiActionVisibility()
 const showPayButton = computed(() =>
@@ -68,7 +68,7 @@ const showPrintButton = computed(
 )
 const showEditButton = computed(() => canSeeUiAction('reception.edit_patient'))
 const showReconsultButton = computed(() => canSeeUiAction('reception.reconsult'))
-const isAdmin = computed(() => auth.user?.role === 'ADMIN')
+const canForceDelete = computed(() => Boolean(auth.user && isDirectionOrGestionnaire(auth.user.role)))
 const allowDelete = computed(() => props.showDelete && canSeeUiAction('reception.delete_patient'))
 
 const rows = computed(() =>
@@ -83,8 +83,8 @@ const rows = computed(() =>
     receptionistName: p.createdBy
       ? fullName(p.createdBy.firstName, p.createdBy.lastName)
       : '',
-    canDelete: allowDelete.value && (isAdmin.value || p.canDelete !== false),
-    forceDelete: isAdmin.value && p.canDelete === false,
+    canDelete: allowDelete.value && (canForceDelete.value || p.canDelete !== false),
+    forceDelete: canForceDelete.value && p.canDelete === false,
     payable: Boolean(p.consultationPayment?.payable),
     paid: p.consultationPayment?.status === 'PAID',
     payment: consultationPaymentMark(p.consultationPayment),
@@ -122,7 +122,7 @@ function formatDate(iso?: string) {
 
 function serviceLabel(service: string) {
   void localeCode.value
-  return service ? uiText(service) : ''
+  return service ? clinicServiceText(service) : ''
 }
 
 function genderLabel(gender?: string) {

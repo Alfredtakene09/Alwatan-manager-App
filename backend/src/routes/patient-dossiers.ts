@@ -11,6 +11,7 @@ import {
   DOCUMENT_KIND_LABELS,
   MAX_FILE_SIZE_BYTES,
   UPLOADS_ROOT,
+  resolveUploadPath,
   backfillMissingDossiers,
   deleteDocumentFile,
   ensurePatientDossier,
@@ -58,7 +59,7 @@ const router = Router();
 router.use(requireAuth);
 
 const DOSSIER_MODULES = ["dossier-patient"] as const;
-const PAYMENT_HISTORY_MODULES = ["dossier-patient", "reception", "comptabilite"] as const;
+const PAYMENT_HISTORY_MODULES = ["reception", "comptabilite", "consultation"] as const;
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -125,6 +126,17 @@ router.get("/:patientId/payment-history", requireAnyModule(...PAYMENT_HISTORY_MO
     select: { id: true },
   });
   if (!patient) return res.status(404).json({ error: "Patient introuvable" });
+  if (req.user!.role === "MEDECIN") {
+    const linkedToPatient = await prisma.visit.findFirst({
+      where: { patientId, ...medecinMatchWhere(req.user!.id) },
+      select: { id: true },
+    });
+    if (!linkedToPatient) {
+      return res.status(403).json({
+        error: "Accès refusé — ce patient n'est pas suivi par votre compte.",
+      });
+    }
+  }
   const history = await buildPatientPaymentHistory(patientId);
   return res.json(history);
 });
@@ -328,7 +340,7 @@ router.post("/:patientId/reconsult", requireAnyModule(...DOSSIER_MODULES), async
           if (!existingInvoice) {
             await tx.invoice.create({
               data: consultationInvoiceCreateData(patient.category, {
-                invoiceNumber: await generateInvoiceNumber(),
+                invoiceNumber: await generateInvoiceNumber(tx),
                 patientId,
                 visitId: updated.id,
                 amountFcfa: billing.billableAmountFcfa,
@@ -359,7 +371,7 @@ router.post("/:patientId/reconsult", requireAnyModule(...DOSSIER_MODULES), async
       if (billing.billableAmountFcfa > 0) {
         await tx.invoice.create({
           data: consultationInvoiceCreateData(patient.category, {
-            invoiceNumber: await generateInvoiceNumber(),
+            invoiceNumber: await generateInvoiceNumber(tx),
             patientId,
             visitId: created.id,
             amountFcfa: billing.billableAmountFcfa,
@@ -487,7 +499,12 @@ router.get(
 
     if (!document) return res.status(404).json({ error: "Document introuvable" });
 
-    const absolutePath = path.join(UPLOADS_ROOT, document.storagePath);
+    let absolutePath: string;
+    try {
+      absolutePath = resolveUploadPath(document.storagePath);
+    } catch {
+      return res.status(404).json({ error: "Fichier introuvable sur le serveur" });
+    }
     if (!fs.existsSync(absolutePath)) {
       return res.status(404).json({ error: "Fichier introuvable sur le serveur" });
     }

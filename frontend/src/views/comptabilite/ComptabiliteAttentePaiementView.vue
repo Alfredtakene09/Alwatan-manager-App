@@ -64,6 +64,7 @@ async function goToHospitalization(visitId: string) {
 }
 
 async function confirmPayment(payload: LabExamPaymentConfirmPayload) {
+  if (submitting.value) return
   const paidItem = pendingItems.value.find((row) => row.id === payload.consultationId)
   const normalizedPaid = paidItem ? normalizeLabExamPendingItem(paidItem) : null
   const payingAll = payload.kinds.length > 1

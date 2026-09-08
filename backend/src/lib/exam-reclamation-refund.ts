@@ -35,6 +35,7 @@ type VisitInvoiceRow = {
   id: string;
   type: InvoiceType;
   amountFcfa: number;
+  paidAmountFcfa: number;
   surgeryCaseId: string | null;
   hospitalizationId: string | null;
   createdAt: Date;
@@ -150,11 +151,19 @@ export async function applyExamReclamationRefund(params: {
       const deducted = Math.min(refundFcfa, invoice.amountFcfa);
       totalRefundedFcfa += deducted;
       const newAmount = Math.max(0, invoice.amountFcfa - refundFcfa);
+      const newPaid = Math.min(invoice.paidAmountFcfa, newAmount);
       await tx.invoice.update({
         where: { id: invoice.id },
         data: {
           amountFcfa: newAmount,
-          ...(newAmount === 0 ? { status: InvoiceStatus.CANCELLED } : {}),
+          paidAmountFcfa: newPaid,
+          ...(newAmount === 0
+            ? { status: InvoiceStatus.CANCELLED }
+            : newPaid >= newAmount && newAmount > 0
+              ? { status: InvoiceStatus.PAID }
+              : newPaid > 0
+                ? { status: InvoiceStatus.PARTIALLY_PAID }
+                : {}),
         },
       });
     } else {

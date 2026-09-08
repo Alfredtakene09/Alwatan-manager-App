@@ -46,6 +46,7 @@ export async function recordInvoiceInstallment(
     note?: string;
   },
 ) {
+  await tx.$queryRaw`SELECT id FROM "Invoice" WHERE id = ${params.invoiceId} FOR UPDATE`;
   const invoice = await tx.invoice.findUniqueOrThrow({
     where: { id: params.invoiceId },
     select: { id: true, amountFcfa: true, paidAmountFcfa: true, status: true },

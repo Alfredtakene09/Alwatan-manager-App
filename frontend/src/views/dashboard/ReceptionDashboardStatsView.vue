@@ -128,7 +128,11 @@ async function loadStats() {
   loading.value = true
   loadError.value = ''
   try {
-    const { data } = await api.get<ReceptionDashboardStats>('/dashboard/reception')
+    const { data } = await api.get<ReceptionDashboardStats>('/dashboard/reception', {
+      params: {
+        createdById: canFilterByReceptionist.value ? filterReceptionistId.value || undefined : undefined,
+      },
+    })
     stats.value = data
   } catch {
     loadError.value = 'Impossible de charger le tableau de bord réception.'
@@ -185,6 +189,7 @@ watch(search, () => {
 
 watch(filterReceptionistId, () => {
   void loadPatients()
+  void loadStats()
 })
 
 onMounted(refreshAll)

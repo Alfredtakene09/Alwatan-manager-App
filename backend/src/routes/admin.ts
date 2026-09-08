@@ -24,8 +24,10 @@ import {
   syncClinicServiceDoctors,
   syncEmployeeClinicServices,
 } from "../lib/clinic-service-doctors.js";
-import { USER_ROLES } from "../lib/roles.js";
+import { USER_ROLES, canAssignUserRole, type AppUserRole } from "../lib/roles.js";
+import { newPasswordSchema } from "../lib/password-policy.js";
 import { employeeCompensationData } from "../lib/doctor-compensation.js";
+import { recalculateAfterEmployeeFicheChangeSafe } from "../lib/recalculate-employee-compensation.js";
 import {
   deleteOrDeactivateEmployee,
   doctorAvailabilitySlotsSchema,
@@ -58,7 +60,7 @@ import {
   findDuplicateRoomByName,
 } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
-import { requireAuth, requireAdmin, requireAdminOrDirection, requireAnyModule, requireModule } from "../middleware/auth.js";
+import { requireAuth, requireAdmin, requireAdminOrDirection, requireAnyModule, requireModule, requireUiAction } from "../middleware/auth.js";
 import { UI_ACTION_IDS, UI_ACTION_TARGET_ROLES, parseHiddenByRole, parseHiddenUiActionList } from "../lib/ui-actions.js";
 import { getHiddenByRole, saveHiddenByRole } from "../lib/role-ui-settings.js";
 import {
@@ -206,7 +208,7 @@ const createUserSchema = z.object({
     .max(50)
     .regex(/^[a-zA-Z0-9._-]+$/, "Caractères autorisés : lettres, chiffres, . _ -"),
   email: optionalEmailSchema,
-  password: z.string().min(6, "Le mot de passe doit contenir au moins 6 caractères."),
+  password: newPasswordSchema,
   role: assignableUserRoleSchema,
   employeeId: z.string().min(1, "Sélectionnez un employé à lier au compte."),
   cashShiftSlot: cashShiftSlotSchema.optional().nullable(),
@@ -229,7 +231,7 @@ const updateUserSchema = z.object({
     .regex(/^[a-zA-Z0-9._-]+$/, "Caractères autorisés : lettres, chiffres, . _ -")
     .optional(),
   email: optionalEmailSchema,
-  password: z.string().min(6, "Le mot de passe doit contenir au moins 6 caractères.").optional(),
+  password: newPasswordSchema.optional(),
   role: assignableUserRoleSchema.optional(),
   active: booleanFromForm.optional(),
   employeeId: z.string().min(1).optional(),
@@ -560,7 +562,7 @@ router.delete("/services/:id", clinicServicesAccess, async (req, res) => {
   return res.json({ ok: true, message: `Le service « ${item.name} » a été supprimé.` });
 });
 
-router.post("/employees", requireModule("utilisateurs"), async (req, res) => {
+router.post("/employees", requireModule("utilisateurs"), requireUiAction("employees.create"), async (req, res) => {
   try {
     const body = createEmployeeSchema.parse(req.body);
     const jobTitle = body.jobTitle?.trim() || null;
@@ -753,7 +755,11 @@ router.put("/employees/:id", requireModule("utilisateurs"), async (req, res) => 
       where: { id: employeeId },
       select: employeeSelect,
     });
-    return res.json(serializeEmployee(refreshed ?? employee));
+    const compensationRecalc = await recalculateAfterEmployeeFicheChangeSafe(employeeId);
+    return res.json({
+      ...serializeEmployee(refreshed ?? employee),
+      compensationRecalc,
+    });
   } catch (error) {
     return res.status(400).json({ error: employeeValidationMessage(error) });
   }
@@ -822,9 +828,15 @@ router.get("/users/:id", requireModule("user-accounts"), async (req, res) => {
   return res.json(await enrichUserForAdmin(user, req.user!.id));
 });
 
-router.post("/users", requireModule("user-accounts"), async (req, res) => {
+router.post("/users", requireModule("user-accounts"), requireUiAction("users.create"), async (req, res) => {
   try {
     const body = createUserSchema.parse(req.body);
+    if (!canAssignUserRole(req.user!.role as AppUserRole, body.role)) {
+      return res.status(403).json({
+        error: "Seul un administrateur peut créer un compte administrateur.",
+        code: "ADMIN_ONLY",
+      });
+    }
     const existingUsername = await prisma.user.findFirst({
       where: { username: { equals: body.username, mode: "insensitive" } },
     });
@@ -878,6 +890,13 @@ router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
 
     const existing = await prisma.user.findUnique({ where: { id: userId } });
     if (!existing) return res.status(404).json({ error: "Utilisateur introuvable" });
+
+    if (body.role && !canAssignUserRole(currentUser.role as AppUserRole, body.role)) {
+      return res.status(403).json({
+        error: "Seul un administrateur peut attribuer le rôle administrateur.",
+        code: "ADMIN_ONLY",
+      });
+    }
 
     const usernameChanged =
       typeof body.username === "string" &&
@@ -1019,7 +1038,7 @@ router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
 });
 
 const unlockUserSchema = z.object({
-  newPassword: z.string().min(6, "Le nouveau mot de passe doit contenir au moins 6 caractères."),
+  newPassword: newPasswordSchema,
 });
 
 /** Déverrouille un compte et impose un nouveau MDP — réservé à ADMIN. */
@@ -1067,6 +1086,12 @@ router.delete("/users/:id", requireModule("user-accounts"), async (req, res) => 
 
   const existing = await prisma.user.findUnique({ where: { id: userId } });
   if (!existing) return res.status(404).json({ error: "Utilisateur introuvable" });
+  if (existing.role === UserRole.ADMIN && currentUser.role !== UserRole.ADMIN) {
+    return res.status(403).json({
+      error: "Seul un administrateur peut supprimer un compte administrateur.",
+      code: "ADMIN_ONLY",
+    });
+  }
   if (userId === currentUser.id) {
     return res.status(409).json({ error: "Vous ne pouvez pas supprimer votre propre compte." });
   }
@@ -1312,7 +1337,7 @@ router.get("/expenses", async (req, res) => {
   return res.json(rows.map(serializeAdminExpense));
 });
 
-router.post("/expenses", async (req, res) => {
+router.post("/expenses", requireUiAction("comptabilite.depenses"), async (req, res) => {
   const user = req.user!;
   try {
     const body = adminExpenseSchema.parse(req.body);
@@ -1355,11 +1380,11 @@ router.post("/expenses", async (req, res) => {
   }
 });
 
-router.put("/expenses/:id", async (req, res) => {
+router.put("/expenses/:id", requireUiAction("comptabilite.depenses"), async (req, res) => {
   const user = req.user!;
   try {
     const body = adminExpenseSchema.parse(req.body);
-    const existing = await prisma.clinicExpense.findUnique({ where: { id: req.params.id } });
+    const existing = await prisma.clinicExpense.findUnique({ where: { id: String(req.params.id) } });
     if (!existing) return res.status(404).json({ error: "Dépense introuvable" });
     const businessDate = parseBusinessDate(body.businessDate);
     const status = body.status ?? existing.status;
@@ -1389,16 +1414,16 @@ router.put("/expenses/:id", async (req, res) => {
   }
 });
 
-router.delete("/expenses/:id", async (req, res) => {
-  const row = await prisma.clinicExpense.findUnique({ where: { id: req.params.id } });
+router.delete("/expenses/:id", requireUiAction("comptabilite.depenses"), async (req, res) => {
+  const row = await prisma.clinicExpense.findUnique({ where: { id: String(req.params.id) } });
   if (!row) return res.status(404).json({ error: "Dépense introuvable" });
   await prisma.clinicExpense.delete({ where: { id: row.id } });
   return res.status(204).send();
 });
 
-router.patch("/expenses/:id/validate", async (req, res) => {
+router.patch("/expenses/:id/validate", requireUiAction("comptabilite.depenses"), async (req, res) => {
   const user = req.user!;
-  const row = await prisma.clinicExpense.findUnique({ where: { id: req.params.id } });
+  const row = await prisma.clinicExpense.findUnique({ where: { id: String(req.params.id) } });
   if (!row) return res.status(404).json({ error: "Dépense introuvable" });
   if (row.status !== ClinicExpenseStatus.PENDING) {
     return res.status(409).json({ error: "Cette dépense n'est pas en attente de validation." });
@@ -1426,7 +1451,7 @@ router.patch("/expenses/:id/validate", async (req, res) => {
   return res.json(serializeAdminExpense(updated));
 });
 
-router.patch("/expenses/:id/reject", async (req, res) => {
+router.patch("/expenses/:id/reject", requireUiAction("comptabilite.depenses"), async (req, res) => {
   const user = req.user!;
   const reason =
     typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
@@ -1434,7 +1459,7 @@ router.patch("/expenses/:id/reject", async (req, res) => {
     return res.status(400).json({ error: "Une justification est requise (3 caractères minimum)." });
   }
 
-  const row = await prisma.clinicExpense.findUnique({ where: { id: req.params.id } });
+  const row = await prisma.clinicExpense.findUnique({ where: { id: String(req.params.id) } });
   if (!row) return res.status(404).json({ error: "Dépense introuvable" });
   if (row.status !== ClinicExpenseStatus.PENDING) {
     return res.status(409).json({ error: "Cette dépense n'est pas en attente de validation." });

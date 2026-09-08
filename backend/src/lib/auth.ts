@@ -20,9 +20,17 @@ export type SessionClaims = SessionUser & {
   sid: string;
 };
 
+export function assertJwtSecret(secret: string | undefined) {
+  if (!secret || secret.includes("changez-ce-secret") || secret.length < 32) {
+    throw new Error(
+      "JWT_SECRET invalide : générez un secret aléatoire d'au moins 32 caractères dans backend/.env",
+    );
+  }
+}
+
 function getSecret() {
   const secret = process.env.JWT_SECRET;
-  if (!secret) throw new Error("JWT_SECRET manquant");
+  assertJwtSecret(secret);
   return new TextEncoder().encode(secret);
 }
 

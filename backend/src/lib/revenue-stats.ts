@@ -347,7 +347,7 @@ export type RevenueDayRow = {
   totalFcfa: number;
 };
 
-export async function buildRevenueLast7Days(): Promise<RevenueDayRow[]> {
+export async function buildRevenueLast7Days(options?: { cashierId?: string }): Promise<RevenueDayRow[]> {
   const dayStarts: Date[] = [];
   for (let offset = 6; offset >= 0; offset -= 1) {
     const day = new Date();
@@ -358,7 +358,7 @@ export async function buildRevenueLast7Days(): Promise<RevenueDayRow[]> {
   const rangeEnd = new Date(dayStarts[dayStarts.length - 1]!);
   rangeEnd.setDate(rangeEnd.getDate() + 1);
 
-  const slices = await loadCollectedSlicesBetween(dayStarts[0]!, rangeEnd);
+  const slices = await loadCollectedSlicesBetween(dayStarts[0]!, rangeEnd, options);
 
   return dayStarts.map((dayStart) => {
     const dayEnd = new Date(dayStart);

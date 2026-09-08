@@ -54,6 +54,7 @@ import {
   computeLabExamsGrossFcfa,
 } from "../lib/lab-exam-prices.js";
 import { generateInvoiceNumber, generateInvoiceNumberBatch } from "../lib/patient-code.js";
+import { immediatePaidInvoiceData } from "../lib/invoice-paid.js";
 import {
   applyExamReclamationRefund,
   ReclamationRefundError,
@@ -64,9 +65,19 @@ import {
   aggregateCollectedToday,
   buildRevenueLast7Days,
 } from "../lib/revenue-stats.js";
+import { aggregateCollectedForCashier } from "../lib/cashier-personal-stats.js";
 import { applyExamKindPayment } from "../lib/patient-invoice-payments.js";
 import { canAccessModule, type AppUserRole } from "../lib/roles.js";
-import { requireAuth, requireAnyModule } from "../middleware/auth.js";
+import { requireAuth, requireAnyModule, isUiActionPermitted } from "../middleware/auth.js";
+import {
+  andWhere,
+  receptionistOwnsPatient,
+  receptionistOwnConsultationsWhere,
+  receptionistOwnReclamationsWhere,
+  receptionistOwnVisitsWhere,
+  receptionistScopeUserId,
+} from "../lib/reception-scope.js";
+import { startOfDay } from "../lib/dashboard-charts.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -405,10 +416,13 @@ function mapLabExamPaid(consultation: {
   };
 }
 
-router.get("/payment-alerts", cashierAccess, async (_req, res) => {
+router.get("/payment-alerts", cashierAccess, async (req, res) => {
+  const user = req.user!;
+  const ownConsultations = receptionistOwnConsultationsWhere(user);
+  const ownVisits = receptionistOwnVisitsWhere(user);
   const [examRows, consultationInvoices] = await Promise.all([
     prisma.consultation.findMany({
-      where: labsPendingApprovalWhere(),
+      where: andWhere(labsPendingApprovalWhere(), ownConsultations),
       select: {
         id: true,
         visitId: true,
@@ -429,6 +443,7 @@ router.get("/payment-alerts", cashierAccess, async (_req, res) => {
         status: { in: [InvoiceStatus.PENDING, InvoiceStatus.PARTIALLY_PAID] },
         visitId: { not: null },
         ...comptabiliteInvoicePatientWhere(),
+        ...(Object.keys(ownVisits).length ? { visit: ownVisits } : {}),
       },
       select: {
         id: true,
@@ -489,8 +504,15 @@ router.get("/payment-alerts", cashierAccess, async (_req, res) => {
   return res.json({ exams, consultations });
 });
 
-router.get("/stats", cashierAccess, async (_req, res) => {
+router.get("/stats", cashierAccess, async (req, res) => {
+  const user = req.user!;
   const patientWhere = comptabilitePatientWhere();
+  const ownVisits = receptionistOwnVisitsWhere(user);
+  const ownConsultations = receptionistOwnConsultationsWhere(user);
+  const scopedCashierId = receptionistScopeUserId(user);
+  const todayStart = startOfDay(new Date());
+  const tomorrowStart = new Date(todayStart);
+  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
   await syncMissingHospitalizationReferrals(prisma, patientWhere);
   await syncHospitalizationReferralsFromPaymentQueue(prisma, patientWhere);
 
@@ -502,14 +524,16 @@ router.get("/stats", cashierAccess, async (_req, res) => {
     consultationsPending,
   ] = await Promise.all([
     prisma.consultation.findMany({
-      where: labsPendingApprovalWhere(),
+      where: andWhere(labsPendingApprovalWhere(), ownConsultations),
       select: { clinicalNotes: true },
     }).then(rows => rows.filter(row => hasUnpaidCashierQueueExams(row.clinicalNotes))),
-    aggregateCollectedToday(),
+    scopedCashierId
+      ? aggregateCollectedForCashier(scopedCashierId, todayStart, tomorrowStart)
+      : aggregateCollectedToday(),
     prisma.surgeryCase.count({
       where: {
         status: { in: [SurgeryStatus.NOTIFIED, SurgeryStatus.QUOTED] },
-        visit: { patient: comptabilitePatientWhere() },
+        visit: { patient: comptabilitePatientWhere(), ...ownVisits },
       },
     }),
     prisma.hospitalization.findMany({
@@ -521,7 +545,7 @@ router.get("/stats", cashierAccess, async (_req, res) => {
             HospitalizationStatus.ACTIVE,
           ],
         },
-        visit: { patient: comptabilitePatientWhere() },
+        visit: { patient: comptabilitePatientWhere(), ...ownVisits },
       },
       select: { status: true, roomId: true, startDate: true },
     }),
@@ -530,6 +554,7 @@ router.get("/stats", cashierAccess, async (_req, res) => {
         type: InvoiceType.CONSULTATION,
         status: { in: [InvoiceStatus.PENDING, InvoiceStatus.PARTIALLY_PAID] },
         ...comptabiliteInvoicePatientWhere(),
+        ...(Object.keys(ownVisits).length ? { visit: ownVisits } : {}),
       },
       select: { amountFcfa: true, paidAmountFcfa: true },
     }),
@@ -563,12 +588,17 @@ router.get("/stats", cashierAccess, async (_req, res) => {
     surgeriesPending,
     hospitalizationsPending,
     collectedTodayTotalFcfa: collectedToday.totalFcfa,
-    revenueLast7Days: await buildRevenueLast7Days(),
+    revenueLast7Days: await buildRevenueLast7Days(
+      scopedCashierId ? { cashierId: scopedCashierId } : undefined,
+    ),
   });
 });
 
 router.get("/", cashierAccess, async (req, res) => {
+  const user = req.user!;
   const patientWhere = comptabilitePatientWhere();
+  const ownVisits = receptionistOwnVisitsWhere(user);
+  const ownConsultations = receptionistOwnConsultationsWhere(user);
   await syncMissingHospitalizationReferrals(prisma, patientWhere);
   await syncHospitalizationReferralsFromPaymentQueue(prisma, patientWhere);
 
@@ -583,7 +613,7 @@ router.get("/", cashierAccess, async (req, res) => {
     prisma.surgeryCase.findMany({
       where: {
         status: { in: surgeryStatusFilter },
-        visit: { patient: comptabilitePatientWhere() },
+        visit: { patient: comptabilitePatientWhere(), ...ownVisits },
       },
       include: {
         visit: { include: { patient: true } },
@@ -597,7 +627,7 @@ router.get("/", cashierAccess, async (req, res) => {
         status: {
           in: [HospitalizationStatus.REQUESTED, HospitalizationStatus.RESERVED, HospitalizationStatus.ACTIVE],
         },
-        visit: { patient: comptabilitePatientWhere() },
+        visit: { patient: comptabilitePatientWhere(), ...ownVisits },
       },
       include: {
         visit: { include: { patient: true } },
@@ -616,7 +646,7 @@ router.get("/", cashierAccess, async (req, res) => {
       orderBy: [{ type: "asc" }, { name: "asc" }],
     }),
     prisma.consultation.findMany({
-      where: labsPendingApprovalWhere(),
+      where: andWhere(labsPendingApprovalWhere(), ownConsultations),
       include: {
         visit: {
           include: {
@@ -672,9 +702,9 @@ router.get("/", cashierAccess, async (req, res) => {
   });
 });
 
-router.get("/paid-exams", cashierAccess, async (_req, res) => {
+router.get("/paid-exams", cashierAccess, async (req, res) => {
   const labExamsPaid = await prisma.consultation.findMany({
-    where: labsPaidExamsWhere(),
+    where: andWhere(labsPaidExamsWhere(), receptionistOwnConsultationsWhere(req.user!)),
     include: {
       visit: {
         include: {
@@ -716,6 +746,31 @@ router.post("/", cashierAccess, async (req, res) => {
 
   if (isReceptionOnly && action !== "pay_lab_exams") {
     return res.status(403).json({ error: "Accès refusé" });
+  }
+
+  const actionUi =
+    action === "pay_consultation"
+      ? "reception.pay_consultation"
+      : action === "pay_lab_exams"
+        ? "comptabilite.exam_payments"
+        : "comptabilite.encaissements";
+  if (!(await isUiActionPermitted(req, actionUi))) {
+    return res.status(403).json({
+      error: "Action masquée pour ce compte",
+      code: "UI_ACTION_HIDDEN",
+      action: actionUi,
+    });
+  }
+  if (
+    action === "pay_consultation" &&
+    Number(req.body?.reductionFcfa ?? 0) > 0 &&
+    !(await isUiActionPermitted(req, "comptabilite.reduction"))
+  ) {
+    return res.status(403).json({
+      error: "Action masquée pour ce compte",
+      code: "UI_ACTION_HIDDEN",
+      action: "comptabilite.reduction",
+    });
   }
 
   try {
@@ -856,22 +911,30 @@ router.post("/", cashierAccess, async (req, res) => {
       const surgeonPercent = surgeon
         ? resolveSurgeonPercent(intervention.surgeonPercent, surgeon)
         : intervention.surgeonPercent;
-      const { surgeonShareFcfa: surgeonShare, clinicShareFcfa: clinicShare } = computeSurgeryShares(
-        intervention.totalCostFcfa,
-        surgeonPercent,
-        surgeon ?? { role: "MEDECIN" },
-      );
 
       const result = await prisma.$transaction(async (tx) => {
+        const current = await tx.surgeryCase.findUnique({
+          where: { id: data.surgeryCaseId },
+          include: { visit: true },
+        });
+        if (!current) throw new Error("SURGERY_NOT_FOUND");
+        if (current.status === SurgeryStatus.PAID) {
+          throw new Error("SURGERY_ALREADY_PAID");
+        }
+        const billedCost =
+          current.totalCostFcfa > 0 ? current.totalCostFcfa : intervention.totalCostFcfa;
+        const { surgeonShareFcfa: billedSurgeonShare, clinicShareFcfa: billedClinicShare } =
+          computeSurgeryShares(billedCost, surgeonPercent, surgeon ?? { role: "MEDECIN" });
+
         const surgery = await tx.surgeryCase.update({
           where: { id: data.surgeryCaseId },
           data: {
             interventionTypeId: data.interventionTypeId,
             surgeonId: data.surgeonId,
             accountantId: user.id,
-            totalCostFcfa: intervention.totalCostFcfa,
-            surgeonShareFcfa: surgeonShare,
-            clinicShareFcfa: clinicShare,
+            totalCostFcfa: billedCost,
+            surgeonShareFcfa: billedSurgeonShare,
+            clinicShareFcfa: billedClinicShare,
             status: SurgeryStatus.PAID,
             paidAt: new Date(),
             authorizedAt: new Date(),
@@ -880,15 +943,13 @@ router.post("/", cashierAccess, async (req, res) => {
         });
         const invoice = await tx.invoice.create({
           data: {
-            invoiceNumber: await generateInvoiceNumber(),
+            invoiceNumber: await generateInvoiceNumber(tx),
             patientId: surgery.visit.patientId,
             visitId: surgery.visitId,
             surgeryCaseId: surgery.id,
             type: InvoiceType.SURGERY,
-            amountFcfa: intervention.totalCostFcfa,
-            status: InvoiceStatus.PAID,
             issuedById: user.id,
-            paidAt: new Date(),
+            ...immediatePaidInvoiceData(billedCost, user.id),
           },
         });
         await tx.visit.update({ where: { id: surgery.visitId }, data: { status: VisitStatus.IN_TREATMENT } });
@@ -939,15 +1000,13 @@ router.post("/", cashierAccess, async (req, res) => {
         });
         const invoice = await tx.invoice.create({
           data: {
-            invoiceNumber: await generateInvoiceNumber(),
+            invoiceNumber: await generateInvoiceNumber(tx),
             patientId: hospitalization.visit.patientId,
             visitId: hospitalization.visitId,
             hospitalizationId: hospitalization.id,
             type: InvoiceType.HOSPITALIZATION_DEPOSIT,
-            amountFcfa: data.depositFcfa,
-            status: InvoiceStatus.PAID,
             issuedById: user.id,
-            paidAt: new Date(),
+            ...immediatePaidInvoiceData(data.depositFcfa, user.id),
           },
         });
         await tx.visit.update({ where: { id: hospitalization.visitId }, data: { status: VisitStatus.IN_TREATMENT } });
@@ -990,15 +1049,13 @@ router.post("/", cashierAccess, async (req, res) => {
         if (balance > 0) {
           invoice = await tx.invoice.create({
             data: {
-              invoiceNumber: await generateInvoiceNumber(),
+              invoiceNumber: await generateInvoiceNumber(tx),
               patientId: hospitalization.visit.patientId,
               visitId: hospitalization.visitId,
               hospitalizationId: hospitalization.id,
               type: InvoiceType.HOSPITALIZATION_FINAL,
-              amountFcfa: balance,
-              status: InvoiceStatus.PAID,
               issuedById: user.id,
-              paidAt: new Date(),
+              ...immediatePaidInvoiceData(balance, user.id),
             },
           });
         }
@@ -1015,6 +1072,13 @@ router.post("/", cashierAccess, async (req, res) => {
         include: { visit: { include: { patient: true } } },
       });
       if (!existing) return res.status(404).json({ error: "Consultation introuvable" });
+      if (receptionistScopeUserId(user)) {
+        const allowedVisit = await prisma.visit.findFirst({
+          where: { id: existing.visitId, ...receptionistOwnVisitsWhere(user) },
+          select: { id: true },
+        });
+        if (!allowedVisit) return res.status(404).json({ error: "Consultation introuvable" });
+      }
       if (!shouldCreateImmediateInvoice(existing.visit.patient.category)) {
         return res.status(400).json({
           error: "Ce patient associé n'est pas soumis au paiement immédiat des examens.",
@@ -1158,7 +1222,7 @@ router.post("/", cashierAccess, async (req, res) => {
           if (sheet.kind === "operation" && existingSurgeryInvoice) return false;
           return true;
         });
-        const invoiceNumbers = await generateInvoiceNumberBatch(sheetsNeedingNewInvoice.length);
+        const invoiceNumbers = await generateInvoiceNumberBatch(sheetsNeedingNewInvoice.length, tx);
         const paidAt = new Date();
         let updatedNotes = existing.clinicalNotes ?? "";
         let numberIndex = 0;
@@ -1357,6 +1421,12 @@ router.post("/", cashierAccess, async (req, res) => {
           error: "Montant de tranche invalide (doit être positif et ne pas dépasser le solde restant).",
         });
       }
+      if (error.message === "SURGERY_ALREADY_PAID") {
+        return res.status(409).json({ error: "Cette opération a déjà été encaissée." });
+      }
+      if (error.message === "SURGERY_NOT_FOUND") {
+        return res.status(404).json({ error: "Dossier opératoire introuvable." });
+      }
       if (error.message === "INVOICE_NOT_PAYABLE") {
         return res.status(409).json({ error: "Cette facture n'accepte plus de paiement." });
       }
@@ -1462,6 +1532,7 @@ router.get("/exam-reclamations", cashierAccess, async (req, res) => {
     where: {
       ...(consultationId ? { consultationId } : {}),
       ...(patientId ? { patientId } : {}),
+      ...receptionistOwnReclamationsWhere(req.user!),
     },
     include: reclamationInclude,
     orderBy: { createdAt: "desc" },
@@ -1488,6 +1559,7 @@ router.post("/exam-reclamations", cashierAccess, async (req, res) => {
                 id: true,
                 type: true,
                 amountFcfa: true,
+                paidAmountFcfa: true,
                 surgeryCaseId: true,
                 hospitalizationId: true,
                 createdAt: true,
@@ -1499,6 +1571,13 @@ router.post("/exam-reclamations", cashierAccess, async (req, res) => {
     });
     if (!consultation?.visit) {
       return res.status(404).json({ error: "Consultation introuvable" });
+    }
+    if (receptionistScopeUserId(user)) {
+      const allowedVisit = await prisma.visit.findFirst({
+        where: { id: consultation.visitId, ...receptionistOwnVisitsWhere(user) },
+        select: { id: true },
+      });
+      if (!allowedVisit) return res.status(404).json({ error: "Consultation introuvable" });
     }
 
     const priorRefunds = await prisma.examReclamation.findMany({
@@ -1618,11 +1697,20 @@ router.patch("/exam-reclamations/:id", cashierAccess, async (req, res) => {
 
     const existing = await prisma.examReclamation.findUnique({
       where: { id: String(req.params.id) },
+      include: { patient: { select: { createdById: true } } },
     });
     if (!existing) return res.status(404).json({ error: "Réclamation introuvable" });
+    if (!receptionistOwnsPatient(user, existing.patient) && existing.createdById !== user.id) {
+      return res.status(404).json({ error: "Réclamation introuvable" });
+    }
+
+    if (body.status === ExamReclamationStatus.REFUNDED) {
+      return res.status(400).json({
+        error: "Le remboursement doit être enregistré via l'action de remboursement dédiée.",
+      });
+    }
 
     const resolvedAt =
-      body.status === ExamReclamationStatus.REFUNDED ||
       body.status === ExamReclamationStatus.REJECTED
         ? new Date()
         : null;

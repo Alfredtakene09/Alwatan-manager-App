@@ -17,6 +17,7 @@ import {
   aggregateCollectedToday,
   buildRevenueLast7Days,
 } from "../lib/revenue-stats.js";
+import { aggregateCollectedForCashier } from "../lib/cashier-personal-stats.js";
 import { buildAdminDashboardOverview, buildAdminNavBadges } from "../lib/admin-dashboard-stats.js";
 import {
   buildGestionnaireDashboardOverview,
@@ -26,6 +27,13 @@ import { countLowStockProducts, listPharmacyStockAlerts } from "../lib/pharmacy-
 import { computePharmacyProfit } from "../lib/pharmacy-profit.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 import { patientsWhoReceivedExamsWhere } from "../lib/patient-exam-stats.js";
+import {
+  andWhere,
+  receptionistOwnConsultationsWhere,
+  receptionistOwnPatientsWhere,
+  receptionistOwnVisitsWhere,
+  receptionistScopeUserId,
+} from "../lib/reception-scope.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -50,8 +58,17 @@ router.get("/gestionnaire/nav-badges", requireModule("gestionnaire"), async (_re
   return res.json(badges);
 });
 
-router.get("/reception", requireModule("reception"), async (_req, res) => {
+router.get("/reception", requireModule("reception"), async (req, res) => {
+  const user = req.user!;
+  const createdById = String(req.query.createdById ?? "").trim();
   const todayStart = startOfDay(new Date());
+  const tomorrowStart = new Date(todayStart);
+  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+  const ownPatients = receptionistOwnPatientsWhere(user, createdById);
+  const ownVisits = receptionistOwnVisitsWhere(user, createdById);
+  const ownConsultations = receptionistOwnConsultationsWhere(user, createdById);
+  const scopedCashierId = receptionistScopeUserId(user, createdById);
+  const weekStart = last7DayStarts()[0] ?? todayStart;
 
   const [
     registeredToday,
@@ -64,19 +81,23 @@ router.get("/reception", requireModule("reception"), async (_req, res) => {
     patients,
     revenueLast7Days,
   ] = await Promise.all([
-    prisma.patient.count({ where: { createdAt: { gte: todayStart } } }),
-    prisma.visit.count({ where: { createdAt: { gte: todayStart } } }),
-    aggregateCollectedToday(),
+    prisma.patient.count({ where: { ...ownPatients, createdAt: { gte: todayStart } } }),
+    prisma.visit.count({
+      where: { createdAt: { gte: todayStart }, ...ownVisits },
+    }),
+    scopedCashierId
+      ? aggregateCollectedForCashier(scopedCashierId, todayStart, tomorrowStart)
+      : aggregateCollectedToday(),
     prisma.consultation
       .findMany({
-        where: labsPendingApprovalWhere(),
+        where: andWhere(labsPendingApprovalWhere(), ownConsultations),
         select: { clinicalNotes: true },
       })
       .then((rows) => rows.filter((row) => hasUnpaidCashierQueueExams(row.clinicalNotes)).length),
     prisma.visit.count({
       where: {
         status: { in: [VisitStatus.WAITING_CONSULTATION, VisitStatus.AWAITING_ACCOUNTING] },
-        patient: { category: "STANDARD" },
+        patient: { category: "STANDARD", ...ownPatients },
       },
     }),
     prisma.hospitalization.count({
@@ -88,17 +109,18 @@ router.get("/reception", requireModule("reception"), async (_req, res) => {
             HospitalizationStatus.ACTIVE,
           ],
         },
+        ...(Object.keys(ownVisits).length ? { visit: ownVisits } : {}),
       },
     }),
     prisma.visit.findMany({
-      where: { createdAt: { gte: last7DayStarts()[0] } },
+      where: { createdAt: { gte: weekStart }, ...ownVisits },
       select: { createdAt: true },
     }),
     prisma.patient.findMany({
-      where: { createdAt: { gte: last7DayStarts()[0] } },
+      where: { createdAt: { gte: weekStart }, ...ownPatients },
       select: { createdAt: true },
     }),
-    buildRevenueLast7Days(),
+    buildRevenueLast7Days(scopedCashierId ? { cashierId: scopedCashierId } : undefined),
   ]);
 
   const dayStarts = last7DayStarts();
@@ -120,9 +142,9 @@ router.get("/reception", requireModule("reception"), async (_req, res) => {
   });
 
   const [femalePatients, malePatients, examPatientsCount] = await Promise.all([
-    prisma.patient.count({ where: { gender: "F" } }),
-    prisma.patient.count({ where: { gender: "M" } }),
-    prisma.patient.count({ where: patientsWhoReceivedExamsWhere() }),
+    prisma.patient.count({ where: { ...ownPatients, gender: "F" } }),
+    prisma.patient.count({ where: { ...ownPatients, gender: "M" } }),
+    prisma.patient.count({ where: patientsWhoReceivedExamsWhere(ownPatients) }),
   ]);
 
   return res.json({

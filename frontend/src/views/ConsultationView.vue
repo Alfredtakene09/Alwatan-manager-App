@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useSilentRefresh } from '@/composables/useSilentRefresh'
 import { useRoute } from 'vue-router'
 import {
@@ -10,7 +10,6 @@ import {
   FlaskConical,
   HeartPulse,
   CheckCircle2,
-  ArrowRightLeft,
   CircleDollarSign,
   PillBottle,
   PenLine,
@@ -19,14 +18,17 @@ import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
 import { fullName } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth'
+import { MEDECIN_PENDING_QUEUE_EVENT } from '@/composables/useDoctorNewPatientAlert'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import MedecinStatsGrid from '@/components/MedecinStatsGrid.vue'
 import MedecinReceivableModal from '@/components/medecin/MedecinReceivableModal.vue'
+import MedecinTransferModal, {
+  type TransferServiceOption,
+} from '@/components/medecin/MedecinTransferModal.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
-import UiSelect from '@/components/ui/UiSelect.vue'
 import MultiExamPrescriptionPicker from '@/components/MultiExamPrescriptionPicker.vue'
 import DoctorPharmacyOrdonnancePicker from '@/components/DoctorPharmacyOrdonnancePicker.vue'
 import PatientMedicalHistory, {
@@ -52,8 +54,7 @@ import ConsultationQueueDataTable, {
 const visits = ref<ConsultationVisitRow[]>([])
 const modalVisitId = ref<string | null>(null)
 const transferVisitId = ref<string | null>(null)
-const transferServices = ref<{ id: string; name: string; doctorCount: number }[]>([])
-const selectedServiceId = ref('')
+const transferServices = ref<TransferServiceOption[]>([])
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const loading = ref(false)
@@ -131,10 +132,6 @@ const isAdminSupervision = computed(
     auth.user?.role === 'COMPTABLE' ||
     auth.user?.role === 'GESTIONNAIRE',
 )
-const transferServiceOptions = computed(() => {
-  const currentServiceId = transferVisit.value?.assignedClinicService?.id
-  return transferServices.value.filter((service) => service.id !== currentServiceId)
-})
 const statsRefreshKey = ref(0)
 const showReceivableModal = ref(false)
 const selectedExamsCount = computed(() => countExamsByKind(selectedExamsByKind.value))
@@ -168,9 +165,7 @@ const submitConsultationLabel = computed(() => {
 
 async function loadTransferServices() {
   try {
-    const { data } = await api.get<{ id: string; name: string; doctorCount: number }[]>(
-      '/visits/transfer-services',
-    )
+    const { data } = await api.get<TransferServiceOption[]>('/visits/transfer-services')
     transferServices.value = Array.isArray(data)
       ? [...data].sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }))
       : []
@@ -180,7 +175,6 @@ async function loadTransferServices() {
 }
 
 async function ensureTransferServicesLoaded() {
-  if (transferServices.value.length) return
   await loadTransferServices()
 }
 
@@ -302,26 +296,25 @@ function closeModal() {
 
 function openTransferModal(id: string) {
   transferVisitId.value = id
-  selectedServiceId.value = ''
   message.value = ''
   void ensureTransferServicesLoaded()
 }
 
 function closeTransferModal() {
   transferVisitId.value = null
-  selectedServiceId.value = ''
 }
 
-async function submitTransfer() {
-  if (!transferVisitId.value || !selectedServiceId.value) {
-    message.value = uiText('Sélectionnez un service destinataire.')
+async function submitTransfer(payload: { clinicServiceId: string; doctorId: string }) {
+  const visitId = transferVisitId.value
+  if (!visitId || !payload.clinicServiceId || !payload.doctorId) {
+    message.value = uiText('Sélectionnez un médecin destinataire.')
     messageType.value = 'error'
     return
   }
 
   const ok = await confirmAppModal({
     title: uiText('Transférer le patient'),
-    message: uiText('Confirmer le transfert de ce patient vers le service sélectionné ?'),
+    message: uiText('Confirmer le transfert de ce patient vers le médecin sélectionné ?'),
     confirmLabel: uiText('Transférer'),
     type: 'CONFIRM',
   })
@@ -330,10 +323,10 @@ async function submitTransfer() {
   transferring.value = true
   message.value = ''
   try {
-    await api.patch(`/visits/${transferVisitId.value}/transfer`, {
-      clinicServiceId: selectedServiceId.value,
-    })
-    message.value = uiText('Patient transféré vers le service sélectionné.')
+    await api.patch(`/visits/${visitId}/transfer`, payload)
+    visits.value = visits.value.filter((visit) => visit.id !== visitId)
+    if (modalVisitId.value === visitId) closeModal()
+    message.value = uiText('Patient transféré au médecin sélectionné.')
     messageType.value = 'success'
     closeTransferModal()
     await loadVisits()
@@ -419,13 +412,29 @@ async function submitExams() {
   }
 }
 
+function onMedecinQueueUpdated(event: Event) {
+  if (isAdminSupervision.value) return
+  const detail = (event as CustomEvent<{ visits: ConsultationVisitRow[] }>).detail
+  if (!detail || !Array.isArray(detail.visits)) return
+  visits.value = detail.visits
+  if (modalVisitId.value && !detail.visits.some((v) => v.id === modalVisitId.value)) {
+    closeModal()
+  }
+  statsRefreshKey.value += 1
+}
+
 onMounted(async () => {
+  window.addEventListener(MEDECIN_PENDING_QUEUE_EVENT, onMedecinQueueUpdated)
   await Promise.all([loadVisits(), loadTransferServices()])
   if (isAdminSupervision.value) return
   const visitId = route.query.visit
   if (typeof visitId === 'string' && (await ensureVisitAvailable(visitId))) {
     await openConsultModal(visitId)
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener(MEDECIN_PENDING_QUEUE_EVENT, onMedecinQueueUpdated)
 })
 </script>
 
@@ -676,51 +685,17 @@ onMounted(async () => {
     </Teleport>
 
     <Teleport to="body">
-      <div v-if="transferVisit" class="modal-overlay" @click.self="closeTransferModal">
-        <div class="modal modal--transfer" role="dialog" aria-modal="true" aria-labelledby="transfer-modal-title">
-          <header class="modal__header">
-            <div>
-              <h2 id="transfer-modal-title">Transférer le patient</h2>
-              <p>
-                {{ fullName(transferVisit.patient.firstName, transferVisit.patient.lastName) }}
-                — {{ transferVisit.patient.code }}
-              </p>
-            </div>
-            <button type="button" class="modal__close" aria-label="Fermer" @click="closeTransferModal">
-              <X :size="18" />
-            </button>
-          </header>
-
-          <div class="modal__body">
-            <UiSelect v-model="selectedServiceId" label="Service destinataire" required>
-              <option value="" disabled>Choisir un service…</option>
-              <option v-for="service in transferServiceOptions" :key="service.id" :value="service.id">
-                {{ service.name
-                }}{{ service.doctorCount ? '' : ` (${uiText('aucun médecin rattaché')})` }}
-              </option>
-            </UiSelect>
-            <p v-if="!transferServiceOptions.length" class="transfer-hint" style="color: var(--danger, #b91c1c)">
-              {{ uiText('Aucun service disponible. Créez-en un dans la page Services.') }}
-            </p>
-            <p v-else class="transfer-hint">
-              Le patient apparaîtra en attente de consultation chez le(s) médecin(s) de ce service.
-              Dès qu’un médecin démarre la consultation, le patient disparaît des autres files.
-            </p>
-          </div>
-
-          <footer class="modal__footer">
-            <UiButton variant="ghost" @click="closeTransferModal">Annuler</UiButton>
-            <UiButton
-              variant="primary"
-              :icon="ArrowRightLeft"
-              :disabled="transferring || !selectedServiceId"
-              @click="submitTransfer"
-            >
-              {{ uiText(transferring ? 'Transfert…' : 'Confirmer le transfert') }}
-            </UiButton>
-          </footer>
-        </div>
-      </div>
+      <MedecinTransferModal
+        v-if="transferVisit"
+        :patient-name="fullName(transferVisit.patient.firstName, transferVisit.patient.lastName)"
+        :patient-code="transferVisit.patient.code"
+        :services="transferServices"
+        :current-service-id="transferVisit.assignedClinicService?.id"
+        :current-doctor-id="auth.user?.id"
+        :transferring="transferring"
+        @close="closeTransferModal"
+        @confirm="submitTransfer"
+      />
     </Teleport>
   </div>
 </template>
@@ -796,10 +771,6 @@ onMounted(async () => {
   max-height: min(92dvh, 860px);
 }
 
-.modal--transfer {
-  max-width: 28rem;
-}
-
 .modal__vitals {
   display: inline-flex;
   align-items: center;
@@ -825,13 +796,6 @@ onMounted(async () => {
 
 .info-section--history :deep(.timeline-item__marker) {
   margin-top: 0.75rem;
-}
-
-.transfer-hint {
-  margin: 0;
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-  line-height: 1.45;
 }
 
 .modal__header {

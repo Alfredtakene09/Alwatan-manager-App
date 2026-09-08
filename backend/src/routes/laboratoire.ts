@@ -288,7 +288,7 @@ router.put("/visits/:visitId/panels/:panelSlug", async (req, res) => {
         error: "Remplissez au moins un résultat avant d'enregistrer.",
       });
     }
-    const visit = await findLabVisitForRead(String(req.params.visitId));
+    const visit = await findLabVisit(String(req.params.visitId));
     if (!visit?.consultation) {
       return res.status(404).json({ error: "Dossier laboratoire introuvable" });
     }

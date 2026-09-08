@@ -1,7 +1,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { AppUserRole } from '@/lib/roles'
-import { getAppLocale, translateExamName, translateRole, translateUi } from './translate'
+import { getAppLocale, translateClinicService, translateExamName, translateRole, translateUi } from './translate'
 import {
   formatAppDate,
   formatAppDateTime,
@@ -24,6 +24,11 @@ export function useAppI18n() {
   function examNameText(label: string) {
     void localeCode.value
     return translateExamName(label)
+  }
+
+  function clinicServiceText(name: string) {
+    void localeCode.value
+    return translateClinicService(name)
   }
 
   function navLabel(label: string) {
@@ -74,6 +79,7 @@ export function useAppI18n() {
     intlLocale: computed(() => intlLocaleFor()),
     uiText,
     examNameText,
+    clinicServiceText,
     navLabel,
     roleLabel,
     dateText,

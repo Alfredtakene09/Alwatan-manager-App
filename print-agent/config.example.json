@@ -9,5 +9,7 @@
   "cut": true,
   "openCashDrawer": false,
   "codePage": "cp850",
+  "printToken": "",
+  "allowRemotePrint": false,
   "logDir": "logs"
 }

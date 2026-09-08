@@ -12,6 +12,8 @@ import {
   isSessionIdle,
   SESSION_ACTIVITY_TOUCH_MS,
 } from "../lib/session-security.js";
+import { getEffectiveHiddenUiActions } from "../lib/role-ui-settings.js";
+import type { UiActionId } from "../lib/ui-actions.js";
 import {
   canAccessModule,
   canManageLabStock,
@@ -24,6 +26,7 @@ declare global {
   namespace Express {
     interface Request {
       user?: SessionUser;
+      userHiddenUiActions?: unknown;
     }
   }
 }
@@ -52,6 +55,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
         lockedAt: true,
         sessionTokenId: true,
         lastActivityAt: true,
+        hiddenUiActions: true,
       },
     });
 
@@ -113,6 +117,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       lastName: dbUser.lastName,
       role: dbUser.role,
     };
+    req.userHiddenUiActions = dbUser.hiddenUiActions;
 
     // Renouvelle le cookie a chaque requete authentifiee (fenetre glissante 12 h).
     try {
@@ -188,6 +193,31 @@ export function requireAnyModule(...modules: string[]) {
       });
     }
     next();
+  };
+}
+
+export async function isUiActionPermitted(req: Request, actionId: UiActionId) {
+  if (!req.user) return false;
+  const role = req.user.role as AppUserRole;
+  if (role === "ADMIN" || role === "COMPTABLE") return true;
+  const hidden = await getEffectiveHiddenUiActions(role, req.userHiddenUiActions);
+  return !hidden.includes(actionId);
+}
+
+/** Refuse une action masquée dans les permissions granulaires (Admin / Direction toujours autorisés). */
+export function requireUiAction(actionId: UiActionId) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "Non autorisé" });
+    }
+    if (await isUiActionPermitted(req, actionId)) {
+      return next();
+    }
+    return res.status(403).json({
+      error: "Action masquée pour ce compte",
+      code: "UI_ACTION_HIDDEN",
+      action: actionId,
+    });
   };
 }
 

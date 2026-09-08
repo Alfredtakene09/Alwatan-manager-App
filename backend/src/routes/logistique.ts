@@ -310,11 +310,31 @@ router.put("/items/:id", async (req, res) => {
     };
     const hasPackagingInput =
       body.cartons !== undefined || body.packages !== undefined || body.units !== undefined;
-    if (hasPackagingInput || body.quantity !== undefined) {
-      data.quantity = resolveItemQuantity({ ...body, ...packaging }, existing.quantity);
-    }
+    const nextQuantity =
+      hasPackagingInput || body.quantity !== undefined
+        ? resolveItemQuantity({ ...body, ...packaging }, existing.quantity)
+        : existing.quantity;
 
-    const item = await prisma.logisticsItem.update({ where: { id: req.params.id }, data, include: itemInclude });
+    const item = await prisma.$transaction(async (tx) => {
+      const updated = await tx.logisticsItem.update({
+        where: { id: req.params.id },
+        data,
+        include: itemInclude,
+      });
+      if (nextQuantity !== existing.quantity) {
+        await applyLogisticsMovement(tx, {
+          itemId: existing.id,
+          type: "ADJUSTMENT",
+          targetQuantity: nextQuantity,
+          userId: req.user!.id,
+        });
+        return tx.logisticsItem.findUniqueOrThrow({
+          where: { id: existing.id },
+          include: itemInclude,
+        });
+      }
+      return updated;
+    });
     return res.json(item);
   } catch {
     return res.status(400).json({ error: "Mise à jour impossible" });

@@ -251,6 +251,7 @@ export function buildLabPanelPrintHtml(
   const validator = context.validatedBy?.trim() || '—'
 
   const useClassicTable = shouldPrintClassicStoolUrine(slug, values)
+  const printScale = useClassicTable ? Math.max(scale, 0.92) : scale
   const bodyHtml = useClassicTable
     ? renderClassicStoolUrineTable(slug, values)
     : renderPanelTables(prepared.sections, values, densityClass, showNrColumn)
@@ -260,7 +261,7 @@ export function buildLabPanelPrintHtml(
   return `
     <article
       class="lab-result-print lab-result-print--single-page"
-      style="--lab-print-scale: ${scale.toFixed(3)}"
+      style="--lab-print-scale: ${printScale.toFixed(3)}"
     >
       <div class="lab-result-print__page">
         ${buildClinicPrintHeader(undefined, { dualLogo: true })}
@@ -479,7 +480,7 @@ const LAB_PANEL_PRINT_STYLES = `
     display: flex;
     align-items: baseline;
     gap: 8px;
-    font-size: 17px;
+    font-size: 19px;
     line-height: 1.4;
   }
   .lab-result-print__field-label {
@@ -489,7 +490,7 @@ const LAB_PANEL_PRINT_STYLES = `
     font-weight: 500;
     text-transform: none;
     letter-spacing: 0;
-    font-size: 15px;
+    font-size: 17px;
   }
   .lab-result-print__field-label::after {
     content: ' :';
@@ -503,7 +504,7 @@ const LAB_PANEL_PRINT_STYLES = `
     margin: 0 0 16px;
     padding: 0 0 8px;
     text-align: center;
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -538,7 +539,7 @@ const LAB_PANEL_PRINT_STYLES = `
     background: transparent;
     border: none;
     border-bottom: 1px solid #cbd5e1;
-    font-size: 17px;
+    font-size: 19px;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -666,7 +667,7 @@ const LAB_PANEL_PRINT_STYLES = `
     margin-top: auto;
     padding-top: 16px;
     border-top: 1px solid #e2e8f0;
-    font-size: 17px;
+    font-size: 18px;
   }
   .lab-result-print__footer-print,
   .lab-result-print__footer-validator {

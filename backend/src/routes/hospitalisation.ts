@@ -5,6 +5,7 @@ import {
   InvoiceStatus,
   InvoiceType,
   VisitStatus,
+  type Prisma,
 } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { comptabilitePatientWhere } from "../lib/patient-billing.js";
@@ -16,6 +17,7 @@ import {
   syncMissingHospitalizationReferrals,
 } from "../lib/hospitalization-referral.js";
 import { generateInvoiceNumber } from "../lib/patient-code.js";
+import { immediatePaidInvoiceData } from "../lib/invoice-paid.js";
 import {
   assertRoomAvailableForAdmission,
   computeRoomTypeAvailability,
@@ -25,10 +27,40 @@ import {
 import { findDuplicateRoomByName } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
-import { requireAuth, requireModule, requireManageAccess } from "../middleware/auth.js";
+import { requireAuth, requireModule, requireManageAccess, requireUiAction } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth, requireModule("hospitalisation"));
+const roomsWriteAccess = [requireManageAccess, requireUiAction("hospitalisation.rooms")] as const;
+
+async function sumPaidHospitalizationFcfa(tx: Prisma.TransactionClient, hospitalizationId: string) {
+  const paid = await tx.invoice.aggregate({
+    where: { hospitalizationId, status: InvoiceStatus.PAID },
+    _sum: { paidAmountFcfa: true },
+  });
+  return paid._sum.paidAmountFcfa ?? 0;
+}
+
+async function syncPendingHospitalizationInvoice(
+  tx: Prisma.TransactionClient,
+  hospitalizationId: string,
+  totalDueFcfa: number,
+) {
+  const pending = await tx.invoice.findFirst({
+    where: {
+      hospitalizationId,
+      status: InvoiceStatus.PENDING,
+      type: { in: [InvoiceType.HOSPITALIZATION_FINAL, InvoiceType.HOSPITALIZATION_DEPOSIT] },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!pending) return;
+  const alreadyPaid = await sumPaidHospitalizationFcfa(tx, hospitalizationId);
+  await tx.invoice.update({
+    where: { id: pending.id },
+    data: { amountFcfa: Math.max(0, totalDueFcfa - alreadyPaid) },
+  });
+}
 
 const roomSchema = z.object({
   name: z.string().min(2),
@@ -189,7 +221,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.post("/rooms", requireManageAccess, async (req, res) => {
+router.post("/rooms", ...roomsWriteAccess, async (req, res) => {
   try {
     const body = roomSchema.parse(req.body);
     const duplicate = await findDuplicateRoomByName(body.name);
@@ -236,7 +268,7 @@ router.post("/rooms", requireManageAccess, async (req, res) => {
   }
 });
 
-router.put("/rooms/:id", requireManageAccess, async (req, res) => {
+router.put("/rooms/:id", ...roomsWriteAccess, async (req, res) => {
   try {
     const body = roomSchema.partial().parse(req.body);
     const roomId = String(req.params.id);
@@ -288,7 +320,7 @@ router.put("/rooms/:id", requireManageAccess, async (req, res) => {
   }
 });
 
-router.delete("/rooms/:id", requireManageAccess, async (req, res) => {
+router.delete("/rooms/:id", ...roomsWriteAccess, async (req, res) => {
   try {
     const room = await prisma.room.findUnique({
       where: { id: String(req.params.id) },
@@ -378,15 +410,13 @@ router.post("/actions", async (req, res) => {
           totalDueFcfa > 0
             ? await tx.invoice.create({
                 data: {
-                  invoiceNumber: await generateInvoiceNumber(),
+                  invoiceNumber: await generateInvoiceNumber(tx),
                   patientId: hospitalization.visit.patientId,
                   visitId: hospitalization.visitId,
                   hospitalizationId: hospitalization.id,
                   type: InvoiceType.HOSPITALIZATION_FINAL,
-                  amountFcfa: totalDueFcfa,
-                  status: InvoiceStatus.PAID,
                   issuedById: user.id,
-                  paidAt: new Date(),
+                  ...immediatePaidInvoiceData(totalDueFcfa, user.id),
                 },
               })
             : null;
@@ -429,6 +459,8 @@ router.post("/actions", async (req, res) => {
           include: { visit: true, room: true, bed: true, attendingDoctorUser: true },
         });
 
+        await syncPendingHospitalizationInvoice(tx, hospitalization.id, totalDueFcfa);
+
         return { hospitalization, nights, totalDueFcfa, reductionFcfa };
       });
       return res.json(result);
@@ -451,7 +483,7 @@ router.post("/actions", async (req, res) => {
         const grossFcfa = nights * hospitalization.dailyRateFcfa;
         const reductionFcfa = hospitalization.reductionFcfa ?? 0;
         const totalDue = Math.max(0, grossFcfa - reductionFcfa);
-        const alreadyPaid = hospitalization.totalDueFcfa ?? 0;
+        const alreadyPaid = await sumPaidHospitalizationFcfa(tx, hospitalization.id);
         const balance = Math.max(0, totalDue - alreadyPaid);
 
         const updated = await tx.hospitalization.update({
@@ -470,19 +502,17 @@ router.post("/actions", async (req, res) => {
 
         let invoice = null;
         if (balance > 0) {
-          invoice = await tx.invoice.create({
-            data: {
-              invoiceNumber: await generateInvoiceNumber(),
-              patientId: hospitalization.visit.patientId,
-              visitId: hospitalization.visitId,
-              hospitalizationId: hospitalization.id,
-              type: InvoiceType.HOSPITALIZATION_FINAL,
-              amountFcfa: balance,
-              status: InvoiceStatus.PAID,
-              issuedById: user.id,
-              paidAt: new Date(),
-            },
-          });
+            invoice = await tx.invoice.create({
+              data: {
+                invoiceNumber: await generateInvoiceNumber(tx),
+                patientId: hospitalization.visit.patientId,
+                visitId: hospitalization.visitId,
+                hospitalizationId: hospitalization.id,
+                type: InvoiceType.HOSPITALIZATION_FINAL,
+                issuedById: user.id,
+                ...immediatePaidInvoiceData(balance, user.id),
+              },
+            });
         }
         await tx.visit.update({ where: { id: hospitalization.visitId }, data: { status: VisitStatus.COMPLETED } });
         return { hospitalization: updated, invoice, nights, totalDue, balance };

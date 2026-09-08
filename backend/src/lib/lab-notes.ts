@@ -1,4 +1,5 @@
 import { InvoiceStatus, InvoiceType, PatientCategory } from "@prisma/client";
+import { EXTERNAL_PATIENT_VISIT_NOTE } from "./visit-external.js";
 
 export const EXAMS_PRESCRIBED_PREFIX = "Examens prescrits";
 export const EXAMS_PAID_PREFIX = "Examens payés";
@@ -412,6 +413,8 @@ export function labsPendingApprovalWhere() {
       patient: {
         category: PatientCategory.STANDARD,
       },
+      // Patient externe : encaissement direct à la réception, hors file / notif paiement.
+      NOT: { notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE } },
     },
   };
 }

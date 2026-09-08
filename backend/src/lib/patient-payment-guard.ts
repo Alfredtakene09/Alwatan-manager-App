@@ -71,7 +71,13 @@ export async function findPatientIdsWithPaidBilling(patientIds: string[]): Promi
 
   const [paidInvoices, paidSurgeries, paidHospitalizations] = await Promise.all([
     prisma.invoice.findMany({
-      where: { patientId: { in: uniqueIds }, status: InvoiceStatus.PAID },
+      where: {
+        patientId: { in: uniqueIds },
+        OR: [
+          { status: InvoiceStatus.PAID },
+          { status: InvoiceStatus.PARTIALLY_PAID, paidAmountFcfa: { gt: 0 } },
+        ],
+      },
       select: { patientId: true },
       distinct: ["patientId"],
     }),
@@ -159,73 +165,39 @@ const consultationLockSelect = {
 } as const;
 
 /**
- * IDs patients dont la suppression est verrouillée (paiement, données, ou déjà consultés).
- * Utilisé par la liste réception pour masquer le bouton supprimer.
+ * IDs patients dont la suppression réceptionniste est verrouillée
+ * (déjà pris en charge par un médecin). Les factures ne bloquent plus :
+ * elles sont effacées avec le dossier.
  */
 export async function findPatientIdsDeletionLocked(patientIds: string[]): Promise<Set<string>> {
   if (!patientIds.length) return new Set();
 
   const uniqueIds = [...new Set(patientIds)];
-  const locked = await findPatientIdsWithPaidBilling(uniqueIds);
+  const visits = await prisma.visit.findMany({
+    where: { patientId: { in: uniqueIds }, status: { not: VisitStatus.CANCELLED } },
+    select: {
+      patientId: true,
+      status: true,
+      consultation: { select: consultationLockSelect },
+    },
+  });
 
-  const [invoices, documents, reclamations, visits] = await Promise.all([
-    prisma.invoice.findMany({
-      where: { patientId: { in: uniqueIds } },
-      select: { patientId: true },
-      distinct: ["patientId"],
-    }),
-    prisma.patientDocument.findMany({
-      where: { patientId: { in: uniqueIds } },
-      select: { patientId: true },
-      distinct: ["patientId"],
-    }),
-    prisma.examReclamation.findMany({
-      where: { patientId: { in: uniqueIds } },
-      select: { patientId: true },
-      distinct: ["patientId"],
-    }),
-    prisma.visit.findMany({
-      where: { patientId: { in: uniqueIds }, status: { not: VisitStatus.CANCELLED } },
-      select: {
-        patientId: true,
-        status: true,
-        consultation: { select: consultationLockSelect },
-      },
-    }),
-  ]);
-
-  for (const row of invoices) {
-    if (row.patientId) locked.add(row.patientId);
-  }
-  for (const row of documents) locked.add(row.patientId);
-  for (const row of reclamations) locked.add(row.patientId);
+  const locked = new Set<string>();
   for (const visit of visits) {
     if (visitIndicatesConsulted(visit)) locked.add(visit.patientId);
   }
-
   return locked;
 }
 
-/** Suppression dossier patient — autorisée seulement sans facture ni activité clinique / consultation. */
+/** Réception : un dossier déjà consulté ne peut pas être supprimé (admin / gestionnaire : cascade). */
 export async function assertPatientDeletable(
   patientId: string,
   db: Prisma.TransactionClient | typeof prisma = prisma,
 ): Promise<void> {
-  await assertPatientDataDeletable(patientId, db);
-
-  const [invoiceCount, documentCount, reclamationCount, visits] = await Promise.all([
-    db.invoice.count({ where: { patientId } }),
-    db.patientDocument.count({ where: { patientId } }),
-    db.examReclamation.count({ where: { patientId } }),
-    db.visit.findMany({
-      where: { patientId, status: { not: VisitStatus.CANCELLED } },
-      include: { consultation: { select: consultationLockSelect } },
-    }),
-  ]);
-
-  if (invoiceCount > 0 || documentCount > 0 || reclamationCount > 0) {
-    throw new Error(PATIENT_HAS_DATA_CODE);
-  }
+  const visits = await db.visit.findMany({
+    where: { patientId, status: { not: VisitStatus.CANCELLED } },
+    include: { consultation: { select: consultationLockSelect } },
+  });
 
   if (visits.some(visitIndicatesConsulted)) {
     throw new Error(PATIENT_ALREADY_CONSULTED_CODE);

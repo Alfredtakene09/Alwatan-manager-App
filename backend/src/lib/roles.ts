@@ -74,6 +74,12 @@ export function canAccessModule(role: AppUserRole, module: string) {
   return MODULE_ACCESS[module]?.includes(role) ?? false
 }
 
+/** Seul un ADMIN peut attribuer (ou promouvoir vers) le rôle ADMIN. */
+export function canAssignUserRole(actorRole: AppUserRole, targetRole: AppUserRole) {
+  if (targetRole === "ADMIN") return actorRole === "ADMIN";
+  return (MANAGEABLE_USER_ROLES as readonly string[]).includes(targetRole);
+}
+
 /** Nomenclatures, suppressions, structure (salles, dossiers…) — pas la réception. */
 export const MANAGEMENT_ROLES: AppUserRole[] = DIRECTION_GESTIONNAIRE_ROLES;
 

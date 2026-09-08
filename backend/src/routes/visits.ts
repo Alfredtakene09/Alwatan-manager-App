@@ -3,7 +3,7 @@ import { z } from "zod";
 import { InvoiceStatus, InvoiceType, PatientCategory, Prisma, SurgeryStatus, UserRole, VisitStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
-import { backfillClinicServiceDoctorLinks } from "../lib/clinic-service-doctors.js";
+import { backfillClinicServiceDoctorLinks, findSelectableDoctorInClinicService, listTransferDoctorsForClinicService } from "../lib/clinic-service-doctors.js";
 import {
   EXAMS_PRESCRIBED_PREFIX,
   hasExamsPrescribed,
@@ -27,6 +27,7 @@ import {
 import { ensureVisitPatientMergedByPhone } from "../lib/merge-patients.js";
 import { canAccessModule } from "../lib/roles.js";
 import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.js";
+import { collectExternalLabOrderPayment } from "../lib/external-lab-payment.js";
 import { computeGrossFcfaFromExamLabels, computeLabExamsGrossFcfa, buildLabExamLines } from "../lib/lab-exam-prices.js";
 import {
   EXTERNAL_PATIENT_VISIT_NOTE,
@@ -35,7 +36,6 @@ import {
   extractExternalPatientService,
 } from "../lib/visit-external.js";
 import {
-  cancelDuplicateActiveVisits,
   keepLatestVisitPerPatient,
 } from "../lib/visit-dedupe.js";
 import {
@@ -62,7 +62,11 @@ import {
   invoiceCollectedAt,
 } from "../lib/revenue-stats.js";
 import { ageUnitSchema, patientAgeShape, refinePatientAge } from "../lib/patient-age.js";
-import { requireAuth, requireModule } from "../middleware/auth.js";
+import { requireAuth, requireModule, requireUiAction } from "../middleware/auth.js";
+import {
+  receptionistOwnsPatient,
+  receptionistOwnVisitsWhere,
+} from "../lib/reception-scope.js";
 
 const visitInclude = {
   patient: true,
@@ -232,9 +236,11 @@ router.get("/", async (req, res) => {
     statusFilter.push(VisitStatus.WAITING_CONSULTATION);
   }
 
-  const where: Prisma.VisitWhereInput = statusFilter.length
-    ? { status: { in: statusFilter } }
-    : {};
+  if (!statusFilter.length) {
+    return res.status(403).json({ error: "Accès refusé" });
+  }
+
+  const where: Prisma.VisitWhereInput = { status: { in: statusFilter } };
 
   if (
     queue === "supervision" &&
@@ -265,8 +271,9 @@ router.get("/", async (req, res) => {
     ];
   }
 
+  const ownVisits = receptionistOwnVisitsWhere(user);
   const visits = await prisma.visit.findMany({
-    where,
+    where: Object.keys(ownVisits).length ? { AND: [where, ownVisits] } : where,
     include: visitInclude,
     orderBy:
       queue === "consulted" || queue === "my-patients"
@@ -285,44 +292,22 @@ router.get("/transfer-services", requireModule("consultation"), async (_req, res
     const services = await prisma.clinicService.findMany({
       where: { active: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-      select: {
-        id: true,
-        name: true,
-        serviceDoctors: {
-          where: {
-            employee: {
-              isMedecin: true,
-              active: true,
-              user: { is: { active: true, role: { not: UserRole.ADMIN } } },
-            },
-          },
-          select: { employeeId: true },
-        },
-        employees: {
-          where: {
-            isMedecin: true,
-            active: true,
-            user: { is: { active: true, role: { not: UserRole.ADMIN } } },
-          },
-          select: { id: true },
-        },
-      },
+      select: { id: true, name: true },
     });
 
-    // Tous les services actifs sont proposés (même sans médecin encore rattaché).
-    return res.json(
-      services.map((service) => {
-        const doctorIds = new Set([
-          ...service.serviceDoctors.map((link) => link.employeeId),
-          ...service.employees.map((employee) => employee.id),
-        ]);
+    const withDoctors = await Promise.all(
+      services.map(async (service) => {
+        const doctors = await listTransferDoctorsForClinicService(service.id);
         return {
           id: service.id,
           name: service.name,
-          doctorCount: doctorIds.size,
+          doctorCount: doctors.length,
+          doctors,
         };
       }),
     );
+
+    return res.json(withDoctors);
   } catch (error) {
     console.error("[transfer-services]", error);
     return res.status(500).json({ error: "Impossible de charger les services." });
@@ -362,13 +347,39 @@ router.patch("/:id/start-consultation", requireModule("consultation"), async (re
     return res.status(409).json({ error: "Cette visite n'est plus en attente de consultation." });
   }
 
-  const visit = await prisma.visit.update({
-    where: { id: visitId },
+  const claimed = await prisma.visit.updateMany({
+    where: {
+      id: visitId,
+      status: VisitStatus.WAITING_CONSULTATION,
+    },
     data: {
       status: VisitStatus.IN_CONSULTATION,
-      // Prise en charge exclusive : disparaît des files des autres médecins du service.
       assignedDoctorId: user.id,
     },
+  });
+
+  if (claimed.count !== 1) {
+    const latest = await prisma.visit.findUnique({
+      where: { id: visitId },
+      select: { status: true, assignedDoctorId: true },
+    });
+    if (
+      latest?.status === VisitStatus.IN_CONSULTATION &&
+      latest.assignedDoctorId === user.id
+    ) {
+      const visit = await prisma.visit.findUniqueOrThrow({
+        where: { id: visitId },
+        include: visitInclude,
+      });
+      return res.json(mapVisitWithBilling(visit));
+    }
+    return res.status(409).json({
+      error: "Ce patient est déjà en consultation avec un autre médecin.",
+    });
+  }
+
+  const visit = await prisma.visit.findUniqueOrThrow({
+    where: { id: visitId },
     include: visitInclude,
   });
 
@@ -377,6 +388,7 @@ router.patch("/:id/start-consultation", requireModule("consultation"), async (re
 
 const transferSchema = z.object({
   clinicServiceId: z.string().min(1),
+  doctorId: z.string().min(1),
 });
 
 router.patch("/:id/transfer", requireModule("consultation"), async (req, res) => {
@@ -393,6 +405,11 @@ router.patch("/:id/transfer", requireModule("consultation"), async (req, res) =>
       },
     });
     if (!service) return res.status(400).json({ error: "Service invalide" });
+
+    const targetDoctor = await findSelectableDoctorInClinicService(body.doctorId, service.id);
+    if (!targetDoctor) {
+      return res.status(400).json({ error: "Médecin invalide pour ce service" });
+    }
 
     const existing = await prisma.visit.findUnique({
       where: { id: visitId },
@@ -418,17 +435,39 @@ router.patch("/:id/transfer", requireModule("consultation"), async (req, res) =>
           existing.consultation.completedAt),
     );
 
-    // Après consultation : nouvelle visite en attente sur le service cible (historique conservé).
+    if (
+      targetDoctor.id === existing.assignedDoctorId &&
+      service.id === existing.assignedClinicServiceId
+    ) {
+      return res.status(400).json({ error: "Choisissez un autre médecin ou un autre service." });
+    }
+
+    const transferNote = `Transféré vers ${service.name} — Dr ${targetDoctor.firstName} ${targetDoctor.lastName}`;
+
+    // Après consultation : nouvelle visite en attente chez le médecin cible (historique conservé).
     if (hasClinicalContent || existing.status === VisitStatus.COMPLETED) {
-      const visit = await prisma.visit.create({
-        data: {
-          patientId: existing.patientId,
-          status: VisitStatus.WAITING_CONSULTATION,
-          assignedDoctorId: null,
-          assignedClinicServiceId: service.id,
-          notes: `Transféré vers ${service.name}`,
-        },
-        include: visitInclude,
+      const visit = await prisma.$transaction(async (tx) => {
+        await tx.visit.update({
+          where: { id: existing.id },
+          data: {
+            assignedDoctorId: null,
+            ...(!alreadyConsulted &&
+            (existing.status === VisitStatus.WAITING_CONSULTATION ||
+              existing.status === VisitStatus.IN_CONSULTATION)
+              ? { status: VisitStatus.COMPLETED }
+              : {}),
+          },
+        });
+        return tx.visit.create({
+          data: {
+            patientId: existing.patientId,
+            status: VisitStatus.WAITING_CONSULTATION,
+            assignedDoctorId: targetDoctor.id,
+            assignedClinicServiceId: service.id,
+            notes: transferNote,
+          },
+          include: visitInclude,
+        });
       });
       return res.json(mapVisitWithBilling(visit));
     }
@@ -448,9 +487,10 @@ router.patch("/:id/transfer", requireModule("consultation"), async (req, res) =>
       return tx.visit.update({
         where: { id: visitId },
         data: {
-          assignedDoctorId: null,
+          assignedDoctorId: targetDoctor.id,
           assignedClinicServiceId: service.id,
           status: VisitStatus.WAITING_CONSULTATION,
+          notes: transferNote,
         },
         include: visitInclude,
       });
@@ -678,13 +718,11 @@ router.get("/compte-rendu-receptions", async (req, res) => {
   return res.json({ receptionists });
 });
 
-router.get("/etat-patients", requireModule("reception"), async (_req, res) => {
-  // Dédup en arrière-plan — ne pas bloquer le chargement de la page
-  void cancelDuplicateActiveVisits().catch(() => undefined);
-
+router.get("/etat-patients", requireModule("reception"), async (req, res) => {
   const visits = await prisma.visit.findMany({
     where: {
       status: { notIn: [VisitStatus.CANCELLED] },
+      ...receptionistOwnVisitsWhere(req.user!),
     },
     select: {
       id: true,
@@ -721,7 +759,7 @@ router.get("/etat-patients", requireModule("reception"), async (_req, res) => {
   return res.json(result);
 });
 
-router.post("/", requireModule("reception"), async (req, res) => {
+router.post("/", requireModule("reception"), requireUiAction("reception.reconsult"), async (req, res) => {
   try {
     const body = visitSchema.parse(req.body);
     const plan = await planReconsultation(body.patientId);
@@ -740,7 +778,9 @@ router.post("/", requireModule("reception"), async (req, res) => {
     }
 
     const patient = await prisma.patient.findUnique({ where: { id: body.patientId } });
-    if (!patient) return res.status(404).json({ error: "Patient introuvable" });
+    if (!patient || !receptionistOwnsPatient(req.user!, patient)) {
+      return res.status(404).json({ error: "Patient introuvable" });
+    }
 
     let consultationAmountFcfa = body.consultationAmountFcfa;
     let renewalHint: string | undefined;
@@ -762,7 +802,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
     const billing = resolveConsultationBilling(
       patient.category,
       consultationAmountFcfa,
-      0,
+      body.reductionFcfa ?? 0,
     );
 
     const visit = await prisma.$transaction(async (tx) => {
@@ -813,7 +853,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
           } else {
             const invoice = await tx.invoice.create({
               data: consultationInvoiceCreateData(patient.category, {
-                invoiceNumber: await generateInvoiceNumber(),
+                invoiceNumber: await generateInvoiceNumber(tx),
                 patientId: body.patientId,
                 visitId: updatedVisit.id,
                 amountFcfa: billing.billableAmountFcfa,
@@ -862,7 +902,7 @@ router.post("/", requireModule("reception"), async (req, res) => {
       if (billing.billableAmountFcfa > 0) {
         const invoice = await tx.invoice.create({
           data: consultationInvoiceCreateData(patient.category, {
-            invoiceNumber: await generateInvoiceNumber(),
+            invoiceNumber: await generateInvoiceNumber(tx),
             patientId: body.patientId,
             visitId: createdVisit.id,
             amountFcfa: billing.billableAmountFcfa,
@@ -960,18 +1000,21 @@ const externalPatientSchema = z
   })
   .superRefine(refinePatientAge);
 
-router.get("/external-queue", requireModule("reception"), async (_req, res) => {
+router.get("/external-queue", requireModule("reception"), async (req, res) => {
   const consultations = await prisma.consultation.findMany({
     where: {
       visit: {
         notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE },
         patient: { category: PatientCategory.STANDARD },
+        ...receptionistOwnVisitsWhere(req.user!),
       },
     },
     include: {
+      doctor: { select: { firstName: true, lastName: true } },
       visit: {
         include: {
           patient: true,
+          assignedDoctor: { select: { firstName: true, lastName: true } },
           invoices: { where: { type: InvoiceType.LAB_EXAM }, take: 1 },
         },
       },
@@ -1001,6 +1044,7 @@ router.get("/external-queue", requireModule("reception"), async (_req, res) => {
       netFcfa: hasExams ? Math.max(0, grossFcfa - (row.labExamReductionFcfa ?? 0)) : 0,
       invoiced: !!invoice,
       invoiceNumber: invoice?.invoiceNumber ?? null,
+      doctor: row.doctor ?? row.visit.assignedDoctor ?? null,
     };
   });
 
@@ -1031,7 +1075,7 @@ router.post("/external-patient", requireModule("reception"), async (req, res) =>
         phone: body.phone,
         gender: body.gender,
       });
-      if (duplicate) {
+      if (duplicate && receptionistOwnsPatient(req.user!, duplicate)) {
         resolvedPatientId = duplicate.id;
       }
     }
@@ -1042,7 +1086,7 @@ router.post("/external-patient", requireModule("reception"), async (req, res) =>
       if (!patientId) {
         const patient = await tx.patient.create({
           data: {
-            code: await generatePatientCode(),
+            code: await generatePatientCode(tx),
             firstName: body.firstName!,
             lastName: body.lastName!,
             phone: body.phone,
@@ -1057,6 +1101,7 @@ router.post("/external-patient", requireModule("reception"), async (req, res) =>
       } else {
         const patient = await tx.patient.findUnique({ where: { id: patientId } });
         if (!patient) throw new Error("PATIENT_NOT_FOUND");
+        if (!receptionistOwnsPatient(req.user!, patient)) throw new Error("PATIENT_NOT_FOUND");
         if (!isComptabiliteBillablePatient(patient.category)) {
           throw new Error("PATIENT_NOT_BILLABLE");
         }
@@ -1187,21 +1232,25 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
         phone: body.phone,
         gender: body.gender,
       });
-      if (duplicate) {
+      if (duplicate && receptionistOwnsPatient(user, duplicate)) {
         resolvedLabPatientId = duplicate.id;
       }
     }
 
     const result = await prisma.$transaction(async (tx) => {
       let patientId = resolvedLabPatientId;
-      let patientCategory = resolvedLabPatientId
-        ? (await tx.patient.findUnique({ where: { id: resolvedLabPatientId } }))?.category
-        : undefined;
+      const existingLabPatient = patientId
+        ? await tx.patient.findUnique({ where: { id: patientId } })
+        : null;
+      if (patientId && (!existingLabPatient || !receptionistOwnsPatient(user, existingLabPatient))) {
+        throw new Error("PATIENT_NOT_FOUND");
+      }
+      let patientCategory = existingLabPatient?.category;
 
       if (!patientId) {
         const patient = await tx.patient.create({
           data: {
-            code: await generatePatientCode(),
+            code: await generatePatientCode(tx),
             firstName: body.firstName!,
             lastName: body.lastName!,
             phone: body.phone,
@@ -1285,11 +1334,9 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
         });
       }
 
-      // Pas d'encaissement ici — file d'attente gestionnaire.
-      const invoice = null;
-
       // Opération prescrite : créer le dossier bloc si un médecin est assigné
       const operationLabel = body.examsByKind?.operation?.find(Boolean);
+      let surgeryCaseId: string | null = null;
       if (operationLabel && assignedDoctorId) {
         const doctorServices = await resolveDoctorClinicServices(assignedDoctorId);
         const serviceIds = doctorServices?.ids ?? [];
@@ -1319,7 +1366,7 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
             totalCostFcfa,
             intervention.surgeonPercent,
           );
-          await tx.surgeryCase.upsert({
+          const surgery = await tx.surgeryCase.upsert({
             where: { visitId },
             update: {
               interventionTypeId: intervention.id,
@@ -1339,6 +1386,7 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
               status: SurgeryStatus.NOTIFIED,
             },
           });
+          surgeryCaseId = surgery.id;
           await tx.consultation.update({
             where: { id: consultation.id },
             data: { needsSurgery: true },
@@ -1351,6 +1399,27 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
         });
       }
 
+      const payment = await collectExternalLabOrderPayment(tx, {
+        visitId,
+        patientId,
+        recordedById: user.id,
+        clinicalNotes,
+        examReduction,
+        surgeryCaseId,
+      });
+      const paidAt = new Date();
+      if (payment.notes !== clinicalNotes || payment.sendToLab) {
+        consultation = await tx.consultation.update({
+          where: { id: consultation.id },
+          data: {
+            clinicalNotes: payment.notes,
+            ...(payment.sendToLab
+              ? { labSentToLabAt: paidAt, labApprovedById: user.id }
+              : {}),
+          },
+        });
+      }
+
       const visit =
         pendingExternal ??
         (await tx.visit.findUnique({
@@ -1358,7 +1427,7 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
           include: { patient: true },
         }));
 
-      return { visit, consultation, invoice, grossFcfa, netFcfa };
+      return { visit, consultation, invoice: payment.invoice, grossFcfa, netFcfa };
     });
 
     return res.status(201).json(result);

@@ -12,7 +12,7 @@ const ROOT = __dirname
 const CONFIG_PATH = path.join(ROOT, 'config.json')
 const EXAMPLE_PATH = path.join(ROOT, 'config.example.json')
 const RAW_PS1 = path.join(ROOT, 'lib', 'raw-print.ps1')
-const VERSION = '1.4.1'
+const VERSION = '1.4.2'
 
 function loadConfig() {
   if (!fs.existsSync(CONFIG_PATH)) {
@@ -33,6 +33,8 @@ function loadConfig() {
     cut: raw.cut !== false,
     openCashDrawer: Boolean(raw.openCashDrawer),
     codePage: String(raw.codePage || 'cp850'),
+    printToken: String(raw.printToken || '').trim(),
+    allowRemotePrint: Boolean(raw.allowRemotePrint),
     logDir: path.isAbsolute(raw.logDir)
       ? raw.logDir
       : path.join(ROOT, raw.logDir || 'logs'),
@@ -168,11 +170,49 @@ function readJson(req) {
   })
 }
 
-function corsHeaders(extra = {}) {
+const PRIVATE_LAN_ORIGIN =
+  /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|100\.\d{1,3}\.\d{1,3}\.\d{1,3}|[\w.-]+\.ts\.net)(?::\d+)?$/i
+
+function requestOrigin(req) {
+  const origin = String(req.headers.origin || '').trim()
+  if (origin) return origin
+  const referer = String(req.headers.referer || '').trim()
+  if (!referer) return ''
+  try {
+    return new URL(referer).origin
+  } catch {
+    return ''
+  }
+}
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true
+  return PRIVATE_LAN_ORIGIN.test(origin)
+}
+
+function isLoopbackAddress(addr) {
+  if (!addr) return false
+  const ip = String(addr).replace(/^::ffff:/, '')
+  return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost'
+}
+
+function requestPrintToken(req) {
+  const header = String(req.headers['x-print-token'] || '').trim()
+  if (header) return header
+  const auth = String(req.headers.authorization || '')
+  const match = /^Bearer\s+(.+)$/i.exec(auth)
+  return match ? match[1].trim() : ''
+}
+
+function corsHeaders(req, extra = {}) {
+  const origin = requestOrigin(req)
+  const allowOrigin = origin && isAllowedOrigin(origin) ? origin : 'http://127.0.0.1'
   return {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Access-Control-Request-Private-Network',
+    'Access-Control-Allow-Headers':
+      'Content-Type, Authorization, X-Print-Token, Access-Control-Request-Private-Network',
     'Access-Control-Allow-Private-Network': 'true',
     'Private-Network-Access-Name': 'Alwatan Print Agent',
     'Private-Network-Access-ID': '01:Alwatan:Print:Agent00',
@@ -180,10 +220,25 @@ function corsHeaders(extra = {}) {
   }
 }
 
-function sendJson(res, status, body) {
+function authorizePrintRequest(req, config) {
+  const origin = requestOrigin(req)
+  if (origin && !isAllowedOrigin(origin)) {
+    return { ok: false, status: 403, error: 'Origine non autorisée' }
+  }
+  const remote = req.socket?.remoteAddress
+  if (!isLoopbackAddress(remote) && !config.allowRemotePrint) {
+    return { ok: false, status: 403, error: 'Impression réservée à ce poste (127.0.0.1)' }
+  }
+  if (config.printToken && requestPrintToken(req) !== config.printToken) {
+    return { ok: false, status: 401, error: 'Jeton d’impression manquant ou invalide' }
+  }
+  return { ok: true }
+}
+
+function sendJson(res, req, status, body) {
   const payload = JSON.stringify(body)
   res.writeHead(status, {
-    ...corsHeaders({
+    ...corsHeaders(req, {
       'Content-Type': 'application/json; charset=utf-8',
       'Content-Length': Buffer.byteLength(payload),
     }),
@@ -259,7 +314,7 @@ async function main() {
 
   const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, corsHeaders())
+      res.writeHead(204, corsHeaders(req))
       res.end()
       return
     }
@@ -271,7 +326,7 @@ async function main() {
     try {
       if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/')) {
         const printerName = await resolvePrinterName(config)
-        sendJson(res, 200, {
+        sendJson(res, req, 200, {
           ok: true,
           service: 'alwatan-print-agent',
           version: VERSION,
@@ -290,18 +345,28 @@ async function main() {
 
       if (req.method === 'GET' && url.pathname === '/printers') {
         const printers = await listPrinterNames()
-        sendJson(res, 200, { ok: true, printers })
+        sendJson(res, req, 200, { ok: true, printers })
         return
       }
 
       if (req.method === 'POST' && url.pathname === '/print') {
+        const authz = authorizePrintRequest(req, config)
+        if (!authz.ok) {
+          sendJson(res, req, authz.status, { ok: false, error: authz.error })
+          return
+        }
         const body = await readJson(req)
         const result = await handlePrint(config, body)
-        sendJson(res, 200, result)
+        sendJson(res, req, 200, result)
         return
       }
 
       if (req.method === 'POST' && url.pathname === '/test') {
+        const authz = authorizePrintRequest(req, config)
+        if (!authz.ok) {
+          sendJson(res, req, authz.status, { ok: false, error: authz.error })
+          return
+        }
         const body = await readJson(req).catch(() => ({}))
         const printerName =
           (body.printerName && String(body.printerName).trim()) ||
@@ -316,15 +381,15 @@ async function main() {
           clinic: { shortName: 'Alwatan Pharmacie', city: 'Test impression' },
           printerName,
         })
-        sendJson(res, 200, result)
+        sendJson(res, req, 200, result)
         return
       }
 
-      sendJson(res, 404, { ok: false, error: 'Not found' })
+      sendJson(res, req, 404, { ok: false, error: 'Not found' })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       log.error('Requête échouée', { path: url.pathname, message })
-      sendJson(res, 500, { ok: false, error: message, code: err?.code || 'PRINT_FAILED' })
+      sendJson(res, req, 500, { ok: false, error: message, code: err?.code || 'PRINT_FAILED' })
     }
   })
 

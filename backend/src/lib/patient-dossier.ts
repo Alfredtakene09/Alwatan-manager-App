@@ -5,6 +5,15 @@ import { prisma } from "./db.js";
 
 export const UPLOADS_ROOT = path.resolve(process.env.UPLOADS_DIR ?? "uploads");
 
+export function resolveUploadPath(storagePath: string) {
+  const resolved = path.resolve(UPLOADS_ROOT, storagePath);
+  const root = UPLOADS_ROOT.endsWith(path.sep) ? UPLOADS_ROOT : `${UPLOADS_ROOT}${path.sep}`;
+  if (resolved !== UPLOADS_ROOT && !resolved.startsWith(root)) {
+    throw new Error("INVALID_STORAGE_PATH");
+  }
+  return resolved;
+}
+
 export const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
   "image/jpeg",

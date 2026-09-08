@@ -26,7 +26,7 @@ const interventionInclude = {
   anesthesiologist: { select: { id: true, firstName: true, lastName: true } },
   clinicService: { select: { id: true, name: true } },
   ...authorizedSurgeonsInclude,
-} as const;
+};
 
 const interventionBaseSchema = z.object({
   code: z.string().min(2).optional(),

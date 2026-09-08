@@ -211,9 +211,9 @@ async function main() {
   }
 
   console.log("Seed terminé.");
-  console.log(`  Superadmin : ${SUPERADMIN_USERNAME} / ${SUPERADMIN_PASSWORD}`);
+  console.log(`  Superadmin : ${SUPERADMIN_USERNAME} (mot de passe d'installation — à changer en production)`);
   for (const member of DEFAULT_STAFF) {
-    console.log(`  ${member.role} : ${member.username} / ${DEFAULT_STAFF_PASSWORD}`);
+    console.log(`  ${member.role} : ${member.username}`);
   }
   if (removed) {
     console.log(

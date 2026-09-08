@@ -3,6 +3,7 @@ import { z } from "zod";
 import { InvoiceStatus, InvoiceType, Prisma } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { generateInvoiceNumber } from "../lib/patient-code.js";
+import { immediatePaidInvoiceData } from "../lib/invoice-paid.js";
 import { generatePharmacyExternalClientCode, splitPharmacyExternalClientName } from "../lib/pharmacy-external-client.js";
 import { shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
 import { applyStockMovement, recordDispensationMovement } from "../lib/pharmacy-stock.js";
@@ -21,12 +22,16 @@ import {
   parsePharmacyOrdonnanceLines,
   PHARMACY_ORDONNANCE_PREFIX,
 } from "../lib/lab-notes.js";
-import { requireAuth, requireModule, requirePharmacyCatalogAccess } from "../middleware/auth.js";
+import { requireAuth, requireModule, requirePharmacyCatalogAccess, requireUiAction } from "../middleware/auth.js";
 
 const router = Router();
 router.use(requireAuth, requireModule("pharmacie"));
 
-const catalogAccess = [requirePharmacyCatalogAccess] as const;
+const catalogAccess = [requirePharmacyCatalogAccess, requireUiAction("pharmacie.catalog")] as const;
+
+function routeParam(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
 
 const prescriptionSchema = z
   .object({
@@ -409,7 +414,7 @@ router.put("/categories/:id", ...catalogAccess, async (req, res) => {
   try {
     const body = categorySchema.partial().parse(req.body);
     const item = await prisma.productCategory.update({
-      where: { id: req.params.id },
+      where: { id: routeParam(req.params.id) },
       data: {
         ...(body.name !== undefined ? { name: body.name.trim() } : {}),
         ...(body.sortOrder !== undefined ? { sortOrder: body.sortOrder } : {}),
@@ -424,15 +429,15 @@ router.put("/categories/:id", ...catalogAccess, async (req, res) => {
 
 router.delete("/categories/:id", ...catalogAccess, async (req, res) => {
   try {
-    const linked = await prisma.product.count({ where: { categoryId: req.params.id } });
+    const linked = await prisma.product.count({ where: { categoryId: routeParam(req.params.id) } });
     if (linked > 0) {
       await prisma.productCategory.update({
-        where: { id: req.params.id },
+        where: { id: routeParam(req.params.id) },
         data: { active: false },
       });
       return res.json({ message: "Catégorie désactivée (produits conservés)" });
     }
-    await prisma.productCategory.delete({ where: { id: req.params.id } });
+    await prisma.productCategory.delete({ where: { id: routeParam(req.params.id) } });
     return res.json({ message: "Catégorie supprimée" });
   } catch {
     return res.status(400).json({ error: "Suppression impossible" });
@@ -491,13 +496,13 @@ router.post("/forms", ...catalogAccess, async (req, res) => {
 router.put("/forms/:id", ...catalogAccess, async (req, res) => {
   try {
     const body = formSchema.partial().parse(req.body);
-    const existing = await prisma.productForm.findUnique({ where: { id: req.params.id } });
+    const existing = await prisma.productForm.findUnique({ where: { id: routeParam(req.params.id) } });
     if (!existing) return res.status(404).json({ error: "Forme introuvable" });
 
     const nextName = body.name !== undefined ? body.name.trim() : undefined;
     const item = await prisma.$transaction(async (tx) => {
       const updated = await tx.productForm.update({
-        where: { id: req.params.id },
+        where: { id: routeParam(req.params.id) },
         data: {
           ...(nextName !== undefined ? { name: nextName } : {}),
           ...(body.sortOrder !== undefined ? { sortOrder: body.sortOrder } : {}),
@@ -520,17 +525,17 @@ router.put("/forms/:id", ...catalogAccess, async (req, res) => {
 
 router.delete("/forms/:id", ...catalogAccess, async (req, res) => {
   try {
-    const existing = await prisma.productForm.findUnique({ where: { id: req.params.id } });
+    const existing = await prisma.productForm.findUnique({ where: { id: routeParam(req.params.id) } });
     if (!existing) return res.status(404).json({ error: "Forme introuvable" });
     const linked = await prisma.product.count({ where: { pharmaceuticalForm: existing.name } });
     if (linked > 0) {
       await prisma.productForm.update({
-        where: { id: req.params.id },
+        where: { id: routeParam(req.params.id) },
         data: { active: false },
       });
       return res.json({ message: "Forme désactivée (produits conservés)" });
     }
-    await prisma.productForm.delete({ where: { id: req.params.id } });
+    await prisma.productForm.delete({ where: { id: routeParam(req.params.id) } });
     return res.json({ message: "Forme supprimée" });
   } catch {
     return res.status(400).json({ error: "Suppression impossible" });
@@ -712,9 +717,17 @@ router.patch("/sales/:prescriptionId", async (req, res) => {
           const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
           if (!invoice) continue;
           const nextAmount = Math.max(0, invoice.amountFcfa + invoiceDeltaFcfa);
+          const nextPaid =
+            invoice.status === InvoiceStatus.PAID
+              ? nextAmount
+              : Math.min(invoice.paidAmountFcfa, nextAmount);
           await tx.invoice.update({
             where: { id: invoiceId },
-            data: { amountFcfa: nextAmount },
+            data: {
+              amountFcfa: nextAmount,
+              paidAmountFcfa: nextPaid,
+              ...(nextAmount === 0 ? { status: InvoiceStatus.CANCELLED } : {}),
+            },
           });
         }
       }
@@ -942,7 +955,7 @@ router.post("/products/remove-expired", async (req, res) => {
 /** Retire un produit expiré précis (désactivation + stock à 0). */
 router.post("/products/:id/retire-expired", async (req, res) => {
   const user = req.user!;
-  const productId = String(req.params.id);
+  const productId = String(routeParam(req.params.id));
   try {
     const now = new Date();
     const product = await prisma.product.findUnique({ where: { id: productId } });
@@ -1019,10 +1032,31 @@ router.put("/products/:id", ...catalogAccess, async (req, res) => {
     if (body.sellBySachet !== undefined) data.sellBySachet = body.sellBySachet;
     if (body.active !== undefined) data.active = body.active;
 
-    const item = await prisma.product.update({
-      where: { id: req.params.id },
-      data,
-      include: productInclude,
+    const productId = routeParam(req.params.id);
+    const existing = await prisma.product.findUnique({ where: { id: productId } });
+    if (!existing) return res.status(404).json({ error: "Produit introuvable" });
+    const requestedQuantity = body.quantity;
+    delete data.quantity;
+
+    const item = await prisma.$transaction(async (tx) => {
+      const updated = await tx.product.update({
+        where: { id: productId },
+        data,
+        include: productInclude,
+      });
+      if (requestedQuantity !== undefined && requestedQuantity !== existing.quantity) {
+        await applyStockMovement(tx, {
+          productId,
+          type: "ADJUSTMENT",
+          targetQuantity: requestedQuantity,
+          userId: req.user!.id,
+        });
+        return tx.product.findUniqueOrThrow({
+          where: { id: productId },
+          include: productInclude,
+        });
+      }
+      return updated;
     });
     return res.json(item);
   } catch (error) {
@@ -1032,13 +1066,13 @@ router.put("/products/:id", ...catalogAccess, async (req, res) => {
 
 router.delete("/products/:id", ...catalogAccess, async (req, res) => {
   try {
-    const salesCount = await prisma.pharmacySaleLine.count({ where: { productId: req.params.id } });
+    const salesCount = await prisma.pharmacySaleLine.count({ where: { productId: routeParam(req.params.id) } });
     if (salesCount > 0) {
-      await prisma.product.update({ where: { id: req.params.id }, data: { active: false } });
+      await prisma.product.update({ where: { id: routeParam(req.params.id) }, data: { active: false } });
       return res.json({ message: "Produit désactivé (historique de ventes conservé)" });
     }
-    await prisma.stockMovement.deleteMany({ where: { productId: req.params.id } });
-    await prisma.product.delete({ where: { id: req.params.id } });
+    await prisma.stockMovement.deleteMany({ where: { productId: routeParam(req.params.id) } });
+    await prisma.product.delete({ where: { id: routeParam(req.params.id) } });
     return res.json({ message: "Produit supprimé" });
   } catch {
     return res.status(400).json({ error: "Suppression impossible" });
@@ -1078,7 +1112,7 @@ router.put("/suppliers/:id", ...catalogAccess, async (req, res) => {
       ...req.body,
       email: req.body.email === "" ? undefined : req.body.email,
     });
-    const item = await prisma.pharmacySupplier.update({ where: { id: req.params.id }, data: body });
+    const item = await prisma.pharmacySupplier.update({ where: { id: routeParam(req.params.id) }, data: body });
     return res.json(item);
   } catch {
     return res.status(400).json({ error: "Mise à jour impossible" });
@@ -1087,12 +1121,12 @@ router.put("/suppliers/:id", ...catalogAccess, async (req, res) => {
 
 router.delete("/suppliers/:id", ...catalogAccess, async (req, res) => {
   try {
-    const movementCount = await prisma.stockMovement.count({ where: { supplierId: req.params.id } });
+    const movementCount = await prisma.stockMovement.count({ where: { supplierId: routeParam(req.params.id) } });
     if (movementCount > 0) {
-      await prisma.pharmacySupplier.update({ where: { id: req.params.id }, data: { active: false } });
+      await prisma.pharmacySupplier.update({ where: { id: routeParam(req.params.id) }, data: { active: false } });
       return res.json({ message: "Fournisseur désactivé (mouvements conservés)" });
     }
-    await prisma.pharmacySupplier.delete({ where: { id: req.params.id } });
+    await prisma.pharmacySupplier.delete({ where: { id: routeParam(req.params.id) } });
     return res.json({ message: "Fournisseur supprimé" });
   } catch {
     return res.status(400).json({ error: "Suppression impossible" });
@@ -1129,7 +1163,7 @@ router.put("/external-clients/:id", async (req, res) => {
   try {
     const body = externalClientSchema.partial().parse(req.body);
     const item = await prisma.pharmacyExternalClient.update({
-      where: { id: req.params.id },
+      where: { id: routeParam(req.params.id) },
       data: {
         ...(body.firstName !== undefined ? { firstName: body.firstName.trim() } : {}),
         ...(body.lastName !== undefined ? { lastName: body.lastName.trim() } : {}),
@@ -1145,15 +1179,15 @@ router.put("/external-clients/:id", async (req, res) => {
 
 router.delete("/external-clients/:id", async (req, res) => {
   try {
-    const linked = await prisma.prescription.count({ where: { externalClientId: req.params.id } });
+    const linked = await prisma.prescription.count({ where: { externalClientId: routeParam(req.params.id) } });
     if (linked > 0) {
       await prisma.pharmacyExternalClient.update({
-        where: { id: req.params.id },
+        where: { id: routeParam(req.params.id) },
         data: { active: false },
       });
       return res.json({ message: "Client désactivé (historique conservé)" });
     }
-    await prisma.pharmacyExternalClient.delete({ where: { id: req.params.id } });
+    await prisma.pharmacyExternalClient.delete({ where: { id: routeParam(req.params.id) } });
     return res.json({ message: "Client supprimé" });
   } catch {
     return res.status(400).json({ error: "Suppression impossible" });
@@ -1438,16 +1472,13 @@ router.post("/", async (req, res) => {
       if (billImmediately) {
         invoice = await tx.invoice.create({
           data: {
-            invoiceNumber: await generateInvoiceNumber(),
+            invoiceNumber: await generateInvoiceNumber(tx),
             patientId: body.patientId,
             externalClientId,
             visitId: body.visitId,
             type: InvoiceType.PHARMACY,
-            amountFcfa: total,
-            paidAmountFcfa: total,
-            status: InvoiceStatus.PAID,
             issuedById: user.id,
-            paidAt: new Date(),
+            ...immediatePaidInvoiceData(total, user.id),
           },
         });
       }

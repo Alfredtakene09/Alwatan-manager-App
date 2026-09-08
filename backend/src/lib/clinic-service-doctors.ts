@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { UserRole, type Prisma } from "@prisma/client";
 import { prisma } from "./db.js";
 
 export const clinicServiceDoctorSelect = {
@@ -372,4 +372,58 @@ export async function syncClinicServiceDoctors(serviceId: string, doctorIds: str
       }
     }
   });
+}
+
+export type TransferServiceDoctor = {
+  id: string;
+  firstName: string;
+  lastName: string;
+};
+
+const transferDoctorUserWhere: Prisma.UserWhereInput = {
+  active: true,
+  role: { not: UserRole.ADMIN },
+  OR: [{ role: UserRole.MEDECIN }, { employee: { is: { isMedecin: true } } }],
+};
+
+const transferDoctorSelect = {
+  id: true,
+  firstName: true,
+  lastName: true,
+} as const;
+
+async function listActiveTransferDoctors() {
+  return prisma.user.findMany({
+    where: transferDoctorUserWhere,
+    select: transferDoctorSelect,
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+  });
+}
+
+/** Médecins avec compte actif rattachés au service (pour transfert). */
+export async function listTransferDoctorsForClinicService(clinicServiceId: string) {
+  const linked = await prisma.user.findMany({
+    where: {
+      ...transferDoctorUserWhere,
+      employee: {
+        is: {
+          isMedecin: true,
+          OR: [
+            { clinicServiceId },
+            { clinicServiceLinks: { some: { clinicServiceId } } },
+          ],
+        },
+      },
+    },
+    select: transferDoctorSelect,
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+  });
+  if (linked.length > 0) return linked;
+  // Service sans rattachement : proposer tous les médecins actifs pour ne pas bloquer le transfert.
+  return listActiveTransferDoctors();
+}
+
+export async function findSelectableDoctorInClinicService(doctorId: string, clinicServiceId: string) {
+  const doctors = await listTransferDoctorsForClinicService(clinicServiceId);
+  return doctors.find((doctor) => doctor.id === doctorId) ?? null;
 }

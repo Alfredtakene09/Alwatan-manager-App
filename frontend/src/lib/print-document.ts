@@ -1,10 +1,17 @@
 import { CLINIC, clinicTaxLine } from './clinic'
 import { formatFcfa, formatFcfaShort } from './format-fcfa'
+import {
+  EXTERNAL_TICKET_THANKS_KEY,
+  PENDING_PAYMENT_STATUS_FR,
+  resolveExternalTicketPaidLabel,
+  shouldPrintPendingPaymentThanks,
+} from './external-ticket-copy'
 import { getAppLocale, translateUi, translateUiLocale } from '@/i18n/translate'
 import { formatAppDate, formatAppTime, intlLocaleFor } from '@/i18n/locale-format'
 import {
   extractBasePanelLabel,
   normalizeLabLabelKey,
+  primaryPrescribedSectionOrExamName,
 } from '@/lib/lab-prescribed-panels'
 
 const formatFcfaPrint = formatFcfa
@@ -1141,6 +1148,103 @@ export const CLINIC_PRINT_STYLES = `
     font-size: 14px;
   }
 
+  /* Ligne article : nom à gauche, montant à droite (sans colonne AR vide). */
+  body.print-thermal .thermal-receipt__line--item {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 0;
+    border-bottom: 1px dotted #000;
+  }
+  body.print-thermal .thermal-receipt__item-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: left;
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+  body.print-thermal .thermal-receipt__item-amount {
+    flex: 0 0 auto;
+    text-align: right;
+    white-space: nowrap;
+    font-weight: 700;
+    direction: ltr !important;
+    unicode-bidi: isolate;
+  }
+
+  /* Reçu patient externe (réception) — lisible sur 80 mm, plus compact qu’une consultation. */
+  body.print-thermal .thermal-receipt--external.thermal-receipt--ticket {
+    font-size: 15px;
+    line-height: 1.32;
+  }
+  body.print-thermal .thermal-receipt--external .thermal-receipt__title,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__title--fr {
+    font-size: 17px;
+  }
+  body.print-thermal .thermal-receipt--external .thermal-receipt__subtitle-no {
+    font-size: 15px;
+  }
+  body.print-thermal .thermal-receipt--external .thermal-receipt__contact {
+    font-size: 12px;
+  }
+  body.print-thermal .thermal-receipt--external .thermal-receipt__row,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__line {
+    font-size: 14px;
+  }
+  body.print-thermal .thermal-receipt--external .thermal-receipt__value,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__item-amount {
+    font-size: 14px;
+  }
+  body.print-thermal .thermal-receipt--external .thermal-receipt__line--total,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__row--total {
+    font-size: 16px;
+    font-weight: 700;
+  }
+  body.print-thermal .thermal-receipt--external .thermal-receipt__thanks {
+    font-size: 15px;
+  }
+  body.print-thermal .thermal-receipt--external .thermal-receipt__line--section {
+    font-weight: 700;
+    border-bottom: 1px solid #000;
+    margin-top: 4px;
+  }
+
+  /* Tickets thermiques en arabe : RTL local (chiffres / tél. restent LTR isolés). */
+  body.print-thermal .thermal-receipt--rtl {
+    direction: rtl;
+    text-align: right;
+  }
+  body.print-thermal .thermal-receipt--rtl .thermal-receipt__ticket-head-text {
+    text-align: right;
+  }
+  body.print-thermal .thermal-receipt--rtl .thermal-receipt__title,
+  body.print-thermal .thermal-receipt--rtl .thermal-receipt__title--fr {
+    text-align: right;
+    text-transform: none;
+  }
+  body.print-thermal .thermal-receipt--rtl .thermal-receipt__thanks,
+  body.print-thermal .thermal-receipt--rtl .thermal-receipt__line--section,
+  body.print-thermal .thermal-receipt--rtl .thermal-receipt__label-locale {
+    font-family: Arial, 'Noto Naskh Arabic', Tahoma, sans-serif;
+  }
+  body.print-thermal .thermal-receipt--rtl .thermal-receipt__thanks {
+    text-align: center;
+  }
+  body.print-thermal .thermal-receipt__row--locale {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 3px 0;
+  }
+  body.print-thermal .thermal-receipt__label-locale {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
   /* Tableau pharmacie : Produit | Qté | PU | PT + Total en pied */
   body.print-thermal .thermal-receipt__items-table {
     width: 100%;
@@ -1288,6 +1392,65 @@ export function thermalMetaRow(labelFr: string, value: string, labelAr?: string)
 </div>`
 }
 
+/** Ligne article ticket : libellé à gauche, montant à droite. */
+export function thermalAmountRow(label: string, amount: string, options?: { total?: boolean }) {
+  const totalClass = options?.total ? ' thermal-receipt__line--total' : ''
+  return `<div class="thermal-receipt__line thermal-receipt__line--item${totalClass}">
+  <span class="thermal-receipt__item-name" dir="ltr">${escapeHtml(label)}</span>
+  <strong class="thermal-receipt__item-amount" dir="ltr">${escapeHtml(amount)}</strong>
+</div>`
+}
+
+function isPrintArabic(): boolean {
+  return getAppLocale() === 'ar'
+}
+
+export function thermalIsRtl() {
+  return isPrintArabic()
+}
+
+/**
+ * Ligne ticket suivant la langue UI (un seul libellé).
+ * En arabe : RTL, montants isolés LTR. Les autres tickets thermiques restent bilingues FR/AR.
+ */
+export function thermalLocaleMetaRow(labelKey: string, value: string) {
+  const rtl = isPrintArabic()
+  const label = thermalLabelWithColon(t(labelKey))
+  const rowDir = rtl ? 'rtl' : 'ltr'
+  const labelDir = rtl ? 'rtl' : 'ltr'
+  const lang = rtl ? ' lang="ar"' : ''
+  return `<div class="thermal-receipt__row thermal-receipt__row--locale" dir="${rowDir}">
+  <span class="thermal-receipt__label-locale" dir="${labelDir}"${lang}>${escapeHtml(label)}</span>
+  <strong class="thermal-receipt__value" dir="ltr">${escapeHtml(value)}</strong>
+</div>`
+}
+
+/** Ligne montant suivant la langue UI (noms d’examens : dir=auto pour FR/AR mélangés). */
+export function thermalLocaleAmountRow(label: string, amount: string, options?: { total?: boolean }) {
+  const rtl = isPrintArabic()
+  const totalClass = options?.total ? ' thermal-receipt__line--total' : ''
+  const rowDir = rtl ? 'rtl' : 'ltr'
+  const lang = rtl ? ' lang="ar"' : ''
+  return `<div class="thermal-receipt__line thermal-receipt__line--item${totalClass}" dir="${rowDir}">
+  <span class="thermal-receipt__item-name" dir="auto"${lang}>${escapeHtml(label)}</span>
+  <strong class="thermal-receipt__item-amount" dir="ltr">${escapeHtml(amount)}</strong>
+</div>`
+}
+
+export function thermalTicketRootClass(extraClass = '') {
+  const rtl = isPrintArabic() ? ' thermal-receipt--rtl' : ''
+  return `thermal-receipt thermal-receipt--ticket ${extraClass}${rtl}`.replace(/\s+/g, ' ').trim()
+}
+
+export function thermalTicketDirAttrs() {
+  return isPrintArabic() ? ' dir="rtl" lang="ar"' : ''
+}
+
+export function thermalThanksHtml(key = 'Merci de votre confiance') {
+  const rtl = isPrintArabic()
+  return `<p class="thermal-receipt__thanks"${rtl ? ' dir="rtl" lang="ar"' : ''}>${escapeHtml(t(key))}</p>`
+}
+
 export type PharmacyTicketLine = {
   name: string
   quantity: number
@@ -1317,11 +1480,11 @@ export function buildPharmacyTicketItemsTableHtml(options: {
 
   const reductionFcfa = options.reductionFcfa ?? 0
   const grossTotal = options.grossTotalFcfa ?? options.totalFcfa
-  const reductionLabel = options.reductionLabel?.trim() || 'Réduction'
+  const reductionLabel = t(options.reductionLabel?.trim() || 'Réduction')
   const subRows =
     reductionFcfa > 0
       ? `<tr class="thermal-receipt__items-sub">
-  <td class="col-total-label" colspan="3" dir="ltr">Sous-total</td>
+  <td class="col-total-label" colspan="3" dir="ltr">${escapeHtml(t('Sous-total'))}</td>
   <td class="col-total-value" dir="ltr">${escapeHtml(fmt(grossTotal))}</td>
 </tr>
 <tr class="thermal-receipt__items-sub">
@@ -1333,10 +1496,10 @@ export function buildPharmacyTicketItemsTableHtml(options: {
   return `<table class="thermal-receipt__items-table" dir="ltr">
   <thead>
     <tr>
-      <th class="col-product">Produit</th>
-      <th class="col-qty">Qté</th>
-      <th class="col-pu">PU</th>
-      <th class="col-pt">PT</th>
+      <th class="col-product">${escapeHtml(t('Produit'))}</th>
+      <th class="col-qty">${escapeHtml(t('Qté'))}</th>
+      <th class="col-pu">${escapeHtml(t('PU'))}</th>
+      <th class="col-pt">${escapeHtml(t('PT'))}</th>
     </tr>
   </thead>
   <tbody>
@@ -1345,7 +1508,7 @@ export function buildPharmacyTicketItemsTableHtml(options: {
   <tfoot>
     ${subRows}
     <tr>
-      <td class="col-total-label" colspan="3" dir="ltr">Total</td>
+      <td class="col-total-label" colspan="3" dir="ltr">${escapeHtml(t('Total'))}</td>
       <td class="col-total-value" dir="ltr">${escapeHtml(fmt(options.totalFcfa))}</td>
     </tr>
   </tfoot>
@@ -1358,15 +1521,18 @@ export function buildThermalTicketHeadHtml(options: {
   number?: string | null
   contact?: string
   logo?: string
+  rtl?: boolean
 }) {
   const title = options.title.trim()
   const number = (options.number ?? '').trim()
   const contact = options.contact ?? `${CLINIC.city} · ${CLINIC.phones}`
   const logo = options.logo ?? CLINIC.logo
+  const titleDir = options.rtl ? 'rtl' : 'ltr'
+  const titleLang = options.rtl ? ' lang="ar"' : ''
   return `<header class="thermal-receipt__ticket-head">
   <div class="thermal-receipt__ticket-head-text">
     <div class="thermal-receipt__ticket-title-line">
-      <h1 class="thermal-receipt__title thermal-receipt__title--fr" dir="ltr">${escapeHtml(title)}</h1>
+      <h1 class="thermal-receipt__title thermal-receipt__title--fr" dir="${titleDir}"${titleLang}>${escapeHtml(title)}</h1>
       ${number ? `<p class="thermal-receipt__subtitle-no" dir="ltr">${escapeHtml(number)}</p>` : ''}
     </div>
     <p class="thermal-receipt__contact" dir="ltr">${escapeHtml(contact)}</p>
@@ -1512,6 +1678,7 @@ function translateStatus(status: string) {
 }
 
 export function buildConsultationReceiptHtml(data: ConsultationReceiptData): string {
+  const rtl = isPrintArabic()
   const { shortDate, timeShort } = parseReceiptDateTime(data.date, true)
   const consultNo = data.invoiceNumber ?? '—'
   const dateLabel = `${shortDate} ${timeShort}`
@@ -1520,21 +1687,21 @@ export function buildConsultationReceiptHtml(data: ConsultationReceiptData): str
   const netFcfa = data.total > 0 ? data.total : Math.max(0, grossFcfa - reductionFcfa)
 
   const metaRows = [
-    thermalMetaRow('Date', dateLabel, ''),
-    thermalMetaRow('Patient', data.patientName, ''),
-    thermalMetaRow('Médecin', data.doctorName, ''),
-    ...(data.processedBy ? [thermalMetaRow('Par', data.processedBy, '')] : []),
+    thermalLocaleMetaRow('Date', dateLabel),
+    thermalLocaleMetaRow('Patient', data.patientName),
+    thermalLocaleMetaRow('Médecin', data.doctorName),
+    ...(data.processedBy ? [thermalLocaleMetaRow('Par', data.processedBy)] : []),
   ].join('')
 
   const priceRows = [
-    thermalMetaRow('Prix consultation', formatFcfaPrint(grossFcfa), ''),
-    ...(reductionFcfa > 0 ? [thermalMetaRow('Réduction', `- ${formatFcfaPrint(reductionFcfa)}`, '')] : []),
-    thermalMetaRow('Net payé', formatFcfaPrint(netFcfa), ''),
+    thermalLocaleMetaRow('Prix consultation', formatFcfaPrint(grossFcfa)),
+    ...(reductionFcfa > 0 ? [thermalLocaleMetaRow('Réduction', `- ${formatFcfaPrint(reductionFcfa)}`)] : []),
+    thermalLocaleMetaRow('Net payé', formatFcfaPrint(netFcfa)),
   ].join('')
 
   return `
-<div class="thermal-receipt thermal-receipt--ticket thermal-receipt--reception">
-  ${buildThermalTicketHeadHtml({ title: 'Reçu de consultation', number: consultNo })}
+<div class="${thermalTicketRootClass('thermal-receipt--reception')}"${thermalTicketDirAttrs()}>
+  ${buildThermalTicketHeadHtml({ title: t('Reçu de consultation'), number: consultNo, rtl })}
   <hr class="thermal-receipt__rule" />
 
   <div class="thermal-receipt__fields">
@@ -1547,8 +1714,7 @@ export function buildConsultationReceiptHtml(data: ConsultationReceiptData): str
   </div>
 
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks" style="font-weight:700;">Payé</p>
-  <p class="thermal-receipt__thanks">Merci</p>
+  ${thermalThanksHtml()}
 </div>`
 }
 
@@ -1569,38 +1735,39 @@ export type DayClosureReceiptData = {
 }
 
 export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string {
+  const rtl = isPrintArabic()
   const closed = parseReceiptDateTime(data.closedAt)
-  const dateShort = new Date(`${data.businessDate}T12:00:00`).toLocaleDateString('fr-FR')
+  const dateShort = formatAppDate(new Date(`${data.businessDate}T12:00:00`))
 
   const metaRows = [
-    thermalMetaRow('Date', dateShort, ''),
-    thermalMetaRow('Clôturé', `${closed.shortDate} ${closed.timeShort}`, ''),
-    thermalMetaRow('Par', data.receptionistName, ''),
-    ...(data.shiftLabel ? [thermalMetaRow('Créneau', data.shiftLabel, '')] : []),
-    thermalMetaRow('Inscriptions', String(data.registeredToday), ''),
-    thermalMetaRow('Passages', String(data.visitsToday), ''),
+    thermalLocaleMetaRow('Date', dateShort),
+    thermalLocaleMetaRow('Clôturé', `${closed.shortDate} ${closed.timeShort}`),
+    thermalLocaleMetaRow('Par', data.receptionistName),
+    ...(data.shiftLabel ? [thermalLocaleMetaRow('Créneau', data.shiftLabel)] : []),
+    thermalLocaleMetaRow('Inscriptions', String(data.registeredToday)),
+    thermalLocaleMetaRow('Passages', String(data.visitsToday)),
   ].join('')
 
   const detailRows = [
     data.consultationsFcfa != null && data.consultationsFcfa > 0
-      ? thermalMetaRow('Consultations', formatFcfaPrint(data.consultationsFcfa), '')
+      ? thermalLocaleMetaRow('Consultations', formatFcfaPrint(data.consultationsFcfa))
       : '',
     data.examsFcfa != null && data.examsFcfa > 0
-      ? thermalMetaRow('Examens', formatFcfaPrint(data.examsFcfa), '')
+      ? thermalLocaleMetaRow('Examens', formatFcfaPrint(data.examsFcfa))
       : '',
     data.surgeryFcfa != null && data.surgeryFcfa > 0
-      ? thermalMetaRow('Chirurgie', formatFcfaPrint(data.surgeryFcfa), '')
+      ? thermalLocaleMetaRow('Chirurgie', formatFcfaPrint(data.surgeryFcfa))
       : '',
     data.hospitalizationFcfa != null && data.hospitalizationFcfa > 0
-      ? thermalMetaRow('Hospitalisation', formatFcfaPrint(data.hospitalizationFcfa), '')
+      ? thermalLocaleMetaRow('Hospitalisation', formatFcfaPrint(data.hospitalizationFcfa))
       : '',
   ]
     .filter(Boolean)
     .join('')
 
   return `
-<div class="thermal-receipt thermal-receipt--ticket thermal-receipt--day-closure">
-  ${buildThermalTicketHeadHtml({ title: 'Clinique Alwatan Clôture', number: dateShort })}
+<div class="${thermalTicketRootClass('thermal-receipt--day-closure')}"${thermalTicketDirAttrs()}>
+  ${buildThermalTicketHeadHtml({ title: t('Clôture de journée'), number: dateShort, rtl })}
   <hr class="thermal-receipt__rule" />
 
   <div class="thermal-receipt__fields">
@@ -1611,13 +1778,13 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
 
   <hr class="thermal-receipt__rule" />
   <div class="thermal-receipt__fields">
-    ${thermalMetaRow('Encaissements', formatFcfaPrint(data.collectedFcfa), '')}
-    ${thermalMetaRow('Dépenses', formatFcfaPrint(data.expensesFcfa), '')}
-    ${thermalMetaRow('Net', formatFcfaPrint(data.netFcfa), '')}
+    ${thermalLocaleMetaRow('Encaissements', formatFcfaPrint(data.collectedFcfa))}
+    ${thermalLocaleMetaRow('Dépenses', formatFcfaPrint(data.expensesFcfa))}
+    ${thermalLocaleMetaRow('Net', formatFcfaPrint(data.netFcfa))}
   </div>
 
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks">Remettre à la comptabilité</p>
+  ${thermalThanksHtml('Remettre à la comptabilité')}
 </div>`
 }
 
@@ -1646,6 +1813,30 @@ export function summarizeExamLinesByPanel(examLines: LabExamInvoiceLine[]): LabE
       continue
     }
     existing.amountFcfa += Math.max(0, Number(line.amountFcfa) || 0)
+  }
+  return order.map((key) => map.get(key)!)
+}
+
+/** Ticket : une ligne par section (si présente) ou nom complet d’examen, montants additionnés. */
+export function summarizeExamLinesBySectionOrName(
+  examLines: LabExamInvoiceLine[],
+  translateLabel: (name: string) => string = t,
+): LabExamInvoiceLine[] {
+  const order: string[] = []
+  const map = new Map<string, LabExamInvoiceLine>()
+  for (const line of examLines) {
+    const name = primaryPrescribedSectionOrExamName(line.label)
+    if (!name) continue
+    const kind = line.kind ?? 'examen'
+    const key = `${kind}::${normalizeLabLabelKey(name)}`
+    const amount = Math.max(0, Number(line.amountFcfa) || 0)
+    const existing = map.get(key)
+    if (!existing) {
+      map.set(key, { label: translateLabel(name), amountFcfa: amount, kind })
+      order.push(key)
+      continue
+    }
+    existing.amountFcfa += amount
   }
   return order.map((key) => map.get(key)!)
 }
@@ -1689,26 +1880,29 @@ function resolveLabExamDocTitle(data: LabExamInvoiceData) {
 
 /** Ticket thermique 80 mm (Xprinter) — encaissements examens réception */
 export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string {
+  const rtl = isPrintArabic()
   const { shortDate, timeShort } = parseReceiptDateTime(data.date, true)
   const hasReduction = data.reductionFcfa > 0
-  const invoiceNo = data.invoiceNumber ?? '—'
+  const invoiceNo = (data.invoiceNumber ?? '').trim()
+  const headerNumber = invoiceNo && invoiceNo !== '—' ? invoiceNo : (data.patientCode || '')
   const paidFcfa = Math.max(0, Number(data.paidFcfa) || 0)
   const remainingFcfa = Math.max(0, Number(data.remainingFcfa) || 0)
   const hasPartialPayment =
     data.paidFcfa != null && (remainingFcfa > 0 || (paidFcfa > 0 && paidFcfa < data.totalFcfa))
   const status = data.status ?? (hasPartialPayment ? 'Payé partiellement' : 'Payé')
   const totalLabel = hasPartialPayment
-    ? 'Total dû'
+    ? t('Total dû')
     : status === 'Payé'
-      ? 'TOTAL'
-      : 'À payer'
+      ? t('Total')
+      : t('À payer')
   const dateLabel = `${shortDate} ${timeShort}`
 
   const metaRows = [
-    thermalMetaRow('Date', dateLabel, ''),
-    thermalMetaRow('Patient', data.patientName, ''),
-    thermalMetaRow('Paiement', status, ''),
-    ...(data.processedBy ? [thermalMetaRow('Par', data.processedBy, '')] : []),
+    thermalLocaleMetaRow('Date', dateLabel),
+    thermalLocaleMetaRow('Patient', data.patientName),
+    ...(data.patientCode ? [thermalLocaleMetaRow('Matricule', data.patientCode)] : []),
+    thermalLocaleMetaRow('Paiement', t(status)),
+    ...(data.processedBy ? [thermalLocaleMetaRow('Par', data.processedBy)] : []),
   ].join('')
 
   const kindComment = data.kindComment?.trim()
@@ -1716,29 +1910,34 @@ export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string
     ? `<p class="thermal-receipt__note" dir="ltr">${escapeHtml(kindComment)}</p>`
     : ''
 
-  const examRows = summarizeExamLinesByPanel(data.examLines)
-    .map((line) => thermalMetaRow(line.label, formatFcfaPrint(line.amountFcfa), ''))
+  const examRows = summarizeExamLinesBySectionOrName(data.examLines)
+    .map((line) => thermalLocaleAmountRow(line.label, formatFcfaPrint(line.amountFcfa)))
     .join('')
 
   const totalsRows = [
     ...(hasReduction
       ? [
-          thermalMetaRow('Sous-total', formatFcfaPrint(data.grossFcfa), ''),
-          thermalMetaRow('Réduction', `- ${formatFcfaPrint(data.reductionFcfa)}`, ''),
+          thermalLocaleAmountRow(t('Sous-total'), formatFcfaPrint(data.grossFcfa)),
+          thermalLocaleAmountRow(t('Réduction'), `- ${formatFcfaPrint(data.reductionFcfa)}`),
         ]
       : []),
-    thermalMetaRow(totalLabel, formatFcfaPrint(data.totalFcfa), ''),
+    thermalLocaleAmountRow(totalLabel, formatFcfaPrint(data.totalFcfa), { total: true }),
     ...(hasPartialPayment
       ? [
-          thermalMetaRow('Encaissé', formatFcfaPrint(paidFcfa), ''),
-          thermalMetaRow('Reste', formatFcfaPrint(remainingFcfa), ''),
+          thermalLocaleAmountRow(t('Encaissé'), formatFcfaPrint(paidFcfa)),
+          thermalLocaleAmountRow(t('Reste'), formatFcfaPrint(remainingFcfa)),
         ]
       : []),
   ].join('')
 
+  const thanksKey =
+    status === 'En attente de paiement' && shouldPrintPendingPaymentThanks('lab')
+      ? PENDING_PAYMENT_STATUS_FR
+      : EXTERNAL_TICKET_THANKS_KEY
+
   return `
-<div class="thermal-receipt thermal-receipt--ticket">
-  ${buildThermalTicketHeadHtml({ title: 'Clinique Alwatan Examens', number: invoiceNo })}
+<div class="${thermalTicketRootClass()}"${thermalTicketDirAttrs()}>
+  ${buildThermalTicketHeadHtml({ title: t('Reçu examens'), number: headerNumber || undefined, rtl })}
   <hr class="thermal-receipt__rule" />
 
   <div class="thermal-receipt__fields">
@@ -1754,7 +1953,84 @@ export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string
   ${kindCommentBlock}
 
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks">Merci</p>
+  ${thermalThanksHtml(thanksKey)}
+</div>`
+}
+
+function buildExternalExamItemRows(examLines: LabExamInvoiceLine[]): string {
+  const rtl = isPrintArabic()
+  const summary = summarizeExamLinesBySectionOrName(examLines, t)
+  if (!summary.length) return ''
+  const kinds = new Set(summary.map((line) => line.kind ?? 'examen'))
+  if (kinds.size <= 1) {
+    return summary.map((line) => thermalLocaleAmountRow(line.label, formatFcfaPrint(line.amountFcfa))).join('')
+  }
+  const parts: string[] = []
+  const sectionDir = rtl ? ' dir="rtl" lang="ar"' : ''
+  for (const kind of EXAM_KIND_ORDER) {
+    const lines = summary.filter((line) => (line.kind ?? 'examen') === kind)
+    if (!lines.length) continue
+    parts.push(
+      `<div class="thermal-receipt__line thermal-receipt__line--section"${sectionDir}>${escapeHtml(t(EXAM_KIND_LABELS[kind]))}</div>`,
+    )
+    for (const line of lines) {
+      parts.push(thermalLocaleAmountRow(line.label, formatFcfaPrint(line.amountFcfa)))
+    }
+  }
+  return parts.join('')
+}
+
+/** Ticket thermique 80 mm — reçu unique patient externe (réception). */
+export function buildExternalPatientThermalReceiptHtml(data: LabExamInvoiceData): string {
+  const rtl = isPrintArabic()
+  const { shortDate, timeShort } = parseReceiptDateTime(data.date, true)
+  const hasReduction = data.reductionFcfa > 0
+  const invoiceNo = (data.invoiceNumber ?? '').trim()
+  const paidLabel = resolveExternalTicketPaidLabel(data.status)
+  const dateLabel = `${shortDate} ${timeShort}`
+  const doctorName =
+    data.prescribedBy?.startsWith('Dr ') ? data.prescribedBy.trim() : ''
+
+  const metaRows = [
+    thermalLocaleMetaRow('Date', dateLabel),
+    thermalLocaleMetaRow('Patient', data.patientName),
+    ...(doctorName ? [thermalLocaleMetaRow('Médecin', doctorName)] : []),
+    ...(paidLabel ? [thermalLocaleMetaRow('Paiement', t(paidLabel))] : []),
+    ...(invoiceNo && invoiceNo !== '—' ? [thermalLocaleMetaRow('Facture', invoiceNo)] : []),
+  ].join('')
+
+  const examRows = buildExternalExamItemRows(data.examLines)
+  const totalsRows = [
+    ...(hasReduction
+      ? [
+          thermalLocaleAmountRow(t('Sous-total'), formatFcfaPrint(data.grossFcfa)),
+          thermalLocaleAmountRow(t('Réduction'), `- ${formatFcfaPrint(data.reductionFcfa)}`),
+        ]
+      : []),
+    thermalLocaleAmountRow(t('Total'), formatFcfaPrint(data.totalFcfa), { total: true }),
+  ].join('')
+
+  const thanksKey = shouldPrintPendingPaymentThanks('external')
+    ? PENDING_PAYMENT_STATUS_FR
+    : EXTERNAL_TICKET_THANKS_KEY
+
+  return `
+<div class="${thermalTicketRootClass('thermal-receipt--external')}"${thermalTicketDirAttrs()}>
+  ${buildThermalTicketHeadHtml({ title: t('Reçu examens'), number: data.patientCode || undefined, rtl })}
+  <hr class="thermal-receipt__rule" />
+
+  <div class="thermal-receipt__fields">
+    ${metaRows}
+  </div>
+
+  <hr class="thermal-receipt__rule" />
+  <div class="thermal-receipt__fields">
+    ${examRows}
+    ${totalsRows}
+  </div>
+
+  <hr class="thermal-receipt__rule" />
+  ${thermalThanksHtml(thanksKey)}
 </div>`
 }
 
@@ -1981,16 +2257,19 @@ function takeReservedPrintWindow(): Window | null {
 
 /** Hauteur page thermique (mm) — toujours portrait (> 80 mm de largeur). */
 function measureThermalPageHeightMm(doc: Document, tight = false): number {
-  const receipt = doc.querySelector('.thermal-receipt') as HTMLElement | null
+  const receipts = Array.from(doc.querySelectorAll('.thermal-receipt')) as HTMLElement[]
   let px = 0
 
-  if (receipt) {
-    const probe = receipt.cloneNode(true) as HTMLElement
-    probe.style.cssText =
-      'position:absolute;left:-10000px;top:0;width:80mm;max-width:80mm;height:auto;min-height:0;margin:0;padding:0;visibility:hidden;pointer-events:none;'
-    doc.body.appendChild(probe)
-    px = Math.ceil(Math.max(probe.scrollHeight, probe.offsetHeight, 1))
-    probe.remove()
+  if (receipts.length) {
+    for (const receipt of receipts) {
+      const probe = receipt.cloneNode(true) as HTMLElement
+      probe.style.cssText =
+        'position:absolute;left:-10000px;top:0;width:80mm;max-width:80mm;height:auto;min-height:0;margin:0;padding:0;visibility:hidden;pointer-events:none;'
+      doc.body.appendChild(probe)
+      px += Math.ceil(Math.max(probe.scrollHeight, probe.offsetHeight, 1))
+      probe.remove()
+    }
+    if (receipts.length > 1) px += (receipts.length - 1) * 8
   } else {
     for (const child of Array.from(doc.body.children)) {
       const el = child as HTMLElement

@@ -35,20 +35,11 @@ import {
 import { isUsablePatientPhone } from "../lib/merge-patients.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere, resolveDoctorConsultationAmount } from "../lib/doctor-compensation.js";
-import { requireAuth, requireModule } from "../middleware/auth.js";
+import { requireAuth, requireModule, requireUiAction } from "../middleware/auth.js";
+import { canAccessModule, isDirectionOrGestionnaire, type AppUserRole } from "../lib/roles.js";
 import { EXTERNAL_PATIENT_VISIT_NOTE } from "../lib/visit-external.js";
 import { patientsWhoReceivedExamsWhere } from "../lib/patient-exam-stats.js";
-
-/** Réceptionniste : uniquement ses dossiers. Direction / gestionnaire / admin : tout, ou un réceptionniste choisi. */
-function receptionistOwnPatientsWhere(
-  user: { id: string; role: UserRole },
-  createdById?: string,
-): Prisma.PatientWhereInput {
-  if (user.role === UserRole.RECEPTIONNISTE) return { createdById: user.id };
-  const id = createdById?.trim();
-  if (id) return { createdById: id };
-  return {};
-}
+import { receptionistOwnPatientsWhere } from "../lib/reception-scope.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -245,7 +236,7 @@ async function syncWaitingVisit(
   const billing = resolveConsultationBilling(
     patient.category,
     resolvedAmount,
-    0,
+    reductionFcfa ?? 0,
   );
 
   let visit = await tx.visit.findFirst({
@@ -275,7 +266,7 @@ async function syncWaitingVisit(
         consultationFeeFcfa: doctorId || consultationAmountFcfa !== undefined
           ? billing.consultationAmountFcfa || null
           : visit.consultationFeeFcfa,
-        reductionFcfa: 0,
+        reductionFcfa: billing.reductionFcfa,
       },
     });
   }
@@ -303,7 +294,7 @@ async function syncWaitingVisit(
     } else {
       await tx.invoice.create({
         data: consultationInvoiceCreateData(patient.category, {
-          invoiceNumber: await generateInvoiceNumber(),
+          invoiceNumber: await generateInvoiceNumber(tx),
           patientId,
           visitId: visit.id,
           amountFcfa: billing.billableAmountFcfa,
@@ -326,12 +317,23 @@ async function syncWaitingVisit(
 
 router.get("/", async (req, res) => {
   const user = req.user!;
+  const role = user.role as AppUserRole;
+  const canFullList =
+    canAccessModule(role, "reception") || canAccessModule(role, "comptabilite");
+  const canSearchDossier = canAccessModule(role, "dossier-patient");
+  if (!canFullList && !canSearchDossier) {
+    return res.status(403).json({ error: "Accès refusé" });
+  }
+
   const q = String(req.query.q ?? "").trim();
   const category = req.query.category as string | undefined;
   const fromParam = String(req.query.from ?? req.query.date ?? "").trim();
   const toParam = String(req.query.to ?? "").trim();
   const createdById = String(req.query.createdById ?? "").trim();
   const terms = q.split(/\s+/).filter(Boolean);
+  if (!canFullList && terms.length === 0) {
+    return res.json([]);
+  }
   const ownScope = receptionistOwnPatientsWhere(user, createdById);
 
   function parseDayStart(value: string): Date | null {
@@ -400,8 +402,8 @@ router.get("/", async (req, res) => {
       const { invoices, ...rest } = patient;
       return {
         ...rest,
-        canDelete: !lockedIds.has(patient.id),
-        consultationPayment: mapConsultationPayment(invoices[0]),
+        canDelete: canFullList && !lockedIds.has(patient.id),
+        consultationPayment: canFullList ? mapConsultationPayment(invoices[0]) : null,
       };
     }),
   );
@@ -522,7 +524,11 @@ const registerConsultationSchema = patientSchema
     }
   });
 
-router.post("/register-consultation", requireModule("reception"), async (req, res) => {
+router.post(
+  "/register-consultation",
+  requireModule("reception"),
+  requireUiAction("reception.create_patient"),
+  async (req, res) => {
   try {
     const body = registerConsultationSchema.parse(req.body);
 
@@ -540,15 +546,18 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
     }
 
     const category = resolvePatientCategory(body.category);
-    const resolvedAmount = resolveDoctorConsultationAmount(doctor, null);
-    const billing = resolveConsultationBilling(category, resolvedAmount, 0);
+    const resolvedAmount = resolveDoctorConsultationAmount(doctor, body.consultationAmountFcfa ?? null);
+    if ((body.reductionFcfa ?? 0) > (resolvedAmount ?? 0)) {
+      return res.status(400).json({ error: "La réduction ne peut pas dépasser le montant." });
+    }
+    const billing = resolveConsultationBilling(category, resolvedAmount, body.reductionFcfa ?? 0);
 
     // Option A : toujours créer un nouveau dossier (doublons acceptés).
     // Fusion ultérieure médecin/facture si même nom + même numéro.
     const result = await prisma.$transaction(async (tx) => {
       const patient = await tx.patient.create({
         data: {
-          code: await generatePatientCode(),
+          code: await generatePatientCode(tx),
           firstName: body.firstName,
           lastName: body.lastName,
           age: body.age,
@@ -581,7 +590,7 @@ router.post("/register-consultation", requireModule("reception"), async (req, re
       if (billing.billableAmountFcfa > 0) {
         const invoice = await tx.invoice.create({
           data: consultationInvoiceCreateData(category, {
-            invoiceNumber: await generateInvoiceNumber(),
+            invoiceNumber: await generateInvoiceNumber(tx),
             patientId: patient.id,
             visitId: visit.id,
             amountFcfa: billing.billableAmountFcfa,
@@ -621,6 +630,12 @@ router.get("/:id/consultation-fee", requireModule("reception"), async (req, res)
     return res.status(400).json({ error: "Médecin requis." });
   }
 
+  const scopedPatient = await prisma.patient.findFirst({
+    where: { id: patientId, ...receptionistOwnPatientsWhere(req.user!) },
+    select: { id: true },
+  });
+  if (!scopedPatient) return res.status(404).json({ error: "Patient introuvable" });
+
   try {
     const fee = await resolveConsultationFeeForPatientDoctor({
       patientId,
@@ -643,8 +658,8 @@ router.get("/:id/consultation-fee", requireModule("reception"), async (req, res)
 
 router.get("/:id", requireModule("reception"), async (req, res) => {
   const patientId = String(req.params.id);
-  const patient = await prisma.patient.findUnique({
-    where: { id: patientId },
+  const patient = await prisma.patient.findFirst({
+    where: { id: patientId, ...receptionistOwnPatientsWhere(req.user!) },
     include: { treatingDoctor: { select: treatingDoctorSelect } },
   });
   if (!patient) return res.status(404).json({ error: "Patient introuvable" });
@@ -660,7 +675,7 @@ router.get("/:id", requireModule("reception"), async (req, res) => {
   });
 });
 
-router.post("/", requireModule("reception"), async (req, res) => {
+router.post("/", requireModule("reception"), requireUiAction("reception.create_patient"), async (req, res) => {
   try {
     const body = patientSchema.parse(req.body);
 
@@ -690,25 +705,28 @@ router.post("/", requireModule("reception"), async (req, res) => {
       );
     }
 
-    const patient = await prisma.patient.create({
-      data: {
-        code: await generatePatientCode(),
-        firstName: body.firstName,
-        lastName: body.lastName,
-        age: body.age,
-        ageUnit: body.ageUnit,
-        phone: body.phone,
-        service: body.service?.trim() || null,
-        gender: body.gender,
-        address: body.address,
-        category: resolvePatientCategory(body.category),
-        ongName: null,
-        recommendedByName: normalizeRecommendedByName(body.recommendedByName),
-        treatingDoctorId: treatingDoctorId ?? null,
-        createdById: req.user!.id,
-        dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : undefined,
-      },
-      include: { treatingDoctor: { select: treatingDoctorSelect } },
+    const patient = await prisma.$transaction(async (tx) => {
+      const code = await generatePatientCode(tx);
+      return tx.patient.create({
+        data: {
+          code,
+          firstName: body.firstName,
+          lastName: body.lastName,
+          age: body.age,
+          ageUnit: body.ageUnit,
+          phone: body.phone,
+          service: body.service?.trim() || null,
+          gender: body.gender,
+          address: body.address,
+          category: resolvePatientCategory(body.category),
+          ongName: null,
+          recommendedByName: normalizeRecommendedByName(body.recommendedByName),
+          treatingDoctorId: treatingDoctorId ?? null,
+          createdById: req.user!.id,
+          dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : undefined,
+        },
+        include: { treatingDoctor: { select: treatingDoctorSelect } },
+      });
     });
     return res.status(201).json(patient);
   } catch {
@@ -716,12 +734,14 @@ router.post("/", requireModule("reception"), async (req, res) => {
   }
 });
 
-router.patch("/:id", requireModule("reception"), async (req, res) => {
+router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit_patient"), async (req, res) => {
   try {
     const body = receptionUpdateSchema.parse(req.body);
     const patientId = String(req.params.id);
 
-    const existing = await prisma.patient.findUnique({ where: { id: patientId } });
+    const existing = await prisma.patient.findFirst({
+      where: { id: patientId, ...receptionistOwnPatientsWhere(req.user!) },
+    });
     if (!existing) return res.status(404).json({ error: "Patient introuvable" });
 
     let treatingDoctorId: string | null | undefined;
@@ -808,18 +828,18 @@ router.patch("/:id", requireModule("reception"), async (req, res) => {
   }
 });
 
-router.delete("/:id", requireModule("reception"), async (req, res) => {
+router.delete("/:id", requireModule("reception"), requireUiAction("reception.delete_patient"), async (req, res) => {
   try {
     const patientId = String(req.params.id);
-    const existing = await prisma.patient.findUnique({ where: { id: patientId } });
+    const existing = await prisma.patient.findFirst({
+      where: { id: patientId, ...receptionistOwnPatientsWhere(req.user!) },
+    });
     if (!existing) return res.status(404).json({ error: "Patient introuvable" });
 
-    if (req.user!.role === UserRole.ADMIN) {
-      await forceDeletePatientCascade(patientId);
-    } else {
+    if (!isDirectionOrGestionnaire(req.user!.role as AppUserRole)) {
       await assertPatientDeletable(patientId);
-      await prisma.patient.delete({ where: { id: patientId } });
     }
+    await forceDeletePatientCascade(patientId);
 
     return res.json({ success: true });
   } catch (error) {

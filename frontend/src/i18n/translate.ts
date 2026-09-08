@@ -122,6 +122,51 @@ export function translateRole(role: string): string {
   return activeBundle().roles?.[role] ?? role
 }
 
+function foldClinicServiceKey(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+/** Alias (casse / accents / fautes fréquentes) → clé FR du dictionnaire. */
+const CLINIC_SERVICE_ALIASES: Record<string, string> = {
+  'accueil reception': 'Accueil / Réception',
+  'bloc operatoire': 'Bloc opératoire',
+  'chirurgie generale': 'Chirurgie Générale',
+  consultation: 'Consultation',
+  echographie: 'Echographie',
+  generaliste: 'Généraliste',
+  gynecologie: 'Gynécologie',
+  hospitalisation: 'Hospitalisation',
+  imagerie: 'Imagerie',
+  interne: 'Médecine interne',
+  'kinesie terapie': 'Kinésithérapie',
+  kinesitherapie: 'Kinésithérapie',
+  kinesitherapetie: 'Kinésithérapie',
+  laboratoire: 'Laboratoire',
+  maternite: 'Maternité',
+  'medecine interne': 'Médecine interne',
+  odontologie: 'Odontologie',
+  ophtalmologie: 'Ophtalmologie',
+  orthopedie: 'Orthopédie',
+  pediatrie: 'Pédiatrie',
+  pharmacie: 'Pharmacie',
+  traumatologie: 'Traumatologie',
+  tromatologie: 'Traumatologie',
+  urgences: 'Urgences',
+  urologie: 'Urologie',
+}
+
+/** Libellé d’un service clinique (liste réception, file, transfert). */
+export function translateClinicService(name: string | null | undefined): string {
+  if (!name) return ''
+  const canonical = CLINIC_SERVICE_ALIASES[foldClinicServiceKey(name)]
+  return translateUi(canonical ?? name)
+}
+
 export function getAppLocale(): AppLocale {
   return activeLocale()
 }

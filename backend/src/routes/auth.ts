@@ -21,6 +21,8 @@ import {
   MAX_FAILED_LOGIN_ATTEMPTS,
   SESSION_ACTIVITY_TOUCH_MS,
 } from "../lib/session-security.js";
+import { newPasswordSchema } from "../lib/password-policy.js";
+import { rateLimit } from "../lib/rate-limit.js";
 
 const router = Router();
 
@@ -42,7 +44,7 @@ const profileSchema = z.object({
 
 const passwordSchema = z.object({
   currentPassword: z.string().min(4, "Mot de passe actuel requis."),
-  newPassword: z.string().min(6, "Le nouveau mot de passe doit contenir au moins 6 caractères."),
+  newPassword: newPasswordSchema,
 });
 
 export type AuthUserPayload = SessionUser & {
@@ -94,7 +96,7 @@ async function clearSessionCookie(req: Request, res: Response) {
   res.clearCookie(COOKIE_NAME, sessionCookieOptions(req));
 }
 
-router.post("/login", async (req, res) => {
+router.post("/login", rateLimit({ windowMs: 60_000, max: 20, prefix: "login" }), async (req, res) => {
   try {
     const { username, password } = loginSchema.parse(req.body);
     const login = username.trim();

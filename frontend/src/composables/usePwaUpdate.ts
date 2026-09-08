@@ -136,11 +136,6 @@ async function checkServerBuild() {
 
   needRefresh.value = true
   void requestServiceWorkerUpdate()
-  if (!applying) {
-    window.setTimeout(() => {
-      void applyUpdateInternal(buildId)
-    }, 800)
-  }
 }
 
 function ensureStarted() {
@@ -153,9 +148,6 @@ function ensureStarted() {
     immediate: true,
     onNeedRefresh() {
       needRefresh.value = true
-      window.setTimeout(() => {
-        void applyUpdateInternal()
-      }, 600)
     },
     onRegisteredSW(_swUrl, registration) {
       if (!registration) return

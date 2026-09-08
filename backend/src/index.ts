@@ -47,6 +47,10 @@ import clinicInfoRoutes from "./routes/clinic-info.js";
 import { ensureClinicInfoRow } from "./lib/clinic.js";
 import { ensureRoleUiSettingsRow } from "./lib/role-ui-settings.js";
 import { getLanIpv4, getTailscaleIpv4, isPrivateLanOrigin, parseCorsOrigins } from "./lib/lan-host.js";
+import { prisma } from "./lib/db.js";
+import { assertJwtSecret } from "./lib/auth.js";
+
+assertJwtSecret(process.env.JWT_SECRET);
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
@@ -92,11 +96,13 @@ app.use(
   }),
 );
 app.use(compression());
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 
-/** Autorise le navigateur (page LAN) à joindre l’agent d’impression sur 127.0.0.1 */
 app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   res.setHeader(
     "Permissions-Policy",
     'local-network-access=(self), private-state-token-redemption=(), private-state-token-issuance=()',
@@ -104,8 +110,14 @@ app.use((_req, res, next) => {
   next();
 });
 
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", service: "alwatan-api" });
+app.get("/api/health", async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: "ok", service: "alwatan-api", db: "ok" });
+  } catch (error) {
+    console.error("[health] base de données indisponible:", error);
+    res.status(503).json({ status: "error", service: "alwatan-api", db: "down" });
+  }
 });
 
 app.get("/api/app-version", (_req, res) => {
@@ -338,6 +350,26 @@ if (serveFrontend) {
     `Interface non servie (index introuvable ou SERVE_FRONTEND=0) : ${frontendIndex}`,
   );
 }
+
+app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("[api]", req.method, req.path, err);
+  if (res.headersSent) return;
+  const status =
+    err && typeof err === "object" && "status" in err && typeof err.status === "number"
+      ? err.status
+      : 500;
+  const safeStatus = status >= 400 && status < 600 ? status : 500;
+  res.status(safeStatus).json({
+    error: safeStatus === 500 ? "Erreur interne du serveur" : "Requête invalide",
+  });
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("[uncaughtException]", error);
+});
 
 function startServer() {
   const keyPath = process.env.SSL_KEY_PATH?.trim();

@@ -17,6 +17,7 @@ import ProfileAccountModal from '@/components/ProfileAccountModal.vue'
 import GlobalAlertsBell from '@/components/layout/GlobalAlertsBell.vue'
 import DoctorOvertimeSubmitButton from '@/components/layout/DoctorOvertimeSubmitButton.vue'
 import { useSessionIdle } from '@/composables/useSessionIdle'
+import { useDoctorNewPatientAlert } from '@/composables/useDoctorNewPatientAlert'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -25,6 +26,7 @@ const { t, isArabic, localeCode, navLabel, roleLabel } = useAppI18n()
 const showProfileModal = ref(false)
 
 useSessionIdle(computed(() => Boolean(auth.user)))
+useDoctorNewPatientAlert()
 
 type NavBadges = {
   depenses?: number

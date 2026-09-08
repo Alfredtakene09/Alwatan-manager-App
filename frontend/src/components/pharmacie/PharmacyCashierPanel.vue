@@ -19,7 +19,7 @@ import {
 import api from '@/api/client'
 import { CLINIC } from '@/lib/clinic'
 import { formatFcfa, fullName } from '@/lib/roles'
-import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, cancelPrintWindow, openPrintDocument, reservePrintWindow, thermalMetaRow } from '@/lib/print-document'
+import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, cancelPrintWindow, openPrintDocument, reservePrintWindow, thermalIsRtl, thermalLocaleMetaRow, thermalThanksHtml, thermalTicketDirAttrs, thermalTicketRootClass } from '@/lib/print-document'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiSelect from '@/components/ui/UiSelect.vue'
@@ -363,9 +363,9 @@ function buildPharmacyBrowserTicketHtml(data: {
   const reductionFcfa = data.reductionFcfa ?? 0
   const coveredByBlock =
     data.coveredByName && (data.isFree || reductionFcfa > 0)
-      ? thermalMetaRow('Par', data.coveredByName, '')
+      ? thermalLocaleMetaRow('Par', data.coveredByName)
       : ''
-  const internalBlock = !data.isExternal ? thermalMetaRow('Type', 'Interne', '') : ''
+  const internalBlock = !data.isExternal ? thermalLocaleMetaRow('Type', uiText('Interne')) : ''
   const itemsTable = buildPharmacyTicketItemsTableHtml({
     lines: data.items.map((item) => ({
       name: item.name,
@@ -380,19 +380,20 @@ function buildPharmacyBrowserTicketHtml(data: {
   })
 
   return `
-<div class="thermal-receipt thermal-receipt--ticket thermal-receipt--pharmacy">
+<div class="${thermalTicketRootClass('thermal-receipt--pharmacy')}"${thermalTicketDirAttrs()}>
   ${buildThermalTicketHeadHtml({
-    title: 'Clinique Alwatan Pharmacie',
+    title: uiText('Reçu pharmacie'),
     number: data.invoiceNumber,
     contact: `${clinic.city} · ${clinic.phones}`,
     logo: clinic.logo,
+    rtl: thermalIsRtl(),
   })}
   <hr class="thermal-receipt__rule" />
 
   <div class="thermal-receipt__fields">
-    ${thermalMetaRow('Date', data.date, '')}
+    ${thermalLocaleMetaRow('Date', data.date)}
     ${internalBlock}
-    ${thermalMetaRow('Paiement', data.paymentModeLabel, '')}
+    ${thermalLocaleMetaRow('Paiement', data.paymentModeLabel)}
     ${coveredByBlock}
   </div>
 
@@ -404,7 +405,7 @@ function buildPharmacyBrowserTicketHtml(data: {
       : ''
   }
   <hr class="thermal-receipt__rule" />
-  <p class="thermal-receipt__thanks">Merci</p>
+  ${thermalThanksHtml()}
 </div>
 `
 }
@@ -690,6 +691,7 @@ async function onReturnSuccess() {
 }
 
 async function submitSale() {
+  if (submitting.value) return
   const externalName = externalClientName.value.trim()
 
   if (!validateBuyerSelection()) return

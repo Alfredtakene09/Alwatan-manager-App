@@ -87,6 +87,13 @@ export default {
     'Supervision clinique — aucune action médicale depuis ce compte Direction':
       'إشراف سريري — لا إجراءات طبية من حساب الإدارة',
     'Aucun patient en attente': 'لا يوجد مرضى في الانتظار',
+    'Nouveau patient en attente': 'مريض جديد في الانتظار',
+    'Nouveaux patients en attente': 'مرضى جدد في الانتظار',
+    '{name} ({code}) a été enregistré à la réception et attend votre consultation.':
+      'تم تسجيل {name} ({code}) في الاستقبال وهو في انتظار استشارتك.',
+    '{count} nouveaux patients ont été enregistrés pour votre consultation :':
+      'تم تسجيل {count} مرضى جدد لاستشارتك:',
+    'Voir la file': 'عرض القائمة',
     'En pause': 'في استراحة',
     'Vous êtes disponible pour de nouveaux patients.':
       'أنت متاح لاستقبال مرضى جدد.',
@@ -219,6 +226,12 @@ export default {
     'Service destinataire': 'الخدمة المستلمة',
     'Choisir un service…': 'اختر خدمة…',
     'aucun médecin rattaché': 'لا طبيب مرتبط',
+    'Médecin destinataire': 'الطبيب المستلم',
+    'Choisir un médecin…': 'اختر طبيباً…',
+    'Aucun médecin rattaché à ce service. Affectez un médecin dans la page Services.':
+      'لا يوجد طبيب مرتبط بهذه الخدمة. عيّن طبيباً في صفحة الخدمات.',
+    'Le patient quittera votre file et apparaîtra chez le médecin choisi.':
+      'سيغادر المريض قائمتك ويظهر لدى الطبيب المختار.',
     'Aucun service disponible. Créez-en un dans la page Services.':
       'لا توجد خدمة متاحة. أنشئ واحدةا في صفحة الخدمات.',
     'Le patient apparaîtra en attente de consultation chez le(s) médecin(s) de ce service.':
@@ -266,6 +279,9 @@ export default {
       'تم تسجيل الملف {code} — {name} في انتظار الاستشارة.',
     'Erreur lors de la création du dossier.': 'خطأ أثناء إنشاء الملف.',
     "Impossible d'imprimer le reçu.": 'تعذر طباعة الإيصال.',
+    "Impossible de charger la file des patients externes.": 'تعذر تحميل قائمة المرضى الخارجيين.',
+    'Prescription enregistrée, mais le reçu n’a pas pu être imprimé. Utilisez « Réimprimer le reçu ».':
+      'تم تسجيل الوصفة، لكن تعذر طباعة الإيصال. استخدم « إعادة طباعة الإيصال ».',
     'Dossier {code} supprimé.': 'تم حذف الملف {code}.',
     '{name} remis en consultation — {hint}': '{name} أُعيد إلى الاستشارة — {hint}',
     '{name} remis en consultation.': '{name} أُعيد إلى الاستشارة.',
@@ -283,6 +299,10 @@ export default {
     'Créneau : {slot}': 'الفترة: {slot}',
     'Supprimer le dossier {code} — {name} ? Cette action est irréversible.':
       'حذف الملف {code} — {name}؟ هذا الإجراء لا يمكن التراجع عنه.',
+    'Supprimer le dossier {code} — {name} ? Les factures, visites et documents liés seront aussi supprimés. Cette action est irréversible.':
+      'حذف الملف {code} — {name}؟ سيتم أيضاً حذف الفواتير والزيارات والمستندات المرتبطة. لا يمكن التراجع عن هذا الإجراء.',
+    'Supprimer le dossier {code} — {name} même s’il a déjà été consulté ? Visites, consultations, factures et documents liés seront aussi supprimés. Cette action est irréversible.':
+      'حذف الملف {code} — {name} حتى بعد الاستشارة؟ سيتم أيضاً حذف الزيارات والاستشارات والفواتير والمستندات المرتبطة. لا يمكن التراجع عن هذا الإجراء.',
     'Aucun médecin lié à ce service. Affectez les médecins au service depuis la page Services.':
       'لا يوجد طبيب مرتبط بهذه المصلحة. عيّن الأطباء للمصلحة من صفحة المصالح.',
     Exonéré: 'معفى',
@@ -895,12 +915,21 @@ export default {
 
     // —— الإيصالات / الفواتير المطبوعة ——
     'Reçu de consultation': 'إيصال استشارة',
+    'Reçu examens': 'إيصال الفحوصات',
+    'Reçu pharmacie': 'إيصال الصيدلية',
+    'Remettre à la comptabilité': 'سلّم إلى المحاسبة',
+    Interne: 'داخلي',
+    Merci: 'شكراً',
+    PU: 'س.و',
+    PT: 'م.ك',
+    Radio: 'أشعة',
     'Reçu {code}': 'إيصال {code}',
     Reçu: 'إيصال',
     'Imprimer le reçu': 'طباعة الإيصال',
     'Imprimer le reçu de consultation': 'طباعة إيصال الاستشارة',
     'Réimprimer le reçu': 'إعادة طباعة الإيصال',
     'Réimprimer le reçu de consultation': 'إعادة طباعة إيصال الاستشارة',
+    'Aucun examen à imprimer': 'لا يوجد فحص للطباعة',
     'Total payé': 'المجموع المدفوع',
     'Merci de votre confiance': 'شكراً لثقتكم',
     'Tél.': 'هاتف',
@@ -1372,6 +1401,8 @@ export default {
       'يحدد التعرفة المعروضة في الاستقبال والحصة المستحقة للطبيب.',
     'Type de rémunération': 'نوع الأجر',
     'Employé mis à jour.': 'تم تحديث الموظف.',
+    'Employé mis à jour. Les montants non réglés (parts médecin, factures en attente, paie, heures sup) ont été recalculés.':
+      'تم تحديث الموظف. أُعيد حساب المبالغ غير المسددة (حصص الطبيب، الفواتير المعلقة، الراتب، الساعات الإضافية).',
     'Employé créé avec succès.': 'تم إنشاء الموظف بنجاح.',
     'Impossible de mettre à jour cet employé.': 'تعذر تحديث هذا الموظف.',
     'Impossible de créer cet employé.': 'تعذر إنشاء هذا الموظف.',
@@ -2631,6 +2662,12 @@ export default {
     Opérations: 'العمليات',
     Opération: 'عملية',
     Ophtalmologie: 'طب العيون',
+    Généraliste: 'الطب العام',
+    'Médecine interne': 'الطب الباطني',
+    Urologie: 'المسالك البولية',
+    Orthopédie: 'جراحة العظام',
+    ORTHOPEDIE: 'جراحة العظام',
+    'Kinésithérapetie': 'العلاج الطبيعي',
     Tromatologie: 'جراحة العظام والرضوض',
     Traumatologie: 'جراحة العظام والرضوض',
     Urgences: 'الطوارئ',

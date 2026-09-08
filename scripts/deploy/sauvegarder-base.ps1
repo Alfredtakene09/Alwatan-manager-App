@@ -48,6 +48,29 @@ function Find-PgDump {
     return $null
 }
 
+function Write-BackupFailure {
+    param([string]$Message)
+    $logDir = Join-Path $Root 'runtime\logs'
+    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+    $logFile = Join-Path $logDir 'backup-failures.log'
+    $line = '{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
+    Add-Content -Path $logFile -Value $line -Encoding UTF8
+    Write-Host "Échec sauvegarde consigné → $logFile" -ForegroundColor Red
+    $source = 'Alwatan Manager'
+    try {
+        Write-EventLog -LogName Application -Source $source -EventId 4001 -EntryType Error -Message $line -ErrorAction Stop
+    } catch {
+        try {
+            New-EventLog -LogName Application -Source $source -ErrorAction SilentlyContinue
+            Write-EventLog -LogName Application -Source $source -EventId 4001 -EntryType Error -Message $line -ErrorAction SilentlyContinue
+        } catch {
+            # Pas de droits Event Log : le fichier runtime/logs/backup-failures.log suffit.
+        }
+    }
+}
+
+try {
+
 $dbUrl = Read-DatabaseUrl -Path $envFile
 if (-not $dbUrl) {
     throw "DATABASE_URL introuvable dans $envFile"
@@ -85,6 +108,29 @@ $sizeMb = [math]::Round((Get-Item $outFile).Length / 1MB, 2)
 Write-Host "OK — $sizeMb Mo" -ForegroundColor Green
 
 $cutoff = (Get-Date).AddDays(-1 * [math]::Abs($KeepDays))
+
+$uploadsRoot = Join-Path $Root 'backend\uploads'
+$uploadsBackupRoot = Join-Path (Split-Path $BackupRoot -Parent) 'uploads'
+if (Test-Path $uploadsRoot) {
+    New-Item -ItemType Directory -Force -Path $uploadsBackupRoot | Out-Null
+    $uploadsZip = Join-Path $uploadsBackupRoot "uploads-$stamp.zip"
+    Write-Host "Sauvegarde des pièces jointes → $uploadsZip"
+    if (Get-Command Compress-Archive -ErrorAction SilentlyContinue) {
+        Compress-Archive -Path (Join-Path $uploadsRoot '*') -DestinationPath $uploadsZip -Force
+        Write-Host "OK — pièces jointes archivées" -ForegroundColor Green
+    } else {
+        Write-Warning "Compress-Archive indisponible — copies manuelles de backend\\uploads recommandées."
+    }
+    Get-ChildItem -Path $uploadsBackupRoot -Filter 'uploads-*.zip' -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt $cutoff } |
+        ForEach-Object {
+            Write-Host "Suppression ancienne archive uploads : $($_.Name)" -ForegroundColor DarkGray
+            Remove-Item $_.FullName -Force
+        }
+} else {
+    Write-Host "Aucun dossier backend\\uploads à archiver." -ForegroundColor DarkGray
+}
+
 Get-ChildItem -Path $BackupRoot -Filter 'alwatan-*.sql' -ErrorAction SilentlyContinue |
     Where-Object { $_.LastWriteTime -lt $cutoff } |
     ForEach-Object {
@@ -92,4 +138,8 @@ Get-ChildItem -Path $BackupRoot -Filter 'alwatan-*.sql' -ErrorAction SilentlyCon
         Remove-Item $_.FullName -Force
     }
 
-Write-Output $outFile
+    Write-Output $outFile
+} catch {
+    Write-BackupFailure $_.Exception.Message
+    throw
+}

@@ -335,6 +335,15 @@ function prescribedSectionOrExamNames(prescribed: string): string[] {
   return names.length ? names : panel ? [panel] : []
 }
 
+/** Premier nom compact d’une ligne prescrite (section ou examen). */
+export function primaryPrescribedSectionOrExamName(prescribed: string): string {
+  return (
+    prescribedSectionOrExamNames(prescribed)[0] ||
+    extractBasePanelLabel(prescribed).trim() ||
+    prescribed.trim()
+  )
+}
+
 /** Noms uniques : section si présente, sinon nom complet de l’examen. */
 export function extractPrescribedSectionOrExamNames(
   labels: string[],

@@ -234,7 +234,7 @@ const interventionInclude = {
   anesthesiologist: { select: { id: true, firstName: true, lastName: true } },
   clinicService: { select: { id: true, name: true } },
   ...authorizedSurgeonsInclude,
-} as const;
+};
 
 async function resolveInterventionClinicServiceId(
   clinicServiceId: string | null | undefined,
@@ -605,7 +605,7 @@ router.put("/catalog/:kindSlug/:id", async (req, res) => {
     const nextCode =
       body.code === undefined
         ? existing.code
-        : body.code.trim()
+        : String(body.code ?? "").trim()
           ? buildExamCatalogCode(body.code, nextLabel)
           : existing.code;
 
