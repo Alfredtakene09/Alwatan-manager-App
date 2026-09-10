@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia'
 import api from '@/api/client'
 import {
+  deriveNamedSectionPriceFcfa,
   getAllLabFormPanels,
   getEntryPanelSlugs,
+  isNamedLabSectionTitle,
   setRuntimeLabPanels,
   type LabFormPanel,
   type LabFormSection,
@@ -64,6 +66,12 @@ export function panelDtoToFormPanel(dto: LabPanelDto): LabFormPanel {
       hasComment: field.hasComment === true,
       type: 'text',
     })
+  }
+
+  for (const section of sections) {
+    if (!isNamedLabSectionTitle(section.title)) continue
+    const price = deriveNamedSectionPriceFcfa(section.fields)
+    if (price != null) section.priceFcfa = price
   }
 
   return { slug: dto.slug, label: dto.label, sections }

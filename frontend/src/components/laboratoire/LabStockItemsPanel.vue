@@ -4,7 +4,7 @@ import axios from 'axios'
 import { Package, Plus, RefreshCw, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import type { LabStockCategoryRecord } from '@/components/laboratoire/LabStockCategoriesPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
@@ -271,6 +271,10 @@ function exportExcel() {
   exportTableExcel(uiText('Stock laboratoire'), exportColumns.value, tableRows.value)
 }
 
+function exportWord() {
+  void exportTableWord(uiText('Stock laboratoire'), exportColumns.value, tableRows.value)
+}
+
 onMounted(async () => {
   await Promise.all([loadItems(), loadCategories()])
 })
@@ -281,7 +285,7 @@ defineExpose({ reload: loadItems })
 <template>
   <PageTableSection embedded>
     <template #toolbar>
-      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
+      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
         Actualiser
       </UiButton>

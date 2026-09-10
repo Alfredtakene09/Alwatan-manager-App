@@ -330,6 +330,7 @@ router.get("/", async (req, res) => {
   const fromParam = String(req.query.from ?? req.query.date ?? "").trim();
   const toParam = String(req.query.to ?? "").trim();
   const createdById = String(req.query.createdById ?? "").trim();
+  const service = String(req.query.service ?? "").trim();
   const terms = q.split(/\s+/).filter(Boolean);
   if (!canFullList && terms.length === 0) {
     return res.json([]);
@@ -362,6 +363,7 @@ router.get("/", async (req, res) => {
     where: {
       ...ownScope,
       ...(category ? { category: category as PatientCategory } : {}),
+      ...(service ? { service } : {}),
       ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
       ...(terms.length > 0
         ? {
@@ -380,12 +382,16 @@ router.get("/", async (req, res) => {
       treatingDoctor: { select: treatingDoctorSelect },
       createdBy: { select: { id: true, firstName: true, lastName: true } },
       invoices: {
-        where: { type: InvoiceType.CONSULTATION, status: { not: InvoiceStatus.CANCELLED } },
+        where: {
+          type: { in: [InvoiceType.CONSULTATION, InvoiceType.LAB_EXAM] },
+          status: { not: InvoiceStatus.CANCELLED },
+        },
         orderBy: { createdAt: "desc" },
-        take: 1,
+        take: 10,
         select: {
           id: true,
           invoiceNumber: true,
+          type: true,
           status: true,
           amountFcfa: true,
           paidAmountFcfa: true,
@@ -400,10 +406,14 @@ router.get("/", async (req, res) => {
   return res.json(
     patients.map((patient) => {
       const { invoices, ...rest } = patient;
+      // Même colonne « paiement » : consultation si présente, sinon montant labo (patients externes).
+      const paymentInvoice =
+        invoices.find((invoice) => invoice.type === InvoiceType.CONSULTATION) ??
+        invoices.find((invoice) => invoice.type === InvoiceType.LAB_EXAM);
       return {
         ...rest,
         canDelete: canFullList && !lockedIds.has(patient.id),
-        consultationPayment: canFullList ? mapConsultationPayment(invoices[0]) : null,
+        consultationPayment: canFullList ? mapConsultationPayment(paymentInvoice) : null,
       };
     }),
   );
@@ -432,13 +442,19 @@ router.get("/receptionists", requireModule("reception"), async (req, res) => {
 router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   const user = req.user!;
   const createdById = String(req.query.createdById ?? "").trim();
+  const service = String(req.query.service ?? "").trim();
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
   const tomorrowStart = new Date(startOfToday);
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
   const ownScope = receptionistOwnPatientsWhere(user, createdById);
+  const patientScope = {
+    ...ownScope,
+    ...(service ? { service } : {}),
+  };
   const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
   const scopedReceptionistId = isReceptionist ? user.id : createdById || null;
+  const revenueOptions = service ? { patientService: service } : undefined;
 
   const [
     registeredToday,
@@ -451,37 +467,46 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     myExpensesToday,
   ] = await Promise.all([
     prisma.patient.count({
-      where: { ...ownScope, createdAt: { gte: startOfToday } },
+      where: { ...patientScope, createdAt: { gte: startOfToday } },
     }),
-    prisma.patient.count({ where: { ...ownScope, gender: "F" } }),
-    prisma.patient.count({ where: { ...ownScope, gender: "M" } }),
-    prisma.patient.count({ where: patientsWhoReceivedExamsWhere(ownScope) }),
+    prisma.patient.count({ where: { ...patientScope, gender: "F" } }),
+    prisma.patient.count({ where: { ...patientScope, gender: "M" } }),
+    prisma.patient.count({ where: patientsWhoReceivedExamsWhere(patientScope) }),
     scopedReceptionistId
       ? prisma.visit.count({
           where: {
             createdAt: { gte: startOfToday },
             OR: [
-              { patient: { createdById: scopedReceptionistId } },
+              { patient: { createdById: scopedReceptionistId, ...(service ? { service } : {}) } },
               {
                 invoices: {
-                  some: { type: InvoiceType.CONSULTATION, issuedById: scopedReceptionistId },
+                  some: {
+                    type: InvoiceType.CONSULTATION,
+                    issuedById: scopedReceptionistId,
+                    ...(service ? { patient: { service } } : {}),
+                  },
                 },
               },
             ],
           },
         })
-      : prisma.visit.count({ where: { createdAt: { gte: startOfToday } } }),
+      : prisma.visit.count({
+          where: {
+            createdAt: { gte: startOfToday },
+            ...(service ? { patient: { service } } : {}),
+          },
+        }),
     prisma.visit.count({
       where: {
         createdAt: { gte: startOfToday },
         notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE },
-        ...(Object.keys(ownScope).length ? { patient: ownScope } : {}),
+        patient: { ...patientScope },
       },
     }),
     CASH_COLLECTOR_ROLES.includes(user.role)
-      ? aggregateCollectedForCashier(user.id, startOfToday, tomorrowStart)
-      : aggregateCollectedToday(),
-    CASH_COLLECTOR_ROLES.includes(user.role)
+      ? aggregateCollectedForCashier(user.id, startOfToday, tomorrowStart, revenueOptions)
+      : aggregateCollectedToday(revenueOptions),
+    CASH_COLLECTOR_ROLES.includes(user.role) && !service
       ? sumExpensesForCashierOnDate(user.id, startOfToday)
       : Promise.resolve({ totalFcfa: 0, count: 0, rows: [] }),
   ]);
@@ -503,6 +528,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     examsTodayFcfa: collectedToday.examsFcfa,
     surgeryTodayFcfa: collectedToday.surgeryFcfa,
     hospitalizationTodayFcfa: collectedToday.hospitalizationFcfa,
+    serviceFilter: service || null,
   });
 });
 

@@ -12,6 +12,7 @@ import {
 import {
   exportBasename,
   exportWorkbook,
+  exportWorkbookWord,
   rowsToHtmlTable,
   type ExportColumn,
 } from '@/lib/table-export'
@@ -160,6 +161,16 @@ function exportExcel() {
   ])
 }
 
+function exportWord() {
+  if (!data.value || !k.value) return
+  void exportWorkbookWord(exportBasename('finances-clinique'), [
+    { name: 'KPI', columns: kpiColumns, rows: kpiRows.value },
+    { name: 'Tendance', columns: trendColumns, rows: filteredTrend.value },
+    { name: 'Recettes', columns: breakdownColumns, rows: data.value.revenueBreakdown },
+    { name: 'Dépenses', columns: breakdownColumns, rows: data.value.expenseBreakdown },
+  ])
+}
+
 onMounted(loadFinances)
 </script>
 
@@ -171,7 +182,7 @@ onMounted(loadFinances)
         subtitle="Recettes, dépenses et tendances"
         :icon="TrendingUp"
       />
-      <ExportButtons :disabled="loading || !k" @pdf="exportPdf" @excel="exportExcel" />
+      <ExportButtons :disabled="loading || !k" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
     </div>
 
     <div v-if="loading" class="chart-empty">Chargement…</div>

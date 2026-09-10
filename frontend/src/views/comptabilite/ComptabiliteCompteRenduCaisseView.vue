@@ -32,7 +32,7 @@ import UiStatCard from '@/components/ui/UiStatCard.vue'
 import '@/assets/comptabilite-section.css'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import {
   shiftHoursLabel as formatShiftHours,
   SHIFT_WINDOWS,
@@ -419,17 +419,25 @@ const cashExportColumns: ExportColumn<CashExportRow>[] = [
   { header: 'Statut', value: (r) => r.statut },
 ]
 
-function exportPdf() {
-  exportTablePdf(`Compte rendu caisse — ${businessDate.value}`, cashExportColumns, exportPanels.value, {
+function cashExportShared() {
+  return {
     captionRows: [
       { label: 'Créneau', value: shiftSlotLabelShort.value },
       { label: 'À décaisser', value: formatFcfa(shiftTotals.value?.pendingFcfa ?? 0) },
     ],
-  })
+  }
+}
+
+function exportPdf() {
+  exportTablePdf(`Compte rendu caisse — ${businessDate.value}`, cashExportColumns, exportPanels.value, cashExportShared())
 }
 
 function exportExcel() {
-  exportTableExcel(`Compte rendu caisse — ${businessDate.value}`, cashExportColumns, exportPanels.value)
+  exportTableExcel(`Compte rendu caisse — ${businessDate.value}`, cashExportColumns, exportPanels.value, cashExportShared())
+}
+
+function exportWord() {
+  void exportTableWord(`Compte rendu caisse — ${businessDate.value}`, cashExportColumns, exportPanels.value, cashExportShared())
 }
 
 function offShiftDisplayName(panel: OffShiftPanel) {
@@ -676,6 +684,7 @@ load()
           :disabled="loading || !exportPanels.length"
           @pdf="exportPdf"
           @excel="exportExcel"
+          @word="exportWord"
         />
         <UiButton
           class="toolbar-refresh"

@@ -58,6 +58,7 @@ import { immediatePaidInvoiceData } from "../lib/invoice-paid.js";
 import {
   applyExamReclamationRefund,
   ReclamationRefundError,
+  voidAllPaidLabExams,
 } from "../lib/exam-reclamation-refund.js";
 import { assertRoomAvailableForAdmission } from "../lib/hospitalization-rooms.js";
 import { shouldCreateImmediateInvoice, comptabilitePatientWhere, comptabiliteInvoicePatientWhere } from "../lib/patient-billing.js";
@@ -68,11 +69,9 @@ import {
 import { aggregateCollectedForCashier } from "../lib/cashier-personal-stats.js";
 import { applyExamKindPayment } from "../lib/patient-invoice-payments.js";
 import { canAccessModule, type AppUserRole } from "../lib/roles.js";
-import { requireAuth, requireAnyModule, isUiActionPermitted } from "../middleware/auth.js";
+import { requireAuth, requireAnyModule, requireAdmin, isUiActionPermitted } from "../middleware/auth.js";
 import {
-  andWhere,
   receptionistOwnsPatient,
-  receptionistOwnConsultationsWhere,
   receptionistOwnReclamationsWhere,
   receptionistOwnVisitsWhere,
   receptionistScopeUserId,
@@ -418,11 +417,11 @@ function mapLabExamPaid(consultation: {
 
 router.get("/payment-alerts", cashierAccess, async (req, res) => {
   const user = req.user!;
-  const ownConsultations = receptionistOwnConsultationsWhere(user);
   const ownVisits = receptionistOwnVisitsWhere(user);
   const [examRows, consultationInvoices] = await Promise.all([
     prisma.consultation.findMany({
-      where: andWhere(labsPendingApprovalWhere(), ownConsultations),
+      // File examens : partagée (prescriptions pédiatre / tout médecin visibles à toute caisse).
+      where: labsPendingApprovalWhere(),
       select: {
         id: true,
         visitId: true,
@@ -508,7 +507,6 @@ router.get("/stats", cashierAccess, async (req, res) => {
   const user = req.user!;
   const patientWhere = comptabilitePatientWhere();
   const ownVisits = receptionistOwnVisitsWhere(user);
-  const ownConsultations = receptionistOwnConsultationsWhere(user);
   const scopedCashierId = receptionistScopeUserId(user);
   const todayStart = startOfDay(new Date());
   const tomorrowStart = new Date(todayStart);
@@ -524,7 +522,7 @@ router.get("/stats", cashierAccess, async (req, res) => {
     consultationsPending,
   ] = await Promise.all([
     prisma.consultation.findMany({
-      where: andWhere(labsPendingApprovalWhere(), ownConsultations),
+      where: labsPendingApprovalWhere(),
       select: { clinicalNotes: true },
     }).then(rows => rows.filter(row => hasUnpaidCashierQueueExams(row.clinicalNotes))),
     scopedCashierId
@@ -598,7 +596,6 @@ router.get("/", cashierAccess, async (req, res) => {
   const user = req.user!;
   const patientWhere = comptabilitePatientWhere();
   const ownVisits = receptionistOwnVisitsWhere(user);
-  const ownConsultations = receptionistOwnConsultationsWhere(user);
   await syncMissingHospitalizationReferrals(prisma, patientWhere);
   await syncHospitalizationReferralsFromPaymentQueue(prisma, patientWhere);
 
@@ -646,7 +643,7 @@ router.get("/", cashierAccess, async (req, res) => {
       orderBy: [{ type: "asc" }, { name: "asc" }],
     }),
     prisma.consultation.findMany({
-      where: andWhere(labsPendingApprovalWhere(), ownConsultations),
+      where: labsPendingApprovalWhere(),
       include: {
         visit: {
           include: {
@@ -704,7 +701,7 @@ router.get("/", cashierAccess, async (req, res) => {
 
 router.get("/paid-exams", cashierAccess, async (req, res) => {
   const labExamsPaid = await prisma.consultation.findMany({
-    where: andWhere(labsPaidExamsWhere(), receptionistOwnConsultationsWhere(req.user!)),
+    where: labsPaidExamsWhere(),
     include: {
       visit: {
         include: {
@@ -735,6 +732,58 @@ router.get("/paid-exams", cashierAccess, async (req, res) => {
   });
 
   return res.json(labExamsPaid.map(mapLabExamPaid));
+});
+
+router.delete("/paid-exams/:consultationId", cashierAccess, requireAdmin, async (req, res) => {
+  const consultationId = String(req.params.consultationId ?? "").trim();
+  if (!consultationId) {
+    return res.status(400).json({ error: "Consultation introuvable" });
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const consultation = await tx.consultation.findUnique({
+        where: { id: consultationId },
+        include: {
+          visit: {
+            select: {
+              invoices: {
+                where: { type: InvoiceType.LAB_EXAM },
+                select: {
+                  id: true,
+                  type: true,
+                  amountFcfa: true,
+                  paidAmountFcfa: true,
+                  surgeryCaseId: true,
+                  hospitalizationId: true,
+                  createdAt: true,
+                },
+              },
+            },
+          },
+        },
+      });
+      if (!consultation?.visit) {
+        throw new ReclamationRefundError("NOT_FOUND", "Consultation introuvable");
+      }
+      return voidAllPaidLabExams({ tx, consultation });
+    });
+    return res.json({
+      ok: true,
+      totalRefundedFcfa: result.totalRefundedFcfa,
+    });
+  } catch (error) {
+    if (error instanceof ReclamationRefundError) {
+      const status =
+        error.code === "NOT_FOUND"
+          ? 404
+          : error.code === "LAB_RESULTS_LOCKED" || error.code === "SURGERY_LOCKED"
+            ? 409
+            : 400;
+      return res.status(status).json({ error: error.message, code: error.code });
+    }
+    return res.status(400).json({ error: "Impossible de supprimer les examens payés." });
+  }
 });
 
 router.post("/", cashierAccess, async (req, res) => {
@@ -1072,13 +1121,6 @@ router.post("/", cashierAccess, async (req, res) => {
         include: { visit: { include: { patient: true } } },
       });
       if (!existing) return res.status(404).json({ error: "Consultation introuvable" });
-      if (receptionistScopeUserId(user)) {
-        const allowedVisit = await prisma.visit.findFirst({
-          where: { id: existing.visitId, ...receptionistOwnVisitsWhere(user) },
-          select: { id: true },
-        });
-        if (!allowedVisit) return res.status(404).json({ error: "Consultation introuvable" });
-      }
       if (!shouldCreateImmediateInvoice(existing.visit.patient.category)) {
         return res.status(400).json({
           error: "Ce patient associé n'est pas soumis au paiement immédiat des examens.",

@@ -92,6 +92,11 @@ export function isDirectionOrGestionnaire(role: AppUserRole) {
   return role === "COMPTABLE" || role === "GESTIONNAIRE" || role === "ADMIN";
 }
 
+/** Salaires, primes, heures supp. — admin / direction / gestionnaire uniquement. */
+export function canViewEmployeeCompensation(role: AppUserRole) {
+  return DIRECTION_GESTIONNAIRE_ROLES.includes(role);
+}
+
 /**
  * Infos cliniques de consultation + ordonnance pharmacie :
  * médecin prescripteur, ou admin / direction / gestionnaire.

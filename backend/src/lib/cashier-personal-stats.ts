@@ -24,8 +24,12 @@ export async function aggregateCollectedForCashier(
   cashierId: string,
   from: Date,
   to: Date,
+  options?: { patientService?: string },
 ): Promise<CollectedBreakdown> {
-  const slices = await loadCollectedSlicesBetween(from, to, { cashierId });
+  const slices = await loadCollectedSlicesBetween(from, to, {
+    cashierId,
+    patientService: options?.patientService,
+  });
   return sumCollectedBreakdown(slices);
 }
 

@@ -12,6 +12,7 @@ import {
   escapeHtml,
   exportBasename,
   exportWorkbook,
+  exportWorkbookWord,
   rowsToHtmlTable,
   type ExportColumn,
 } from '@/lib/table-export'
@@ -234,6 +235,15 @@ function exportExcel() {
   ])
 }
 
+function exportWord() {
+  if (!report.value) return
+  void exportWorkbookWord(exportBasename('rapport-ventes-pharmacie'), [
+    { name: 'KPI', columns: kpiColumns.value, rows: kpiRows.value },
+    { name: uiText('Top produits'), columns: topProductColumns.value, rows: report.value.topProducts },
+    { name: uiText('Catégories'), columns: categoryColumns.value, rows: report.value.salesByCategory },
+  ])
+}
+
 onMounted(() => {
   void loadPharmacists()
   void loadReport()
@@ -263,7 +273,7 @@ onMounted(() => {
           <option value="7d">{{ uiText('7 derniers jours') }}</option>
           <option value="30d">{{ uiText('30 derniers jours') }}</option>
         </UiSelect>
-        <ExportButtons :disabled="loading || !report" @pdf="exportPdf" @excel="exportExcel" />
+        <ExportButtons :disabled="loading || !report" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadReport">
           {{ uiText('Actualiser') }}
         </UiButton>

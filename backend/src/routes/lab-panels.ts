@@ -57,7 +57,7 @@ const fieldSchema = z.object({
   unit: z.string().max(120).optional().nullable(),
   reference: z.string().max(2000).optional().nullable(),
   defaultValue: z.string().max(2000).optional().nullable(),
-  /** Tarif partiel (FCFA) — omis / null / 0 = pas de tarif unitaire. */
+  /** Tarif partiel (FCFA) — champ hors section, ou tarif de section sur le 1er champ. */
   priceFcfa: optionalFieldPrice,
   hasComment: z.boolean().optional(),
   type: z.enum(["text", "textarea"]).optional(),

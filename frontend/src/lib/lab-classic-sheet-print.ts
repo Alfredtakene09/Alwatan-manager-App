@@ -1,4 +1,4 @@
-import { getLabFormPanel, labFieldCommentKey, type LabFormPanel } from '@/lib/lab-form-panels'
+import { getLabFormPanel, labFieldCommentKey, type LabFormPanel } from './lab-form-panels'
 
 type ClassicRow = {
   key: string
@@ -25,14 +25,14 @@ const STOOL_MICROSCOPIC: ClassicRow[] = [
   { key: 'stoolGiardia', label: 'Gardia.L' },
   { key: 'stoolWormsMicro', label: 'Worms' },
   { key: 'stoolTrophozoite', label: 'E.Hist' },
-  { key: 'stoolUndigested', label: 'Udigested Food' },
+  { key: 'stoolUndigested', label: 'Undigested Food' },
   { key: 'stoolYeast', label: 'Yeast cells' },
   { key: 'stoolOthers', label: 'Other' },
 ]
 
 const URINE_GENERAL: ClassicRow[] = [
-  { key: 'urineColor', label: 'Colour' },
   { key: 'urineReaction', label: 'Reaction' },
+  { key: 'urineColor', label: 'Colour' },
   { key: 'urineAlbumin', label: 'Albumin' },
   { key: 'urineSugar', label: 'Sugar' },
   { key: 'urineAcetone', label: 'Acetone' },
@@ -58,7 +58,25 @@ const BUCKET_ROWS: Record<Bucket, ClassicRow[]> = {
   urineDeposit: URINE_DEPOSIT,
 }
 
-const EXTRA_EXCLUDED_PREFIX_KEYS = new Set(['urineHcg', 'stoolTrypanosoma'])
+const EXTRA_EXCLUDED_PREFIX_KEYS = new Set([
+  'urineHcg',
+  'urine_hcg',
+  'urinehcg',
+  'stoolTrypanosoma',
+])
+
+/** Lignes toujours en tête de section (même vides) dès que la section a du contenu. */
+const PINNED_HEAD: Partial<Record<Bucket, ClassicRow[]>> = {
+  urineGeneral: [{ key: 'urineReaction', label: 'Reaction' }],
+  urineDeposit: [
+    { key: 'urinePusCells', label: 'Pus cels' },
+    { key: 'urineRbcs', label: 'RBCs' },
+  ],
+  stoolMicro: [
+    { key: 'stoolPusCells', label: 'Pus cels' },
+    { key: 'stoolRbcs', label: 'RBCs' },
+  ],
+}
 
 const URINE_GENERAL_LEFTOVER = new Set([
   'urinePh',
@@ -159,8 +177,32 @@ function humanizeKey(key: string) {
     .trim()
 }
 
+function isUrineHcgField(key: string, label?: string) {
+  const compact = key.toLowerCase().replace(/[_\s-]/g, '')
+  if (compact === 'urinehcg' || compact === 'urinehcgtest') return true
+  return Boolean(label && /urine\s*hcg/i.test(label))
+}
+
+function classicPrintLabel(label: string) {
+  const t = label.trim()
+  if (/^crytals$/i.test(t)) return 'Crystals'
+  if (/^pus cells$/i.test(t)) return 'Pus cels'
+  if (/udigested food/i.test(t) || /undisgested food/i.test(t) || /undigested food/i.test(t)) {
+    return 'Undigested Food'
+  }
+  if (/glyc[eé]mie/i.test(t) || /^blood glucose$/i.test(t) || /^fbg$/i.test(t) || /^rbg$/i.test(t)) {
+    return 'RBG (RBS)'
+  }
+  return t
+}
+
+function extraPrintLabel(field: { key: string; label: string }) {
+  if (field.key === 'fbg' || field.key === 'rbg') return 'RBG (RBS)'
+  return classicPrintLabel(field.label)
+}
+
 function isStoolOrUrineResultKey(key: string) {
-  if (EXTRA_EXCLUDED_PREFIX_KEYS.has(key)) return false
+  if (EXTRA_EXCLUDED_PREFIX_KEYS.has(key) || isUrineHcgField(key)) return false
   if (key.endsWith('__comment')) return false
   if (key.startsWith('stool') || key.startsWith('urine')) return true
   return ALIAS_TO_CANONICAL.has(key.toLowerCase())
@@ -219,41 +261,50 @@ function collectBucketRows(
   const defs = BUCKET_ROWS[bucket]
   const seenLabels = new Set<string>()
 
+  const pushRow = (label: string, value: string) => {
+    const printLabel = classicPrintLabel(label)
+    if (seenLabels.has(printLabel.toLowerCase())) return
+    rows.push({ label: printLabel, value })
+    seenLabels.add(printLabel.toLowerCase())
+  }
+
   for (const def of defs) {
     const value = takeValue(values, used, candidatesFor(def.key))
     if (!value) continue
-    rows.push({ label: def.label, value })
-    seenLabels.add(def.label.toLowerCase())
+    pushRow(def.label, value)
   }
 
   if (bucket === 'stoolGeneral') {
     const ph = takeValue(values, used, candidatesFor('stoolPh'))
-    if (ph) {
-      rows.push({ label: byKey.get('stoolPh')?.label ?? 'PH', value: ph })
-    }
+    if (ph) pushRow(byKey.get('stoolPh')?.label ?? 'PH', ph)
   }
   if (bucket === 'urineGeneral') {
     for (const key of URINE_GENERAL_LEFTOVER) {
       const value = takeValue(values, used, candidatesFor(key))
       if (!value) continue
-      rows.push({ label: byKey.get(key)?.label ?? humanizeKey(key.replace(/^urine/, '')), value })
+      pushRow(byKey.get(key)?.label ?? humanizeKey(key.replace(/^urine/, '')), value)
     }
   }
 
   for (const section of panel?.sections ?? []) {
     if (bucketFromSectionTitle(section.title) !== bucket) continue
     for (const field of section.fields) {
-      if (EXTRA_EXCLUDED_PREFIX_KEYS.has(field.key) || used.has(field.key)) continue
+      if (
+        EXTRA_EXCLUDED_PREFIX_KEYS.has(field.key) ||
+        isUrineHcgField(field.key, field.label) ||
+        used.has(field.key)
+      ) {
+        continue
+      }
       const value = takeValue(values, used, [field.key, toSnake(field.key)])
       if (!value) continue
-      if (seenLabels.has(field.label.toLowerCase())) continue
-      rows.push({ label: field.label, value })
-      seenLabels.add(field.label.toLowerCase())
+      pushRow(field.label, value)
     }
   }
 
   for (const [key, raw] of Object.entries(values)) {
     if (used.has(key) || key.endsWith('__comment') || EXTRA_EXCLUDED_PREFIX_KEYS.has(key)) continue
+    if (isUrineHcgField(key, byKey.get(key)?.label)) continue
     if (!String(raw ?? '').trim()) continue
     const canonical = ALIAS_TO_CANONICAL.get(key.toLowerCase()) ?? key
     let guessed: Bucket | null = CANONICAL_BUCKET.get(canonical) ?? null
@@ -265,13 +316,44 @@ function collectBucketRows(
     if (guessed !== bucket) continue
     const value = takeValue(values, used, [key])
     if (!value) continue
-    const label = byKey.get(key)?.label ?? humanizeKey(key.replace(/^(stool|urine)/, ''))
-    if (seenLabels.has(label.toLowerCase())) continue
-    rows.push({ label, value })
-    seenLabels.add(label.toLowerCase())
+    pushRow(byKey.get(key)?.label ?? humanizeKey(key.replace(/^(stool|urine)/, '')), value)
   }
 
-  return rows
+  return ensurePinnedHead(bucket, rows, values, used)
+}
+
+function ensurePinnedHead(
+  bucket: Bucket,
+  rows: Array<{ label: string; value: string }>,
+  values: Record<string, string>,
+  used: Set<string>,
+) {
+  const pinned = PINNED_HEAD[bucket]
+  if (!pinned?.length || !rows.length) return rows
+
+  const head: Array<{ label: string; value: string }> = []
+  const rest = [...rows]
+
+  for (const def of pinned) {
+    const printLabel = classicPrintLabel(def.label)
+    const idx = rest.findIndex((row) => row.label.toLowerCase() === printLabel.toLowerCase())
+    if (idx >= 0) {
+      head.push(rest[idx]!)
+      rest.splice(idx, 1)
+      continue
+    }
+    const value = takeValue(values, used, candidatesFor(def.key))
+    head.push({ label: printLabel, value })
+  }
+
+  return [...head, ...rest]
+}
+
+function withUnit(value: string, unit?: string) {
+  const trimmedUnit = unit?.trim() ?? ''
+  if (!trimmedUnit) return value
+  if (value.toLowerCase().includes(trimmedUnit.toLowerCase())) return value
+  return `${value} ${trimmedUnit}`
 }
 
 function extraFilledRows(
@@ -286,6 +368,7 @@ function extraFilledRows(
     if (bucketFromSectionTitle(section.title)) continue
     for (const field of section.fields) {
       if (seen.has(field.key) || used.has(field.key)) continue
+      if (isUrineHcgField(field.key, field.label)) continue
       const value = fieldValue(values, field.key)
       if (!value) continue
       const fallback = field.defaultValue?.trim() ?? ''
@@ -293,7 +376,7 @@ function extraFilledRows(
       seen.add(field.key)
       used.add(field.key)
       used.add(labFieldCommentKey(field.key))
-      rows.push({ label: field.label, value })
+      rows.push({ label: extraPrintLabel(field), value: withUnit(value, field.unit) })
     }
   }
   return rows
@@ -313,6 +396,7 @@ function renderRows(rows: Array<{ label: string; value: string }>) {
 }
 
 function renderSection(title: string, rows: Array<{ label: string; value: string }>, sub = false) {
+  if (!rows.length && sub) return ''
   const titleClass = sub
     ? 'lab-classic-sheet__title lab-classic-sheet__title--sub'
     : 'lab-classic-sheet__title'
@@ -327,6 +411,19 @@ function renderSection(title: string, rows: Array<{ label: string; value: string
   `
 }
 
+function renderEqualsRows(rows: Array<{ label: string; value: string }>) {
+  return rows
+    .map(
+      (row) => `
+      <div class="lab-classic-sheet__eq-row">
+        <span class="lab-classic-sheet__eq-label">${escapeHtml(row.label)}</span>
+        <span class="lab-classic-sheet__eq-sign">=</span>
+        <span class="lab-classic-sheet__eq-value">${escapeHtml(row.value)}</span>
+      </div>`,
+    )
+    .join('')
+}
+
 export const LAB_CLASSIC_SHEET_STYLES = `
   .lab-classic-sheet {
     width: 100%;
@@ -334,14 +431,32 @@ export const LAB_CLASSIC_SHEET_STYLES = `
     background: transparent;
   }
   .lab-classic-sheet__extras {
-    margin: 0 0 14px;
-    padding: 8px 12px 10px;
-    border: 1.5px solid #0f172a;
-    background: #fff;
+    margin: 14px 0 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    page-break-inside: avoid;
+    break-inside: avoid;
   }
-  .lab-classic-sheet__extra-line {
-    margin: 0 0 4px;
+  .lab-classic-sheet__eq-row {
+    display: grid;
+    grid-template-columns: max-content 18px minmax(0, 1fr);
+    align-items: baseline;
+    column-gap: 10px;
+    margin: 0 0 6px;
+    font-size: 16px;
+    line-height: 1.4;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .lab-classic-sheet__eq-label,
+  .lab-classic-sheet__eq-value {
     font-weight: 600;
+    color: #0f172a;
+  }
+  .lab-classic-sheet__eq-sign {
+    text-align: center;
+    font-weight: 700;
   }
   .lab-classic-sheet__table {
     width: 100%;
@@ -349,13 +464,19 @@ export const LAB_CLASSIC_SHEET_STYLES = `
     table-layout: fixed;
     border: 1.5px solid #0f172a;
     background: #fff;
+    page-break-inside: avoid;
+    break-inside: avoid;
   }
-  .lab-classic-sheet__table td {
-    width: 33.33%;
+  .lab-classic-sheet__table td,
+  .lab-classic-sheet__col {
+    width: 50%;
     vertical-align: top;
     padding: 10px 12px 12px;
     border: 1.5px solid #0f172a;
     background: #fff;
+  }
+  .lab-classic-sheet__col--full {
+    width: 100%;
   }
   .lab-classic-sheet__title {
     margin: 0 0 10px;
@@ -381,6 +502,8 @@ export const LAB_CLASSIC_SHEET_STYLES = `
     column-gap: 6px;
     font-size: 16px;
     line-height: 1.4;
+    page-break-inside: avoid;
+    break-inside: avoid;
   }
   .lab-classic-sheet__label {
     font-weight: 600;
@@ -397,8 +520,26 @@ export const LAB_CLASSIC_SHEET_STYLES = `
   }
 `
 
-/** Tests hors selles/urines au-dessus, puis 4 sections dans 3 colonnes. */
-export function renderClassicStoolUrineTable(slug: string, values: Record<string, string>) {
+export type ClassicSheetRow = { label: string; value: string }
+
+export type ClassicSheetColumn = {
+  key: 'urine' | 'stool'
+  sections: Array<{ title: string; sub?: boolean; rows: ClassicSheetRow[] }>
+}
+
+export type ClassicSheetModel = {
+  columns: ClassicSheetColumn[]
+  extras: ClassicSheetRow[]
+}
+
+/**
+ * Modèle d'impression « 2e investigation » : 2 colonnes (urine | selles),
+ * analyses ponctuelles (GE, HB, CRP…) en dessous.
+ */
+export function buildClassicStoolUrineModel(
+  slug: string,
+  values: Record<string, string>,
+): ClassicSheetModel {
   const panel = getLabFormPanel(slug)
   const byKey = panelFieldLookup(panel)
   const used = new Set<string>()
@@ -409,23 +550,57 @@ export function renderClassicStoolUrineTable(slug: string, values: Record<string
   const urineDeposit = collectBucketRows('urineDeposit', values, used, panel, byKey)
   const extras = extraFilledRows(panel, values, used)
 
-  const extrasHtml = extras.length
-    ? `<div class="lab-classic-sheet__extras">${renderSection('Investigations', extras)}</div>`
+  const columns: ClassicSheetColumn[] = []
+  if (urineGeneral.length || urineDeposit.length) {
+    const sections: ClassicSheetColumn['sections'] = [
+      { title: 'Urine Analysis', rows: urineGeneral },
+    ]
+    if (urineDeposit.length) sections.push({ title: 'Diposite', sub: true, rows: urineDeposit })
+    columns.push({ key: 'urine', sections })
+  }
+  if (stoolGeneral.length || stoolMicro.length) {
+    const sections: ClassicSheetColumn['sections'] = [
+      { title: 'Stool General', rows: stoolGeneral },
+    ]
+    if (stoolMicro.length) sections.push({ title: 'Microscopic', sub: true, rows: stoolMicro })
+    columns.push({ key: 'stool', sections })
+  }
+
+  return { columns, extras }
+}
+
+function renderColumn(column: ClassicSheetColumn) {
+  return column.sections
+    .map((section, index) => renderSection(section.title, section.rows, Boolean(section.sub) || index > 0))
+    .join('')
+}
+
+/** Feuille selles/urines en 2 colonnes ; les autres tests du même formulaire passent en dessous. */
+export function renderClassicStoolUrineTable(slug: string, values: Record<string, string>) {
+  const model = buildClassicStoolUrineModel(slug, values)
+  const colCount = model.columns.length
+  const colClass = colCount === 1 ? 'lab-classic-sheet__col lab-classic-sheet__col--full' : 'lab-classic-sheet__col'
+
+  const tableHtml = colCount
+    ? `<table class="lab-classic-sheet__table" data-classic-cols="${colCount}">
+        <tr>
+          ${model.columns
+            .map((column) => `<td class="${colClass}">${renderColumn(column)}</td>`)
+            .join('')}
+        </tr>
+      </table>`
     : ''
+
+  const extrasHtml = model.extras.length
+    ? `<div class="lab-classic-sheet__extras">${renderEqualsRows(model.extras)}</div>`
+    : ''
+
+  if (!tableHtml && !extrasHtml) return ''
 
   return `
     <div class="lab-classic-sheet">
+      ${tableHtml}
       ${extrasHtml}
-      <table class="lab-classic-sheet__table">
-        <tr>
-          <td>${renderSection('Stool General', stoolGeneral)}</td>
-          <td>${renderSection('Microscopic', stoolMicro)}</td>
-          <td>
-            ${renderSection('Urine General', urineGeneral)}
-            ${renderSection('Diposite', urineDeposit, true)}
-          </td>
-        </tr>
-      </table>
     </div>
   `
 }

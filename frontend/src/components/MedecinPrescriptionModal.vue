@@ -69,7 +69,7 @@ const props = withDefaults(
     /** Affiche l’onglet résumé (comme l’ancien « Voir ») en premier. */
     showResumeTab?: boolean
     /** Onglet d’ouverture : résumé (Voir) ou formulaire d’édition (Modifier). */
-    startTab?: 'resume' | 'edit'
+    startTab?: 'resume' | 'edit' | 'notes'
   }>(),
   {
     showResumeTab: false,
@@ -190,6 +190,7 @@ const labLockedHint = computed(() => {
 const modalTitle = computed(() => {
   if (props.showResumeTab && consultModalTab.value === 'resume') return uiText('Dossier consulté')
   if (workingMode.value === 'append') return uiText('Ajouter des examens')
+  if (props.startTab === 'notes') return uiText('Modifier le dossier')
   if (isLabLocked.value) return uiText('Ordonnance / notes')
   return uiText('Modifier la prescription')
 })
@@ -279,8 +280,11 @@ const existingExamsFlat = computed(() =>
 
 function resetForm() {
   workingMode.value = props.mode
+  const startOnNotes = props.startTab === 'notes'
   const startOnEdit = props.startTab === 'edit' || (!props.showResumeTab && props.mode === 'edit')
-  if (startOnEdit) {
+  if (startOnNotes) {
+    consultModalTab.value = 'notes'
+  } else if (startOnEdit) {
     consultModalTab.value = isLabLocked.value ? 'pharmacy' : 'exams'
   } else {
     consultModalTab.value = props.showResumeTab && props.mode === 'edit' ? 'resume' : 'exams'
@@ -557,7 +561,6 @@ async function submit() {
               </span>
             </button>
             <button
-              v-if="showConsultationPanel || showResumeTab"
               type="button"
               class="consult-tabs__btn"
               :class="{ 'consult-tabs__btn--active': consultModalTab === 'notes' }"
@@ -678,7 +681,7 @@ async function submit() {
             </div>
           </section>
 
-          <section v-show="consultModalTab === 'exams'" class="info-section info-section--picker">
+          <section v-if="consultModalTab === 'exams'" class="info-section info-section--picker">
             <MultiExamPrescriptionPicker
               v-model="selectedExamsByKind"
               v-model:comments="examCommentsByKind"
@@ -690,7 +693,6 @@ async function submit() {
           </section>
 
           <section
-            v-if="showConsultationPanel || showResumeTab"
             v-show="consultModalTab === 'notes'"
             class="info-section info-section--consultation"
           >

@@ -6,6 +6,11 @@ import { DEFAULT_CLINIC_SERVICES } from "../src/lib/clinic-services-seed.js";
 import { DEFAULT_EXPENSE_INDICES } from "../src/lib/expense-indices-seed.js";
 import { DEFAULT_EXPENSE_CATEGORIES } from "../src/lib/expense-categories-seed.js";
 import { DEFAULT_PRODUCT_FORMS } from "../src/lib/product-forms-seed.js";
+import {
+  PETITE_CHIRURGIE_CATALOG_ITEMS,
+  PETITE_CHIRURGIE_SURGEON_PERCENT,
+} from "../src/lib/petite-chirurgie-catalog.js";
+import { ensurePrintedTariffCatalogItems } from "../src/lib/printed-tariff-catalog.js";
 
 /** Comptes créés par le seed — conservés lors d'une réinitialisation de la base. */
 export const DEFAULT_STAFF_USERNAMES = ["Root", "gestionnaire", "pharmacie"] as const;
@@ -68,6 +73,28 @@ export async function seedReferenceData() {
   for (const intervention of interventions) {
     await prisma.interventionType.upsert({ where: { code: intervention.code }, update: intervention, create: intervention });
   }
+
+  const blocService = await prisma.clinicService.findFirst({
+    where: { name: "Bloc opératoire" },
+    select: { id: true },
+  });
+  for (const item of PETITE_CHIRURGIE_CATALOG_ITEMS) {
+    await prisma.interventionType.upsert({
+      where: { code: item.code },
+      // Additif : ne pas écraser un tarif déjà saisi en production.
+      update: {},
+      create: {
+        code: item.code,
+        label: item.label,
+        category: InterventionCategory.PETITE_C,
+        totalCostFcfa: item.totalCostFcfa,
+        surgeonPercent: PETITE_CHIRURGIE_SURGEON_PERCENT,
+        clinicServiceId: blocService?.id ?? null,
+      },
+    });
+  }
+
+  await ensurePrintedTariffCatalogItems();
 
   for (const kind of Object.values(ExamCatalogKind)) {
     for (const item of EXAM_CATALOG_SEED[kind]) {

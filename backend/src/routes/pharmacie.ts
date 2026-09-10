@@ -10,6 +10,7 @@ import { applyStockMovement, recordDispensationMovement } from "../lib/pharmacy-
 import { listPharmacyStockAlerts, listPharmacyExpiryAlerts } from "../lib/pharmacy-alerts.js";
 import { buildPharmacyReport } from "../lib/pharmacy-reports.js";
 import { buildPharmacyRevenueReport } from "../lib/pharmacy-revenue.js";
+import { parseLimitParam, yearMonthRange } from "../lib/year-month.js";
 import {
   applyPharmacySaleReturns,
   canRegisterPharmacyReturn,
@@ -1196,10 +1197,16 @@ router.delete("/external-clients/:id", async (req, res) => {
 
 router.get("/stock-movements", async (req, res) => {
   const productId = typeof req.query.productId === "string" ? req.query.productId : undefined;
+  const month = typeof req.query.month === "string" ? req.query.month : undefined;
+  const range = yearMonthRange(month);
+  const take = parseLimitParam(req.query.limit, 200, 10_000);
   const items = await prisma.stockMovement.findMany({
-    where: productId ? { productId } : undefined,
+    where: {
+      ...(productId ? { productId } : {}),
+      ...(range ? { createdAt: { gte: range.from, lt: range.to } } : {}),
+    },
     orderBy: { createdAt: "desc" },
-    take: 200,
+    take,
     include: {
       product: { select: { id: true, name: true, sku: true } },
       supplier: { select: { id: true, name: true } },

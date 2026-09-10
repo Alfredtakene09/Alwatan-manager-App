@@ -5,7 +5,7 @@ import { Package, Plus, RefreshCw, Save, Search } from '@lucide/vue'
 import api from '@/api/client'
 import { canAccessModule, formatFcfa } from '@/lib/roles'
 import { defaultExpiryDateInput, PHARMACEUTICAL_FORMS } from '@/lib/pharmacy-product-forms'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
 import type { PharmacyFormRecord } from '@/components/pharmacie/PharmacyFormsPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
@@ -131,34 +131,41 @@ const filteredItems = computed(() => {
 
 const tableRows = computed(() => {
   void localeCode.value
-  return filteredItems.value.map((item) => {
-    const purchase = item.purchasePriceFcfa
-    const hasPurchase = purchase != null && purchase > 0
-    const profitFcfa = hasPurchase ? item.unitPriceFcfa - purchase : null
-    return {
-      id: item.id,
-      name: item.dosage ? `${item.name} — ${item.dosage}` : item.name,
-      form: item.pharmaceuticalForm || '—',
-      category: item.category?.name ?? '—',
-      price: formatFcfa(item.unitPriceFcfa),
-      priceSort: item.unitPriceFcfa,
-      purchasePrice: hasPurchase ? formatFcfa(purchase) : '—',
-      purchasePriceSort: hasPurchase ? purchase : -1,
-      profit: profitFcfa != null ? formatFcfa(profitFcfa) : '—',
-      profitSort: profitFcfa ?? Number.NEGATIVE_INFINITY,
-      quantity: item.quantity,
-      minStock: item.minStock,
-      stockLabel: translateTemplate('{n} en stock', { n: item.quantity }),
-      stockVariant: item.quantity <= item.minStock ? 'danger' : 'success',
-      statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),
-      statusVariant: item.active ? 'success' : 'danger',
-      toggleLabel: item.active ? uiText('Désactiver') : uiText('Activer'),
-      isActive: item.active,
-      canDelete: canManageCatalog.value,
-      showEdit: canManageCatalog.value,
-      showToggle: canManageCatalog.value,
-    }
-  })
+  return filteredItems.value.map(toProductExportRow)
+})
+
+function toProductExportRow(item: PharmacyProductRecord) {
+  const purchase = item.purchasePriceFcfa
+  const hasPurchase = purchase != null && purchase > 0
+  const profitFcfa = hasPurchase ? item.unitPriceFcfa - purchase : null
+  return {
+    id: item.id,
+    name: item.dosage ? `${item.name} — ${item.dosage}` : item.name,
+    form: item.pharmaceuticalForm || '—',
+    category: item.category?.name ?? '—',
+    price: formatFcfa(item.unitPriceFcfa),
+    priceSort: item.unitPriceFcfa,
+    purchasePrice: hasPurchase ? formatFcfa(purchase) : '—',
+    purchasePriceSort: hasPurchase ? purchase : -1,
+    profit: profitFcfa != null ? formatFcfa(profitFcfa) : '—',
+    profitSort: profitFcfa ?? Number.NEGATIVE_INFINITY,
+    quantity: item.quantity,
+    minStock: item.minStock,
+    stockLabel: translateTemplate('{n} en stock', { n: item.quantity }),
+    stockVariant: item.quantity <= item.minStock ? 'danger' : 'success',
+    statusLabel: item.active ? uiText('Actif') : uiText('Inactif'),
+    statusVariant: item.active ? 'success' : 'danger',
+    toggleLabel: item.active ? uiText('Désactiver') : uiText('Activer'),
+    isActive: item.active,
+    canDelete: canManageCatalog.value,
+    showEdit: canManageCatalog.value,
+    showToggle: canManageCatalog.value,
+  }
+}
+
+const catalogExportRows = computed(() => {
+  void localeCode.value
+  return items.value.map(toProductExportRow)
 })
 
 function setFormFeedback(text: string, type: 'error' | 'success' | 'info' = 'error') {
@@ -448,7 +455,7 @@ onMounted(async () => {
   await Promise.all([loadItems(), loadSuppliers()])
 })
 
-type ProductExportRow = (typeof tableRows.value)[number]
+type ProductExportRow = ReturnType<typeof toProductExportRow>
 
 const productExportColumns = computed<ExportColumn<ProductExportRow>[]>(() => {
   void localeCode.value
@@ -465,12 +472,36 @@ const productExportColumns = computed<ExportColumn<ProductExportRow>[]>(() => {
   ]
 })
 
+function productExportTotals() {
+  const saleValue = items.value.reduce((sum, item) => sum + item.quantity * item.unitPriceFcfa, 0)
+  const purchaseValue = items.value.reduce(
+    (sum, item) => sum + item.quantity * (item.purchasePriceFcfa ?? 0),
+    0,
+  )
+  return [
+    { label: uiText('Nombre de médicaments'), value: String(items.value.length) },
+    { label: uiText('Valeur stock (prix vente)'), value: formatFcfa(saleValue) },
+    { label: uiText('Valeur stock (prix achat)'), value: formatFcfa(purchaseValue) },
+  ]
+}
+
+function productExportShared() {
+  return {
+    captionRows: [{ label: uiText('Périmètre'), value: uiText('Catalogue complet') }],
+    totalsRows: productExportTotals(),
+  }
+}
+
 function exportPdf() {
-  exportTablePdf(uiText('Produits pharmacie'), productExportColumns.value, tableRows.value)
+  exportTablePdf(uiText('Produits pharmacie'), productExportColumns.value, catalogExportRows.value, productExportShared())
 }
 
 function exportExcel() {
-  exportTableExcel(uiText('Produits pharmacie'), productExportColumns.value, tableRows.value)
+  exportTableExcel(uiText('Produits pharmacie'), productExportColumns.value, catalogExportRows.value, productExportShared())
+}
+
+function exportWord() {
+  void exportTableWord(uiText('Produits pharmacie'), productExportColumns.value, catalogExportRows.value, productExportShared())
 }
 
 defineExpose({ reload: loadItems })
@@ -500,7 +531,7 @@ defineExpose({ reload: loadItems })
       <UiButton variant="ghost" size="sm" :icon="Search" :disabled="loading" @click="applyFilters">
         {{ uiText('Rechercher') }}
       </UiButton>
-      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
+      <ExportButtons :disabled="loading || !items.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
         {{ uiText('Actualiser') }}
       </UiButton>

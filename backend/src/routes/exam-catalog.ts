@@ -12,6 +12,8 @@ import {
   resolveDoctorClinicServices,
 } from "../lib/clinic-service-exam.js";
 import { ensureKinesitherapieCatalogItems } from "../lib/kinesitherapie-catalog.js";
+import { ensurePetiteChirurgieCatalogItems } from "../lib/petite-chirurgie-catalog.js";
+import { ensurePrintedTariffCatalogItems } from "../lib/printed-tariff-catalog.js";
 import { requireAuth, requireAnyModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -81,6 +83,8 @@ async function appendPrescriptionDestinationServices(
 
 router.get("/", async (req, res) => {
   await ensureKinesitherapieCatalogItems();
+  await ensurePetiteChirurgieCatalogItems();
+  await ensurePrintedTariffCatalogItems();
 
   // Un médecin ne peut consulter que son propre périmètre (pas un autre doctorId).
   const isMedecin = req.user?.role === "MEDECIN";

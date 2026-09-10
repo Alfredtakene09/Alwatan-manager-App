@@ -80,14 +80,12 @@ export function translateUi(text: string | null | undefined): string {
 }
 
 /**
- * Libellé d’examen / formulaire labo : en arabe, conserver l’anglais (pas la traduction arabe).
+ * Libellé d’examen / formulaire / champ labo : toujours le texte enregistré
+ * (catalogue / panels), sans traduction — y compris en arabe (réception, labo, médecin).
  */
 export function translateExamName(text: string | null | undefined): string {
   if (text == null) return ''
-  if (activeLocale() === 'ar') {
-    return translateUiLocale(text, 'en')
-  }
-  return translateUi(text)
+  return String(text)
 }
 
 /** Traduction figée vers une locale (ex. tickets thermiques toujours en arabe). */

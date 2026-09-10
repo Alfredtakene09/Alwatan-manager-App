@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FileDown, FileSpreadsheet } from '@lucide/vue'
+import { FileDown, FileSpreadsheet, FileText } from '@lucide/vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
 
@@ -11,18 +11,21 @@ withDefaults(
     size?: 'sm' | 'md' | 'lg'
     showPdf?: boolean
     showExcel?: boolean
+    showWord?: boolean
   }>(),
   {
     disabled: false,
     size: 'sm',
     showPdf: true,
     showExcel: true,
+    showWord: true,
   },
 )
 
 defineEmits<{
   pdf: []
   excel: []
+  word: []
 }>()
 </script>
 
@@ -47,6 +50,16 @@ defineEmits<{
       @click="$emit('excel')"
     >
       Exporter Excel
+    </UiButton>
+    <UiButton
+      v-if="showWord && canSeeUiAction('export.word')"
+      variant="outline"
+      :size="size"
+      :icon="FileText"
+      :disabled="disabled"
+      @click="$emit('word')"
+    >
+      Exporter Word
     </UiButton>
   </div>
 </template>

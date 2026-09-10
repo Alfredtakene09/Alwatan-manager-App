@@ -11,7 +11,7 @@ import {
   unitsToPackaging,
 } from '@/lib/logistics-packaging'
 import { resolvePackagingMode } from '@/lib/logistics-units'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import type { LogisticsItemRecord } from '@/components/logistique/LogisticsItemsPanel.vue'
 import type { LogisticsSupplierRecord } from '@/components/logistique/LogisticsSuppliersPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
@@ -393,6 +393,10 @@ function exportExcel() {
   exportTableExcel('Mouvements de stock logistique', movementExportColumns, tableRows.value)
 }
 
+function exportWord() {
+  void exportTableWord('Mouvements de stock logistique', movementExportColumns, tableRows.value)
+}
+
 defineExpose({ reload })
 </script>
 
@@ -403,7 +407,7 @@ defineExpose({ reload })
         <option value="">Tous les articles</option>
         <option v-for="p in items" :key="p.id" :value="p.id">{{ p.name }}</option>
       </select>
-      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
+      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="reload">
         Actualiser
       </UiButton>

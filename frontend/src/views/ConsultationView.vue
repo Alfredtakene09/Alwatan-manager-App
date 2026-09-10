@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useSilentRefresh } from '@/composables/useSilentRefresh'
 import { useRoute } from 'vue-router'
 import {
@@ -183,10 +183,13 @@ async function loadVisits(opts?: { silent?: boolean }) {
   try {
     const queue = isAdminSupervision.value ? 'supervision' : 'pending'
     const { data } = await api.get('/visits', { params: { queue } })
-    visits.value = data
-    if (modalVisitId.value && !data.some((v: ConsultationVisitRow) => v.id === modalVisitId.value)) {
-      closeModal()
-    }
+    const openId = modalVisitId.value
+    const openVisit = openId ? visits.value.find((visit) => visit.id === openId) : null
+    const incoming = Array.isArray(data) ? data : []
+    visits.value =
+      openVisit && !incoming.some((visit: ConsultationVisitRow) => visit.id === openVisit.id)
+        ? [...incoming, openVisit]
+        : incoming
   } finally {
     if (!opts?.silent) loading.value = false
     // Aussi en silent poll : sinon la carte KPI « Consultation » reste figée
@@ -416,22 +419,36 @@ function onMedecinQueueUpdated(event: Event) {
   if (isAdminSupervision.value) return
   const detail = (event as CustomEvent<{ visits: ConsultationVisitRow[] }>).detail
   if (!detail || !Array.isArray(detail.visits)) return
-  visits.value = detail.visits
-  if (modalVisitId.value && !detail.visits.some((v) => v.id === modalVisitId.value)) {
-    closeModal()
-  }
+  const openId = modalVisitId.value
+  const openVisit = openId ? visits.value.find((visit) => visit.id === openId) : null
+  const incoming = detail.visits.filter((visit) => visit.id !== openId)
+  visits.value = openVisit ? [...incoming, openVisit] : incoming
   statsRefreshKey.value += 1
+}
+
+async function openVisitFromQuery(visitId: unknown) {
+  if (typeof visitId !== 'string' || !visitId) return
+  if (await ensureVisitAvailable(visitId)) {
+    await openConsultModal(visitId)
+  }
 }
 
 onMounted(async () => {
   window.addEventListener(MEDECIN_PENDING_QUEUE_EVENT, onMedecinQueueUpdated)
   await Promise.all([loadVisits(), loadTransferServices()])
   if (isAdminSupervision.value) return
-  const visitId = route.query.visit
-  if (typeof visitId === 'string' && (await ensureVisitAvailable(visitId))) {
-    await openConsultModal(visitId)
-  }
+  await openVisitFromQuery(route.query.visit)
 })
+
+watch(
+  () => route.query.visit,
+  (visitId) => {
+    if (isAdminSupervision.value) return
+    if (typeof visitId === 'string' && visitId && visitId !== modalVisitId.value) {
+      void openVisitFromQuery(visitId)
+    }
+  },
+)
 
 onUnmounted(() => {
   window.removeEventListener(MEDECIN_PENDING_QUEUE_EVENT, onMedecinQueueUpdated)
@@ -614,7 +631,7 @@ onUnmounted(() => {
               </button>
             </div>
 
-            <section v-show="consultModalTab === 'exams'" class="info-section info-section--exams">
+            <section v-if="consultModalTab === 'exams'" class="info-section info-section--exams">
               <MultiExamPrescriptionPicker
                 v-model="selectedExamsByKind"
                 v-model:comments="examCommentsByKind"

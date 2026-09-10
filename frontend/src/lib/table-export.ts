@@ -1,25 +1,35 @@
 import * as XLSX from 'xlsx'
 import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
+import { formatAppDateTime } from '@/i18n/locale-format'
+import { translateUi } from '@/i18n/translate'
+import { CLINIC, clinicTaxLine } from '@/lib/clinic'
+import {
+  escapeHtml,
+  rowsToHtmlTable,
+  rowsToMatrix,
+  type ExportCaptionRow,
+  type ExportCell,
+  type ExportColumn,
+} from '@/lib/table-export-html'
+import { buildWordDocument, packWordBlob, type WordSheetDef } from '@/lib/table-export-word'
 
-export type ExportCell = string | number | boolean | null | undefined
+export { escapeHtml, rowsToHtmlTable, rowsToMatrix }
+export type { ExportCaptionRow, ExportCell, ExportColumn }
 
-export type ExportColumn<T> = {
-  header: string
-  value: (row: T) => ExportCell
+export type TableExportOptions = {
+  captionRows?: ExportCaptionRow[]
+  totalsRows?: ExportCaptionRow[]
+  filename?: string
+  sheetName?: string
+  autoPrint?: boolean
+  generatedAt?: Date
 }
 
-function cellText(value: ExportCell): string {
-  if (value == null) return ''
-  if (typeof value === 'boolean') return value ? 'Oui' : 'Non'
-  return String(value)
-}
-
-export function escapeHtml(value: ExportCell): string {
-  return cellText(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+export type WorkbookSheetDef<T = any> = {
+  name: string
+  columns: ExportColumn<T>[]
+  rows: T[]
+  totalsRows?: ExportCaptionRow[]
 }
 
 function stamp(): string {
@@ -39,64 +49,81 @@ export function exportBasename(title: string): string {
   return `${slug || 'export'}-${stamp()}`
 }
 
-export function rowsToMatrix<T>(columns: ExportColumn<T>[], rows: T[]): string[][] {
-  const header = columns.map((c) => c.header)
-  const body = rows.map((row) => columns.map((c) => cellText(c.value(row))))
-  return [header, ...body]
+/** Date de génération + filtres appliqués (en-tête du PDF / Word). */
+export function defaultReportCaptionRows(
+  extra: ExportCaptionRow[] = [],
+  generatedAt = new Date(),
+): ExportCaptionRow[] {
+  return [
+    { label: translateUi('Date de génération'), value: formatAppDateTime(generatedAt) },
+    ...extra,
+  ]
 }
 
-export function rowsToHtmlTable<T>(
-  columns: ExportColumn<T>[],
-  rows: T[],
-  extras?: { captionRows?: Array<{ label: string; value: string }> },
-): string {
-  const caption = (extras?.captionRows ?? [])
-    .map((r) => `<div class="row"><span>${escapeHtml(r.label)}</span><strong>${escapeHtml(r.value)}</strong></div>`)
-    .join('')
-  const head = columns.map((c) => `<th>${escapeHtml(c.header)}</th>`).join('')
-  const body = rows
-    .map((row, index) => {
-      const cells = columns.map((c) => `<td>${escapeHtml(c.value(row))}</td>`).join('')
-      return `<tr><td>${index + 1}</td>${cells}</tr>`
-    })
-    .join('')
-  return `${caption}
-<table>
-  <thead><tr><th>#</th>${head}</tr></thead>
-  <tbody>${body || `<tr><td colspan="${columns.length + 1}">Aucune donnée</td></tr>`}</tbody>
-</table>`
+function clinicHeaderLines(): string[] {
+  const tax = clinicTaxLine()
+  return [
+    CLINIC.nameFr,
+    CLINIC.nameAr,
+    CLINIC.fullAddress,
+    CLINIC.phoneLabel,
+    CLINIC.email ? `${translateUi('Email :')} ${CLINIC.email}` : '',
+    tax,
+    CLINIC.printFooter,
+  ].filter(Boolean)
 }
 
-/** Ouvre l’aperçu impression / Enregistrer en PDF. */
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.rel = 'noopener'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+function excelColWidths<T>(columns: ExportColumn<T>[], rows: T[]) {
+  return columns.map((col) => {
+    const headerLen = col.header.length
+    const maxCell = rows.reduce((max, row) => Math.max(max, String(col.value(row) ?? '').length), 0)
+    return { wch: Math.min(48, Math.max(10, headerLen, maxCell) + 2) }
+  })
+}
+
+/** Ouvre l’aperçu impression / Enregistrer en PDF. Totaux uniquement en fin de dernière page. */
 export function exportTablePdf<T>(
   title: string,
   columns: ExportColumn<T>[],
   rows: T[],
-  options?: {
-    captionRows?: Array<{ label: string; value: string }>
-    autoPrint?: boolean
-  },
+  options?: TableExportOptions,
 ): void {
+  const captionRows = defaultReportCaptionRows(options?.captionRows, options?.generatedAt)
   const body = `${buildClinicPrintHeader(title)}
-${rowsToHtmlTable(columns, rows, { captionRows: options?.captionRows })}`
-  openPrintDocument(title, body, { pageSize: 'A4', autoPrint: options?.autoPrint !== false })
+${rowsToHtmlTable(columns, rows, {
+  captionRows,
+  totalsRows: options?.totalsRows,
+  emptyLabel: translateUi('Aucune donnée'),
+})}`
+  openPrintDocument(title, body, {
+    pageSize: 'A4',
+    tableReport: true,
+    autoPrint: options?.autoPrint !== false,
+  })
 }
 
-/** Télécharge un fichier Excel (.xlsx). */
+/** Télécharge un fichier Excel (.xlsx). Les totaux sont ajoutés en bas de feuille, une seule fois. */
 export function exportTableExcel<T>(
   title: string,
   columns: ExportColumn<T>[],
   rows: T[],
-  options?: { sheetName?: string; filename?: string },
+  options?: TableExportOptions,
 ): void {
-  const matrix = rowsToMatrix(columns, rows)
+  const matrix = rowsToMatrix(columns, rows, { totalsRows: options?.totalsRows })
   const sheet = XLSX.utils.aoa_to_sheet(matrix)
-  const colWidths = columns.map((col) => {
-    const headerLen = col.header.length
-    const maxCell = rows.reduce((max, row) => Math.max(max, cellText(col.value(row)).length), 0)
-    return { wch: Math.min(48, Math.max(10, headerLen, maxCell) + 2) }
-  })
-  sheet['!cols'] = colWidths
+  sheet['!cols'] = excelColWidths(columns, rows)
 
   const workbook = XLSX.utils.book_new()
   const sheetName = (options?.sheetName ?? 'Export').slice(0, 31)
@@ -104,17 +131,60 @@ export function exportTableExcel<T>(
   XLSX.writeFile(workbook, `${options?.filename ?? exportBasename(title)}.xlsx`)
 }
 
-/** Plusieurs feuilles dans un seul classeur. */
-export function exportWorkbook(
-  filename: string,
-  sheets: Array<{ name: string; columns: ExportColumn<any>[]; rows: any[] }>,
-): void {
+/** Plusieurs feuilles dans un seul classeur. Totaux en bas de chaque feuille si fournis. */
+export function exportWorkbook(filename: string, sheets: WorkbookSheetDef[]): void {
   const workbook = XLSX.utils.book_new()
   for (const sheetDef of sheets) {
-    const matrix = rowsToMatrix(sheetDef.columns, sheetDef.rows)
+    const matrix = rowsToMatrix(sheetDef.columns, sheetDef.rows, { totalsRows: sheetDef.totalsRows })
     const sheet = XLSX.utils.aoa_to_sheet(matrix)
     XLSX.utils.book_append_sheet(workbook, sheet, sheetDef.name.slice(0, 31) || 'Feuille')
   }
   const base = filename.endsWith('.xlsx') ? filename.slice(0, -5) : filename
   XLSX.writeFile(workbook, `${base}.xlsx`)
+}
+
+/** Télécharge un fichier Word (.docx) équivalent au PDF/Excel (mêmes colonnes, filtres et totaux). */
+export async function exportTableWord<T>(
+  title: string,
+  columns: ExportColumn<T>[],
+  rows: T[],
+  options?: TableExportOptions,
+): Promise<void> {
+  const captionRows = defaultReportCaptionRows(options?.captionRows, options?.generatedAt)
+  const doc = buildWordDocument(
+    title,
+    [
+      {
+        name: options?.sheetName ?? title,
+        columns,
+        rows,
+        captionRows,
+        totalsRows: options?.totalsRows,
+        emptyLabel: translateUi('Aucune donnée'),
+      },
+    ],
+    { headerLines: clinicHeaderLines(), creator: CLINIC.shortName },
+  )
+  const blob = await packWordBlob(doc)
+  downloadBlob(blob, `${options?.filename ?? exportBasename(title)}.docx`)
+}
+
+/** Plusieurs sections (équivalent multi-feuilles Excel) dans un seul document Word. */
+export async function exportWorkbookWord(filename: string, sheets: WorkbookSheetDef[]): Promise<void> {
+  const doc = buildWordDocument(
+    filename.replace(/\.docx$/i, ''),
+    sheets.map(
+      (sheet): WordSheetDef => ({
+        name: sheet.name,
+        columns: sheet.columns,
+        rows: sheet.rows,
+        totalsRows: sheet.totalsRows,
+        emptyLabel: translateUi('Aucune donnée'),
+      }),
+    ),
+    { headerLines: clinicHeaderLines(), creator: CLINIC.shortName },
+  )
+  const blob = await packWordBlob(doc)
+  const base = filename.replace(/\.docx$/i, '').replace(/\.xlsx$/i, '')
+  downloadBlob(blob, `${base}.docx`)
 }

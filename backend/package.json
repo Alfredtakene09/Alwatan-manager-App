@@ -27,7 +27,7 @@
     "db:import-pharmacy": "tsx scripts/import-syntalsoft-pharmacy.ts",
     "db:rename-pharmacy-categories": "tsx scripts/rename-pharmacy-categories.ts",
     "db:migrate-pharmacy-categories-to-forms": "tsx scripts/migrate-pharmacy-categories-to-forms.ts",
-    "test": "tsx --test src/lib/pharmacy-returns.test.ts src/lib/patient-code.test.ts src/lib/password-policy.test.ts src/lib/consultation-invoice.test.ts src/lib/auth.test.ts"
+    "test": "tsx --test src/lib/pharmacy-returns.test.ts src/lib/patient-code.test.ts src/lib/password-policy.test.ts src/lib/consultation-invoice.test.ts src/lib/auth.test.ts src/lib/lab-notes-pending.test.ts src/lib/reception-scope.test.ts src/lib/petite-chirurgie-catalog.test.ts src/lib/year-month.test.ts src/lib/employee-compensation.test.ts src/lib/recorded-diagnoses.test.ts src/lib/printed-tariff-catalog.test.ts src/lib/clinic-service-exam.test.ts src/lib/lab-notes-section.test.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

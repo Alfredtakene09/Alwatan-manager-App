@@ -4,6 +4,9 @@ import { CheckCircle2, FlaskConical } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
+import { formatFcfa, fullName } from '@/lib/roles'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -14,13 +17,16 @@ import LabExamsPendingDataTable, {
 import ExamReclamationModal from '@/components/comptabilite/ExamReclamationModal.vue'
 import ExamPaidDetailModal from '@/components/comptabilite/ExamPaidDetailModal.vue'
 import ExamensPayesSubnav from '@/components/comptabilite/ExamensPayesSubnav.vue'
-import { normalizeLabExamPendingItem, type LabExamPendingItem } from '@/lib/lab-exam-pending'
+import { activeExamKindsFromBlocks, normalizeLabExamPendingItem, type LabExamPendingItem } from '@/lib/lab-exam-pending'
 import { printAllPendingLabExamInvoices } from '@/lib/lab-exam-invoice'
 import { emptyExamReductionsByKind } from '@/lib/exam-billing'
 import type { ExamKindSlug } from '@/lib/exam-catalog/types'
+import { cancelPrintWindow, ensurePrintWindow } from '@/lib/print-document'
 
 const auth = useAuthStore()
 const { t, uiText } = useAppI18n()
+const canDeletePaid = computed(() => auth.user?.role === 'ADMIN')
+const deletingPaid = ref(false)
 
 const paidItems = ref<LabExamPendingItem[]>([])
 const loading = ref(false)
@@ -46,6 +52,8 @@ function resolvePaidKinds(item: LabExamPendingItem): ExamKindSlug[] {
     .filter(([, inv]) => inv && (inv.paidFcfa ?? inv.netFcfa) > 0)
     .map(([kind]) => kind as ExamKindSlug)
   if (fromInvoices.length) return fromInvoices
+  const fromExams = activeExamKindsFromBlocks(item.allExamsByKind ?? item.examsByKind)
+  if (fromExams.length) return fromExams
   return Object.keys(item.invoicesByKind ?? {}) as ExamKindSlug[]
 }
 
@@ -85,6 +93,12 @@ function onPrint(id: string) {
     return
   }
 
+  if (!ensurePrintWindow('80mm')) {
+    message.value = uiText("Impossible d'imprimer le reçu.")
+    messageType.value = 'error'
+    return
+  }
+
   const normalized = normalizeLabExamPendingItem({
     ...item,
     cashierName:
@@ -101,6 +115,7 @@ function onPrint(id: string) {
   )
 
   if (!printed) {
+    cancelPrintWindow()
     message.value = uiText("Impossible de générer le reçu : données d'examen manquantes.")
     messageType.value = 'error'
   }
@@ -132,6 +147,42 @@ function onReclamationSubmitted() {
   )
   messageType.value = 'success'
   void load()
+}
+
+async function deletePaidExams(id: string) {
+  if (!canDeletePaid.value || deletingPaid.value) return
+  const item = paidItems.value.find((row) => row.id === id)
+  if (!item) return
+  const patient = item.visit.patient
+  const confirmed = await confirmAppModal({
+    type: 'DELETE',
+    title: uiText('Supprimer les examens payés'),
+    message: translateTemplate(
+      'Annuler tous les examens payés de {code} — {name} ? Les factures seront remboursées et les examens retirés du dossier. Cette action est irréversible.',
+      {
+        code: patient.code,
+        name: fullName(patient.firstName, patient.lastName),
+      },
+    ),
+    confirmLabel: uiText('Supprimer'),
+  })
+  if (!confirmed) return
+
+  deletingPaid.value = true
+  message.value = ''
+  try {
+    const { data } = await api.delete<{ totalRefundedFcfa?: number }>(`/comptabilite/paid-exams/${id}`)
+    closeDetail()
+    message.value = translateTemplate('Examens payés supprimés. Montant remboursé : {amount}.', {
+      amount: formatFcfa(data.totalRefundedFcfa ?? 0),
+    })
+    messageType.value = 'success'
+    await load()
+  } catch (error: unknown) {
+    await showApiErrorModal(error, uiText('Impossible de supprimer les examens payés.'))
+  } finally {
+    deletingPaid.value = false
+  }
 }
 
 onMounted(load)
@@ -174,9 +225,11 @@ onMounted(load)
           :items="paidItems as LabExamPendingRow[]"
           :loading="loading"
           :printable-ids="printableIds"
+          :can-delete-paid="canDeletePaid"
           @print="onPrint"
           @reclaim="openReclamation"
           @view="openDetail"
+          @delete="deletePaidExams"
         />
       </UiCard>
     </section>
@@ -184,7 +237,10 @@ onMounted(load)
     <ExamPaidDetailModal
       v-model:open="detailOpen"
       :item="detailItem"
+      :can-delete-paid="canDeletePaid"
       @close="closeDetail"
+      @print="onPrint"
+      @delete="deletePaidExams"
     />
 
     <ExamReclamationModal

@@ -1,6 +1,6 @@
 import { InvoiceStatus, InvoiceType, Prisma } from "@prisma/client";
 import { prisma } from "./db.js";
-import { comptabiliteInvoicePatientWhere } from "./patient-billing.js";
+import { comptabiliteInvoicePatientWhere, comptabilitePatientWhere } from "./patient-billing.js";
 
 /** Encaissements comptoir : consultations, examens, chirurgie, hospitalisation — hors associés et pharmacie. */
 export const COLLECTED_INVOICE_TYPES: InvoiceType[] = [
@@ -232,9 +232,19 @@ export type CollectedSlice = CollectedInvoiceFields & {
 export async function loadCollectedSlicesBetween(
   from: Date,
   to: Date,
-  options?: { cashierId?: string },
+  options?: { cashierId?: string; patientService?: string },
 ): Promise<CollectedSlice[]> {
-  const invoiceWhere = collectedInvoiceParentWhere();
+  const service = options?.patientService?.trim();
+  const patientServiceWhere = service
+    ? { patient: { ...comptabilitePatientWhere(), service } }
+    : undefined;
+  const invoiceWhere: Prisma.InvoiceWhereInput = patientServiceWhere
+    ? {
+        type: { in: COLLECTED_INVOICE_TYPES },
+        status: { not: InvoiceStatus.CANCELLED },
+        ...patientServiceWhere,
+      }
+    : collectedInvoiceParentWhere();
   const [payments, legacyInvoices] = await Promise.all([
     prisma.invoicePayment.findMany({
       where: {
@@ -253,6 +263,7 @@ export async function loadCollectedSlicesBetween(
     prisma.invoice.findMany({
       where: {
         ...collectedInvoicesWhere(from, to),
+        ...(patientServiceWhere ?? {}),
         payments: { none: {} },
         ...(options?.cashierId ? { issuedById: options.cashierId } : {}),
       },
@@ -283,8 +294,12 @@ export async function loadCollectedSlicesBetween(
   return [...fromPayments, ...fromLegacy];
 }
 
-export async function aggregateCollectedBetween(from: Date, to: Date) {
-  const slices = await loadCollectedSlicesBetween(from, to);
+export async function aggregateCollectedBetween(
+  from: Date,
+  to: Date,
+  options?: { patientService?: string },
+) {
+  const slices = await loadCollectedSlicesBetween(from, to, options);
   return sumCollectedBreakdown(slices);
 }
 
@@ -305,11 +320,11 @@ export async function aggregatePharmacyBetween(from: Date, to: Date) {
   };
 }
 
-export async function aggregateCollectedToday() {
+export async function aggregateCollectedToday(options?: { patientService?: string }) {
   const todayStart = startOfDay(new Date());
   const tomorrowStart = new Date(todayStart);
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-  return aggregateCollectedBetween(todayStart, tomorrowStart);
+  return aggregateCollectedBetween(todayStart, tomorrowStart, options);
 }
 
 /** Totaux journaliers par rôle encaisseur — fenêtre 24 h, aligné sur « Recettes du jour ». */

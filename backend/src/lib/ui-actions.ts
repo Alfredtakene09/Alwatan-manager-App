@@ -20,6 +20,7 @@ export const UI_ACTION_IDS = [
   "table.toggle",
   "export.pdf",
   "export.excel",
+  "export.word",
   "export.print",
   "dossier.attach",
   "reception.create_patient",

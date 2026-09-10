@@ -23,6 +23,7 @@ import { normalizeLabExamPendingItem } from '@/lib/lab-exam-pending'
 import { printLabExamPaymentReceipts, printPendingLabExamInvoices } from '@/lib/lab-exam-invoice'
 import ComptabiliteStatsGrid from '@/components/comptabilite/ComptabiliteStatsGrid.vue'
 import { isAxiosError } from 'axios'
+import { cancelPrintWindow, ensurePrintWindow, reservePrintWindow } from '@/lib/print-document'
 
 const { data, message, messageType, loading, load } = useComptabiliteQueue()
 const router = useRouter()
@@ -49,8 +50,17 @@ function closePayment() {
 
 function onPrint(id: string) {
   const item = pendingItems.value.find((row) => row.id === id)
-  if (item) {
-    printPendingLabExamInvoices(normalizeLabExamPendingItem(item))
+  if (!item) return
+  if (!ensurePrintWindow('80mm')) {
+    message.value = "Impossible d'imprimer le reçu."
+    messageType.value = 'error'
+    return
+  }
+  const printed = printPendingLabExamInvoices(normalizeLabExamPendingItem(item))
+  if (!printed) {
+    cancelPrintWindow()
+    message.value = "Impossible de générer le reçu : données d'examen manquantes."
+    messageType.value = 'error'
   }
 }
 
@@ -71,6 +81,7 @@ async function confirmPayment(payload: LabExamPaymentConfirmPayload) {
   submitting.value = true
   submittingKind.value = payingAll ? null : (payload.kinds[0] ?? null)
   message.value = ''
+  if (normalizedPaid) reservePrintWindow('80mm')
   try {
     const { data: res } = await api.post('/comptabilite', {
       action: 'pay_lab_exams',
@@ -86,7 +97,7 @@ async function confirmPayment(payload: LabExamPaymentConfirmPayload) {
       remainingPayableExamKinds((res.remainingUnpaidKinds ?? []) as ExamKindSlug[]).length === 0
     if (shouldClose) closePayment()
     if (normalizedPaid) {
-      printLabExamPaymentReceipts(
+      const printed = printLabExamPaymentReceipts(
         normalizedPaid,
         {
           kinds: payload.kinds,
@@ -94,6 +105,7 @@ async function confirmPayment(payload: LabExamPaymentConfirmPayload) {
         },
         res.invoicesByKind,
       )
+      if (!printed) cancelPrintWindow()
     }
     const invoiceCount = Object.keys(res.invoicesByKind ?? {}).length
     const invoicesByKind = (res.invoicesByKind ?? {}) as Record<string, { invoiceNumber?: string }>
@@ -124,6 +136,7 @@ async function confirmPayment(payload: LabExamPaymentConfirmPayload) {
       submittingKind.value = null
     }
   } catch (error: unknown) {
+    cancelPrintWindow()
     const shown = await showApiErrorModal(error, 'Erreur lors du paiement.')
     if (!shown) {
       const apiMessage = isAxiosError(error)

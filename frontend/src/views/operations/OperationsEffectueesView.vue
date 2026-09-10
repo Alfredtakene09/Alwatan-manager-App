@@ -46,6 +46,7 @@ import { EXAM_KIND_LABELS, type ExamKindSlug } from '@/lib/exam-catalog/types'
 import { remainingPayableExamKinds } from '@/lib/exam-billing'
 import { normalizeLabExamPendingItem } from '@/lib/lab-exam-pending'
 import { printLabExamPaymentReceipts } from '@/lib/lab-exam-invoice'
+import { cancelPrintWindow, reservePrintWindow } from '@/lib/print-document'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -59,7 +60,7 @@ import LabExamPaymentModal, {
   type LabExamPaymentConfirmPayload,
   type LabExamPaymentItem,
 } from '@/components/comptabilite/LabExamPaymentModal.vue'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 
 const DATE_MODES: { id: DateFilterMode; label: string; icon: typeof CalendarDays }[] = [
   { id: 'day', label: 'Jour', icon: CalendarDays },
@@ -306,6 +307,7 @@ async function confirmEncaisser(payload: LabExamPaymentConfirmPayload) {
   submittingPayment.value = true
   submittingKind.value = payingAll ? null : (payload.kinds[0] ?? null)
   message.value = ''
+  if (normalizedPaid) reservePrintWindow('80mm')
   try {
     const { data: res } = await api.post('/comptabilite', {
       action: 'pay_lab_exams',
@@ -321,7 +323,7 @@ async function confirmEncaisser(payload: LabExamPaymentConfirmPayload) {
       remainingPayableExamKinds((res.remainingUnpaidKinds ?? []) as ExamKindSlug[]).length === 0
     if (shouldClose) closeEncaisser()
     if (normalizedPaid) {
-      printLabExamPaymentReceipts(
+      const printed = printLabExamPaymentReceipts(
         normalizedPaid,
         {
           kinds: payload.kinds,
@@ -329,6 +331,7 @@ async function confirmEncaisser(payload: LabExamPaymentConfirmPayload) {
         },
         res.invoicesByKind,
       )
+      if (!printed) cancelPrintWindow()
     }
     const kindLabel = payingAll
       ? 'Tous les examens'
@@ -347,6 +350,7 @@ async function confirmEncaisser(payload: LabExamPaymentConfirmPayload) {
     await load()
     if (!shouldClose) submittingKind.value = null
   } catch (error: unknown) {
+    cancelPrintWindow()
     const shown = await showApiErrorModal(error, 'Erreur lors de l’encaissement.')
     if (!shown) {
       const apiMessage = isAxiosError(error)
@@ -549,6 +553,10 @@ function exportExcel() {
   exportTableExcel('Opérations effectuées', completedExportColumns, displayedSurgeries.value)
 }
 
+function exportWord() {
+  void exportTableWord('Opérations effectuées', completedExportColumns, displayedSurgeries.value)
+}
+
 onMounted(load)
 </script>
 
@@ -705,6 +713,7 @@ onMounted(load)
             :disabled="loading || !displayedSurgeries.length"
             @pdf="exportPdf"
             @excel="exportExcel"
+            @word="exportWord"
           />
           <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">
             Actualiser

@@ -57,11 +57,26 @@ function hasModule(module: string) {
 
 const canSeeAlerts = computed(() => {
   if (!auth.user) return false
-  return hasModule('admin') || hasModule('gestionnaire') || hasModule('hospitalisation')
+  return (
+    hasModule('admin') ||
+    hasModule('gestionnaire') ||
+    hasModule('hospitalisation') ||
+    hasModule('reception')
+  )
 })
 
-/** Encaissement examens / consultations — gestionnaire, direction, admin. */
-const canSeePaymentAlerts = computed(() => hasModule('comptabilite'))
+/** Encaissement examens — réception, gestionnaire, direction, admin. */
+const canSeeExamPaymentAlerts = computed(() => hasModule('comptabilite') || hasModule('reception'))
+/** Factures consultation impayées — gestionnaire, direction, admin. */
+const canSeeConsultationPaymentAlerts = computed(() => hasModule('comptabilite'))
+const canSeePaymentAlerts = computed(
+  () => canSeeExamPaymentAlerts.value || canSeeConsultationPaymentAlerts.value,
+)
+const examPaymentActionTo = computed(() =>
+  hasModule('reception') && !hasModule('comptabilite')
+    ? '/reception/en-attente-paiement'
+    : '/comptabilite/en-attente-paiement',
+)
 const canSeeHospitalizationAlerts = computed(() => hasModule('hospitalisation'))
 const canSeeGestionnaireAlerts = computed(() => hasModule('gestionnaire'))
 const canSeeAdminAlerts = computed(() => hasModule('admin'))
@@ -84,7 +99,7 @@ const dashboardAlerts = computed(() => {
     kind?: 'hospitalization' | 'exam-payment' | 'consultation-payment' | 'default'
   }> = []
 
-  if (canSeePaymentAlerts.value) {
+  if (canSeeExamPaymentAlerts.value) {
     for (const exam of pendingExamPayments.value) {
       items.push({
         id: `exam-pay-${exam.id}`,
@@ -95,10 +110,12 @@ const dashboardAlerts = computed(() => {
           ? `${exam.patientCode} — ${exam.patientName} · ${exam.examsSummary} · ${formatFcfa(exam.amountFcfa)}`
           : `${exam.patientCode} — ${exam.patientName} · ${formatFcfa(exam.amountFcfa)}`,
         actionLabel: translateDashboardLabel('Encaisser'),
-        actionTo: '/comptabilite/en-attente-paiement',
+        actionTo: examPaymentActionTo.value,
       })
     }
+  }
 
+  if (canSeeConsultationPaymentAlerts.value) {
     for (const consult of pendingConsultationPayments.value) {
       items.push({
         id: `consult-pay-${consult.id}`,
@@ -245,9 +262,14 @@ const alertsModalSubtitle = computed(() => {
 
 const alertsEmptyMessage = computed(() => {
   void localeCode.value
-  if (canSeePaymentAlerts.value) {
+  if (canSeeConsultationPaymentAlerts.value) {
     return translateDashboardLabel(
       'Tout est à jour — aucun paiement, clôture, dépense, paie ni hospitalisation en attente.',
+    )
+  }
+  if (canSeeExamPaymentAlerts.value) {
+    return translateDashboardLabel(
+      'Tout est à jour — aucun paiement examens ni hospitalisation en attente.',
     )
   }
   if (canSeeHospitalizationAlerts.value) {

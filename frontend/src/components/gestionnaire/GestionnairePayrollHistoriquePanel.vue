@@ -4,8 +4,7 @@ import { Search, History, Eye, Download, Printer } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { formatShortDate } from '@/lib/admin-dashboard'
-import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
-import { exportTableExcel, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -179,49 +178,30 @@ function toggleOne(id: string, checked: boolean) {
   selectedIds.value = [...set]
 }
 
-function historyRowsToTableHtml() {
-  const bodyRows = exportRows.value
-    .map(
-      (row) => `
-      <tr>
-        <td>${row.paidAt ? formatShortDate(row.paidAt) : '—'}</td>
-        <td>${periodLabel(row.year, row.month)}</td>
-        <td>${row.employee.fullName}</td>
-        <td>${row.employee.jobTitle ?? '—'}</td>
-        <td>${row.employee.service}</td>
-        <td>${formatFcfa(row.netFcfa)}</td>
-        <td>${row.paymentMethod ? PAYMENT_LABELS[row.paymentMethod] ?? row.paymentMethod : '—'}</td>
-      </tr>`,
-    )
-    .join('')
+function historyExportTotals() {
+  const rows = exportRows.value
+  const net = rows.reduce((sum, row) => sum + row.netFcfa, 0)
+  return [
+    { label: 'Nombre de fiches', value: String(rows.length) },
+    { label: 'Total net', value: formatFcfa(net) },
+  ]
+}
 
-  return `
-    ${buildClinicPrintHeader('Historique des paiements')}
-    <table>
-      <thead>
-        <tr>
-          <th>Date de paiement</th><th>Période</th><th>Employé</th><th>Poste</th><th>Service</th><th>Net payé</th><th>Mode</th>
-        </tr>
-      </thead>
-      <tbody>${bodyRows}</tbody>
-    </table>
-  `
+function historyExportShared() {
+  return { totalsRows: historyExportTotals() }
 }
 
 function printHistoryRows() {
   if (!exportRows.value.length) return
-  openPrintDocument('Historique des paiements', historyRowsToTableHtml(), {
+  exportTablePdf('Historique des paiements', historyExportColumns, exportRows.value, {
+    ...historyExportShared(),
     autoPrint: true,
-    pageSize: 'A4',
   })
 }
 
 function exportHistoryPdf() {
   if (!exportRows.value.length) return
-  openPrintDocument('Historique des paiements (PDF)', historyRowsToTableHtml(), {
-    autoPrint: true,
-    pageSize: 'A4',
-  })
+  exportTablePdf('Historique des paiements', historyExportColumns, exportRows.value, historyExportShared())
 }
 
 const historyExportColumns: ExportColumn<HistoryRow>[] = [
@@ -239,7 +219,12 @@ const historyExportColumns: ExportColumn<HistoryRow>[] = [
 
 function exportHistoryExcel() {
   if (!exportRows.value.length) return
-  exportTableExcel('Historique des paiements', historyExportColumns, exportRows.value)
+  exportTableExcel('Historique des paiements', historyExportColumns, exportRows.value, historyExportShared())
+}
+
+function exportHistoryWord() {
+  if (!exportRows.value.length) return
+  void exportTableWord('Historique des paiements', historyExportColumns, exportRows.value, historyExportShared())
 }
 
 watch([periodFilter, serviceFilter], () => {
@@ -329,6 +314,7 @@ defineExpose({ reload: loadHistory })
         :show-pdf="false"
         :disabled="!exportRows.length"
         @excel="exportHistoryExcel"
+        @word="exportHistoryWord"
       />
     </div>
 

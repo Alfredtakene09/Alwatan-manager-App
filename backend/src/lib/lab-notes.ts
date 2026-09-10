@@ -1,4 +1,6 @@
-import { InvoiceStatus, InvoiceType, PatientCategory } from "@prisma/client";
+import { InvoiceStatus, InvoiceType, VisitStatus, type Prisma } from "@prisma/client";
+import { classicSectionFamily } from "./lab-routine-billing-groups.js";
+import { comptabilitePatientWhere } from "./patient-billing.js";
 import { EXTERNAL_PATIENT_VISIT_NOTE } from "./visit-external.js";
 
 export const EXAMS_PRESCRIBED_PREFIX = "Examens prescrits";
@@ -28,24 +30,6 @@ export function splitPrescribedExamList(raw: string): string[] {
   return items;
 }
 
-/** Libellé panel sans le suffixe « (formes cochées) ». */
-export function extractBasePanelLabel(prescribed: string): string {
-  const trimmed = prescribed.trim();
-  const match = trimmed.match(/^(.*?)\s*\((.*)\)\s*$/);
-  if (!match) return trimmed;
-  return match[1].trim() || trimmed;
-}
-
-/** Formes / lignes cochées dans « Panel (A, B) », ou null si pas de parenthèses. */
-export function extractSelectedFormLabels(prescribed: string): string[] | null {
-  const trimmed = prescribed.trim();
-  const match = trimmed.match(/^(.*?)\s*\((.*)\)\s*$/);
-  if (!match) return null;
-  const inner = match[2].trim();
-  if (!inner) return [];
-  return splitPrescribedExamList(inner);
-}
-
 function normalizeLabLabelKey(label: string): string {
   return label
     .trim()
@@ -58,6 +42,95 @@ function normalizeLabLabelKey(label: string): string {
 }
 
 const UNTITLED_SECTION_LABEL = "Formulaire principal";
+
+type TopLevelParenGroup = { start: number; end: number; inner: string };
+
+/** Groupes `(…)` au niveau 0 (ignore les parenthèses imbriquées dans le contenu). */
+function findTopLevelParenGroups(value: string): TopLevelParenGroup[] {
+  const groups: TopLevelParenGroup[] = [];
+  let depth = 0;
+  let openAt = -1;
+  for (let i = 0; i < value.length; i += 1) {
+    const char = value[i];
+    if (char === "(") {
+      if (depth === 0) openAt = i;
+      depth += 1;
+      continue;
+    }
+    if (char !== ")") continue;
+    if (depth <= 0) continue;
+    depth -= 1;
+    if (depth === 0 && openAt >= 0) {
+      groups.push({ start: openAt, end: i, inner: value.slice(openAt + 1, i) });
+      openAt = -1;
+    }
+  }
+  return groups;
+}
+
+/**
+ * True si le contenu entre parenthèses est un suffixe de sélection encodé
+ * (`Section: champs`, section multi-mots, Routine legacy…), et non un acronyme
+ * faisant partie du libellé panel (`(TFT)`, `(BHCG)`, `(NFS)`…).
+ */
+function looksLikeEncodedSelection(inner: string): boolean {
+  const trimmed = inner.trim();
+  if (!trimmed) return false;
+  if (trimmed.includes(":")) return true;
+  if (/\s·\s/.test(trimmed)) return true;
+  if (splitPrescribedExamList(trimmed).length > 1) return true;
+  if (normalizeLabLabelKey(trimmed) === normalizeLabLabelKey(UNTITLED_SECTION_LABEL)) return true;
+  if (/\s/.test(trimmed)) return true;
+  const family = classicSectionFamily(trimmed);
+  return (
+    family === "urine-deposit" ||
+    family === "urine-general" ||
+    family === "stool-general" ||
+    family === "stool-micro"
+  );
+}
+
+/**
+ * Sépare « Panel » et le suffixe de sélection.
+ * Gère les libellés qui contiennent déjà des parenthèses :
+ * `Thyroid Hormones Test ( TFT) (Formulaire principal: T3)`.
+ */
+function splitPrescribedPanelAndSelection(prescribed: string): {
+  base: string;
+  selectionInner: string | null;
+} {
+  const trimmed = prescribed.trim();
+  const groups = findTopLevelParenGroups(trimmed);
+  if (!groups.length) return { base: trimmed, selectionInner: null };
+
+  const last = groups[groups.length - 1];
+  if (trimmed.slice(last.end + 1).trim() !== "") {
+    return { base: trimmed, selectionInner: null };
+  }
+
+  const base = trimmed.slice(0, last.start).trim();
+  const inner = last.inner.trim();
+  if (!base) return { base: trimmed, selectionInner: null };
+
+  if (groups.length >= 2 || looksLikeEncodedSelection(inner)) {
+    return { base, selectionInner: inner };
+  }
+
+  return { base: trimmed, selectionInner: null };
+}
+
+/** Libellé panel sans le suffixe « (formes cochées) ». */
+export function extractBasePanelLabel(prescribed: string): string {
+  return splitPrescribedPanelAndSelection(prescribed).base;
+}
+
+/** Formes / lignes cochées dans « Panel (A, B) », ou null si pas de parenthèses. */
+export function extractSelectedFormLabels(prescribed: string): string[] | null {
+  const { selectionInner } = splitPrescribedPanelAndSelection(prescribed);
+  if (selectionInner === null) return null;
+  if (!selectionInner) return [];
+  return splitPrescribedExamList(selectionInner);
+}
 
 /** Champs individuels dans « Panel (Section: A · B) » ou « Panel (champ) ». */
 export function extractPrescribedFieldLabels(prescribed: string): string[] {
@@ -395,26 +468,25 @@ export function hasLabResults(notes?: string | null): boolean {
   return !!notes?.includes(LAB_RESULTS_COMPLETION_MARKER);
 }
 
-function allPrescriptionOrClauses() {
-  // File d'attente paiement / labo : pas les examens de spécialité ni hospit/opération seules.
-  const kinds: ExamKindSlug[] = [...LAB_QUEUE_EXAM_KINDS, "specialty", "operation"];
-  return kinds.map((kind) => ({
-    clinicalNotes: { contains: `${EXAMS_PRESCRIBED_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]})` },
-  }));
+/** Visite interne : notes null (cas fréquent) ou sans marqueur patient externe. */
+export function visitNotExternalWhere(): Prisma.VisitWhereInput {
+  return {
+    OR: [
+      { notes: null },
+      { NOT: { notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE } } },
+    ],
+  };
 }
 
 export function labsPendingApprovalWhere() {
   return {
-    OR: [
-      { clinicalNotes: { contains: `${EXAMS_PRESCRIBED_PREFIX} : ` } },
-      ...allPrescriptionOrClauses(),
-    ],
+    clinicalNotes: { contains: EXAMS_PRESCRIBED_PREFIX },
     visit: {
-      patient: {
-        category: PatientCategory.STANDARD,
-      },
-      // Patient externe : encaissement direct à la réception, hors file / notif paiement.
-      NOT: { notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE } },
+      AND: [
+        { patient: comptabilitePatientWhere() },
+        visitNotExternalWhere(),
+        { status: { not: VisitStatus.CANCELLED } },
+      ],
     },
   };
 }
@@ -424,9 +496,8 @@ export function labsPaidExamsWhere() {
     AND: [
       {
         visit: {
-          patient: {
-            category: PatientCategory.STANDARD,
-          },
+          patient: comptabilitePatientWhere(),
+          status: { not: VisitStatus.CANCELLED },
         },
       },
       {
@@ -456,6 +527,7 @@ export function labsPaidExamsWhere() {
 export function labsWaitingWhere(doctorId?: string) {
   return {
     ...(doctorId ? { doctorId } : {}),
+    visit: { status: { not: VisitStatus.CANCELLED } },
     OR: [
       { labSentToLabAt: { not: null } },
       ...LAB_QUEUE_EXAM_KINDS.map((kind) => ({

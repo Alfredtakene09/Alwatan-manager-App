@@ -14,8 +14,10 @@ import {
 } from '@/lib/exam-catalog-kinds'
 import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
 import { suggestExamCatalogKindSlugFromServiceName } from '@/lib/exam-catalog-service-kind'
+import { exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -194,6 +196,52 @@ const tableRows = computed(() => {
     isActive: item.active,
   }))
 })
+
+type CatalogExportRow = {
+  label: string
+  category: string
+  price: string
+}
+
+const catalogExportColumns = computed<ExportColumn<CatalogExportRow>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Libellé'), value: (row) => row.label },
+    { header: uiText('Catégorie'), value: (row) => row.category },
+    { header: uiText('Tarif'), value: (row) => row.price },
+  ]
+})
+
+const catalogExportRows = computed<CatalogExportRow[]>(() =>
+  tableRows.value.map((row) => ({
+    label: row.label,
+    category: row.category,
+    price: row.price,
+  })),
+)
+
+function catalogExportShared() {
+  const captionRows = [{ label: uiText('Type'), value: contextLabel.value }]
+  if (selectedCategory.value.trim()) {
+    captionRows.push({
+      label: uiText('Catégorie'),
+      value: examNameText(selectedCategory.value),
+    })
+  }
+  return {
+    captionRows,
+    totalsRows: [
+      {
+        label: uiText('Nombre d’examens'),
+        value: String(catalogExportRows.value.length),
+      },
+    ],
+  }
+}
+
+function exportCatalogPdf() {
+  exportTablePdf(catalogCardTitle.value, catalogExportColumns.value, catalogExportRows.value, catalogExportShared())
+}
 
 function resetListFilters() {
   searchQuery.value = ''
@@ -615,6 +663,12 @@ onMounted(async () => {
       class="section"
     >
       <template #actions>
+        <ExportButtons
+          :disabled="loading || !catalogExportRows.length"
+          :show-excel="false"
+          :show-word="false"
+          @pdf="exportCatalogPdf"
+        />
         <UiButton variant="primary" size="sm" :icon="Plus" ui-action="catalog.exam_types" @click="openAddModal">
           {{ uiText(addButtonLabel) }}
         </UiButton>

@@ -1,7 +1,14 @@
-import { buildExternalPatientThermalReceiptHtml, buildLabExamThermalReceiptHtml, openPrintDocument } from '@/lib/print-document'
+import {
+  buildExternalPatientThermalReceiptHtml,
+  buildLabExamThermalReceiptHtml,
+  cancelPrintWindow,
+  ensurePrintWindow,
+  openPrintDocument,
+} from '@/lib/print-document'
 import { fullName } from '@/lib/roles'
 import { normalizePatientAgeUnit } from '@/lib/patient-age'
 import type { ExamKindSlug } from '@/lib/exam-catalog/types'
+import { EXAM_KIND_LABELS, INVOICE_EXAM_COMMENT_KINDS } from '@/lib/exam-catalog/types'
 import {
   buildExamSheetsFromBlocks,
   emptyExamReductionsByKind,
@@ -17,7 +24,6 @@ import {
   type LabExamPendingItem,
 } from '@/lib/lab-exam-pending'
 import { parsePrescribedExamsByKind, parsePrescribedExamCommentsByKind } from '@/lib/lab-notes'
-import { INVOICE_EXAM_COMMENT_KINDS } from '@/lib/exam-catalog/types'
 import { getLabExamPriceFcfa } from '@/lib/lab-exams'
 
 export { resolveLabExamInvoiceDocTitle, EXAM_INVOICE_DOC_TITLES } from '@/lib/lab-exam-pending'
@@ -150,30 +156,80 @@ export function printExternalPatientReceipt(
 ) {
   const normalized = normalizeLabExamPendingItem(item)
   if (!normalized.examLines.length) return false
-  const grossFcfa = options?.grossFcfa ?? normalized.grossFcfa
-  const reductionFcfa = Math.max(
+
+  const totalReduction = Math.max(
     0,
     options?.reductionFcfa ?? normalized.labExamReductionFcfa ?? 0,
   )
-  const totalFcfa =
-    options?.totalFcfa ?? Math.max(0, grossFcfa - reductionFcfa)
-  openPrintDocument(
-    `Reçu examens — ${normalized.visit.patient.code}`,
-    buildExternalPatientThermalReceiptHtml({
-      ...buildPatientContext(normalized),
-      examLines: normalized.examLines.map((line) => ({
-        label: line.label,
-        amountFcfa: line.unitPriceFcfa,
-        kind: line.kind,
-      })),
-      grossFcfa,
-      reductionFcfa,
-      totalFcfa,
-      status: options?.status,
-      invoiceNumber: options?.invoiceNumber?.trim() || undefined,
-    }),
-    { pageSize: '80mm' },
-  )
+
+  const examsByKind =
+    activeExamKindsFromBlocks(normalized.examsByKind).length > 0
+      ? normalized.examsByKind
+      : examsByKindFromLines(normalized.examLines)
+
+  const baseSheets = buildExamSheetsFromBlocks(examsByKind, emptyExamReductionsByKind())
+  if (!baseSheets.length) return false
+
+  // Répartition de la réduction globale (réception) sur chaque service, dans l’ordre.
+  const reductions = emptyExamReductionsByKind()
+  const hasPerKindReduction = Object.values(normalized.reductionsByKind ?? {}).some((v) => (v ?? 0) > 0)
+  if (hasPerKindReduction && normalized.reductionsByKind) {
+    for (const kind of Object.keys(normalized.reductionsByKind) as ExamKindSlug[]) {
+      reductions[kind] = normalized.reductionsByKind[kind] ?? 0
+    }
+  } else {
+    let remaining = totalReduction
+    for (const sheet of baseSheets) {
+      const share = Math.min(sheet.grossFcfa, remaining)
+      reductions[sheet.kind] = share
+      remaining -= share
+    }
+  }
+
+  const sheets = buildExamSheetsFromBlocks(examsByKind, reductions)
+  if (!sheets.length) return false
+
+  const patientCtx = buildPatientContext(normalized)
+  const sections = sheets
+    .map((sheet) => {
+      const meta = normalized.invoicesByKind?.[sheet.kind]
+      const html = buildExternalPatientThermalReceiptHtml({
+        ...patientCtx,
+        docTitle: EXAM_KIND_LABELS[sheet.kind],
+        examLines: sheet.lines.map((line) => ({
+          label: line.label,
+          amountFcfa: line.unitPriceFcfa,
+          kind: sheet.kind,
+        })),
+        grossFcfa: meta?.grossFcfa ?? sheet.grossFcfa,
+        reductionFcfa: meta?.reductionFcfa ?? sheet.reductionFcfa,
+        totalFcfa: meta?.netFcfa ?? sheet.netFcfa,
+        status: options?.status,
+        invoiceNumber:
+          meta?.invoiceNumber?.trim() || options?.invoiceNumber?.trim() || undefined,
+      })
+      return html ? `<div class="print-invoice-page">${html}</div>` : null
+    })
+    .filter(Boolean)
+    .join('')
+
+  if (!sections) return false
+
+  // Un seul clic : N reçus distincts (un par service) dans le même job d’impression.
+  return openThermalReceipt(`Reçus examens — ${normalized.visit.patient.code}`, sections)
+}
+
+function openThermalReceipt(title: string, html: string): boolean {
+  if (!html) {
+    cancelPrintWindow()
+    return false
+  }
+  if (!ensurePrintWindow('80mm')) return false
+  const printed = openPrintDocument(title, html, { pageSize: '80mm' })
+  if (!printed) {
+    cancelPrintWindow()
+    return false
+  }
   return true
 }
 
@@ -226,7 +282,10 @@ function buildKindInvoiceSection(
   invoiceMeta?: ExamKindInvoiceMeta | string,
 ): string | null {
   const normalized = normalizeLabExamPendingItem(item)
-  const block = normalized.examsByKind[kind]
+  const block =
+    normalized.examsByKind[kind]?.lines.length
+      ? normalized.examsByKind[kind]
+      : normalized.allExamsByKind?.[kind]
   if (!block?.lines.length) return null
 
   const meta = typeof invoiceMeta === 'string' ? { invoiceNumber: invoiceMeta } : invoiceMeta
@@ -265,10 +324,10 @@ export function printPendingLabExamInvoices(item: LabExamPendingItem) {
   const kinds =
     normalized.unpaidKinds?.length
       ? normalized.unpaidKinds
-      : activeExamKindsFromBlocks(normalized.examsByKind)
-  if (!kinds.length) return
+      : activeExamKindsFromBlocks(normalized.allExamsByKind ?? normalized.examsByKind)
+  if (!kinds.length) return false
 
-  printAllPendingLabExamInvoices(
+  return printAllPendingLabExamInvoices(
     normalized,
     normalized.reductionsByKind ?? emptyExamReductionsByKind(),
     'En attente',
@@ -285,13 +344,33 @@ export function printLabExamKindInvoice(
   invoiceMeta?: ExamKindInvoiceMeta | string,
 ) {
   const section = buildKindInvoiceSection(item, kind, reductionFcfa, status, invoiceMeta)
-  if (!section) return
+  if (!section) return false
+  return openThermalReceipt(resolveSingleExamInvoiceDocTitle(kind), section)
+}
 
-  openPrintDocument(
-    resolveSingleExamInvoiceDocTitle(kind),
-    section,
-    { pageSize: '80mm' },
-  )
+function sheetsForPrint(
+  item: LabExamPendingItem,
+  reductions: ExamReductionsByKind,
+  kinds?: ExamKindSlug[],
+) {
+  const source =
+    item.allExamsByKind && activeExamKindsFromBlocks(item.allExamsByKind).length
+      ? item.allExamsByKind
+      : item.examsByKind
+  const normalized = normalizeLabExamPendingItem({ ...item, examsByKind: source })
+  let sheets = buildExamSheetsFromBlocks(normalized.examsByKind, reductions)
+  if (kinds?.length) {
+    const allowed = new Set(kinds)
+    sheets = sheets.filter((sheet) => allowed.has(sheet.kind))
+  }
+  if (!sheets.length && normalized.examLines.length) {
+    sheets = buildExamSheetsFromBlocks(examsByKindFromLines(normalized.examLines), reductions)
+    if (kinds?.length) {
+      const allowed = new Set(kinds)
+      sheets = sheets.filter((sheet) => allowed.has(sheet.kind))
+    }
+  }
+  return { normalized, sheets }
 }
 
 export function printAllPendingLabExamInvoices(
@@ -301,20 +380,25 @@ export function printAllPendingLabExamInvoices(
   invoicesByKind?: Partial<Record<ExamKindSlug, ExamKindInvoiceMeta>>,
   kinds?: ExamKindSlug[],
 ) {
-  const normalized = normalizeLabExamPendingItem(item)
-  let sheets = buildExamSheetsFromBlocks(normalized.examsByKind, reductions)
-  if (kinds?.length) {
-    const allowed = new Set(kinds)
-    sheets = sheets.filter((sheet) => allowed.has(sheet.kind))
-  }
+  const { normalized, sheets } = sheetsForPrint(item, reductions, kinds)
   // Cause racine bug impression : sheets vide si examsByKind ne contient que des impayés filtrés.
   if (!sheets.length) return false
+
+  const printItem = normalizeLabExamPendingItem({
+    ...normalized,
+    examsByKind: {
+      ...normalized.examsByKind,
+      ...Object.fromEntries(
+        sheets.map((sheet) => [sheet.kind, { lines: sheet.lines, grossFcfa: sheet.grossFcfa }]),
+      ),
+    } as LabExamPendingItem['examsByKind'],
+  })
 
   const sections = sheets
     .map((sheet) => {
       const meta = invoicesByKind?.[sheet.kind]
       const html = buildKindInvoiceSection(
-        normalized,
+        printItem,
         sheet.kind,
         sheet.reductionFcfa,
         status,
@@ -327,12 +411,10 @@ export function printAllPendingLabExamInvoices(
 
   if (!sections) return false
 
-  openPrintDocument(
+  return openThermalReceipt(
     `Factures examens — ${normalized.visit.patient.code}`,
     sections,
-    { pageSize: '80mm' },
   )
-  return true
 }
 
 export function printLabExamPaymentReceipts(
@@ -364,20 +446,18 @@ export function printLabExamPaymentReceipts(
       .filter(Boolean)
       .map((html) => `<div class="print-invoice-page">${html}</div>`)
       .join('')
-    if (!sections) return
-    openPrintDocument(
+    if (!sections) return false
+    return openThermalReceipt(
       `Factures examens — ${normalized.visit.patient.code}`,
       sections,
-      { pageSize: '80mm' },
     )
-    return
   }
 
   const kind = payload.kinds[0]
-  if (!kind) return
+  if (!kind) return false
   const meta = invoicesByKind?.[kind]
   const payment = resolveReceiptPaymentMeta(meta)
-  printLabExamKindInvoice(
+  return printLabExamKindInvoice(
     normalized,
     kind,
     payload.reductionsByKind[kind] ?? 0,

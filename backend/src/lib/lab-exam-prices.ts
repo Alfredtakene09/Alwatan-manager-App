@@ -12,6 +12,10 @@ import {
   extractPrescribedFieldLabels,
   extractSelectedFormLabels,
 } from "./lab-notes.js";
+import {
+  ROUTINE_BILLING_GROUPS,
+  billingGroupForSectionTitle,
+} from "./lab-routine-billing-groups.js";
 
 const DEFAULT_EXAM_PRICE_FCFA = 3000;
 
@@ -97,6 +101,7 @@ export async function refreshExamPriceCache() {
         },
         select: {
           label: true,
+          section: true,
           priceFcfa: true,
           panel: {
             select: {
@@ -121,17 +126,52 @@ export async function refreshExamPriceCache() {
     ]);
 
     const nextFieldPrices = new Map<string, number>();
+    const sectionSums = new Map<string, number>();
+    /** panelLabel → map sectionTitle → price sum */
+    const panelSectionPrices = new Map<string, Map<string, number>>();
+
     for (const field of fields) {
       if (field.priceFcfa == null || field.priceFcfa < 1) continue;
       const panelLabels = new Set<string>([
         field.panel.label,
         ...field.panel.examCatalogItems.map((item) => item.label),
       ]);
+      const sectionTitle = field.section?.trim() || "";
       for (const panelLabel of panelLabels) {
         if (!panelLabel.trim()) continue;
         nextFieldPrices.set(fieldPriceLookupKey(panelLabel, field.label), field.priceFcfa);
+        if (sectionTitle && sectionTitle.toLowerCase() !== "formulaire principal") {
+          const sectionKey = fieldPriceLookupKey(panelLabel, sectionTitle);
+          sectionSums.set(sectionKey, (sectionSums.get(sectionKey) ?? 0) + field.priceFcfa);
+          if (!panelSectionPrices.has(panelLabel)) panelSectionPrices.set(panelLabel, new Map());
+          const bySection = panelSectionPrices.get(panelLabel)!;
+          bySection.set(sectionTitle, (bySection.get(sectionTitle) ?? 0) + field.priceFcfa);
+        }
       }
     }
+    for (const [sectionKey, sum] of sectionSums) {
+      nextFieldPrices.set(sectionKey, sum);
+    }
+
+    // Alias des groupes Routine (Urine+Disposite, Stool+Micro) → un seul tarif.
+    for (const [panelLabel, bySection] of panelSectionPrices) {
+      for (const group of ROUTINE_BILLING_GROUPS) {
+        const linkedTitles: string[] = [];
+        let groupPrice: number | undefined;
+        for (const [sectionTitle, price] of bySection) {
+          const matched = billingGroupForSectionTitle(sectionTitle);
+          if (matched?.id !== group.id) continue;
+          linkedTitles.push(sectionTitle);
+          if (groupPrice == null && price > 0) groupPrice = price;
+        }
+        if (groupPrice == null || !linkedTitles.length) continue;
+        const aliases = new Set<string>([group.label, ...linkedTitles]);
+        for (const alias of aliases) {
+          nextFieldPrices.set(fieldPriceLookupKey(panelLabel, alias), groupPrice);
+        }
+      }
+    }
+
     fieldPriceCache = nextFieldPrices;
   } catch {
     catalogPriceCache = new Map();
@@ -142,7 +182,8 @@ export async function refreshExamPriceCache() {
 /**
  * Prix d’une ligne prescrite :
  * - examen entier (« Panel ») → tarif catalogue ;
- * - champs partiels (« Panel (Section: champ) ») → somme des prix champs (sinon tarif examen / champ).
+ * - section nommée (« Panel (Urine General) ») → tarif de section ;
+ * - champs hors section (« Panel (champ) ») → somme des prix champs.
  */
 export function getLabExamPriceFcfa(label: string | null | undefined): number {
   if (typeof label !== "string") return 0;
@@ -154,6 +195,11 @@ export function getLabExamPriceFcfa(label: string | null | undefined): number {
     const units = countPrescribedFieldUnits(trimmed);
     return resolveExamBasePrice(trimmed) * units;
   }
+
+  // Filet : libellé catalogue entier (ex. acronyme entre parenthèses) déjà en cache.
+  const exact = catalogPriceCache.get(trimmed);
+  if (exact != null) return exact;
+  if (LAB_EXAM_PRICES_FCFA[trimmed] != null) return LAB_EXAM_PRICES_FCFA[trimmed];
 
   const base = extractBasePanelLabel(trimmed);
   let sum = 0;

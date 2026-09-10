@@ -66,6 +66,16 @@ export const CLINIC_PRINT_STYLES = `
     size: A4 portrait;
     margin: 0;
   }
+  @page print-a4-report {
+    size: A4 portrait;
+    margin: 12mm 10mm 16mm 10mm;
+    @bottom-center {
+      content: "Page " counter(page);
+      font-size: 9px;
+      color: #64748b;
+      font-family: 'Segoe UI', Arial, sans-serif;
+    }
+  }
   body {
     font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
     padding: 28px 32px;
@@ -88,6 +98,44 @@ export const CLINIC_PRINT_STYLES = `
     width: 100%;
     padding: 12mm 14mm;
     margin: 0;
+  }
+  body.print-a4-report {
+    page: print-a4-report;
+    max-width: none;
+    width: 100%;
+    padding: 0 2mm 6mm;
+    margin: 0;
+  }
+  body.print-a4-report table {
+    page-break-inside: auto;
+  }
+  body.print-a4-report thead {
+    display: table-header-group;
+  }
+  /* Pas table-footer-group : le pied se répéterait à chaque page. */
+  body.print-a4-report tfoot {
+    display: table-row-group;
+  }
+  body.print-a4-report tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  body.print-a4-report .clinic-header {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+  body.print-a4-report .report-totals {
+    margin-top: 10px;
+    width: 100%;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  body.print-a4-report .report-totals th,
+  body.print-a4-report .report-totals td,
+  body.print-a4-report tfoot th,
+  body.print-a4-report tfoot td {
+    font-weight: 700;
+    background: #f1f5f9;
   }
   .print-invoice-page {
     page-break-after: always;
@@ -876,6 +924,14 @@ export const CLINIC_PRINT_STYLES = `
     text-align: left;
     white-space: normal;
   }
+  body.print-thermal .print-invoice-page {
+    page-break-after: always;
+    break-after: page;
+  }
+  body.print-thermal .print-invoice-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
   body.print-thermal .print-invoice-page + .print-invoice-page {
     margin-top: 8px;
   }
@@ -1174,41 +1230,78 @@ export const CLINIC_PRINT_STYLES = `
     unicode-bidi: isolate;
   }
 
-  /* Reçu patient externe (réception) — lisible sur 80 mm, plus compact qu’une consultation. */
-  body.print-thermal .thermal-receipt--external.thermal-receipt--ticket {
-    font-size: 15px;
-    line-height: 1.32;
+  /* Reçu patient externe / examens — gros caractères, police lisible (80 mm). */
+  body.print-thermal .thermal-receipt--external.thermal-receipt--ticket,
+  body.print-thermal .thermal-receipt--exam.thermal-receipt--ticket {
+    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
+    font-size: 20px;
+    line-height: 1.35;
+    font-weight: 600;
   }
   body.print-thermal .thermal-receipt--external .thermal-receipt__title,
-  body.print-thermal .thermal-receipt--external .thermal-receipt__title--fr {
-    font-size: 17px;
+  body.print-thermal .thermal-receipt--external .thermal-receipt__title--fr,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__title,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__title--fr {
+    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
+    font-size: 24px;
+    font-weight: 800;
   }
-  body.print-thermal .thermal-receipt--external .thermal-receipt__subtitle-no {
-    font-size: 15px;
+  body.print-thermal .thermal-receipt--external .thermal-receipt__subtitle-no,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__subtitle-no {
+    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
+    font-size: 20px;
+    font-weight: 700;
   }
-  body.print-thermal .thermal-receipt--external .thermal-receipt__contact {
-    font-size: 12px;
+  body.print-thermal .thermal-receipt--external .thermal-receipt__contact,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__contact {
+    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
+    font-size: 16px;
+    font-weight: 600;
   }
   body.print-thermal .thermal-receipt--external .thermal-receipt__row,
-  body.print-thermal .thermal-receipt--external .thermal-receipt__line {
-    font-size: 14px;
+  body.print-thermal .thermal-receipt--external .thermal-receipt__line,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__row,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__line {
+    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
+    font-size: 18px;
+    font-weight: 600;
   }
   body.print-thermal .thermal-receipt--external .thermal-receipt__value,
-  body.print-thermal .thermal-receipt--external .thermal-receipt__item-amount {
-    font-size: 14px;
+  body.print-thermal .thermal-receipt--external .thermal-receipt__item-amount,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__item-name,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__value,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__item-amount,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__item-name {
+    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
+    font-size: 18px;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--external .thermal-receipt__line--total,
-  body.print-thermal .thermal-receipt--external .thermal-receipt__row--total {
+  body.print-thermal .thermal-receipt--external .thermal-receipt__row--total,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__line--total,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__row--total {
+    font-size: 22px;
+    font-weight: 800;
+  }
+  body.print-thermal .thermal-receipt--external .thermal-receipt__thanks,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__thanks {
+    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
+    font-size: 20px;
+    font-weight: 700;
+  }
+  body.print-thermal .thermal-receipt--external .thermal-receipt__note,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__note {
+    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
     font-size: 16px;
-    font-weight: 700;
+    font-weight: 600;
   }
-  body.print-thermal .thermal-receipt--external .thermal-receipt__thanks {
-    font-size: 15px;
-  }
-  body.print-thermal .thermal-receipt--external .thermal-receipt__line--section {
-    font-weight: 700;
+  body.print-thermal .thermal-receipt--external .thermal-receipt__line--section,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__line--section {
+    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
+    font-size: 18px;
+    font-weight: 800;
     border-bottom: 1px solid #000;
-    margin-top: 4px;
+    margin-top: 6px;
   }
 
   /* Tickets thermiques en arabe : RTL local (chiffres / tél. restent LTR isolés). */
@@ -1566,7 +1659,7 @@ function buildGroupedExamInvoiceRows(examLines: LabExamInvoiceLine[]) {
   const summaryLines = summarizeExamLinesByPanel(examLines)
   const renderRow = (line: LabExamInvoiceLine, kind: ExamKindSlug) => `
       <div class="receipt-invoice__line receipt-invoice__exam-row receipt-invoice__exam-row--${kind}">
-        <span>${escapeHtml(t(line.label))}</span>
+        <span>${escapeHtml(line.label)}</span>
         <strong>${formatFcfaPrint(line.amountFcfa)}</strong>
       </div>`
 
@@ -1820,7 +1913,8 @@ export function summarizeExamLinesByPanel(examLines: LabExamInvoiceLine[]): LabE
 /** Ticket : une ligne par section (si présente) ou nom complet d’examen, montants additionnés. */
 export function summarizeExamLinesBySectionOrName(
   examLines: LabExamInvoiceLine[],
-  translateLabel: (name: string) => string = t,
+  /** Conservé pour compat ; les noms d’examens restent tels qu’enregistrés. */
+  translateLabel: (name: string) => string = (name) => name,
 ): LabExamInvoiceLine[] {
   const order: string[] = []
   const map = new Map<string, LabExamInvoiceLine>()
@@ -1936,7 +2030,7 @@ export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string
       : EXTERNAL_TICKET_THANKS_KEY
 
   return `
-<div class="${thermalTicketRootClass()}"${thermalTicketDirAttrs()}>
+<div class="${thermalTicketRootClass('thermal-receipt--exam')}"${thermalTicketDirAttrs()}>
   ${buildThermalTicketHeadHtml({ title: t('Reçu examens'), number: headerNumber || undefined, rtl })}
   <hr class="thermal-receipt__rule" />
 
@@ -1959,7 +2053,8 @@ export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string
 
 function buildExternalExamItemRows(examLines: LabExamInvoiceLine[]): string {
   const rtl = isPrintArabic()
-  const summary = summarizeExamLinesBySectionOrName(examLines, t)
+  // Noms d’examens : libellés catalogue, jamais traduits (même UI arabe).
+  const summary = summarizeExamLinesBySectionOrName(examLines)
   if (!summary.length) return ''
   const kinds = new Set(summary.map((line) => line.kind ?? 'examen'))
   if (kinds.size <= 1) {
@@ -1980,7 +2075,7 @@ function buildExternalExamItemRows(examLines: LabExamInvoiceLine[]): string {
   return parts.join('')
 }
 
-/** Ticket thermique 80 mm — reçu unique patient externe (réception). */
+/** Ticket thermique 80 mm — reçu patient externe (réception). Un ticket par service. */
 export function buildExternalPatientThermalReceiptHtml(data: LabExamInvoiceData): string {
   const rtl = isPrintArabic()
   const { shortDate, timeShort } = parseReceiptDateTime(data.date, true)
@@ -1990,6 +2085,9 @@ export function buildExternalPatientThermalReceiptHtml(data: LabExamInvoiceData)
   const dateLabel = `${shortDate} ${timeShort}`
   const doctorName =
     data.prescribedBy?.startsWith('Dr ') ? data.prescribedBy.trim() : ''
+  const title = data.docTitle?.trim()
+    ? `${t('Reçu')} — ${t(data.docTitle.trim())}`
+    : t('Reçu examens')
 
   const metaRows = [
     thermalLocaleMetaRow('Date', dateLabel),
@@ -2016,7 +2114,7 @@ export function buildExternalPatientThermalReceiptHtml(data: LabExamInvoiceData)
 
   return `
 <div class="${thermalTicketRootClass('thermal-receipt--external')}"${thermalTicketDirAttrs()}>
-  ${buildThermalTicketHeadHtml({ title: t('Reçu examens'), number: data.patientCode || undefined, rtl })}
+  ${buildThermalTicketHeadHtml({ title, number: data.patientCode || undefined, rtl })}
   <hr class="thermal-receipt__rule" />
 
   <div class="thermal-receipt__fields">
@@ -2188,6 +2286,8 @@ export function buildClinicPrintHeader(
 export type OpenPrintOptions = {
   autoPrint?: boolean
   pageSize?: 'A5' | 'A4' | '80mm'
+  /** Rapport tabulaire A4 : marges, en-tête répété, numéros de page. */
+  tableReport?: boolean
   /** Force LTR même si la session est en arabe (ex. feuilles de résultats labo). */
   forceLtr?: boolean
   /** Ticket court (pharmacie) : hauteur page serrée après le contenu. */
@@ -2213,6 +2313,16 @@ function printWindowFeatures(pageSize?: OpenPrintOptions['pageSize']): string {
  * À appeler synchrone au début du clic (avant tout await).
  * Ouvre une fenêtre blanche pour que print() reste autorisé après l’API.
  */
+export function hasReservedPrintWindow() {
+  return Boolean(reservedPrintWindow && !reservedPrintWindow.closed)
+}
+
+/** Réserve une fenêtre si aucune n’est déjà ouverte (réimpression synchrone au clic). */
+export function ensurePrintWindow(pageSize: OpenPrintOptions['pageSize'] = '80mm'): boolean {
+  if (hasReservedPrintWindow()) return true
+  return reservePrintWindow(pageSize)
+}
+
 export function reservePrintWindow(pageSize: OpenPrintOptions['pageSize'] = '80mm'): boolean {
   cancelPrintWindow()
   if (typeof window === 'undefined') return false
@@ -2257,19 +2367,26 @@ function takeReservedPrintWindow(): Window | null {
 
 /** Hauteur page thermique (mm) — toujours portrait (> 80 mm de largeur). */
 function measureThermalPageHeightMm(doc: Document, tight = false): number {
+  const pages = Array.from(doc.querySelectorAll('.print-invoice-page')) as HTMLElement[]
   const receipts = Array.from(doc.querySelectorAll('.thermal-receipt')) as HTMLElement[]
+  const targets = pages.length > 1 ? pages : receipts.length ? receipts : []
   let px = 0
 
-  if (receipts.length) {
-    for (const receipt of receipts) {
-      const probe = receipt.cloneNode(true) as HTMLElement
+  if (targets.length) {
+    // Plusieurs reçus (page-break) : taille = le plus grand ticket, pas la somme.
+    let maxPx = 0
+    let sumPx = 0
+    for (const target of targets) {
+      const probe = target.cloneNode(true) as HTMLElement
       probe.style.cssText =
         'position:absolute;left:-10000px;top:0;width:80mm;max-width:80mm;height:auto;min-height:0;margin:0;padding:0;visibility:hidden;pointer-events:none;'
       doc.body.appendChild(probe)
-      px += Math.ceil(Math.max(probe.scrollHeight, probe.offsetHeight, 1))
+      const h = Math.ceil(Math.max(probe.scrollHeight, probe.offsetHeight, 1))
       probe.remove()
+      maxPx = Math.max(maxPx, h)
+      sumPx += h
     }
-    if (receipts.length > 1) px += (receipts.length - 1) * 8
+    px = pages.length > 1 || receipts.length > 1 ? maxPx : sumPx
   } else {
     for (const child of Array.from(doc.body.children)) {
       const el = child as HTMLElement
@@ -2471,7 +2588,11 @@ function printHtmlInNewWindow(
     }
     return false
   }
-  setTimeout(() => {
+
+  let printed = false
+  const kickPrint = () => {
+    if (printed) return
+    printed = true
     try {
       onBeforePrint?.(printWindow.document)
     } catch {
@@ -2483,7 +2604,20 @@ function printHtmlInNewWindow(
     } catch {
       /* ignore */
     }
-  }, 350)
+  }
+
+  const schedule = () => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(kickPrint)
+    })
+  }
+
+  if (printWindow.document.readyState === 'complete') {
+    schedule()
+  } else {
+    printWindow.addEventListener('load', schedule, { once: true })
+    setTimeout(kickPrint, 400)
+  }
   return true
 }
 
@@ -2491,14 +2625,15 @@ export function openPrintDocument(
   _title: string,
   bodyHtml: string,
   autoPrintOrOptions: boolean | OpenPrintOptions = true,
-) {
+): boolean {
   const options: OpenPrintOptions =
     typeof autoPrintOrOptions === 'boolean'
       ? { autoPrint: autoPrintOrOptions }
       : { autoPrint: true, ...autoPrintOrOptions }
 
   const isA5 = options.pageSize === 'A5'
-  const isA4 = options.pageSize === 'A4'
+  const isTableReport = Boolean(options.tableReport)
+  const isA4 = options.pageSize === 'A4' && !isTableReport
   const isThermal = options.pageSize === '80mm'
   const locale = getAppLocale()
   // Thermique : layout LTR (FR gauche · valeur centre · AR droite), chiffres non inversés.
@@ -2516,6 +2651,7 @@ export function openPrintDocument(
   const bodyClassParts = [
     isA5 ? 'print-a5' : '',
     isA4 ? 'print-a4' : '',
+    isTableReport ? 'print-a4-report' : '',
     isThermal ? 'print-thermal' : '',
     isRtl ? 'print-rtl' : '',
     options.forceLtr && !isThermal ? 'print-ltr-forced' : '',
@@ -2551,7 +2687,9 @@ export function openPrintDocument(
       margin: 0 !important;
     }
   }`
-    : `
+    : isTableReport
+      ? ''
+      : `
   @media print {
     @page { margin: 0 !important; }
   }`
@@ -2624,29 +2762,29 @@ ${contentHtml}
   if (autoPrint && typeof document !== 'undefined') {
     // Priorité : fenêtre réservée au clic (fiable après await API sur postes clients).
     if (preparedWindow) {
-      printHtmlInNewWindow(html, windowSize, beforePrint, preparedWindow)
-      return
+      return printHtmlInNewWindow(html, windowSize, beforePrint, preparedWindow)
     }
 
-    const printed = printHtmlInHiddenFrame(
-      html,
-      beforePrint,
-      isThermal
-        ? { widthPx: 302, heightPx: 1200, delayMs: 500, waitImages: true }
-        : { delayMs: 300 },
-    )
-    if (!printed) {
-      printHtmlInNewWindow(html, windowSize, beforePrint)
+    // Thermique : l’iframe quasi invisible clignote et print() est souvent ignoré
+    // en mode cabinet (--app). Ouvrir une vraie fenêtre d’impression.
+    if (isThermal) {
+      return printHtmlInNewWindow(html, windowSize, beforePrint)
     }
-    return
+
+    const printed = printHtmlInHiddenFrame(html, beforePrint, { delayMs: 300 })
+    if (!printed) {
+      return printHtmlInNewWindow(html, windowSize, beforePrint)
+    }
+    return true
   }
 
   const printWindow =
     preparedWindow ?? window.open('', '_blank', windowSize)
-  if (!printWindow) return
+  if (!printWindow) return false
   printWindow.document.write(html)
   printWindow.document.close()
   if (isThermal) {
     printWindow.onload = () => runThermalFit(printWindow.document)
   }
+  return true
 }

@@ -106,6 +106,23 @@ export function serializeEmployee(employee: EmployeeRecord) {
   };
 }
 
+/** Masque les montants de rémunération si le rôle n’y a pas droit (défense en profondeur API). */
+export function redactEmployeeCompensation<
+  T extends {
+    fixedSalaryFcfa?: unknown;
+    bonusFcfa?: unknown;
+    overtimeHourlyRateFcfa?: unknown;
+  },
+>(dto: T, canView: boolean): T {
+  if (canView) return dto;
+  return {
+    ...dto,
+    fixedSalaryFcfa: null,
+    bonusFcfa: null,
+    overtimeHourlyRateFcfa: null,
+  };
+}
+
 function employeeNameKey(firstName: string, lastName: string) {
   return `${firstName} ${lastName}`.trim().toLowerCase();
 }

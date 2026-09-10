@@ -290,7 +290,9 @@ const router = createRouter({
         },
         {
           path: 'pharmacie/mouvements',
-          redirect: { name: 'pharmacie-produits' },
+          name: 'pharmacie-mouvements',
+          component: () => import('@/views/pharmacie/PharmacieMovementsView.vue'),
+          meta: { module: 'pharmacie' },
         },
         {
           path: 'pharmacie/tableau-de-bord',

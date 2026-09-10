@@ -7,6 +7,8 @@ import { formatFcfa } from '@/lib/roles'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import type { PayrollRow } from '@/lib/admin-dashboard'
 import { PAYROLL_STATUS_LABEL } from '@/lib/admin-dashboard'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -25,6 +27,7 @@ type PayrollResponse = {
     id: string
     grossFcfa: number
     pendingAdvancesFcfa?: number
+    netFcfa?: number
     status: PayrollRow['status']
     employee: { fullName: string; jobTitle: string | null }
   }>
@@ -46,6 +49,12 @@ function resolveTab(tab: unknown): TabId {
   return 'mois'
 }
 
+function currentYearMonth() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+const periodInput = ref(currentYearMonth())
 const activeTab = ref<TabId>(resolveTab(route.query.tab))
 const payload = ref<PayrollResponse | null>(null)
 const advanceRows = ref<SalaryAdvanceSummary[]>([])
@@ -60,6 +69,7 @@ const rows = computed(() =>
     jobTitle: row.employee.jobTitle,
     grossFcfa: row.grossFcfa,
     pendingAdvancesFcfa: row.pendingAdvancesFcfa ?? 0,
+    netFcfa: row.netFcfa ?? Math.max(0, row.grossFcfa - (row.pendingAdvancesFcfa ?? 0)),
     status: row.status,
   })),
 )
@@ -126,7 +136,10 @@ async function loadAdvances() {
 async function loadPayroll() {
   loading.value = true
   try {
-    const { data } = await api.get<PayrollResponse>('/admin/payroll')
+    const [year, month] = periodInput.value.split('-').map(Number)
+    const { data } = await api.get<PayrollResponse>('/admin/payroll', {
+      params: Number.isFinite(year) && Number.isFinite(month) ? { year, month } : undefined,
+    })
     payload.value = data
   } finally {
     loading.value = false
@@ -169,6 +182,53 @@ async function payAllPending() {
   avancesPanelRef.value?.reload()
 }
 
+type PayrollExportRow = (typeof rows.value)[number]
+
+const payrollExportColumns: ExportColumn<PayrollExportRow>[] = [
+  { header: 'Employé', value: (r) => r.employeeName },
+  { header: 'Poste', value: (r) => r.jobTitle ?? '—' },
+  { header: 'Salaire brut', value: (r) => formatFcfa(r.grossFcfa) },
+  { header: 'Avance', value: (r) => (r.pendingAdvancesFcfa > 0 ? formatFcfa(r.pendingAdvancesFcfa) : '—') },
+  { header: 'Net', value: (r) => formatFcfa(r.netFcfa) },
+  { header: 'Statut paiement', value: (r) => PAYROLL_STATUS_LABEL[r.status] },
+]
+
+function payrollExportTotals() {
+  const gross = rows.value.reduce((sum, row) => sum + row.grossFcfa, 0)
+  const advances = rows.value.reduce((sum, row) => sum + row.pendingAdvancesFcfa, 0)
+  const net = rows.value.reduce((sum, row) => sum + row.netFcfa, 0)
+  return [
+    { label: 'Nombre de fiches', value: String(rows.value.length) },
+    { label: 'Total brut', value: formatFcfa(gross) },
+    { label: 'Total avances', value: formatFcfa(advances) },
+    { label: 'Total net', value: formatFcfa(net) },
+  ]
+}
+
+function exportPayrollPdf() {
+  exportTablePdf('Paie du mois', payrollExportColumns, rows.value, {
+    captionRows: [{ label: 'Période', value: periodLabel.value }],
+    totalsRows: payrollExportTotals(),
+  })
+}
+
+function exportPayrollExcel() {
+  exportTableExcel('Paie du mois', payrollExportColumns, rows.value, {
+    totalsRows: payrollExportTotals(),
+  })
+}
+
+function exportPayrollWord() {
+  void exportTableWord('Paie du mois', payrollExportColumns, rows.value, {
+    captionRows: [{ label: 'Période', value: periodLabel.value }],
+    totalsRows: payrollExportTotals(),
+  })
+}
+
+watch(periodInput, () => {
+  if (activeTab.value === 'mois') void loadPayroll()
+})
+
 onMounted(reloadPayrollData)
 </script>
 
@@ -176,6 +236,13 @@ onMounted(reloadPayrollData)
   <div class="admin-page salaires-page">
     <UiPageHeader title="Salaires & paie" :subtitle="pageSubtitle" :icon="Coins">
       <template v-if="activeTab === 'mois'" #actions>
+        <input
+          v-model="periodInput"
+          type="month"
+          class="salaires-month-input"
+          aria-label="Période de paie"
+        />
+        <ExportButtons :disabled="loading || !rows.length" @pdf="exportPayrollPdf" @excel="exportPayrollExcel" @word="exportPayrollWord" />
         <UiButton @click="payAllPending">Valider la paie</UiButton>
       </template>
     </UiPageHeader>
@@ -269,6 +336,7 @@ onMounted(reloadPayrollData)
               <th>Poste</th>
               <th>Salaire brut</th>
               <th>Avance</th>
+              <th>Net</th>
               <th>Statut paiement</th>
               <th>Actions</th>
             </tr>
@@ -284,6 +352,7 @@ onMounted(reloadPayrollData)
                 </span>
                 <span v-else>—</span>
               </td>
+              <td>{{ formatFcfa(row.netFcfa) }}</td>
               <td>{{ PAYROLL_STATUS_LABEL[row.status] }}</td>
               <td>
                 <UiButton
@@ -381,6 +450,17 @@ onMounted(reloadPayrollData)
   background: #fff;
   color: var(--primary-800);
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+}
+
+.salaires-month-input {
+  min-width: 160px;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
 }
 
 .payroll-progress {

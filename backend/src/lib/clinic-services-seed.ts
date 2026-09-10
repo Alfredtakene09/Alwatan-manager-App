@@ -11,6 +11,8 @@ export const DEFAULT_CLINIC_SERVICES = [
   "Bloc opératoire",
   "Pharmacie",
   "Accueil / Réception",
+  "Orthopédie",
+  "Kinésithérapie",
 ] as const;
 
 type ClinicServiceDb = Pick<PrismaClient, "clinicService">;

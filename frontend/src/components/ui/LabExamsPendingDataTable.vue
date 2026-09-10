@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Banknote, BedDouble, Eye, AlertCircle, Printer } from '@lucide/vue'
+import { Banknote, BedDouble, Eye, AlertCircle, Printer, Trash2 } from '@lucide/vue'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
 import { examLinesSectionOrNameList, type LabExamPendingItem } from '@/lib/lab-exam-pending'
@@ -19,8 +19,9 @@ const props = withDefaults(
     fill?: boolean
     mode?: 'pending' | 'paid'
     printableIds?: Set<string>
+    canDeletePaid?: boolean
   }>(),
-  { mode: 'pending' },
+  { mode: 'pending', canDeletePaid: false },
 )
 
 const emit = defineEmits<{
@@ -29,6 +30,7 @@ const emit = defineEmits<{
   reclaim: [id: string]
   view: [id: string]
   hospitalize: [visitId: string]
+  delete: [id: string]
 }>()
 
 const isPaidMode = computed(() => props.mode === 'paid')
@@ -260,21 +262,33 @@ function onPrint(row: TableRow) {
                   </button>
                   <button
                     type="button"
-                    class="st-btn"
+                    class="st-btn st-btn--accent st-btn--labeled"
                     :title="
                       row.canPrint
-                        ? uiText('Imprimer les factures')
+                        ? uiText('Réimprimer le reçu')
                         : uiText('Aucune facture payée à imprimer')
                     "
                     :aria-label="
                       row.canPrint
-                        ? uiText('Imprimer les factures')
+                        ? uiText('Réimprimer le reçu')
                         : uiText('Aucune facture payée à imprimer')
                     "
                     :disabled="!row.canPrint"
                     @click="onPrint(row)"
                   >
                     <Printer :size="15" />
+                    <span>{{ uiText('Réimprimer') }}</span>
+                  </button>
+                  <button
+                    v-if="canDeletePaid"
+                    type="button"
+                    class="st-btn st-btn--delete st-btn--labeled"
+                    :title="uiText('Supprimer les examens payés')"
+                    :aria-label="uiText('Supprimer les examens payés')"
+                    @click="emit('delete', row.id)"
+                  >
+                    <Trash2 :size="15" />
+                    <span>{{ uiText('Supprimer') }}</span>
                   </button>
                 </div>
                 <div v-else class="st-actions">

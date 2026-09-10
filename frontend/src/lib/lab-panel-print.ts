@@ -3,7 +3,6 @@ import { fullName } from '@/lib/roles'
 import { formatAppDate, formatAppDateTime } from '@/i18n/locale-format'
 import { translateExamName, translateUi } from '@/i18n/translate'
 import {
-  getAllLabFormPanels,
   getLabFormPanel,
   labFieldCommentKey,
   type LabFormPanel,
@@ -14,6 +13,13 @@ import {
   LAB_CLASSIC_SHEET_STYLES,
   valuesHaveClassicStoolOrUrine,
 } from '@/lib/lab-classic-sheet-print'
+import {
+  LAB_VISIT_FLOW_ARTICLE_CLASS,
+  panelResultsHaveValues,
+  resolveLabVisitPrintSlugs,
+} from '@/lib/lab-visit-print-aggregate'
+
+export { LAB_VISIT_FLOW_ARTICLE_CLASS }
 
 type PrintContext = {
   patientName: string
@@ -35,6 +41,7 @@ function escapeHtml(value: string) {
 }
 
 function formatFormTitle(label: string) {
+  if (/glyc[eé]mie/i.test(label.trim())) return 'RBG (RBS)'
   return translateExamName(label).trim().toUpperCase()
 }
 
@@ -205,31 +212,6 @@ function getSectionsToPrint(
   return { formTitle, sections: sectionsToPrint }
 }
 
-/** Au-delà : une page par formulaire. En dessous + volume faible → tout sur 1 page. */
-const MAX_COMBINED_PANELS = 3
-const MAX_COMBINED_PRINT_ROWS = 24
-
-function measurePanelPrintLoad(slug: LabPanelSlug, values: Record<string, string>) {
-  const prepared = getSectionsToPrint(slug, values)
-  if (!prepared) return 0
-  // Titre formulaire + lignes tableau.
-  return 2 + countFilledTableRows(prepared.sections)
-}
-
-function canCombinePanelsOnOnePage(
-  slugs: LabPanelSlug[],
-  panelResults: Partial<Record<LabPanelSlug, Record<string, string>>>,
-) {
-  if (slugs.length < 2 || slugs.length > MAX_COMBINED_PANELS) return false
-  let total = 0
-  for (const slug of slugs) {
-    const load = measurePanelPrintLoad(slug, panelResults[slug] ?? {})
-    if (!load) return false
-    total += load
-  }
-  return total <= MAX_COMBINED_PRINT_ROWS
-}
-
 function shouldPrintClassicStoolUrine(slug: LabPanelSlug, values: Record<string, string>) {
   return slug === 'routine' && valuesHaveClassicStoolOrUrine(values)
 }
@@ -285,55 +267,72 @@ export function buildLabPanelPrintHtml(
   `
 }
 
-/** Plusieurs petits formulaires saisis → une seule page PDF (en-tête / patient uniques). */
-export function buildCombinedLabPanelsPrintHtml(
+function renderVisitPanelBlock(
+  slug: LabPanelSlug,
+  values: Record<string, string>,
+  densityClass: string,
+) {
+  if (shouldPrintClassicStoolUrine(slug, values)) {
+    const panel = getLabFormPanel(slug)
+    const formTitle = formatFormTitle(panel?.label ?? slug)
+    const bodyHtml = renderClassicStoolUrineTable(slug, values)
+    if (!bodyHtml.trim()) return ''
+    return `
+      <section class="lab-result-print__panel-block lab-result-print__panel-block--classic">
+        <h2 class="lab-result-print__form-name">${escapeHtml(formTitle)}</h2>
+        <div class="lab-result-print__body">${bodyHtml}</div>
+      </section>
+    `
+  }
+
+  const prepared = getSectionsToPrint(slug, values)
+  if (!prepared) return ''
+  const showNrColumn = sectionsHaveReference(prepared.sections)
+  const tables = renderPanelTables(prepared.sections, values, densityClass, showNrColumn)
+  if (!tables.trim()) return ''
+  return `
+    <section class="lab-result-print__panel-block">
+      <h2 class="lab-result-print__form-name">${escapeHtml(prepared.formTitle)}</h2>
+      <div class="lab-result-print__body">${tables}</div>
+    </section>
+  `
+}
+
+/**
+ * Tous les formulaires d’une même visite → un seul article HTML.
+ * La pagination se fait par flux CSS (saut de page naturel), jamais par plusieurs jobs d’impression.
+ */
+export function buildVisitLabResultsPrintHtml(
   slugs: LabPanelSlug[],
   panelResults: Partial<Record<LabPanelSlug, Record<string, string>>>,
   context: PrintContext,
 ) {
-  const blocks = slugs
-    .map((slug) => {
-      const values = panelResults[slug]
-      if (!values) return null
-      const prepared = getSectionsToPrint(slug, values)
-      if (!prepared) return null
-      return { slug, values, ...prepared }
-    })
-    .filter(Boolean) as Array<{
-    slug: LabPanelSlug
-    values: Record<string, string>
-    formTitle: string
-    sections: LabPanelSection[]
-  }>
+  const blocks = slugs.flatMap((slug) => {
+    const values = panelResults[slug]
+    if (!values || !panelResultsHaveValues(values)) return []
+    return [{ slug, values }]
+  })
 
   if (!blocks.length) return ''
 
   const date = context.date ?? formatAppDate(new Date())
   const printedAt = formatAppDateTime(new Date())
-  const rowCount = blocks.reduce((sum, block) => sum + 2 + countFilledTableRows(block.sections), 0)
+  const rowCount = blocks.reduce((sum, block) => {
+    const prepared = getSectionsToPrint(block.slug, block.values)
+    return sum + 2 + (prepared ? countFilledTableRows(prepared.sections) : 0)
+  }, 0)
   const densityClass = tableDensityClass(Math.max(rowCount, 12))
-  const scale = initialPrintScale(rowCount)
   const validator = context.validatedBy?.trim() || '—'
 
   const bodyBlocks = blocks
-    .map((block) => {
-      const showNrColumn = sectionsHaveReference(block.sections)
-      return `
-        <section class="lab-result-print__panel-block">
-          <h2 class="lab-result-print__form-name">${escapeHtml(block.formTitle)}</h2>
-          <div class="lab-result-print__body">
-            ${renderPanelTables(block.sections, block.values, densityClass, showNrColumn)}
-          </div>
-        </section>
-      `
-    })
+    .map((block) => renderVisitPanelBlock(block.slug, block.values, densityClass))
+    .filter(Boolean)
     .join('')
 
+  if (!bodyBlocks.trim()) return ''
+
   return `
-    <article
-      class="lab-result-print lab-result-print--single-page lab-result-print--combined"
-      style="--lab-print-scale: ${scale.toFixed(3)}"
-    >
+    <article class="lab-result-print lab-result-print--combined ${LAB_VISIT_FLOW_ARTICLE_CLASS}">
       <div class="lab-result-print__page">
         ${buildClinicPrintHeader(undefined, { dualLogo: true })}
         ${renderPatientBand(context, date)}
@@ -351,6 +350,15 @@ export function buildCombinedLabPanelsPrintHtml(
       </div>
     </article>
   `
+}
+
+/** @deprecated Alias de buildVisitLabResultsPrintHtml — un document unique pour toute la visite. */
+export function buildCombinedLabPanelsPrintHtml(
+  slugs: LabPanelSlug[],
+  panelResults: Partial<Record<LabPanelSlug, Record<string, string>>>,
+  context: PrintContext,
+) {
+  return buildVisitLabResultsPrintHtml(slugs, panelResults, context)
 }
 
 function buildFallbackSectionsFromValues(values: Record<string, string>): LabPanelSection[] {
@@ -375,33 +383,6 @@ function humanizeFieldKey(key: string) {
   return spaced || key
 }
 
-function panelResultsHaveValues(values?: Record<string, string> | null) {
-  if (!values) return false
-  return Object.values(values).some((value) => String(value ?? '').trim().length > 0)
-}
-
-/** Ordre d'impression : slugs préférés, puis catalogue, puis le reste des résultats. */
-function resolvePrintSlugs(
-  panelResults: Partial<Record<LabPanelSlug, Record<string, string>>>,
-  preferSlugs?: LabPanelSlug[],
-) {
-  const filled = Object.keys(panelResults).filter((slug) =>
-    panelResultsHaveValues(panelResults[slug]),
-  )
-  if (!filled.length) return [] as LabPanelSlug[]
-
-  const ordered: LabPanelSlug[] = []
-  const push = (slug: LabPanelSlug) => {
-    if (!ordered.includes(slug) && filled.includes(slug)) ordered.push(slug)
-  }
-
-  for (const slug of preferSlugs ?? []) push(slug)
-  for (const panel of getAllLabFormPanels()) push(panel.slug)
-  for (const slug of filled) push(slug)
-
-  return ordered
-}
-
 const LAB_PANEL_PRINT_STYLES = `
   .lab-result-print--single-page {
     --lab-print-scale: 1;
@@ -421,10 +402,33 @@ const LAB_PANEL_PRINT_STYLES = `
     page-break-after: auto;
     break-after: auto;
   }
+  /* Visite complète : un document continu. Saut de page naturel si le contenu déborde. */
+  .lab-result-print--flow {
+    width: 100%;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    box-sizing: border-box;
+  }
+  .lab-result-print--flow .lab-result-print__page {
+    transform: none;
+    width: 100%;
+    min-height: ${A4_PRINTABLE_HEIGHT_MM}mm;
+    height: auto;
+  }
+  .lab-result-print--flow .clinic-header,
+  .lab-result-print--flow .lab-result-print__patient {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  .lab-result-print--flow .lab-result-print__footer {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
   .lab-result-print__page {
-    transform: scale(var(--lab-print-scale));
+    transform: scale(var(--lab-print-scale, 1));
     transform-origin: top left;
-    width: calc(100% / var(--lab-print-scale));
+    width: calc(100% / var(--lab-print-scale, 1));
     min-height: ${A4_PRINTABLE_HEIGHT_MM}mm;
     box-sizing: border-box;
     color: #0f172a;
@@ -513,6 +517,10 @@ const LAB_PANEL_PRINT_STYLES = `
     border: none;
     border-bottom: 1px solid #0f172a;
   }
+  .lab-result-print--combined .lab-result-print__panel-block {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
   .lab-result-print--combined .lab-result-print__panel-block + .lab-result-print__panel-block {
     margin-top: 0.75rem;
     padding-top: 0.55rem;
@@ -532,6 +540,8 @@ const LAB_PANEL_PRINT_STYLES = `
   }
   .lab-sheet-block {
     margin: 0;
+    page-break-inside: avoid;
+    break-inside: avoid;
   }
   .lab-sheet-block__heading {
     margin: 0 0 8px;
@@ -708,6 +718,11 @@ const LAB_PANEL_PRINT_STYLES = `
       max-height: ${A4_PRINTABLE_HEIGHT_MM}mm;
       overflow: hidden;
     }
+    .lab-result-print--flow {
+      height: auto !important;
+      max-height: none !important;
+      overflow: visible !important;
+    }
   }
 `
 
@@ -755,30 +770,12 @@ export function printLabVisitPanelResults(
   context: PrintContext,
   options?: { preferSlugs?: LabPanelSlug[] },
 ) {
-  const slugs = resolvePrintSlugs(panelResults, options?.preferSlugs)
+  const slugs = resolveLabVisitPrintSlugs(panelResults, options?.preferSlugs)
   if (!slugs.length) return false
 
-  const classicSlugs = slugs.filter((slug) =>
-    shouldPrintClassicStoolUrine(slug, panelResults[slug] ?? {}),
-  )
-  const tableSlugs = slugs.filter((slug) => !classicSlugs.includes(slug))
-
-  const classicBody = classicSlugs
-    .map((slug) => buildLabPanelPrintHtml(slug, panelResults[slug]!, context))
-    .filter(Boolean)
-    .join('')
-
-  const tableBody = tableSlugs.length
-    ? canCombinePanelsOnOnePage(tableSlugs, panelResults)
-      ? buildCombinedLabPanelsPrintHtml(tableSlugs, panelResults, context)
-      : tableSlugs
-          .map((slug) => buildLabPanelPrintHtml(slug, panelResults[slug]!, context))
-          .filter(Boolean)
-          .join('')
-    : ''
-
-  const body = `${classicBody}${tableBody}`
-
+  // Un seul openPrintDocument : tous les formulaires de la visite, y compris s’ils
+  // occupent plusieurs pages physiques. Les panneaux vides (en attente) sont omis.
+  const body = buildVisitLabResultsPrintHtml(slugs, panelResults, context)
   if (!body) return false
 
   const title =

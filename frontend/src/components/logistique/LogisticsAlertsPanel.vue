@@ -9,6 +9,7 @@ import {
 import {
   exportBasename,
   exportWorkbook,
+  exportWorkbookWord,
   rowsToHtmlTable,
   type ExportColumn,
 } from '@/lib/table-export'
@@ -137,6 +138,14 @@ function exportExcel() {
   ])
 }
 
+function exportWord() {
+  if (!hasAlertRows.value) return
+  void exportWorkbookWord(exportBasename('alertes-logistique'), [
+    { name: 'Stock', columns: stockExportColumns, rows: stockRows.value },
+    { name: 'Péremption', columns: expiryExportColumns, rows: expiryRows.value },
+  ])
+}
+
 onMounted(loadAlerts)
 
 defineExpose({ reload: loadAlerts })
@@ -147,7 +156,7 @@ defineExpose({ reload: loadAlerts })
     <div class="page-table-section">
       <div class="page-table-toolbar">
         <strong class="panel-table-title">Alertes stock</strong>
-        <ExportButtons :disabled="loading || !hasAlertRows" @pdf="exportPdf" @excel="exportExcel" />
+        <ExportButtons :disabled="loading || !hasAlertRows" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadAlerts">
           Actualiser
         </UiButton>

@@ -22,6 +22,8 @@ import dashboardRoutes from "./routes/dashboard.js";
 import hospitalisationRoutes from "./routes/hospitalisation.js";
 import { refreshExamPriceCache } from "./lib/lab-exam-prices.js";
 import { ensureKinesitherapieCatalogItems } from "./lib/kinesitherapie-catalog.js";
+import { ensurePetiteChirurgieCatalogItems } from "./lib/petite-chirurgie-catalog.js";
+import { ensurePrintedTariffCatalogItems } from "./lib/printed-tariff-catalog.js";
 import { backfillLegacyConsultationInvoices } from "./lib/revenue-stats.js";
 import { backfillLabReceptionistApprovals } from "./lib/lab-receptionist-backfill.js";
 import examCatalogRoutes from "./routes/exam-catalog.js";
@@ -31,7 +33,7 @@ import medecinOperationTypesRoutes from "./routes/medecin-operation-types.js";
 import patientDossiersRoutes, { initPatientDossiers } from "./routes/patient-dossiers.js";
 import laboratoireRoutes from "./routes/laboratoire.js";
 import labPanelsRoutes from "./routes/lab-panels.js";
-import { seedLabPanelsIfEmpty, ensureRoutineClassicSheetFields } from "./lib/lab-panels-seed.js";
+import { seedLabPanelsIfEmpty, ensureRoutineClassicSheetFields, dedupeRoutineClassicSheetFields } from "./lib/lab-panels-seed.js";
 import { refreshLabPanelRegistry } from "./lib/lab-panels-registry.js";
 import { syncAllExamLabPanelLinks, syncAllLabPanelExamLinks } from "./lib/exam-lab-panel.js";
 import surgeriesRoutes from "./routes/surgeries.js";
@@ -183,9 +185,11 @@ refreshExamPriceCache().catch((error) => {
 });
 
 ensureKinesitherapieCatalogItems()
+  .then(() => ensurePetiteChirurgieCatalogItems())
+  .then(() => ensurePrintedTariffCatalogItems())
   .then(() => refreshExamPriceCache())
   .catch((error) => {
-    console.error("Impossible d'initialiser le catalogue kinésithérapie:", error);
+    console.error("Impossible d'initialiser les catalogues kinésithérapie / petite chirurgie / tarifaire:", error);
   });
 
 ensureClinicInfoRow().catch((error) => {
@@ -199,6 +203,12 @@ seedLabPanelsIfEmpty()
   .then((created) => {
     if (created > 0) {
       console.log(`${created} formulaire(s) de résultats laboratoire initialisé(s).`);
+    }
+    return dedupeRoutineClassicSheetFields();
+  })
+  .then((removed) => {
+    if (removed > 0) {
+      console.log(`Formulaire Routine : ${removed} champ(s) selles/urine en double supprimé(s).`);
     }
     return ensureRoutineClassicSheetFields();
   })

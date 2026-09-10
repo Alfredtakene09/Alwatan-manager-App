@@ -17,6 +17,7 @@ import {
 import {
   exportBasename,
   exportWorkbook,
+  exportWorkbookWord,
   rowsToHtmlTable,
   type ExportColumn,
 } from '@/lib/table-export'
@@ -311,6 +312,17 @@ function exportExcel() {
   ])
 }
 
+function exportWord() {
+  if (!filteredCards.value.length) return
+  void exportWorkbookWord(exportBasename('alertes-pharmacie'), [
+    {
+      name: activeFilterMeta.value.label,
+      columns: exportColumns.value,
+      rows: filteredCards.value,
+    },
+  ])
+}
+
 watch(
   () => data.value,
   (next) => {
@@ -344,6 +356,7 @@ defineExpose({ reload: loadAlerts })
           :disabled="loading || !filteredCards.length"
           @pdf="exportPdf"
           @excel="exportExcel"
+          @word="exportWord"
         />
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || removing" @click="loadAlerts">
           {{ uiText('Actualiser') }}

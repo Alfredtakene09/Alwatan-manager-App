@@ -30,7 +30,7 @@ import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import '@/assets/gestionnaire-page.css'
@@ -234,6 +234,15 @@ function exportDayClosuresExcel() {
   )
 }
 
+function exportDayClosuresWord() {
+  if (!dayClosures.value.length) return
+  void exportTableWord(
+    uiText('Clôtures de journée — Réception'),
+    localizedExportColumns(dayClosureExportColumns),
+    dayClosures.value,
+  )
+}
+
 function exportHistoryPdf() {
   if (!historyRows.value.length) return
   exportTablePdf(
@@ -246,6 +255,15 @@ function exportHistoryPdf() {
 function exportHistoryExcel() {
   if (!historyRows.value.length) return
   exportTableExcel(
+    uiText('Historique des décaissements'),
+    localizedExportColumns(historyExportColumns),
+    historyRows.value,
+  )
+}
+
+function exportHistoryWord() {
+  if (!historyRows.value.length) return
+  void exportTableWord(
     uiText('Historique des décaissements'),
     localizedExportColumns(historyExportColumns),
     historyRows.value,
@@ -425,6 +443,7 @@ onMounted(refreshAll)
               :disabled="dayClosureLoading || !dayClosures.length"
               @pdf="exportDayClosuresPdf"
               @excel="exportDayClosuresExcel"
+              @word="exportDayClosuresWord"
             />
           </div>
 
@@ -514,6 +533,7 @@ onMounted(refreshAll)
                 :disabled="historyLoading || !historyRows.length"
                 @pdf="exportHistoryPdf"
                 @excel="exportHistoryExcel"
+                @word="exportHistoryWord"
               />
             </div>
           </div>

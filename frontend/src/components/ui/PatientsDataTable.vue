@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Pencil, RefreshCw, Trash2, Banknote, Printer } from '@lucide/vue'
-import { fullName, isDirectionOrGestionnaire } from '@/lib/roles'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { ChevronDown, Pencil, RefreshCw, Trash2, Banknote, Printer } from '@lucide/vue'
+import { fullName, formatFcfa, isDirectionOrGestionnaire } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth'
 import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
 import { sortPatientsNewestFirst } from '@/lib/patient-sort'
@@ -44,8 +44,19 @@ const props = withDefaults(
     showPay?: boolean
     showPrint?: boolean
     printingPatientId?: string | null
+    /** Services proposés dans le filtre d’en-tête (noms bruts). */
+    serviceOptions?: string[]
+    /** Service actuellement filtré ('' = tous). */
+    serviceFilter?: string
   }>(),
-  { showDelete: true, showReceptionist: false, showPrint: false, printingPatientId: null },
+  {
+    showDelete: true,
+    showReceptionist: false,
+    showPrint: false,
+    printingPatientId: null,
+    serviceOptions: () => [],
+    serviceFilter: '',
+  },
 )
 
 const emit = defineEmits<{
@@ -54,6 +65,7 @@ const emit = defineEmits<{
   delete: [patient: PatientRow]
   pay: [patient: PatientRow]
   print: [patient: PatientRow]
+  'update:serviceFilter': [service: string]
 }>()
 
 const { uiText, clinicServiceText, localeCode, dateText } = useAppI18n()
@@ -63,13 +75,32 @@ const showPayButton = computed(() =>
   (props.showPay ?? Boolean(auth.user && isDirectionOrGestionnaire(auth.user.role))) &&
   canSeeUiAction('reception.pay_consultation'),
 )
-const showPrintButton = computed(
-  () => props.showPrint && canSeeUiAction('reception.print_receipt'),
-)
+const showPrintButton = computed(() => props.showPrint)
 const showEditButton = computed(() => canSeeUiAction('reception.edit_patient'))
 const showReconsultButton = computed(() => canSeeUiAction('reception.reconsult'))
 const canForceDelete = computed(() => Boolean(auth.user && isDirectionOrGestionnaire(auth.user.role)))
 const allowDelete = computed(() => props.showDelete && canSeeUiAction('reception.delete_patient'))
+
+const serviceMenuOpen = ref(false)
+const serviceHeaderRef = ref<HTMLElement | null>(null)
+
+const serviceChoices = computed(() => {
+  const fromProps = props.serviceOptions.map((name) => name.trim()).filter(Boolean)
+  const fromRows = props.patients
+    .map((patient) => patient.service?.trim() || '')
+    .filter(Boolean)
+  return [...new Set([...fromProps, ...fromRows])].sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: 'base' }),
+  )
+})
+
+const serviceFilterEnabled = computed(() => serviceChoices.value.length > 0)
+const activeServiceLabel = computed(() => {
+  void localeCode.value
+  const selected = props.serviceFilter?.trim()
+  if (!selected) return uiText('Service')
+  return clinicServiceText(selected)
+})
 
 const rows = computed(() =>
   sortPatientsNewestFirst(props.patients).map((p) => ({
@@ -95,19 +126,23 @@ function consultationPaymentMark(payment: ConsultationPaymentInfo | null | undef
   if (!payment) {
     return { label: '—', variant: 'default' as const }
   }
+  const amount = formatFcfa(payment.amountFcfa)
   if (payment.status === 'PAID' || (payment.remainingFcfa <= 0 && payment.paidAmountFcfa > 0)) {
-    return { label: uiText('Payé'), variant: 'success' as const }
+    return { label: amount, variant: 'success' as const }
   }
   if (
     payment.status === 'PARTIALLY_PAID' ||
     (payment.paidAmountFcfa > 0 && payment.remainingFcfa > 0)
   ) {
-    return { label: uiText('Partiel'), variant: 'warning' as const }
+    return {
+      label: `${uiText('Partiel')} · ${formatFcfa(payment.remainingFcfa)}`,
+      variant: 'warning' as const,
+    }
   }
   if (payment.payable || payment.status === 'PENDING' || payment.status === 'DRAFT') {
-    return { label: uiText('Non payé'), variant: 'danger' as const }
+    return { label: amount, variant: 'danger' as const }
   }
-  return { label: '—', variant: 'default' as const }
+  return { label: amount || '—', variant: 'default' as const }
 }
 
 function formatDate(iso?: string) {
@@ -136,6 +171,31 @@ function genderClass(gender?: string) {
   if (gender === 'M') return 'st-pill st-pill--m'
   return 'st-pill st-pill--na'
 }
+
+function toggleServiceMenu() {
+  if (!serviceFilterEnabled.value) return
+  serviceMenuOpen.value = !serviceMenuOpen.value
+}
+
+function selectService(service: string) {
+  emit('update:serviceFilter', service)
+  serviceMenuOpen.value = false
+}
+
+function onDocumentPointerDown(event: PointerEvent) {
+  if (!serviceMenuOpen.value) return
+  const target = event.target as Node | null
+  if (target && serviceHeaderRef.value?.contains(target)) return
+  serviceMenuOpen.value = false
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocumentPointerDown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown)
+})
 </script>
 
 <template>
@@ -165,12 +225,68 @@ function genderClass(gender?: string) {
               <th class="simple-table__num">#</th>
               <th>{{ uiText('Matricule') }}</th>
               <th>{{ uiText('Nom complet') }}</th>
-              <th>{{ uiText('Service') }}</th>
+              <th class="simple-table__service-head">
+                <div
+                  ref="serviceHeaderRef"
+                  class="st-service-filter"
+                  :class="{
+                    'st-service-filter--active': Boolean(serviceFilter),
+                    'st-service-filter--open': serviceMenuOpen,
+                    'st-service-filter--disabled': !serviceFilterEnabled,
+                  }"
+                >
+                  <button
+                    type="button"
+                    class="st-service-filter__trigger"
+                    :disabled="!serviceFilterEnabled"
+                    :aria-expanded="serviceMenuOpen"
+                    :aria-haspopup="serviceFilterEnabled ? 'listbox' : undefined"
+                    :title="uiText('Filtrer par service')"
+                    @click="toggleServiceMenu"
+                  >
+                    <span class="st-service-filter__label">{{ activeServiceLabel }}</span>
+                    <ChevronDown
+                      v-if="serviceFilterEnabled"
+                      :size="12"
+                      class="st-service-filter__chevron"
+                    />
+                  </button>
+                  <div
+                    v-if="serviceMenuOpen"
+                    class="st-service-filter__menu"
+                    role="listbox"
+                    :aria-label="uiText('Filtrer par service')"
+                  >
+                    <button
+                      type="button"
+                      class="st-service-filter__option"
+                      :class="{ 'st-service-filter__option--active': !serviceFilter }"
+                      role="option"
+                      :aria-selected="!serviceFilter"
+                      @click="selectService('')"
+                    >
+                      {{ uiText('Tous les services') }}
+                    </button>
+                    <button
+                      v-for="service in serviceChoices"
+                      :key="service"
+                      type="button"
+                      class="st-service-filter__option"
+                      :class="{ 'st-service-filter__option--active': serviceFilter === service }"
+                      role="option"
+                      :aria-selected="serviceFilter === service"
+                      @click="selectService(service)"
+                    >
+                      {{ serviceLabel(service) }}
+                    </button>
+                  </div>
+                </div>
+              </th>
               <th>{{ uiText('Téléphone') }}</th>
               <th>{{ uiText('Genre') }}</th>
               <th>{{ uiText("Date d'inscription") }}</th>
               <th v-if="showReceptionist">{{ uiText('Réceptionniste') }}</th>
-              <th>{{ uiText('Paiement consultation') }}</th>
+              <th>{{ uiText('Paiement') }}</th>
               <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
             </tr>
           </thead>
@@ -184,7 +300,17 @@ function genderClass(gender?: string) {
                 <span class="st-name">{{ row.fullName }}</span>
               </td>
               <td>
-                <span v-if="row.service" class="st-date">{{ serviceLabel(row.service) }}</span>
+                <button
+                  v-if="row.service && serviceFilterEnabled"
+                  type="button"
+                  class="st-service-cell"
+                  :class="{ 'st-service-cell--active': serviceFilter === row.service }"
+                  :title="uiText('Filtrer par ce service')"
+                  @click="selectService(serviceFilter === row.service ? '' : row.service)"
+                >
+                  {{ serviceLabel(row.service) }}
+                </button>
+                <span v-else-if="row.service" class="st-date">{{ serviceLabel(row.service) }}</span>
                 <span v-else class="st-muted">—</span>
               </td>
               <td>
@@ -289,3 +415,124 @@ function genderClass(gender?: string) {
     </div>
   </div>
 </template>
+
+<style scoped>
+.simple-table__service-head {
+  position: relative;
+  overflow: visible;
+}
+
+.st-service-filter {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+}
+
+.st-service-filter__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.st-service-filter__trigger:disabled {
+  cursor: default;
+}
+
+.st-service-filter__trigger:not(:disabled):hover .st-service-filter__label,
+.st-service-filter--active .st-service-filter__label {
+  color: var(--primary-700, #0f766e);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.st-service-filter__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.st-service-filter__chevron {
+  flex-shrink: 0;
+  opacity: 0.7;
+  transition: transform 0.15s ease;
+}
+
+.st-service-filter--open .st-service-filter__chevron {
+  transform: rotate(180deg);
+}
+
+.st-service-filter__menu {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  inset-inline-start: 0;
+  z-index: 20;
+  min-width: 11rem;
+  max-width: min(18rem, 70vw);
+  max-height: 14rem;
+  overflow: auto;
+  padding: 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 0.5rem);
+  background: var(--bg-card, #fff);
+  box-shadow: var(--shadow-md, 0 10px 24px rgb(15 23 42 / 0.12));
+}
+
+.st-service-filter__option {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.4rem 0.55rem;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: start;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+}
+
+.st-service-filter__option:hover {
+  background: var(--surface-soft, #f6f8fb);
+}
+
+.st-service-filter__option--active {
+  background: color-mix(in srgb, var(--primary-500, #14b8a6) 14%, transparent);
+  color: var(--primary-800, #115e59);
+}
+
+.st-service-cell {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: start;
+  cursor: pointer;
+}
+
+.st-service-cell:hover,
+.st-service-cell--active {
+  color: var(--primary-700, #0f766e);
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+</style>

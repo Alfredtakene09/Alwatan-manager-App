@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Eye } from '@lucide/vue'
+import { Eye, Printer, Trash2 } from '@lucide/vue'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { EXAM_KIND_LABELS, EXAM_KIND_ORDER, type ExamKindSlug } from '@/lib/exam-catalog/types'
 import { normalizeLabExamPendingItem, type LabExamPendingItem } from '@/lib/lab-exam-pending'
@@ -11,9 +11,10 @@ import { useAppI18n } from '@/i18n/useAppI18n'
 
 const props = defineProps<{
   item: LabExamPendingItem | null
+  canDeletePaid?: boolean
 }>()
 
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; print: [id: string]; delete: [id: string] }>()
 const open = defineModel<boolean>('open', { default: false })
 
 const { uiText, isArabic } = useAppI18n()
@@ -101,6 +102,16 @@ const invoiceRows = computed(() => {
 function close() {
   open.value = false
   emit('close')
+}
+
+function reprint() {
+  if (!props.item?.id) return
+  emit('print', props.item.id)
+}
+
+function deletePaid() {
+  if (!props.item?.id || !props.canDeletePaid) return
+  emit('delete', props.item.id)
 }
 </script>
 
@@ -196,6 +207,22 @@ function close() {
 
     <template #footer>
       <UiButton variant="ghost" @click="close">{{ uiText('Fermer') }}</UiButton>
+      <UiButton
+        v-if="canDeletePaid && normalized"
+        variant="danger"
+        :icon="Trash2"
+        @click="deletePaid"
+      >
+        {{ uiText('Supprimer') }}
+      </UiButton>
+      <UiButton
+        v-if="normalized"
+        variant="primary"
+        :icon="Printer"
+        @click="reprint"
+      >
+        {{ uiText('Réimprimer le reçu') }}
+      </UiButton>
     </template>
   </UiFormModal>
 </template>

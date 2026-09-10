@@ -28,6 +28,7 @@ import {
   Warehouse,
   Hospital,
   Plus,
+  ArrowDownUp,
 } from '@lucide/vue'
 import type { AppUserRole } from './roles'
 import { canAccessModule, canManageLabStock, canManagePharmacyCatalog } from './roles'
@@ -119,6 +120,13 @@ const pharmacyNavChildren: NavChildItem[] = [
     icon: Package,
     module: 'pharmacie',
     description: 'Prix, stock et références',
+  },
+  {
+    to: '/pharmacie/mouvements',
+    label: 'Mouvements',
+    icon: ArrowDownUp,
+    module: 'pharmacie',
+    description: 'Entrées, sorties et ajustements de stock',
   },
   {
     to: '/pharmacie/ventes',

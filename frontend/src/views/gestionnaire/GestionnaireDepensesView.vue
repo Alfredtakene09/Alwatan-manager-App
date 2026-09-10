@@ -18,7 +18,7 @@ import GestionnaireExpenseFormModal, {
 } from '@/components/gestionnaire/GestionnaireExpenseFormModal.vue'
 import GestionnaireDepensesCategoriesPanel from '@/components/gestionnaire/GestionnaireDepensesCategoriesPanel.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import '@/assets/gestionnaire-page.css'
 
 type TabId = 'liste' | 'categories'
@@ -122,17 +122,25 @@ const expenseExportColumns: ExportColumn<ExpenseRow>[] = [
   { header: 'Commentaire', value: (r) => r.comment ?? '—' },
 ]
 
-function exportPdf() {
-  exportTablePdf('Historique des dépenses', expenseExportColumns, rows.value, {
+function expenseExportShared() {
+  return {
     captionRows: [
       { label: 'Période', value: filterLabel.value },
       { label: 'Total', value: formatFcfa(totalFcfa.value) },
     ],
-  })
+  }
+}
+
+function exportPdf() {
+  exportTablePdf('Historique des dépenses', expenseExportColumns, rows.value, expenseExportShared())
 }
 
 function exportExcel() {
-  exportTableExcel('Historique des dépenses', expenseExportColumns, rows.value)
+  exportTableExcel('Historique des dépenses', expenseExportColumns, rows.value, expenseExportShared())
+}
+
+function exportWord() {
+  void exportTableWord('Historique des dépenses', expenseExportColumns, rows.value, expenseExportShared())
 }
 
 function openExpenseModal() {
@@ -307,7 +315,7 @@ onMounted(async () => {
             </p>
           </div>
           <div class="depenses-card__head-actions">
-            <ExportButtons :disabled="loading || !rows.length" @pdf="exportPdf" @excel="exportExcel" />
+            <ExportButtons :disabled="loading || !rows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
             <div class="depenses-segment" role="group" aria-label="Filtrer par période">
               <button
                 type="button"

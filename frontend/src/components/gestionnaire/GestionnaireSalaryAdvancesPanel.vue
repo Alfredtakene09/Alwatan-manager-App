@@ -6,8 +6,7 @@ import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { formatShortDate } from '@/lib/admin-dashboard'
 import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
-import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
-import { exportTableExcel, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -248,49 +247,32 @@ function toggleOne(id: string, checked: boolean) {
   selectedIds.value = [...set]
 }
 
-function advancesRowsToTableHtml() {
-  const rowsHtml = exportRows.value
-    .map(
-      (row) => `
-      <tr>
-        <td>${formatShortDate(row.businessDate)}</td>
-        <td>${row.employee.fullName}</td>
-        <td>${row.employee.service}</td>
-        <td>${formatFcfa(row.amountFcfa)}</td>
-        <td>${formatFcfa(row.remainingFcfa ?? row.amountFcfa)}</td>
-        <td>${row.installmentFcfa != null ? formatFcfa(row.installmentFcfa) : 'Tout'}</td>
-        <td>${row.statusLabel}</td>
-        <td>${payrollPeriodLabel(row)}</td>
-        <td>${row.recordedByName}</td>
-        <td>${row.comment || '—'}</td>
-      </tr>`,
-    )
-    .join('')
+function advancesExportTotals() {
+  const rows = exportRows.value
+  const total = rows.reduce((sum, row) => sum + row.amountFcfa, 0)
+  const remaining = rows.reduce((sum, row) => sum + (row.remainingFcfa ?? row.amountFcfa), 0)
+  return [
+    { label: 'Nombre d’avances', value: String(rows.length) },
+    { label: 'Total', value: formatFcfa(total) },
+    { label: 'Reste', value: formatFcfa(remaining) },
+  ]
+}
 
-  return `
-    ${buildClinicPrintHeader('Avances sur salaire')}
-    <table>
-      <thead>
-        <tr>
-          <th>Date</th><th>Employé</th><th>Service</th><th>Total</th><th>Reste</th><th>Tranche</th><th>Statut</th><th>Période paie</th><th>Enregistré par</th><th>Commentaire</th>
-        </tr>
-      </thead>
-      <tbody>${rowsHtml}</tbody>
-    </table>
-  `
+function advancesExportShared() {
+  return { totalsRows: advancesExportTotals() }
 }
 
 function printAdvanceRows() {
   if (!exportRows.value.length) return
-  openPrintDocument('Avances sur salaire', advancesRowsToTableHtml(), { autoPrint: true, pageSize: 'A4' })
+  exportTablePdf('Avances sur salaire', advancesExportColumns, exportRows.value, {
+    ...advancesExportShared(),
+    autoPrint: true,
+  })
 }
 
 function exportAdvancesPdf() {
   if (!exportRows.value.length) return
-  openPrintDocument('Avances sur salaire (PDF)', advancesRowsToTableHtml(), {
-    autoPrint: true,
-    pageSize: 'A4',
-  })
+  exportTablePdf('Avances sur salaire', advancesExportColumns, exportRows.value, advancesExportShared())
 }
 
 const advancesExportColumns: ExportColumn<SalaryAdvanceRow>[] = [
@@ -311,7 +293,12 @@ const advancesExportColumns: ExportColumn<SalaryAdvanceRow>[] = [
 
 function exportAdvancesExcel() {
   if (!exportRows.value.length) return
-  exportTableExcel('Avances sur salaire', advancesExportColumns, exportRows.value)
+  exportTableExcel('Avances sur salaire', advancesExportColumns, exportRows.value, advancesExportShared())
+}
+
+function exportAdvancesWord() {
+  if (!exportRows.value.length) return
+  void exportTableWord('Avances sur salaire', advancesExportColumns, exportRows.value, advancesExportShared())
 }
 
 onMounted(async () => {
@@ -394,6 +381,7 @@ defineExpose({ reload: loadRows })
         :show-pdf="false"
         :disabled="!exportRows.length"
         @excel="exportAdvancesExcel"
+        @word="exportAdvancesWord"
       />
     </div>
 

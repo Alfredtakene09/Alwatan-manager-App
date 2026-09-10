@@ -4,7 +4,7 @@ import axios from 'axios'
 import { ClipboardList, Plus, RefreshCw, Save, X, Check, Ban } from '@lucide/vue'
 import api from '@/api/client'
 import { fullName } from '@/lib/roles'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import type { LogisticsItemRecord } from '@/components/logistique/LogisticsItemsPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
@@ -258,6 +258,10 @@ function exportExcel() {
   exportTableExcel('Demandes logistique', requestExportColumns, tableRows.value)
 }
 
+function exportWord() {
+  void exportTableWord('Demandes logistique', requestExportColumns, tableRows.value)
+}
+
 defineExpose({ reload })
 </script>
 
@@ -270,7 +274,7 @@ defineExpose({ reload })
         <option value="FULFILLED">Livrées</option>
         <option value="REJECTED">Refusées</option>
       </select>
-      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
+      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="reload">
         Actualiser
       </UiButton>

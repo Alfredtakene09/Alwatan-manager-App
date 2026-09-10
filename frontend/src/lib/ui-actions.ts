@@ -88,6 +88,12 @@ export const UI_ACTIONS: UiActionDef[] = [
     defaultRoles: ALL_TARGETS,
   },
   {
+    id: 'export.word',
+    group: 'general',
+    label: 'Exporter Word',
+    defaultRoles: ALL_TARGETS,
+  },
+  {
     id: 'export.print',
     group: 'general',
     label: 'Imprimer',

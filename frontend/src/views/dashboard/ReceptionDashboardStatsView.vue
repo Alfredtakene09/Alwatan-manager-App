@@ -47,17 +47,21 @@ const loadingPatients = ref(false)
 const search = ref('')
 const receptionists = ref<{ id: string; name: string }[]>([])
 const filterReceptionistId = ref('')
+const serviceFilter = ref('')
+const services = ref<{ id: string; name: string }[]>([])
 const canFilterByReceptionist = computed(() => auth.user?.role !== 'RECEPTIONNISTE')
+const serviceFilterOptions = computed(() => services.value.map((service) => service.name))
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
 const summaryStats = computed((): SummaryStat[] => {
   if (!stats.value) return []
   const s = stats.value
+  const serviceHint = serviceFilter.value.trim()
   return [
     {
       id: 'visits',
-      label: 'Visites aujourd\'hui',
+      label: serviceHint ? `Visites aujourd'hui · ${serviceHint}` : 'Visites aujourd\'hui',
       value: s.visitsToday,
       icon: CalendarDays,
       variant: 'teal',
@@ -65,7 +69,7 @@ const summaryStats = computed((): SummaryStat[] => {
     },
     {
       id: 'gender',
-      label: 'Féminin / Masculin',
+      label: serviceHint ? `Féminin / Masculin · ${serviceHint}` : 'Féminin / Masculin',
       value: `${s.femalePatients} / ${s.malePatients}`,
       icon: Users,
       variant: 'rose',
@@ -73,7 +77,7 @@ const summaryStats = computed((): SummaryStat[] => {
     },
     {
       id: 'exams',
-      label: 'Patients examens',
+      label: serviceHint ? `Patients examens · ${serviceHint}` : 'Patients examens',
       value: s.examPatientsCount ?? 0,
       icon: FlaskConical,
       variant: 'blue',
@@ -131,6 +135,7 @@ async function loadStats() {
     const { data } = await api.get<ReceptionDashboardStats>('/dashboard/reception', {
       params: {
         createdById: canFilterByReceptionist.value ? filterReceptionistId.value || undefined : undefined,
+        service: serviceFilter.value.trim() || undefined,
       },
     })
     stats.value = data
@@ -149,6 +154,7 @@ async function loadPatients() {
       params: {
         q: search.value.trim() || undefined,
         createdById: canFilterByReceptionist.value ? filterReceptionistId.value || undefined : undefined,
+        service: serviceFilter.value.trim() || undefined,
       },
     })
     patients.value = sortPatientsNewestFirst(data)
@@ -170,8 +176,17 @@ async function loadReceptionists() {
   }
 }
 
+async function loadServices() {
+  try {
+    const { data } = await api.get<{ id: string; name: string }[]>('/visits/external-services')
+    services.value = Array.isArray(data) ? data : []
+  } catch {
+    services.value = []
+  }
+}
+
 async function refreshAll() {
-  await Promise.all([loadStats(), loadPatients(), loadReceptionists()])
+  await Promise.all([loadStats(), loadPatients(), loadReceptionists(), loadServices()])
 }
 
 function clearSearch() {
@@ -188,6 +203,11 @@ watch(search, () => {
 })
 
 watch(filterReceptionistId, () => {
+  void loadPatients()
+  void loadStats()
+})
+
+watch(serviceFilter, () => {
   void loadPatients()
   void loadStats()
 })
@@ -288,6 +308,8 @@ onMounted(refreshAll)
           :show-receptionist="canFilterByReceptionist"
           :patients="patients"
           :loading="loadingPatients"
+          :service-options="serviceFilterOptions"
+          v-model:service-filter="serviceFilter"
           @edit="goToRegistration"
           @reconsult="goToRegistration"
         />
@@ -301,9 +323,10 @@ onMounted(refreshAll)
 
 .table-toolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
 .receptionist-filter {
@@ -313,12 +336,14 @@ onMounted(refreshAll)
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 .receptionist-filter select {
   height: 2.25rem;
-  min-width: 12rem;
-  padding: 0 0.65rem;
+  min-width: 10rem;
+  max-width: 12rem;
+  padding: 0 0.55rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-card);
@@ -332,7 +357,9 @@ onMounted(refreshAll)
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  min-width: min(100%, 16rem);
+  min-width: 0;
+  flex: 1;
+  max-width: 18rem;
   padding: 0.35rem 0.65rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);

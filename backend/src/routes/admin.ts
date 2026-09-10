@@ -16,6 +16,7 @@ import {
 import { parseShiftSlot } from "../lib/cash-shift.js";
 import { prisma } from "../lib/db.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
+import { listRecordedDiagnoses } from "../lib/recorded-diagnoses.js";
 import { resolveEmployeeClinicServiceLink } from "../lib/clinic-service-exam.js";
 import {
   getClinicServiceWithDoctors,
@@ -24,7 +25,7 @@ import {
   syncClinicServiceDoctors,
   syncEmployeeClinicServices,
 } from "../lib/clinic-service-doctors.js";
-import { USER_ROLES, canAssignUserRole, type AppUserRole } from "../lib/roles.js";
+import { USER_ROLES, canAssignUserRole, canViewEmployeeCompensation, type AppUserRole } from "../lib/roles.js";
 import { newPasswordSchema } from "../lib/password-policy.js";
 import { employeeCompensationData } from "../lib/doctor-compensation.js";
 import { recalculateAfterEmployeeFicheChangeSafe } from "../lib/recalculate-employee-compensation.js";
@@ -41,7 +42,7 @@ import {
   saveEmployeePhoto,
   sendEmployeePhoto,
 } from "../lib/employee-photo.js";
-import { employeeSelect, serializeEmployee, isHiddenPlatformAdminEmployee, hiddenPlatformAdminEmployeeWhere } from "../lib/employee.js";
+import { employeeSelect, serializeEmployee, redactEmployeeCompensation, isHiddenPlatformAdminEmployee, hiddenPlatformAdminEmployeeWhere } from "../lib/employee.js";
 import {
   countEmployeesForJobTitle,
   serializeJobTitlesWithUsage,
@@ -385,7 +386,12 @@ router.get("/employees", requireModule("utilisateurs"), async (req, res) => {
   return res.json(
     employees
       .filter((employee) => !isHiddenPlatformAdminEmployee(employee))
-      .map(serializeEmployee),
+      .map((employee) =>
+        redactEmployeeCompensation(
+          serializeEmployee(employee),
+          canViewEmployeeCompensation(req.user!.role),
+        ),
+      ),
   );
 });
 
@@ -495,6 +501,18 @@ router.get("/services", clinicServicesAccess, async (req, res) => {
   await ensureDefaultClinicServices(prisma);
   const activeOnly = req.query.activeOnly === "true";
   return res.json(await listClinicServicesWithDoctors(activeOnly));
+});
+
+router.get("/diagnoses", clinicServicesAccess, async (req, res) => {
+  const month = typeof req.query.month === "string" ? req.query.month : undefined;
+  const items = await listRecordedDiagnoses(month);
+  return res.json(
+    items.map((item) => ({
+      label: item.label,
+      count: item.count,
+      lastAt: item.lastAt.toISOString(),
+    })),
+  );
 });
 
 router.post("/services", clinicServicesAccess, async (req, res) => {
@@ -1489,6 +1507,9 @@ router.patch("/expenses/:id/reject", requireUiAction("comptabilite.depenses"), a
 });
 
 router.get("/payroll/history", async (req, res) => {
+  if (!canViewEmployeeCompensation(req.user!.role)) {
+    return res.status(403).json({ error: "Accès aux salaires non autorisé." });
+  }
   const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
   const rows = await prisma.employeePayroll.findMany({
     where: { status: PayrollStatus.PAID },
@@ -1506,6 +1527,9 @@ router.get("/payroll/history", async (req, res) => {
 });
 
 router.get("/payroll", async (req, res) => {
+  if (!canViewEmployeeCompensation(req.user!.role)) {
+    return res.status(403).json({ error: "Accès aux salaires non autorisé." });
+  }
   const { year, month } = currentPayrollPeriod();
   const queryYear = Number(req.query.year);
   const queryMonth = Number(req.query.month);

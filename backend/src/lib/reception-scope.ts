@@ -29,6 +29,9 @@ export function receptionistOwnPatientsWhere(
 /**
  * Visite du réceptionniste : dossier créé par lui, ou facture émise par lui
  * (re-visite / examens labo sur un dossier déjà ouvert).
+ *
+ * Ne pas appliquer à la file d'encaissement des examens prescrits par un médecin
+ * (pédiatre → réception → labo) : cette file est partagée entre toutes les caisses.
  */
 export function receptionistOwnVisitsWhere(
   user: ReceptionScopeUser,

@@ -11,6 +11,7 @@ import {
   escapeHtml,
   exportBasename,
   exportWorkbook,
+  exportWorkbookWord,
   rowsToHtmlTable,
   type ExportColumn,
 } from '@/lib/table-export'
@@ -124,6 +125,15 @@ function exportExcel() {
   ])
 }
 
+function exportWord() {
+  if (!data.value) return
+  void exportWorkbookWord(exportBasename('rapport-logistique'), [
+    { name: 'KPI', columns: kpiExportColumns, rows: kpiRows.value },
+    { name: 'Catégories', columns: categoryExportColumns, rows: categoryRows.value },
+    { name: 'Top sorties', columns: topExitExportColumns, rows: topExitRows.value },
+  ])
+}
+
 onMounted(loadReport)
 
 defineExpose({ reload: loadReport })
@@ -137,7 +147,7 @@ defineExpose({ reload: loadReport })
         <option value="30d">30 derniers jours</option>
         <option value="90d">90 derniers jours</option>
       </select>
-      <ExportButtons :disabled="loading || !data" @pdf="exportPdf" @excel="exportExcel" />
+      <ExportButtons :disabled="loading || !data" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadReport">
         Actualiser
       </UiButton>

@@ -18,6 +18,7 @@ import { translateTemplate } from '@/lib/dashboard-i18n'
 import { useLabPanelsStore } from '@/stores/lab-panels'
 import {
   buildCartEntriesForSelectedFields,
+  countPrescriptionSelectionUnits,
   extractSelectedFieldsFromCart,
   getPrescriptionCheckGroups,
   getPrescriptionCheckItems,
@@ -66,6 +67,9 @@ const catalogItems = ref(
 const NO_UNIT_PRICE_MESSAGE =
   'Ce champ n’a pas de tarif individuel. Cochez le formulaire entier (« Tout sélectionner ») pour appliquer le tarif général.'
 
+const NO_SECTION_PRICE_MESSAGE =
+  'Cette section n’a pas de tarif. Renseignez le tarif de section dans les formulaires laboratoire.'
+
 
 const cart = computed({
   get: () => props.modelValue,
@@ -103,7 +107,7 @@ const gridHint = computed(() => {
   void localeCode.value
   if (props.kind === 'examen') {
     return uiText(
-      'Cochez un formulaire (ex. Routine) pour tout prendre, ou déroulez pour cocher champ par champ.',
+      'Cochez un formulaire entier, une section (ex. Urine) ou un champ hors section.',
     )
   }
   return uiText('Cliquez un examen pour le sélectionner ou le retirer.')
@@ -204,7 +208,7 @@ function examMatchesQuery(exam: CatalogExam, q: string) {
   )
 }
 
-/** Conserve les sections ; filtre seulement les champs (sauf si le titre de section matche). */
+/** Conserve les sections ; une section nommée reste entière si un champ matche. */
 function filterCheckGroupsByQuery(
   groups: LabPrescriptionCheckGroup[],
   q: string,
@@ -214,6 +218,9 @@ function filterCheckGroupsByQuery(
   return groups
     .map((group) => {
       if (textMatchesQuery(group.title, q)) return group
+      if (group.named && group.fields.some((field) => textMatchesQuery(field.label, q))) {
+        return group
+      }
       const fields = group.fields.filter((field) => textMatchesQuery(field.label, q))
       if (!fields.length) return null
       return { ...group, fields }
@@ -331,10 +338,11 @@ const chipGroups = computed(() => {
           !q || textMatchesQuery(exam.label, q) || textMatchesQuery(exam.category, q)
         const checkGroups = filterCheckGroupsByQuery(allGroups, q, matchedByName)
         const checkItems = flattenGroupFields(checkGroups)
-        const parsedFields = extractSelectedFieldsFromCart(cart.value, exam.label)
+        const parsedFields = extractSelectedFieldsFromCart(cart.value, exam.label, allGroups)
+        // Clés `item.key` (pas les libellés) — évite de cocher Colour/Blood dans plusieurs sections.
         const selectedForms = !parsedFields
           ? isPanelLabelInCart(cart.value, exam.label)
-            ? allCheckItems.map((item) => item.label)
+            ? allCheckItems.map((item) => item.key)
             : []
           : parsedFields
         const selected = isPanelLabelInCart(cart.value, exam.label)
@@ -342,10 +350,9 @@ const chipGroups = computed(() => {
         const allSelected =
           selected &&
           (allCheckItems.length === 0 ||
-            allCheckItems.every((item) => selectedForms.includes(item.label)))
+            allCheckItems.every((item) => selectedForms.includes(item.key)))
         const partialSelected = selected && !allSelected && selectedForms.length > 0
-        // Compteur compact uniquement — pas la liste des champs (gagne de la place).
-        const selectedCount = selectedForms.length
+        const selectedCount = countPrescriptionSelectionUnits(allGroups, selectedForms)
         const displaySuffix = selectedCount > 0 ? ` (${selectedCount})` : ''
         const forceExpand = Boolean(q) && !matchedByName && checkItems.length > 0 && !selected
         // Détail des champs uniquement si l’utilisateur déroule volontairement.
@@ -461,11 +468,9 @@ function togglePanelAll(exam: {
   }
 }
 
-/** Coche / décoche tous les champs d’une section interne. */
-function toggleSectionForms(
-  panelLabel: string,
-  sectionFields: LabPrescriptionCheckItem[],
-) {
+/** Coche / décoche une section nommée (tous les champs) ou les champs tarifés d’une section sans titre. */
+function toggleSectionForms(panelLabel: string, section: LabPrescriptionCheckGroup) {
+  const sectionFields = section.fields
   if (!sectionFields.length) return
   const catalogExam =
     catalogItems.value.find((item) => item.label === panelLabel) ??
@@ -478,52 +483,79 @@ function toggleSectionForms(
     } as CatalogExam)
   const allItems = checkItemsForExam(catalogExam)
   const current = currentSelectedFields(panelLabel, allItems)
-  const pricedSection = sectionFields.filter((item) => item.hasUnitPrice)
-  const sectionLabels = sectionFields.map((item) => item.label)
-  const pricedLabels = pricedSection.map((item) => item.label)
 
-  if (!pricedLabels.length) {
+  if (section.named) {
+    if (!section.hasUnitPrice) {
+      fieldNotice.value = uiText(NO_SECTION_PRICE_MESSAGE)
+      return
+    }
+    const sectionKeys = sectionFields.map((item) => item.key)
+    const allSelected = sectionKeys.every((key) => current.includes(key))
+    fieldNotice.value = ''
+    if (allSelected) {
+      setPanelForms(
+        panelLabel,
+        current.filter((key) => !sectionKeys.includes(key)),
+      )
+      return
+    }
+    setPanelForms(panelLabel, [...new Set([...current, ...sectionKeys])])
+    return
+  }
+
+  const pricedSection = sectionFields.filter((item) => item.hasUnitPrice)
+  const sectionKeys = sectionFields.map((item) => item.key)
+  const pricedKeys = pricedSection.map((item) => item.key)
+
+  if (!pricedKeys.length) {
     fieldNotice.value = uiText(NO_UNIT_PRICE_MESSAGE)
     return
   }
 
-  const allPricedSelected = pricedLabels.every((label) => current.includes(label))
+  const allPricedSelected = pricedKeys.every((key) => current.includes(key))
   if (allPricedSelected) {
     fieldNotice.value = ''
     setPanelForms(
       panelLabel,
-      current.filter((label) => !sectionLabels.includes(label)),
+      current.filter((key) => !sectionKeys.includes(key)),
     )
     return
   }
 
-  if (pricedLabels.length < sectionFields.length) {
+  if (pricedKeys.length < sectionFields.length) {
     fieldNotice.value = uiText(NO_UNIT_PRICE_MESSAGE)
   } else {
     fieldNotice.value = ''
   }
-  const merged = new Set([...current, ...pricedLabels])
+  const merged = new Set([...current, ...pricedKeys])
   setPanelForms(panelLabel, [...merged])
 }
 
 function isSectionFullySelected(
   selectedForms: string[],
-  sectionFields: LabPrescriptionCheckItem[],
+  section: LabPrescriptionCheckGroup,
 ) {
-  if (!sectionFields.length) return false
-  const priced = sectionFields.filter((item) => item.hasUnitPrice)
-  const pool = priced.length ? priced : sectionFields
-  return pool.every((item) => selectedForms.includes(item.label))
+  if (!section.fields.length) return false
+  if (section.named) {
+    return section.fields.every((item) => selectedForms.includes(item.key))
+  }
+  const priced = section.fields.filter((item) => item.hasUnitPrice)
+  const pool = priced.length ? priced : section.fields
+  return pool.every((item) => selectedForms.includes(item.key))
 }
 
 function isSectionPartiallySelected(
   selectedForms: string[],
-  sectionFields: LabPrescriptionCheckItem[],
+  section: LabPrescriptionCheckGroup,
 ) {
-  if (!sectionFields.length) return false
-  const priced = sectionFields.filter((item) => item.hasUnitPrice)
-  const pool = priced.length ? priced : sectionFields
-  const count = pool.filter((item) => selectedForms.includes(item.label)).length
+  if (!section.fields.length) return false
+  const pool = section.named
+    ? section.fields
+    : (() => {
+        const priced = section.fields.filter((item) => item.hasUnitPrice)
+        return priced.length ? priced : section.fields
+      })()
+  const count = pool.filter((item) => selectedForms.includes(item.key)).length
   return count > 0 && count < pool.length
 }
 
@@ -538,7 +570,7 @@ async function ensureLabPanelsReady() {
   catalogEpoch.value += 1
 }
 
-function setPanelForms(panelLabel: string, formLabels: string[]) {
+function setPanelForms(panelLabel: string, fieldKeys: string[]) {
   const catalogExam =
     catalogItems.value.find((item) => item.label === panelLabel) ??
     ({
@@ -550,22 +582,33 @@ function setPanelForms(panelLabel: string, formLabels: string[]) {
     } as CatalogExam)
   const groups = checkGroupsForExam(catalogExam)
   const allItems = flattenGroupFields(groups)
-  const selected = new Set(formLabels.map((label) => label.trim()).filter(Boolean))
-  const allKnown = allItems.map((item) => item.label.trim())
+  const selected = new Set(fieldKeys.map((key) => key.trim()).filter(Boolean))
+  const allKnown = allItems.map((item) => item.key)
   const knownSet = new Set(allKnown)
   const allFormFieldsSelected =
     allKnown.length > 0 &&
-    allKnown.every((label) => selected.has(label)) &&
-    [...selected].every((label) => knownSet.has(label))
+    allKnown.every((key) => selected.has(key)) &&
+    [...selected].every((key) => knownSet.has(key))
 
-  let labels = [...selected]
+  const namedSectionFieldKeys = new Set<string>()
+  for (const group of groups) {
+    if (!group.named) continue
+    const keys = group.fields.map((field) => field.key)
+    if (keys.length && keys.every((key) => selected.has(key))) {
+      for (const key of keys) namedSectionFieldKeys.add(key)
+    }
+  }
+
+  let keys = [...selected]
   if (!allFormFieldsSelected) {
-    const blocked = labels.filter((label) => {
-      const item = allItems.find((entry) => entry.label === label)
+    const blocked = keys.filter((key) => {
+      if (namedSectionFieldKeys.has(key)) return false
+      const item = allItems.find((entry) => entry.key === key)
       return item ? !item.hasUnitPrice : false
     })
-    labels = labels.filter((label) => {
-      const item = allItems.find((entry) => entry.label === label)
+    keys = keys.filter((key) => {
+      if (namedSectionFieldKeys.has(key)) return true
+      const item = allItems.find((entry) => entry.key === key)
       return item?.hasUnitPrice === true
     })
     if (blocked.length) {
@@ -577,17 +620,27 @@ function setPanelForms(panelLabel: string, formLabels: string[]) {
     fieldNotice.value = ''
   }
 
-  const nextEntries = buildCartEntriesForSelectedFields(panelLabel, groups, labels)
+  const nextEntries = buildCartEntriesForSelectedFields(panelLabel, groups, keys)
   const without = cart.value.filter((item) => !isPanelLabelInCart([item], panelLabel))
   cart.value = [...without, ...nextEntries]
   // Garder le panneau ouvert pour cocher plusieurs champs sans re-développer.
 }
 
 function currentSelectedFields(panelLabel: string, allItems: LabPrescriptionCheckItem[]): string[] {
-  const parsed = extractSelectedFieldsFromCart(cart.value, panelLabel)
+  const catalogExam =
+    catalogItems.value.find((item) => item.label === panelLabel) ??
+    ({
+      id: panelLabel,
+      code: '',
+      label: panelLabel,
+      category: 'Laboratoire',
+      priceFcfa: 0,
+    } as CatalogExam)
+  const groups = checkGroupsForExam(catalogExam)
+  const parsed = extractSelectedFieldsFromCart(cart.value, panelLabel, groups)
   if (parsed === null) {
     return isPanelLabelInCart(cart.value, panelLabel)
-      ? allItems.map((item) => item.label)
+      ? allItems.map((item) => item.key)
       : []
   }
   return parsed
@@ -605,11 +658,11 @@ function toggleFormItem(panelLabel: string, item: LabPrescriptionCheckItem) {
     } as CatalogExam)
   const allItems = checkItemsForExam(catalogExam)
   const current = currentSelectedFields(panelLabel, allItems)
-  if (current.includes(item.label)) {
+  if (current.includes(item.key)) {
     fieldNotice.value = ''
     setPanelForms(
       panelLabel,
-      current.filter((label) => label !== item.label),
+      current.filter((key) => key !== item.key),
     )
     return
   }
@@ -618,7 +671,7 @@ function toggleFormItem(panelLabel: string, item: LabPrescriptionCheckItem) {
     return
   }
   fieldNotice.value = ''
-  setPanelForms(panelLabel, [...current, item.label])
+  setPanelForms(panelLabel, [...current, item.key])
 }
 
 function onUnpricedFieldClick(item: LabPrescriptionCheckItem) {
@@ -641,9 +694,9 @@ function selectAllForms(
     } as CatalogExam)
   const allItems = checkItemsForExam(catalogExam)
   const current = currentSelectedFields(panelLabel, allItems)
-  const visibleSet = new Set(visibleItems.map((item) => item.label))
-  const kept = current.filter((label) => !visibleSet.has(label))
-  setPanelForms(panelLabel, [...kept, ...visibleItems.map((item) => item.label)])
+  const visibleSet = new Set(visibleItems.map((item) => item.key))
+  const kept = current.filter((key) => !visibleSet.has(key))
+  setPanelForms(panelLabel, [...kept, ...visibleItems.map((item) => item.key)])
 }
 
 function selectAllFormsAndCollapse(
@@ -675,10 +728,10 @@ function clearAllForms(
     } as CatalogExam)
   const allItems = checkItemsForExam(catalogExam)
   const current = currentSelectedFields(panelLabel, allItems)
-  const visibleSet = new Set(visibleItems.map((item) => item.label))
+  const visibleSet = new Set(visibleItems.map((item) => item.key))
   setPanelForms(
     panelLabel,
-    current.filter((label) => !visibleSet.has(label)),
+    current.filter((key) => !visibleSet.has(key)),
   )
 }
 
@@ -892,7 +945,7 @@ function onCatalogInvalidate() {
                   <span
                     v-if="exam.selectedCount > 0"
                     class="exam-picker__chip-count-badge"
-                    :title="translateTemplate('{n} champs sélectionnés', { n: String(exam.selectedCount) })"
+                    :title="translateTemplate('{n} éléments sélectionnés', { n: String(exam.selectedCount) })"
                   >
                     {{ exam.selectedCount }}
                   </span>
@@ -908,7 +961,9 @@ function onCatalogInvalidate() {
               <div v-if="exam.expanded" class="exam-picker__forms" @click.stop>
                 <div class="exam-picker__forms-toolbar">
                   <span class="exam-picker__forms-title">{{
-                    uiText('Champs à cocher')
+                    exam.checkGroups.some((section) => section.named)
+                      ? uiText('Sections et champs à cocher')
+                      : uiText('Champs à cocher')
                   }}</span>
                   <div class="exam-picker__forms-actions">
                     <button
@@ -939,15 +994,21 @@ function onCatalogInvalidate() {
                     <label class="exam-picker__forms-section">
                       <input
                         type="checkbox"
-                        :checked="isSectionFullySelected(exam.selectedForms, section.fields)"
-                        :indeterminate="
-                          isSectionPartiallySelected(exam.selectedForms, section.fields)
-                        "
-                        @change="toggleSectionForms(exam.label, section.fields)"
+                        :checked="isSectionFullySelected(exam.selectedForms, section)"
+                        :indeterminate="isSectionPartiallySelected(exam.selectedForms, section)"
+                        @change="toggleSectionForms(exam.label, section)"
                       />
                       <span>{{ examNameText(section.title) }}</span>
                     </label>
-                    <ul class="exam-picker__forms-list">
+                    <ul
+                      v-if="section.named"
+                      class="exam-picker__forms-preview"
+                    >
+                      <li v-for="item in section.fields" :key="item.key">
+                        {{ examNameText(item.label) }}
+                      </li>
+                    </ul>
+                    <ul v-else class="exam-picker__forms-list">
                       <li v-for="item in section.fields" :key="item.key">
                         <label
                           class="exam-picker__form-row"
@@ -961,7 +1022,7 @@ function onCatalogInvalidate() {
                         >
                           <input
                             type="checkbox"
-                            :checked="exam.selectedForms.includes(item.label)"
+                            :checked="exam.selectedForms.includes(item.key)"
                             :disabled="!item.hasUnitPrice"
                             @change="toggleFormItem(exam.label, item)"
                           />
@@ -1669,6 +1730,26 @@ function onCatalogInvalidate() {
   height: 0.9rem;
   accent-color: var(--brand-red, #c62828);
   cursor: pointer;
+}
+
+.exam-picker__forms-preview {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 1.3rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.exam-picker__forms-preview li {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.15rem 0.4rem;
+  line-height: 1.3;
 }
 
 .exam-picker__forms-list {

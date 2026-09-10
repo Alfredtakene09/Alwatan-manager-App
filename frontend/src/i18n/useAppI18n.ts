@@ -21,6 +21,7 @@ export function useAppI18n() {
     return translateUi(label)
   }
 
+  /** Nom d’examen / champ labo tel qu’enregistré (jamais traduit). */
   function examNameText(label: string) {
     void localeCode.value
     return translateExamName(label)

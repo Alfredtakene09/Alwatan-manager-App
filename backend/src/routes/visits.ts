@@ -62,7 +62,11 @@ import {
   invoiceCollectedAt,
 } from "../lib/revenue-stats.js";
 import { ageUnitSchema, patientAgeShape, refinePatientAge } from "../lib/patient-age.js";
-import { requireAuth, requireModule, requireUiAction } from "../middleware/auth.js";
+import { requireAuth, requireAdmin, requireModule, requireUiAction } from "../middleware/auth.js";
+import {
+  ReclamationRefundError,
+  voidAllPaidLabExams,
+} from "../lib/exam-reclamation-refund.js";
 import {
   receptionistOwnsPatient,
   receptionistOwnVisitsWhere,
@@ -962,7 +966,7 @@ const externalLabOrderSchema = z
     ...patientAgeShape,
     exams: z.array(z.string().min(1)).optional(),
     examsByKind: examsByKindSchema.optional(),
-    reductionFcfa: z.number().int().min(0).default(0),
+    reductionFcfa: z.coerce.number().int().min(0).default(0),
     /** Montant net facturé (surcharge le calcul catalogue − réduction). */
     amountFcfa: z.number().int().min(0).optional(),
     /** Montant dédié à l’opération (parts % appliquées sur le SurgeryCase). */
@@ -1005,6 +1009,7 @@ router.get("/external-queue", requireModule("reception"), async (req, res) => {
     where: {
       visit: {
         notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE },
+        status: { not: VisitStatus.CANCELLED },
         patient: { category: PatientCategory.STANDARD },
         ...receptionistOwnVisitsWhere(req.user!),
       },
@@ -1050,6 +1055,89 @@ router.get("/external-queue", requireModule("reception"), async (req, res) => {
 
   return res.json(rows);
 });
+
+/** Une visite pour le modal « Modifier le dossier » (médecin). */
+router.get("/:id", requireModule("consultation"), async (req, res) => {
+  const visitId = String(req.params.id ?? "").trim();
+  if (!visitId) return res.status(400).json({ error: "Visite introuvable" });
+
+  const visit = await prisma.visit.findUnique({
+    where: { id: visitId },
+    include: visitInclude,
+  });
+  if (!visit) return res.status(404).json({ error: "Visite introuvable" });
+
+  const user = req.user!;
+  if (user.role === UserRole.MEDECIN) {
+    const queueCtx = await resolveDoctorQueueContext(user.id);
+    if (!visitBelongsToDoctor(visit, user.id, queueCtx.clinicServiceIds)) {
+      return res.status(403).json({ error: "Ce dossier n'est pas lié à votre compte." });
+    }
+  }
+
+  return res.json(mapVisitWithBilling(visit));
+});
+
+router.delete(
+  "/external-queue/:consultationId",
+  requireModule("reception"),
+  requireAdmin,
+  async (req, res) => {
+    const consultationId = String(req.params.consultationId ?? "").trim();
+    if (!consultationId) {
+      return res.status(400).json({ error: "Consultation introuvable" });
+    }
+
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        const consultation = await tx.consultation.findUnique({
+          where: { id: consultationId },
+          include: {
+            visit: {
+              select: {
+                notes: true,
+                invoices: {
+                  where: { type: InvoiceType.LAB_EXAM },
+                  select: {
+                    id: true,
+                    type: true,
+                    amountFcfa: true,
+                    paidAmountFcfa: true,
+                    surgeryCaseId: true,
+                    hospitalizationId: true,
+                    createdAt: true,
+                  },
+                },
+              },
+            },
+          },
+        });
+        if (!consultation?.visit) {
+          throw new ReclamationRefundError("NOT_FOUND", "Consultation introuvable");
+        }
+        if (!consultation.visit.notes?.includes(EXTERNAL_PATIENT_VISIT_NOTE)) {
+          throw new ReclamationRefundError("NOT_FOUND", "Dossier patient externe introuvable");
+        }
+        return voidAllPaidLabExams({ tx, consultation });
+      });
+      return res.json({
+        ok: true,
+        totalRefundedFcfa: result.totalRefundedFcfa,
+      });
+    } catch (error) {
+      if (error instanceof ReclamationRefundError) {
+        const status =
+          error.code === "NOT_FOUND"
+            ? 404
+            : error.code === "LAB_RESULTS_LOCKED" || error.code === "SURGERY_LOCKED"
+              ? 409
+              : 400;
+        return res.status(status).json({ error: error.message, code: error.code });
+      }
+      return res.status(400).json({ error: "Impossible de supprimer le dossier externe." });
+    }
+  },
+);
 
 router.post("/external-patient", requireModule("reception"), async (req, res) => {
   try {

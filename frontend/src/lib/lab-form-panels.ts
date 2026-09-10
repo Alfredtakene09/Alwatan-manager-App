@@ -59,7 +59,7 @@ export type LabFormField = {
   unit?: string
   reference?: string
   defaultValue?: string
-  /** Tarif partiel (FCFA) si sélection d’un seul champ ; absent = tarif examen. */
+  /** Tarif partiel (FCFA) si sélection d’un seul champ (hors section nommée). */
   priceFcfa?: number
   hasComment?: boolean
   /** Conservé pour rétro-compat ; tous les champs sont traités comme texte court. */
@@ -71,8 +71,31 @@ export function labFieldCommentKey(fieldKey: string) {
   return `${fieldKey}__comment`
 }
 
+export const UNTITLED_LAB_SECTION_LABEL = 'Formulaire principal'
+
+/** Section nommée (ex. Urine General) — sélection et tarif au niveau section. */
+export function isNamedLabSectionTitle(title?: string | null): boolean {
+  const trimmed = title?.trim()
+  if (!trimmed) return false
+  return trimmed.toLowerCase() !== UNTITLED_LAB_SECTION_LABEL.toLowerCase()
+}
+
+/** Tarif d’une section : un seul prix, ou somme des prix champs hérités. */
+export function deriveNamedSectionPriceFcfa(
+  fields: Array<{ priceFcfa?: number | null }>,
+): number | undefined {
+  const prices = fields
+    .map((field) => field.priceFcfa)
+    .filter((price): price is number => price != null && Number.isFinite(price) && price > 0)
+  if (!prices.length) return undefined
+  if (prices.length === 1) return prices[0]
+  return prices.reduce((sum, price) => sum + price, 0)
+}
+
 export type LabFormSection = {
   title?: string
+  /** Tarif de la section entière (FCFA), si section nommée. */
+  priceFcfa?: number
   fields: LabFormField[]
 }
 
@@ -98,8 +121,8 @@ const DEFAULT_LAB_FORM_PANELS: LabFormPanel[] = [
           { key: 'dDimer', label: 'D.Dimer Test', reference: '0 - 0.5 mg/l' },
           { key: 'rheumatoidFactor', label: 'Rematoid Factor' },
           { key: 'urineHcg', label: 'Urine HCG' },
-          { key: 'fbg', label: 'FBG', reference: '70 - 120 mg/dl' },
-          { key: 'rbg', label: 'RBG', reference: '120 - 180 mg/dl' },
+          { key: 'fbg', label: 'RBG (RBS)', reference: '70 - 120 mg/dl' },
+          { key: 'rbg', label: 'RBG (RBS)', reference: '120 - 180 mg/dl' },
           { key: 'sChlamydia', label: 'S.Chlamydia Test' },
           { key: 'swapChlamydia', label: 'Swap Chlamydia Test' },
           { key: 'esr', label: 'ESR', unit: 'mm1/2hour' },
@@ -140,7 +163,7 @@ const DEFAULT_LAB_FORM_PANELS: LabFormPanel[] = [
           { key: 'stoolGiardia', label: 'Gardia.L' },
           { key: 'stoolWormsMicro', label: 'Worms' },
           { key: 'stoolTrophozoite', label: 'E.Hist' },
-          { key: 'stoolUndigested', label: 'Udigested Food' },
+          { key: 'stoolUndigested', label: 'Undigested Food' },
           { key: 'stoolYeast', label: 'Yeast cells' },
           { key: 'stoolOthers', label: 'Other' },
         ],

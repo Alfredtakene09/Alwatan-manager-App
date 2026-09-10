@@ -16,7 +16,7 @@ import {
   packagingToUnits,
   unitsToPackaging,
 } from '@/lib/logistics-packaging'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import type { LogisticsCategoryRecord } from '@/components/logistique/LogisticsCategoriesPanel.vue'
 import type { LogisticsSupplierRecord } from '@/components/logistique/LogisticsSuppliersPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
@@ -498,6 +498,10 @@ function exportExcel() {
   exportTableExcel('Articles logistique', itemExportColumns, tableRows.value)
 }
 
+function exportWord() {
+  void exportTableWord('Articles logistique', itemExportColumns, tableRows.value)
+}
+
 defineExpose({ reload: loadItems })
 </script>
 
@@ -522,7 +526,7 @@ defineExpose({ reload: loadItems })
           </option>
         </select>
       </div>
-      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
+      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
         Actualiser
       </UiButton>

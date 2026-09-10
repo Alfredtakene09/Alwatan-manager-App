@@ -37,8 +37,8 @@ export const LAB_PANELS_SEED: LabPanelSeed[] = [
       { key: "dDimer", label: "D.Dimer Test", reference: "0 - 0.5 mg/l" },
       { key: "rheumatoidFactor", label: "Rematoid Factor" },
       { key: "urineHcg", label: "Urine HCG" },
-      { key: "fbg", label: "FBG", reference: "70 - 120 mg/dl" },
-      { key: "rbg", label: "RBG", reference: "120 - 180 mg/dl" },
+      { key: "fbg", label: "RBG (RBS)", reference: "70 - 120 mg/dl" },
+      { key: "rbg", label: "RBG (RBS)", reference: "120 - 180 mg/dl" },
       { key: "sChlamydia", label: "S.Chlamydia Test" },
       { key: "swapChlamydia", label: "Swap Chlamydia Test" },
       { key: "esr", label: "ESR", unit: "mm1/2hour" },
@@ -69,7 +69,7 @@ export const LAB_PANELS_SEED: LabPanelSeed[] = [
       { section: "Stool General — Microscopic", key: "stoolGiardia", label: "Gardia.L" },
       { section: "Stool General — Microscopic", key: "stoolWormsMicro", label: "Worms" },
       { section: "Stool General — Microscopic", key: "stoolTrophozoite", label: "E.Hist" },
-      { section: "Stool General — Microscopic", key: "stoolUndigested", label: "Udigested Food" },
+      { section: "Stool General — Microscopic", key: "stoolUndigested", label: "Undigested Food" },
       { section: "Stool General — Microscopic", key: "stoolYeast", label: "Yeast cells" },
       { section: "Stool General — Microscopic", key: "stoolOthers", label: "Other" },
       { section: "Urine General", key: "urineColor", label: "Colour" },
@@ -321,7 +321,207 @@ export async function seedLabPanelsIfEmpty() {
   return created;
 }
 
-/** Ajoute / réordonne les champs selles-urine du formulaire Routine pour coller à la feuille classique. */
+const CLASSIC_EXCLUDED_KEYS = new Set(["urinehcg", "stooltrypanosoma"]);
+
+/** Normalise une clé de champ (camelCase / snake / suffixes _2) pour détecter les doublons. */
+export function normalizeLabFieldKey(key: string): string {
+  return key
+    .replace(/_(\d+)$/i, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase()
+    .replace(/_/g, "");
+}
+
+function isClassicStoolUrineKey(key: string): boolean {
+  const norm = normalizeLabFieldKey(key);
+  if (CLASSIC_EXCLUDED_KEYS.has(norm)) return false;
+  return norm.startsWith("stool") || norm.startsWith("urine");
+}
+
+/**
+ * Famille de section pour regrouper les intitulés historiques / personnalisés
+ * (Urine Analysis ≈ Urine General, Disposite ≈ Deposit, Miscroscopic ≈ Microscopic…).
+ */
+export function classicSectionFamily(section: string | null | undefined): string {
+  const raw = (section ?? "").trim().toLowerCase();
+  if (!raw) return "main";
+  if (raw.includes("deposit") || raw.includes("disposit") || raw.includes("diposit")) {
+    return "urine-deposit";
+  }
+  if (raw.includes("urine")) return "urine-general";
+  // « Miscroscopic » (faute fréquente) ≈ Microscopic / Stool General — Microscopic
+  if (
+    raw.includes("microscopic") ||
+    raw.includes("miscrocopic") ||
+    raw.includes("miscroscopic") ||
+    raw.includes("miscro") ||
+    raw.includes("micro")
+  ) {
+    return "stool-micro";
+  }
+  if (raw.includes("stool") || raw.includes("selle")) return "stool-general";
+  return raw;
+}
+
+/** Alias de clés clinic / seed → forme canonique dans une famille de section. */
+const CLASSIC_KEY_ALIASES_BY_FAMILY: Record<string, Record<string, string>> = {
+  "urine-general": {
+    reaction: "urinereaction",
+    urinereaction: "urinereaction",
+    urinecolor: "urinecolor",
+    color: "urinecolor",
+    colour: "urinecolor",
+  },
+  "urine-deposit": {
+    tvaginals: "urinetvaginalis",
+    urinetvaginalis: "urinetvaginalis",
+    yeast: "urineyeast",
+    urineyeast: "urineyeast",
+  },
+  "stool-general": {
+    reaction: "stoolreaction",
+    reaction2: "stoolreaction",
+    stoolreaction: "stoolreaction",
+  },
+  "stool-micro": {
+    flagellate: "stoolflagellate",
+    stoolflagellate: "stoolflagellate",
+    gardial: "stoolgiardia",
+    stoolgiardia: "stoolgiardia",
+    ehist: "stooltrophozoite",
+    stooltrophozoite: "stooltrophozoite",
+    vdigestedfood: "stoolundigested",
+    undigestedfood: "stoolundigested",
+    udigestedfood: "stoolundigested",
+    stoolundigested: "stoolundigested",
+    yeastcells: "stoolyeast",
+    stoolyeast: "stoolyeast",
+  },
+};
+
+export function canonicalClassicFieldKey(
+  key: string,
+  section: string | null | undefined,
+): string | null {
+  const family = classicSectionFamily(section);
+  const norm = normalizeLabFieldKey(key);
+  const aliases = CLASSIC_KEY_ALIASES_BY_FAMILY[family];
+  const aliased = aliases?.[norm];
+  if (aliased) return aliased;
+  if (!isClassicStoolUrineKey(key)) return null;
+  return norm;
+}
+
+type RoutineFieldRow = {
+  id: string;
+  key: string;
+  section: string | null;
+  sortOrder: number;
+};
+
+function classicDedupeToken(field: Pick<RoutineFieldRow, "key" | "section">): string | null {
+  const canonical = canonicalClassicFieldKey(field.key, field.section);
+  if (!canonical) return null;
+  return `${classicSectionFamily(field.section)}::${canonical}`;
+}
+
+/**
+ * Supprime les doublons selles/urine du formulaire Routine
+ * (ex. Urine General / Stool General répétés après un seed ou une sauvegarde UI).
+ */
+export async function dedupeRoutineClassicSheetFields() {
+  const panel = await prisma.labPanel.findUnique({
+    where: { slug: "routine" },
+    include: { fields: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
+  });
+  if (!panel) return 0;
+
+  const seen = new Set<string>();
+  const duplicateIds: string[] = [];
+  for (const field of panel.fields) {
+    const token = classicDedupeToken(field);
+    if (!token) continue;
+    if (seen.has(token)) duplicateIds.push(field.id);
+    else seen.add(token);
+  }
+
+  if (duplicateIds.length) {
+    await prisma.labPanelField.deleteMany({ where: { id: { in: duplicateIds } } });
+  }
+
+  // Fusionne les titres de section équivalents (Urine General → Urine Analysis…).
+  const refreshed = await prisma.labPanel.findUnique({
+    where: { id: panel.id },
+    include: { fields: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
+  });
+  if (!refreshed) return duplicateIds.length;
+
+  const preferredSectionByFamily = new Map<string, string>();
+  const classicFamilies = new Set([
+    "urine-general",
+    "urine-deposit",
+    "stool-general",
+    "stool-micro",
+  ]);
+  for (const field of refreshed.fields) {
+    const family = classicSectionFamily(field.section);
+    if (!classicFamilies.has(family)) continue;
+    const title = field.section?.trim();
+    if (!title) continue;
+    if (!preferredSectionByFamily.has(family)) preferredSectionByFamily.set(family, title);
+  }
+
+  let renamed = 0;
+  for (const field of refreshed.fields) {
+    const family = classicSectionFamily(field.section);
+    if (!classicFamilies.has(family)) continue;
+    const preferred = preferredSectionByFamily.get(family);
+    const current = field.section?.trim() || null;
+    if (!preferred || current === preferred) continue;
+    await prisma.labPanelField.update({
+      where: { id: field.id },
+      data: { section: preferred },
+    });
+    renamed += 1;
+  }
+
+  // Regroupe les champs d'une même section (sortOrder contigu) pour l'UI.
+  const finalPanel = await prisma.labPanel.findUnique({
+    where: { id: panel.id },
+    include: { fields: { orderBy: [{ sortOrder: "asc" }, { id: "asc" }] } },
+  });
+  if (finalPanel) {
+    const sectionOrder: string[] = [];
+    const bySection = new Map<string, typeof finalPanel.fields>();
+    for (const field of finalPanel.fields) {
+      const sectionKey = field.section?.trim() || "";
+      if (!bySection.has(sectionKey)) {
+        bySection.set(sectionKey, []);
+        sectionOrder.push(sectionKey);
+      }
+      bySection.get(sectionKey)!.push(field);
+    }
+    let order = 0;
+    for (const sectionKey of sectionOrder) {
+      for (const field of bySection.get(sectionKey) ?? []) {
+        if (field.sortOrder !== order) {
+          await prisma.labPanelField.update({
+            where: { id: field.id },
+            data: { sortOrder: order },
+          });
+        }
+        order += 1;
+      }
+    }
+  }
+
+  return duplicateIds.length + renamed;
+}
+
+/**
+ * Assure la présence des champs selles/urine de référence, sans recréer
+ * ceux déjà présents sous une clé équivalente (casse / suffixe différent).
+ */
 export async function ensureRoutineClassicSheetFields() {
   const routine = LAB_PANELS_SEED.find((panel) => panel.slug === "routine");
   if (!routine) return 0;
@@ -332,51 +532,51 @@ export async function ensureRoutineClassicSheetFields() {
   });
   if (!panel) return 0;
 
-  const classicFields = routine.fields.filter((field) => {
-    if (field.key === "urineHcg" || field.key === "stoolTrypanosoma") return false;
-    return field.key.startsWith("stool") || field.key.startsWith("urine");
-  });
+  const classicFields = routine.fields.filter((field) => isClassicStoolUrineKey(field.key));
   if (!classicFields.length) return 0;
 
-  const existing = new Map(panel.fields.map((field) => [field.key, field]));
+  const existingByExact = new Map(panel.fields.map((field) => [field.key, field]));
+  const existingByToken = new Map<string, RoutineFieldRow>();
+  for (const field of panel.fields) {
+    const token = classicDedupeToken(field);
+    if (token && !existingByToken.has(token)) existingByToken.set(token, field);
+  }
+
   const extraMax = panel.fields.reduce((max, field) => {
-    if (field.key === "urineHcg" || field.key === "stoolTrypanosoma") return Math.max(max, field.sortOrder);
-    if (field.key.startsWith("stool") || field.key.startsWith("urine")) return max;
+    if (classicDedupeToken(field)) return max;
     return Math.max(max, field.sortOrder);
   }, -1);
 
   let changed = 0;
   let sortOrder = extraMax + 1;
   for (const spec of classicFields) {
-    const found = existing.get(spec.key);
-    const nextSection = spec.section ?? null;
-    const nextLabel = spec.label;
-    if (!found) {
-      await prisma.labPanelField.create({
-        data: {
-          panelId: panel.id,
-          section: nextSection,
-          key: spec.key,
-          label: nextLabel,
-          unit: spec.unit ?? null,
-          reference: spec.reference ?? null,
-          defaultValue: spec.defaultValue ?? null,
-          type: spec.type ?? "text",
-          sortOrder,
-        },
-      });
-      changed += 1;
-    } else if (
-      found.section !== nextSection ||
-      found.label !== nextLabel ||
-      found.sortOrder !== sortOrder
-    ) {
-      await prisma.labPanelField.update({
-        where: { id: found.id },
-        data: { section: nextSection, label: nextLabel, sortOrder },
-      });
-      changed += 1;
-    }
+    const token = classicDedupeToken({ key: spec.key, section: spec.section ?? null });
+    if (!token) continue;
+    const found = existingByExact.get(spec.key) ?? existingByToken.get(token);
+    if (found) continue;
+
+    await prisma.labPanelField.create({
+      data: {
+        panelId: panel.id,
+        section: spec.section ?? null,
+        key: spec.key,
+        label: spec.label,
+        unit: spec.unit ?? null,
+        reference: spec.reference ?? null,
+        defaultValue: spec.defaultValue ?? null,
+        type: spec.type ?? "text",
+        sortOrder,
+      },
+    });
+    const createdRow: RoutineFieldRow = {
+      id: "new",
+      key: spec.key,
+      section: spec.section ?? null,
+      sortOrder,
+    };
+    existingByExact.set(spec.key, createdRow as never);
+    existingByToken.set(token, createdRow);
+    changed += 1;
     sortOrder += 1;
   }
   return changed;

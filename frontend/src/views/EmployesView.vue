@@ -4,7 +4,8 @@ import { useRoute, RouterLink } from 'vue-router'
 import axios from 'axios'
 import { UserRound, Plus, RefreshCw, Save, Briefcase, Stethoscope, Banknote, Info, Phone, Users, UserCheck, Building2, Palmtree, UserX, Search, Camera } from '@lucide/vue'
 import api from '@/api/client'
-import { formatFcfa, fullName } from '@/lib/roles'
+import { formatFcfa, fullName, canViewEmployeeCompensation } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth'
 import {
   CONSULTATION_QUOTA_MODE_OPTIONS,
   CONSULTATION_RENEWAL_POLICY_OPTIONS,
@@ -35,7 +36,7 @@ import {
 } from '@/lib/employee-job-titles'
 import { employeeNeedsAppAccount, isHiddenPlatformAdminEmployee, isHiddenPlatformAdminJobTitle } from '@/lib/employee-app-account'
 import { inferIsMedecinFromJobTitle } from '@/lib/doctor-job-title'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -123,7 +124,11 @@ type ClinicServiceOption = { id: string; name: string; active?: boolean }
 const clinicServices = ref<ClinicServiceOption[]>([])
 
 const route = useRoute()
+const auth = useAuthStore()
 const { uiText, localeCode } = useAppI18n()
+const canExportSalaries = computed(() =>
+  auth.user ? canViewEmployeeCompensation(auth.user.role) : false,
+)
 const isGestionnaireRegistry = computed(() => route.meta.employeeRegistry === 'gestionnaire')
 const apiBase = computed(() => (isGestionnaireRegistry.value ? '/gestionnaire' : '/admin'))
 const showPayrollSection = computed(() => isGestionnaireRegistry.value)
@@ -400,9 +405,8 @@ function employeeCompensationLabel(employee: Employee): string {
   )
 }
 
-const tableRows = computed(() => {
-  localeCode.value
-  return filteredEmployees.value.map((employee) => ({
+function toEmployeeExportRow(employee: Employee) {
+  return {
     id: employee.id,
     name: fullName(employee.firstName, employee.lastName),
     jobTitle: employee.jobTitle || '—',
@@ -415,30 +419,75 @@ const tableRows = computed(() => {
           : employee.clinicService?.name || employee.service || '—')
       : '—',
     profileLabel: employee.isMedecin ? uiText('Médecin') : uiText('Personnel'),
-    compensationLabel: employeeCompensationLabel(employee),
+    compensationLabel: canExportSalaries.value ? employeeCompensationLabel(employee) : '—',
     statusLabel: employee.active ? uiText('Actif') : uiText('Inactif'),
     statusVariant: employee.active ? 'success' : 'danger',
-  }))
+  }
+}
+
+const tableRows = computed(() => {
+  localeCode.value
+  return filteredEmployees.value.map(toEmployeeExportRow)
 })
 
-type EmployeeExportRow = (typeof tableRows.value)[number]
+const catalogExportRows = computed(() => {
+  localeCode.value
+  return employees.value
+    .slice()
+    .sort((a, b) =>
+      fullName(a.firstName, a.lastName).localeCompare(fullName(b.firstName, b.lastName), 'fr', {
+        sensitivity: 'base',
+        numeric: true,
+      }),
+    )
+    .map(toEmployeeExportRow)
+})
 
-const employeeExportColumns: ExportColumn<EmployeeExportRow>[] = [
-  { header: 'Nom', value: (r) => r.name },
-  { header: 'Profil', value: (r) => r.profileLabel },
-  { header: 'Poste', value: (r) => r.jobTitle },
-  { header: 'Spécialité', value: (r) => r.specialty },
-  { header: 'Services', value: (r) => r.servicesLabel },
-  { header: 'Rémunération', value: (r) => r.compensationLabel },
-  { header: 'Statut', value: (r) => r.statusLabel },
-]
+type EmployeeExportRow = ReturnType<typeof toEmployeeExportRow>
+
+const employeeExportColumns = computed<ExportColumn<EmployeeExportRow>[]>(() => {
+  const cols: ExportColumn<EmployeeExportRow>[] = [
+    { header: uiText('Nom'), value: (r) => r.name },
+    { header: uiText('Profil'), value: (r) => r.profileLabel },
+    { header: uiText('Poste'), value: (r) => r.jobTitle },
+    { header: uiText('Spécialité'), value: (r) => r.specialty },
+    { header: uiText('Services'), value: (r) => r.servicesLabel },
+  ]
+  if (canExportSalaries.value) {
+    cols.push({ header: uiText('Rémunération'), value: (r) => r.compensationLabel })
+  }
+  cols.push({ header: uiText('Statut'), value: (r) => r.statusLabel })
+  return cols
+})
+
+function employeeExportTotals() {
+  if (!canExportSalaries.value) {
+    return [{ label: uiText('Nombre d’employés'), value: String(employees.value.length) }]
+  }
+  const payrollTotal = employees.value.reduce((sum, employee) => sum + (employee.fixedSalaryFcfa ?? 0), 0)
+  return [
+    { label: uiText('Nombre d’employés'), value: String(employees.value.length) },
+    { label: uiText('Masse salariale (salaires fixes)'), value: formatFcfa(payrollTotal) },
+  ]
+}
+
+function employeeExportShared() {
+  return {
+    captionRows: [{ label: uiText('Périmètre'), value: uiText('Catalogue complet') }],
+    totalsRows: employeeExportTotals(),
+  }
+}
 
 function exportPdf() {
-  exportTablePdf('Employés', employeeExportColumns, tableRows.value)
+  exportTablePdf(uiText('Employés'), employeeExportColumns.value, catalogExportRows.value, employeeExportShared())
 }
 
 function exportExcel() {
-  exportTableExcel('Employés', employeeExportColumns, tableRows.value)
+  exportTableExcel(uiText('Employés'), employeeExportColumns.value, catalogExportRows.value, employeeExportShared())
+}
+
+function exportWord() {
+  void exportTableWord(uiText('Employés'), employeeExportColumns.value, catalogExportRows.value, employeeExportShared())
 }
 
 function clearPhotoSelection() {
@@ -1076,7 +1125,7 @@ onMounted(async () => {
         icon-variant="violet"
       >
         <template #actions>
-          <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
+          <ExportButtons :disabled="loading || !employees.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
           <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadEmployees">
             Actualiser
           </UiButton>
@@ -1109,7 +1158,7 @@ onMounted(async () => {
                     <th>Poste</th>
                     <th>Spécialité</th>
                     <th class="simple-table__grow">Services</th>
-                    <th>Rémunération</th>
+                    <th v-if="canExportSalaries">Rémunération</th>
                     <th>Statut</th>
                     <th class="simple-table__actions-head">Actions</th>
                   </tr>
@@ -1128,7 +1177,7 @@ onMounted(async () => {
                       <span v-if="row.servicesLabel === '—'" class="st-muted">—</span>
                       <span v-else class="st-date">{{ row.servicesLabel }}</span>
                     </td>
-                    <td>
+                    <td v-if="canExportSalaries">
                       <span v-if="row.compensationLabel === '—'" class="st-muted">—</span>
                       <span v-else class="st-date">{{ row.compensationLabel }}</span>
                     </td>

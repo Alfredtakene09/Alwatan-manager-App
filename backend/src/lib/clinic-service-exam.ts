@@ -71,7 +71,14 @@ export async function resolveEmployeeClinicServiceLink(input: {
   return { clinicServiceId: null, service: freeText, clinicServiceIds: [] };
 }
 
-/** Filtre catalogue : service(s) du médecin + Labo/Hospit (tous libellés) + formulaires labo liés. */
+/** Types toujours proposables à la prescription (comme le labo), même rattachés à un service. */
+export const GLOBAL_PRESCRIPTION_EXAM_KINDS = [
+  ExamCatalogKind.ODONTO,
+  ExamCatalogKind.RADIO,
+  ExamCatalogKind.ECHO,
+] as const;
+
+/** Filtre catalogue : service(s) du médecin + Labo/Hospit + Radio/Écho/Odonto + formulaires labo. */
 export function examCatalogVisibleForServiceWhere(
   clinicServiceId: string | string[] | null | undefined,
 ): Prisma.ExamCatalogItemWhereInput {
@@ -100,6 +107,8 @@ export function examCatalogVisibleForServiceWhere(
       },
       // Non rattaché à un service
       { clinicServiceId: null },
+      // Odonto / Radio / Écho rattachés à leur service : visibles comme la nomenclature globale
+      { kind: { in: [...GLOBAL_PRESCRIPTION_EXAM_KINDS] } },
       // Formulaire de résultats labo lié → toujours proposable à tous les médecins
       {
         kind: ExamCatalogKind.EXAMEN,
@@ -107,6 +116,26 @@ export function examCatalogVisibleForServiceWhere(
       },
     ],
   };
+}
+
+/**
+ * Onglet nomenclature d'un service :
+ * actes liés au service +, pour Odonto/Radio/Écho, la nomenclature globale du type.
+ */
+export function examCatalogWhereForServiceTab(service: {
+  id: string;
+  name: string;
+}): Prisma.ExamCatalogItemWhereInput {
+  const kind = suggestExamCatalogKindFromServiceName(service.name);
+  if (
+    (GLOBAL_PRESCRIPTION_EXAM_KINDS as readonly ExamCatalogKind[]).includes(kind) &&
+    isCanonicalServiceForExamKind(service.name, kind)
+  ) {
+    return {
+      OR: [{ clinicServiceId: service.id }, { kind, clinicServiceId: null }],
+    };
+  }
+  return { clinicServiceId: service.id };
 }
 
 /**

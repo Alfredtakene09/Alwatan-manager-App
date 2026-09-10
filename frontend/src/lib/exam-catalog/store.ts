@@ -1,11 +1,13 @@
 import api from '@/api/client'
-
+import {
+  ROUTINE_BILLING_GROUPS,
+  billingGroupAliasTitles,
+  collectSectionsForBillingGroup,
+  resolveBillingGroupPriceFcfa,
+} from '@/lib/lab-routine-billing-groups'
 import { RADIO_EXAM_CATALOG } from './radio'
-
 import { ECHO_EXAM_CATALOG } from './echo'
-
 import { ODONTO_EXAM_CATALOG } from './odonto'
-
 import type { CatalogExam, ExamKindSlug, GroupedExamCatalog } from './types'
 
 
@@ -90,6 +92,7 @@ type LabPanelApiRow = {
     id?: string
     key?: string
     label?: string
+    section?: string | null
     priceFcfa?: number | null
   }>
   examCatalogItems?: Array<{
@@ -136,13 +139,60 @@ function rememberFieldPricesFromPanels(panels: LabPanelApiRow[]) {
       panel.label,
       ...(panel.examCatalogItems ?? []).map((item) => item.label),
     ])
+    const sectionSums = new Map<string, number>()
+    const sectionsByTitle = new Map<string, { title: string; priceFcfa?: number; fields: NonNullable<LabPanelApiRow['fields']> }>()
+
     for (const field of panel.fields ?? []) {
       const fieldLabel = String(field.label || '').trim()
       const price = field.priceFcfa
+      const sectionTitle = String(field.section || '').trim()
+      if (sectionTitle && sectionTitle.toLowerCase() !== 'formulaire principal') {
+        const existing = sectionsByTitle.get(sectionTitle) ?? {
+          title: sectionTitle,
+          fields: [] as NonNullable<LabPanelApiRow['fields']>,
+        }
+        existing.fields.push(field)
+        if (price != null && price > 0) {
+          existing.priceFcfa = (existing.priceFcfa ?? 0) + price
+        }
+        sectionsByTitle.set(sectionTitle, existing)
+      }
       if (!fieldLabel || price == null || price < 1) continue
       for (const panelLabel of panelLabels) {
         if (!String(panelLabel || '').trim()) continue
         fieldPriceCache.set(fieldPriceLookupKey(panelLabel, fieldLabel), price)
+        if (sectionTitle && sectionTitle.toLowerCase() !== 'formulaire principal') {
+          const sectionKey = fieldPriceLookupKey(panelLabel, sectionTitle)
+          sectionSums.set(sectionKey, (sectionSums.get(sectionKey) ?? 0) + price)
+        }
+      }
+    }
+
+    for (const [sectionKey, sum] of sectionSums) {
+      fieldPriceCache.set(sectionKey, sum)
+    }
+
+    // Groupes Routine : un seul tarif partagé sous tous les alias de section.
+    const formSections = [...sectionsByTitle.values()].map((section) => ({
+      title: section.title,
+      priceFcfa: section.priceFcfa,
+      fields: section.fields.map((field) => ({
+        key: String(field.key || ''),
+        label: String(field.label || ''),
+        priceFcfa: field.priceFcfa ?? undefined,
+      })),
+    }))
+    for (const groupDef of ROUTINE_BILLING_GROUPS) {
+      const linked = collectSectionsForBillingGroup(formSections, groupDef)
+      if (!linked.length) continue
+      const groupPrice = resolveBillingGroupPriceFcfa(linked)
+      if (groupPrice == null) continue
+      const aliases = billingGroupAliasTitles(formSections, groupDef)
+      for (const panelLabel of panelLabels) {
+        if (!String(panelLabel || '').trim()) continue
+        for (const alias of aliases) {
+          fieldPriceCache.set(fieldPriceLookupKey(panelLabel, alias), groupPrice)
+        }
       }
     }
   }
@@ -485,7 +535,8 @@ function resolveExamBasePrice(label: string): number {
 /**
  * Prix d’une ligne prescrite :
  * - examen entier → tarif catalogue ;
- * - champs partiels → somme des prix champs (sinon tarif examen / champ).
+ * - section nommée (« Panel (Urine General) ») → tarif de section ;
+ * - champs hors section → somme des prix champs.
  */
 export function getExamPriceFcfa(label: string): number {
   const trimmed = label.trim()
@@ -495,6 +546,10 @@ export function getExamPriceFcfa(label: string): number {
   if (!selectedFields.length) {
     return resolveExamBasePrice(trimmed) * countPrescribedFieldUnits(trimmed)
   }
+
+  // Filet : libellé catalogue entier (ex. acronyme entre parenthèses) déjà en cache.
+  const exact = priceCache.get(trimmed)
+  if (exact != null) return exact
 
   const base = extractBasePanelLabel(trimmed)
   let sum = 0

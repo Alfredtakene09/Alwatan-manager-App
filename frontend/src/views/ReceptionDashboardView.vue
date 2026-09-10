@@ -13,7 +13,6 @@ import {
   Stethoscope,
   Banknote,
   Printer,
-  Percent,
   Lock,
   CheckCircle2,
   CircleDollarSign,
@@ -65,8 +64,9 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import PatientsDataTable from '@/components/ui/PatientsDataTable.vue'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
+import ReceptionReductionFields from '@/components/reception/ReceptionReductionFields.vue'
 import DoctorSharesReceivablePanel from '@/components/reception/DoctorSharesReceivablePanel.vue'
-import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
+import { matchReceptionReductionPercent } from '@/lib/reception-reduction'
 
 type ReceptionStats = {
   registeredToday: number
@@ -165,8 +165,6 @@ type DayClosureStatus = {
 const { uiText, clinicServiceText, dateText, localeCode } = useAppI18n()
 const auth = useAuthStore()
 const router = useRouter()
-const { canSeeUiAction } = useUiActionVisibility()
-const canReprintReceipt = computed(() => canSeeUiAction('reception.print_receipt'))
 const printingPatientId = ref<string | null>(null)
 
 type ReceptionPageTab = 'enregistrement' | 'doctor-shares'
@@ -213,6 +211,7 @@ const doctors = ref<Doctor[]>([])
 const services = ref<ServiceOption[]>([])
 const listFrom = ref(todayInputValue())
 const listTo = ref(todayInputValue())
+const serviceFilter = ref('')
 const sortedDoctors = computed(() =>
   [...doctors.value].sort((a, b) => {
     const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
@@ -273,7 +272,11 @@ const deletingPatientId = ref<string | null>(null)
 const reconsultForm = ref({
   doctorId: '',
   consultationAmount: '',
+  reduction: '0',
 })
+const formReductionPercent = ref('')
+const editReductionPercent = ref('')
+const reconsultReductionPercent = ref('')
 const renewalPreview = ref<ConsultationRenewalPreview | null>(null)
 const loadingRenewalPreview = ref(false)
 
@@ -356,6 +359,28 @@ const showEditConsultationBilling = computed(
     showConsultationBillingSummary(editForm.value.category) &&
     !editBillingExempt.value &&
     showDoctorConsultationBilling(editDoctor.value),
+)
+const reconsultEffectiveAmount = computed(() => {
+  const patient = selectedPatient.value
+  if (patient?.category && isExemptCategory(patient.category)) return 0
+  if (renewalPreview.value?.withinValidity) return 0
+  return (
+    renewalPreview.value?.amountFcfa ??
+    resolveConsultationAmountForDoctor(
+      reconsultDoctor.value,
+      Number(reconsultForm.value.consultationAmount) || 0,
+    )
+  )
+})
+const reconsultReduction = computed(() => Math.max(0, Number(reconsultForm.value.reduction) || 0))
+const reconsultTotal = computed(() => Math.max(0, reconsultEffectiveAmount.value - reconsultReduction.value))
+const showReconsultConsultationBilling = computed(
+  () =>
+    Boolean(selectedPatient.value) &&
+    !(selectedPatient.value?.category && isExemptCategory(selectedPatient.value.category)) &&
+    !renewalPreview.value?.withinValidity &&
+    showDoctorConsultationBilling(reconsultDoctor.value) &&
+    reconsultEffectiveAmount.value > 0,
 )
 
 function collectNewPatientValidationErrors(): string[] {
@@ -469,6 +494,14 @@ function collectReconsultValidationErrors(): string[] {
     issues.push('Indiquez un montant de consultation valide.')
   }
 
+  if (showReconsultConsultationBilling.value && amount > 0) {
+    if (reconsultReduction.value > amount) {
+      issues.push('La réduction ne peut pas dépasser le montant de la consultation.')
+    } else if (reconsultTotal.value <= 0) {
+      issues.push('Le total à payer doit être supérieur à 0.')
+    }
+  }
+
   return issues
 }
 
@@ -504,21 +537,35 @@ const patientsPanelSubtitle = computed(() => {
     auth.user?.role === 'RECEPTIONNISTE'
       ? uiText('Vos dossiers créés à la réception')
       : uiText('Liste des dossiers créés à la réception')
-  return translateTemplate('{scope} — {date}', {
+  const servicePart = serviceFilter.value.trim()
+    ? translateTemplate(' — {service}', {
+        service: clinicServiceText(serviceFilter.value.trim()),
+      })
+    : ''
+  return translateTemplate('{scope} — {date}{service}', {
     scope,
     date: listDateLabel.value,
+    service: servicePart,
   })
 })
+
+const serviceFilterOptions = computed(() => services.value.map((service) => service.name))
 
 const isListDateToday = computed(() => {
   const today = todayInputValue()
   return listFrom.value === today && listTo.value === today
 })
 
-const dashboardStats = computed(() => [
+const dashboardStats = computed(() => {
+  const serviceHint = serviceFilter.value.trim()
+    ? clinicServiceText(serviceFilter.value.trim())
+    : ''
+  return [
   {
     id: 'today',
-    label: 'Inscrits aujourd\'hui',
+    label: serviceHint
+      ? translateTemplate("Inscrits aujourd'hui · {service}", { service: serviceHint })
+      : 'Inscrits aujourd\'hui',
     value: stats.value.registeredToday,
     hint: translateTemplate('{n} passage(s) enregistré(s)', { n: stats.value.visitsToday }),
     icon: CalendarDays,
@@ -526,7 +573,9 @@ const dashboardStats = computed(() => [
   },
   {
     id: 'female',
-    label: 'Féminin',
+    label: serviceHint
+      ? translateTemplate('Féminin · {service}', { service: serviceHint })
+      : 'Féminin',
     value: stats.value.femalePatients,
     hint: 'Dossiers patients',
     icon: Users,
@@ -534,7 +583,9 @@ const dashboardStats = computed(() => [
   },
   {
     id: 'male',
-    label: 'Masculin',
+    label: serviceHint
+      ? translateTemplate('Masculin · {service}', { service: serviceHint })
+      : 'Masculin',
     value: stats.value.malePatients,
     hint: 'Dossiers patients',
     icon: Users,
@@ -542,7 +593,13 @@ const dashboardStats = computed(() => [
   },
   {
     id: 'revenue',
-    label: stats.value.isPersonalScope ? 'Mes encaissements (jour)' : 'Recettes du jour',
+    label: stats.value.isPersonalScope
+      ? serviceHint
+        ? translateTemplate('Mes encaissements · {service}', { service: serviceHint })
+        : 'Mes encaissements (jour)'
+      : serviceHint
+        ? translateTemplate('Recettes du jour · {service}', { service: serviceHint })
+        : 'Recettes du jour',
     value: formatFcfaCompact(stats.value.netTodayFcfa ?? stats.value.revenueTodayFcfa),
     hint: stats.value.isPersonalScope
       ? stats.value.expensesTodayFcfa
@@ -555,14 +612,19 @@ const dashboardStats = computed(() => [
     icon: Banknote,
     variant: 'violet' as const,
   },
-])
+]
+})
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
 async function loadReceptionStats() {
   loadingStats.value = true
   try {
-    const { data } = await api.get<ReceptionStats>('/patients/reception-stats')
+    const { data } = await api.get<ReceptionStats>('/patients/reception-stats', {
+      params: {
+        service: serviceFilter.value.trim() || undefined,
+      },
+    })
     stats.value = data
   } finally {
     loadingStats.value = false
@@ -667,6 +729,7 @@ async function loadPatients() {
         q: search.value.trim() || undefined,
         from,
         to,
+        service: serviceFilter.value.trim() || undefined,
       },
     })
     patients.value = sortPatientsNewestFirst(data)
@@ -723,6 +786,7 @@ function resetForm() {
     consultationAmount: '',
     reduction: '0',
   }
+  formReductionPercent.value = ''
   syncDoctorForService('form')
 }
 
@@ -777,6 +841,7 @@ function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
     if (isExemptCategory(form.value.category)) {
       form.value.consultationAmount = '0'
       form.value.reduction = '0'
+      formReductionPercent.value = ''
       return
     }
     if (doctorShowsFixedConsultationPrice(doctor)) {
@@ -789,6 +854,7 @@ function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
     }
     form.value.consultationAmount = '0'
     form.value.reduction = '0'
+    formReductionPercent.value = ''
     return
   }
   if (target === 'edit') {
@@ -796,6 +862,7 @@ function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
     if (isExemptCategory(editForm.value.category)) {
       editForm.value.consultationAmount = '0'
       editForm.value.reduction = '0'
+      editReductionPercent.value = ''
       return
     }
     if (doctorShowsFixedConsultationPrice(doctor)) {
@@ -808,6 +875,7 @@ function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
     }
     editForm.value.consultationAmount = '0'
     editForm.value.reduction = '0'
+    editReductionPercent.value = ''
     return
   }
   const doctor = findDoctor(reconsultForm.value.doctorId)
@@ -827,6 +895,8 @@ function applyCategoryBillingDefaults(target: 'form' | 'edit') {
   if (isExemptCategory(state.category)) {
     state.consultationAmount = '0'
     state.reduction = '0'
+    if (target === 'form') formReductionPercent.value = ''
+    else editReductionPercent.value = ''
   }
   applyDoctorBillingDefaults(target)
 }
@@ -1068,6 +1138,7 @@ async function openEditModal(patient: Patient) {
     }
     syncDoctorForService('edit')
     applyCategoryBillingDefaults('edit')
+    syncEditReductionPercent()
   } catch {
     showAlert('Impossible de charger le dossier patient.', 'error')
     closeEditModal()
@@ -1099,11 +1170,21 @@ function resetEditForm() {
       : '0',
   }
   syncDoctorForService('edit')
+  syncEditReductionPercent()
+}
+
+function syncEditReductionPercent() {
+  const match = matchReceptionReductionPercent(
+    editEffectiveAmount.value,
+    Number(editForm.value.reduction) || 0,
+  )
+  editReductionPercent.value = match != null ? String(match) : ''
 }
 
 function closeEditModal() {
   showEditModal.value = false
   selectedPatient.value = null
+  editReductionPercent.value = ''
 }
 
 function openReconsultModal(patient: Patient) {
@@ -1111,7 +1192,9 @@ function openReconsultModal(patient: Patient) {
   reconsultForm.value = {
     doctorId: doctors.value[0]?.id ?? '',
     consultationAmount: '',
+    reduction: '0',
   }
+  reconsultReductionPercent.value = ''
   renewalPreview.value = null
   applyDoctorBillingDefaults('reconsult')
   showReconsultModal.value = true
@@ -1121,7 +1204,8 @@ function openReconsultModal(patient: Patient) {
 function closeReconsultModal() {
   showReconsultModal.value = false
   selectedPatient.value = null
-  reconsultForm.value = { doctorId: '', consultationAmount: '' }
+  reconsultForm.value = { doctorId: '', consultationAmount: '', reduction: '0' }
+  reconsultReductionPercent.value = ''
   renewalPreview.value = null
 }
 
@@ -1147,6 +1231,9 @@ async function submitReconsultation() {
             Number(reconsultForm.value.consultationAmount) || 0,
           ))
 
+    const reduction =
+      exempt || renewalPreview.value?.withinValidity ? 0 : reconsultReduction.value
+
     const { data } = await api.post<{
       invoiceNumber?: string | null
       totalFcfa?: number
@@ -1156,16 +1243,17 @@ async function submitReconsultation() {
       patientId: patient.id,
       doctorId: reconsultForm.value.doctorId,
       consultationAmountFcfa: amount,
+      reductionFcfa: reduction,
     })
     const hint = data.renewalHint
     const patientName = fullName(patient.firstName, patient.lastName)
-    const total = data.totalFcfa ?? (exempt ? 0 : amount)
+    const total = data.totalFcfa ?? (exempt ? 0 : Math.max(0, amount - reduction))
     await printReceipt({
       patientCode: patient.code,
       patientName,
       doctorName: getDoctorName(reconsultForm.value.doctorId),
       amount: exempt ? 0 : amount,
-      reduction: 0,
+      reduction: exempt ? 0 : reduction,
       total: exempt ? 0 : total,
       invoiceNumber: data.invoiceNumber
         ?? (exempt
@@ -1253,6 +1341,11 @@ watch(search, () => {
 
 watch([listFrom, listTo], () => {
   loadPatients()
+})
+
+watch(serviceFilter, () => {
+  loadPatients()
+  loadReceptionStats()
 })
 
 watch(() => form.value.service, () => {
@@ -1445,6 +1538,8 @@ onUnmounted(clearAlert)
             fill
             :patients="patients"
             :loading="loadingPatients || !!deletingPatientId"
+            :service-options="serviceFilterOptions"
+            v-model:service-filter="serviceFilter"
             show-print
             :printing-patient-id="printingPatientId"
             @print="printPatientReceipt"
@@ -1538,20 +1633,17 @@ onUnmounted(clearAlert)
           {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
         </p>
 
-        <div v-if="showFormConsultationBilling" class="form-grid-2">
-          <UiInput
-            v-model="form.reduction"
-            label="Réduction (FCFA)"
-            type="number"
-            min="0"
-            placeholder="0"
-            :icon="Percent"
-          />
+        <ReceptionReductionFields
+          v-if="showFormConsultationBilling"
+          v-model:reduction-fcfa="form.reduction"
+          v-model:reduction-percent="formReductionPercent"
+          :amount-fcfa="formEffectiveAmount"
+        >
           <div class="total-preview total-preview--compact">
             <span>{{ uiText('Total à payer') }}</span>
             <strong>{{ formatFcfa(formTotal) }}</strong>
           </div>
-        </div>
+        </ReceptionReductionFields>
       </form>
 
       <template #footer>
@@ -1668,26 +1760,23 @@ onUnmounted(clearAlert)
           {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
         </p>
 
-        <div v-if="showEditConsultationBilling" class="form-grid-2">
-          <UiInput
-            v-model="editForm.reduction"
-            label="Réduction (FCFA)"
-            type="number"
-            min="0"
-            placeholder="0"
-            :icon="Percent"
-          />
+        <ReceptionReductionFields
+          v-if="showEditConsultationBilling"
+          v-model:reduction-fcfa="editForm.reduction"
+          v-model:reduction-percent="editReductionPercent"
+          :amount-fcfa="editEffectiveAmount"
+        >
           <div class="total-preview total-preview--compact">
             <span>{{ uiText('Total à payer') }}</span>
             <strong>{{ formatFcfa(editTotal) }}</strong>
           </div>
-        </div>
+        </ReceptionReductionFields>
       </form>
 
       <template #footer>
         <UiButton type="button" variant="ghost" @click="closeEditModal">Annuler</UiButton>
         <UiButton
-          v-if="!loadingEdit && canReprintReceipt && selectedPatient"
+          v-if="!loadingEdit && selectedPatient"
           type="button"
           variant="ghost"
           :icon="Printer"
@@ -1789,6 +1878,17 @@ onUnmounted(clearAlert)
           <p v-else-if="doctorIsFixedSalary(reconsultDoctor)" class="doctor-hint">
             {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
           </p>
+          <ReceptionReductionFields
+            v-if="showReconsultConsultationBilling"
+            v-model:reduction-fcfa="reconsultForm.reduction"
+            v-model:reduction-percent="reconsultReductionPercent"
+            :amount-fcfa="reconsultEffectiveAmount"
+          >
+            <div class="total-preview total-preview--compact">
+              <span>{{ uiText('Total à payer') }}</span>
+              <strong>{{ formatFcfa(reconsultTotal) }}</strong>
+            </div>
+          </ReceptionReductionFields>
         </section>
       </form>
 
@@ -2068,11 +2168,12 @@ onUnmounted(clearAlert)
 .table-toolbar__new {
   flex-shrink: 0;
   justify-self: end;
+  white-space: nowrap;
 }
 
 .table-toolbar__filters {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: flex-end;
   gap: 0.5rem;
   min-width: 0;
@@ -2080,16 +2181,16 @@ onUnmounted(clearAlert)
 
 .date-range-filter {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: flex-end;
-  gap: 0.4rem;
+  gap: 0.35rem;
   flex-shrink: 0;
 }
 
 .date-filter {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.15rem;
   flex-shrink: 0;
 }
 
@@ -2103,7 +2204,9 @@ onUnmounted(clearAlert)
 
 .date-filter__input {
   height: 2.25rem;
-  padding: 0 0.65rem;
+  width: 8.75rem;
+  max-width: 100%;
+  padding: 0 0.5rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-card);
@@ -2135,16 +2238,17 @@ onUnmounted(clearAlert)
   align-items: stretch;
   gap: 0.2rem;
   flex: 1;
-  min-width: 10rem;
+  min-width: 8rem;
   padding: 0;
 }
 
 .search-compact {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
   width: 100%;
-  padding: 0.45rem 0.875rem;
+  min-width: 0;
+  padding: 0.4rem 0.75rem;
   border: 1.5px solid var(--border);
   border-radius: 999px;
   background: #fff;
@@ -2402,6 +2506,54 @@ onUnmounted(clearAlert)
   .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .table-toolbar {
+    grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) auto;
+    gap: 0.45rem 0.55rem;
+  }
+
+  .table-toolbar__title h3 {
+    font-size: 0.8125rem;
+  }
+
+  .table-toolbar__title p {
+    font-size: 0.625rem;
+  }
+
+  .table-toolbar__filters {
+    gap: 0.35rem;
+  }
+
+  .date-filter__input {
+    height: 2rem;
+    width: 7.25rem;
+    padding: 0 0.35rem;
+    font-size: 0.75rem;
+  }
+
+  .date-filter__today {
+    font-size: 0.625rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .search-compact {
+    padding: 0.3rem 0.55rem;
+    gap: 0.3rem;
+  }
+
+  .search-compact__input {
+    font-size: 0.75rem;
+  }
+
+  .search-count {
+    display: none;
+  }
+
+  .table-toolbar__new {
+    min-height: 2rem;
+    padding-inline: 0.7rem;
+    font-size: 0.75rem;
+  }
 }
 
 @media (max-width: 768px) {
@@ -2442,8 +2594,48 @@ onUnmounted(clearAlert)
   }
 
   .table-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.4rem 0.45rem;
+  }
+
+  .table-toolbar__title {
+    grid-column: 1 / -1;
+  }
+
+  .table-toolbar__filters {
+    grid-column: 1;
+  }
+
+  .table-toolbar__new {
+    grid-column: 2;
+    width: auto;
+    justify-self: end;
+  }
+
+  .date-filter__input {
+    width: 6.75rem;
+  }
+
+  .table-toolbar__search {
+    min-width: 6.5rem;
+  }
+
+  .row-actions {
+    flex-wrap: wrap;
+  }
+
+  .modal__footer :deep(.ui-btn) {
+    flex: 1;
+  }
+}
+
+@media (max-width: 520px) {
+  .table-toolbar {
     grid-template-columns: 1fr;
-    gap: 0.5rem;
+  }
+
+  .table-toolbar__filters {
+    flex-wrap: wrap;
   }
 
   .table-toolbar__new {
@@ -2459,12 +2651,15 @@ onUnmounted(clearAlert)
     width: 100%;
   }
 
-  .row-actions {
-    flex-wrap: wrap;
+  .date-filter__input {
+    width: auto;
+    min-width: 0;
+    flex: 1;
   }
 
-  .modal__footer :deep(.ui-btn) {
-    flex: 1;
+  .date-range-filter {
+    flex-wrap: wrap;
+    width: 100%;
   }
 }
 </style>

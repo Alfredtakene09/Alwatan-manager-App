@@ -14,7 +14,7 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import type { ExpenseIndiceOption } from '@/lib/expense-indices'
 import { fetchExpenseIndices, toActiveIndiceOptions } from '@/lib/expense-indices'
 import '@/assets/simple-table.css'
@@ -244,17 +244,25 @@ const expenseExportColumns = computed<ExportColumn<ExpenseExportRow>[]>(() => {
   ]
 })
 
-function exportPdf() {
-  exportTablePdf(expenseListTitle.value, expenseExportColumns.value, tableRows.value, {
+function expenseExportShared() {
+  return {
     captionRows: [
       { label: uiText('Période'), value: formattedPeriodLabel.value },
       { label: totalLabel.value, value: formatFcfa(totalFcfa.value) },
     ],
-  })
+  }
+}
+
+function exportPdf() {
+  exportTablePdf(expenseListTitle.value, expenseExportColumns.value, tableRows.value, expenseExportShared())
 }
 
 function exportExcel() {
-  exportTableExcel(expenseListTitle.value, expenseExportColumns.value, tableRows.value)
+  exportTableExcel(expenseListTitle.value, expenseExportColumns.value, tableRows.value, expenseExportShared())
+}
+
+function exportWord() {
+  void exportTableWord(expenseListTitle.value, expenseExportColumns.value, tableRows.value, expenseExportShared())
 }
 
 async function loadIndices() {
@@ -492,7 +500,7 @@ onMounted(async () => {
       icon-variant="blue"
     >
       <template #actions>
-        <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
+        <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">
           {{ t('common.refresh') }}
         </UiButton>

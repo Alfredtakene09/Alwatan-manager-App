@@ -18,7 +18,7 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiBadge from '@/components/ui/UiBadge.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import VisitEtatDataTable from '@/components/ui/VisitEtatDataTable.vue'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import { useSilentRefresh } from '@/composables/useSilentRefresh'
@@ -222,6 +222,14 @@ function exportExcel() {
   )
 }
 
+function exportWord() {
+  void exportTableWord(
+    translateTemplate('État des patients — {title}', { title: tablePanelTitle.value }),
+    visitExportColumns.map((col) => ({ ...col, header: uiText(col.header) })),
+    filteredVisits.value,
+  )
+}
+
 onMounted(loadEtat)
 onUnmounted(clearAlert)
 </script>
@@ -324,6 +332,7 @@ onUnmounted(clearAlert)
             :disabled="loading || !filteredVisits.length"
             @pdf="exportPdf"
             @excel="exportExcel"
+            @word="exportWord"
           />
         </div>
 

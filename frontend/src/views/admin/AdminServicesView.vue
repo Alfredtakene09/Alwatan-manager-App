@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
-import { Building2, Plus, Save, RefreshCw, Pencil, Trash2 } from '@lucide/vue'
+import { Building2, Plus, Save, RefreshCw, Pencil, Trash2, Stethoscope } from '@lucide/vue'
 import api from '@/api/client'
 import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { formatAppDate } from '@/i18n/locale-format'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -35,7 +39,14 @@ type ClinicService = {
   doctors: ServiceDoctor[]
 }
 
+type RecordedDiagnosis = {
+  label: string
+  count: number
+  lastAt: string
+}
+
 const auth = useAuthStore()
+const { uiText, clinicServiceText, localeCode } = useAppI18n()
 const apiBase = computed(() => (auth.user?.role === 'GESTIONNAIRE' ? '/gestionnaire' : '/admin'))
 
 const rows = ref<ClinicService[]>([])
@@ -47,6 +58,9 @@ const editingId = ref<string | null>(null)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const doctorSearch = ref('')
+const diagnoses = ref<RecordedDiagnosis[]>([])
+const diagnosesLoading = ref(false)
+const diagnosisMonth = ref('')
 
 const form = ref({
   name: '',
@@ -75,7 +89,7 @@ function doctorFullName(doctor: Pick<ServiceDoctor, 'firstName' | 'lastName'>) {
 }
 
 function doctorsLabel(row: ClinicService) {
-  if (!row.doctors?.length) return 'Aucun médecin'
+  if (!row.doctors?.length) return uiText('Aucun médecin')
   return row.doctors.map(doctorFullName).join(', ')
 }
 
@@ -136,8 +150,144 @@ async function loadServices() {
 }
 
 async function reloadAll() {
-  await Promise.all([loadServices(), loadDoctors()])
+  await Promise.all([loadServices(), loadDoctors(), loadDiagnoses()])
 }
+
+function diagnosisMonthLabel() {
+  if (!diagnosisMonth.value) return uiText('Toutes les périodes')
+  const [year, month] = diagnosisMonth.value.split('-').map(Number)
+  if (!year || !month) return diagnosisMonth.value
+  return new Date(year, month - 1, 1).toLocaleDateString(
+    localeCode.value === 'ar' ? 'ar-TD' : localeCode.value === 'en' ? 'en-GB' : 'fr-FR',
+    { month: 'long', year: 'numeric' },
+  )
+}
+
+async function loadDiagnoses() {
+  diagnosesLoading.value = true
+  try {
+    const { data } = await api.get<RecordedDiagnosis[]>(`${apiBase.value}/diagnoses`, {
+      params: diagnosisMonth.value ? { month: diagnosisMonth.value } : undefined,
+    })
+    diagnoses.value = Array.isArray(data) ? data : []
+  } catch {
+    diagnoses.value = []
+  } finally {
+    diagnosesLoading.value = false
+  }
+}
+
+type ServiceExportRow = {
+  name: string
+  doctors: string
+  doctorCount: number
+  status: string
+}
+
+const serviceExportColumns = computed<ExportColumn<ServiceExportRow>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Service'), value: (r) => r.name },
+    { header: uiText('Médecins'), value: (r) => r.doctors },
+    { header: uiText('Nb médecins'), value: (r) => r.doctorCount },
+    { header: uiText('Statut'), value: (r) => r.status },
+  ]
+})
+
+function serviceExportRows(): ServiceExportRow[] {
+  return sortedRows.value.map((row) => ({
+    name: clinicServiceText(row.name),
+    doctors: doctorsLabel(row),
+    doctorCount: row.doctors.length,
+    status: row.active ? uiText('Actif') : uiText('Inactif'),
+  }))
+}
+
+function serviceExportOptions() {
+  const rows = serviceExportRows()
+  const uniqueDoctors = new Set(sortedRows.value.flatMap((row) => row.doctors.map((d) => d.id)))
+  return {
+    rows,
+    options: {
+      captionRows: [{ label: uiText('Périmètre'), value: uiText('Catalogue complet') }],
+      totalsRows: [
+        { label: uiText('Nombre de services'), value: String(rows.length) },
+        { label: uiText('Services actifs'), value: String(sortedRows.value.filter((r) => r.active).length) },
+        { label: uiText('Médecins rattachés'), value: String(uniqueDoctors.size) },
+      ],
+    },
+  }
+}
+
+function exportServicesPdf() {
+  const { rows, options } = serviceExportOptions()
+  exportTablePdf(uiText('Services cliniques'), serviceExportColumns.value, rows, options)
+}
+
+function exportServicesExcel() {
+  const { rows, options } = serviceExportOptions()
+  exportTableExcel(uiText('Services cliniques'), serviceExportColumns.value, rows, options)
+}
+
+function exportServicesWord() {
+  const { rows, options } = serviceExportOptions()
+  void exportTableWord(uiText('Services cliniques'), serviceExportColumns.value, rows, options)
+}
+
+type DiagnosisExportRow = {
+  label: string
+  count: number
+  lastAt: string
+}
+
+const diagnosisExportColumns = computed<ExportColumn<DiagnosisExportRow>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Maladie / diagnostic'), value: (r) => r.label },
+    { header: uiText('Occurrences'), value: (r) => r.count },
+    { header: uiText('Dernière occurrence'), value: (r) => r.lastAt },
+  ]
+})
+
+const diagnosisTableRows = computed(() => {
+  void localeCode.value
+  return diagnoses.value.map((item) => ({
+    label: item.label,
+    count: item.count,
+    lastAt: formatAppDate(item.lastAt),
+  }))
+})
+
+function diagnosisExportOptions() {
+  return {
+    captionRows: [{ label: uiText('Période'), value: diagnosisMonthLabel() }],
+    totalsRows: [
+      { label: uiText('Nombre de maladies'), value: String(diagnoses.value.length) },
+      {
+        label: uiText('Total d’occurrences'),
+        value: String(diagnoses.value.reduce((sum, item) => sum + item.count, 0)),
+      },
+    ],
+  }
+}
+
+function exportDiagnosesPdf() {
+  exportTablePdf(uiText('Maladies enregistrées'), diagnosisExportColumns.value, diagnosisTableRows.value, diagnosisExportOptions())
+}
+
+function exportDiagnosesExcel() {
+  exportTableExcel(uiText('Maladies enregistrées'), diagnosisExportColumns.value, diagnosisTableRows.value, diagnosisExportOptions())
+}
+
+function exportDiagnosesWord() {
+  void exportTableWord(uiText('Maladies enregistrées'), diagnosisExportColumns.value, diagnosisTableRows.value, diagnosisExportOptions())
+}
+
+watch(diagnosisMonth, () => {
+  void loadDiagnoses()
+})
+
+onMounted(reloadAll)
 
 function openCreateModal() {
   editingId.value = null
@@ -226,12 +376,10 @@ async function deleteService(row: ClinicService) {
     messageType.value = 'error'
   }
 }
-
-onMounted(reloadAll)
 </script>
 
 <template>
-  <div>
+  <div class="admin-page">
     <UiPageHeader
       title="Services"
       subtitle="Créer et gérer la liste des services de la clinique"
@@ -242,6 +390,7 @@ onMounted(reloadAll)
 
     <UiCard title="Référentiel des services" :icon="Building2" icon-variant="violet">
       <template #actions>
+        <ExportButtons :disabled="loading || !sortedRows.length" @pdf="exportServicesPdf" @excel="exportServicesExcel" @word="exportServicesWord" />
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="reloadAll">
           Actualiser
         </UiButton>
@@ -250,7 +399,7 @@ onMounted(reloadAll)
         </UiButton>
       </template>
 
-      <p v-if="!loading && !sortedRows.length" class="empty">Aucun service configuré.</p>
+      <p v-if="!loading && !sortedRows.length" class="empty">{{ uiText('Aucun service configuré.') }}</p>
       <div v-else class="services-table-wrap">
         <table class="services-table">
           <thead>
@@ -266,10 +415,10 @@ onMounted(reloadAll)
             <tr v-for="(row, index) in sortedRows" :key="row.id">
               <td class="col-index">{{ index + 1 }}</td>
               <td>
-                <strong>{{ row.name }}</strong>
+                <strong>{{ clinicServiceText(row.name) }}</strong>
               </td>
               <td>
-                <span v-if="!row.doctors.length" class="muted">Aucun médecin</span>
+                <span v-if="!row.doctors.length" class="muted">{{ uiText('Aucun médecin') }}</span>
                 <ul v-else class="doctor-chips">
                   <li v-for="doctor in row.doctors" :key="doctor.id">
                     {{ doctorFullName(doctor) }}
@@ -289,6 +438,61 @@ onMounted(reloadAll)
           </tbody>
         </table>
         <p class="sr-only">{{ sortedRows.map((row) => doctorsLabel(row)).join(' ; ') }}</p>
+      </div>
+    </UiCard>
+
+    <UiCard
+      title="Maladies enregistrées"
+      description="Diagnostics saisis lors des consultations, regroupés par libellé."
+      :icon="Stethoscope"
+      icon-variant="teal"
+    >
+      <template #actions>
+        <input
+          v-model="diagnosisMonth"
+          type="month"
+          class="filter-month"
+          :aria-label="uiText('Filtrer par mois')"
+        />
+        <UiButton
+          v-if="diagnosisMonth"
+          variant="ghost"
+          size="sm"
+          @click="diagnosisMonth = ''"
+        >
+          {{ uiText('Toutes les périodes') }}
+        </UiButton>
+        <ExportButtons
+          :disabled="diagnosesLoading || !diagnoses.length"
+          @pdf="exportDiagnosesPdf"
+          @excel="exportDiagnosesExcel"
+          @word="exportDiagnosesWord"
+        />
+      </template>
+
+      <p v-if="diagnosesLoading" class="empty">{{ uiText('Chargement des maladies…') }}</p>
+      <p v-else-if="!diagnoses.length" class="empty">{{ uiText('Aucune maladie enregistrée.') }}</p>
+      <div v-else class="services-table-wrap">
+        <table class="services-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>{{ uiText('Maladie / diagnostic') }}</th>
+              <th class="col-num">{{ uiText('Occurrences') }}</th>
+              <th>{{ uiText('Dernière occurrence') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, index) in diagnosisTableRows" :key="`${row.label}-${index}`">
+              <td class="col-index">{{ index + 1 }}</td>
+              <td>
+                <strong>{{ row.label }}</strong>
+              </td>
+              <td class="col-num">{{ row.count }}</td>
+              <td>{{ row.lastAt }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </UiCard>
 
@@ -366,6 +570,12 @@ onMounted(reloadAll)
 </template>
 
 <style scoped>
+.admin-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
 .empty {
   text-align: center;
   color: var(--text-light);
@@ -411,6 +621,22 @@ onMounted(reloadAll)
   width: 2.5rem;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.col-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.filter-month {
+  min-width: 160px;
+  padding: 0.35rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
 }
 
 .doctor-chips {

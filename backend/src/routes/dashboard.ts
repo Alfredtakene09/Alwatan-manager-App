@@ -28,8 +28,6 @@ import { computePharmacyProfit } from "../lib/pharmacy-profit.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 import { patientsWhoReceivedExamsWhere } from "../lib/patient-exam-stats.js";
 import {
-  andWhere,
-  receptionistOwnConsultationsWhere,
   receptionistOwnPatientsWhere,
   receptionistOwnVisitsWhere,
   receptionistScopeUserId,
@@ -61,13 +59,26 @@ router.get("/gestionnaire/nav-badges", requireModule("gestionnaire"), async (_re
 router.get("/reception", requireModule("reception"), async (req, res) => {
   const user = req.user!;
   const createdById = String(req.query.createdById ?? "").trim();
+  const service = String(req.query.service ?? "").trim();
   const todayStart = startOfDay(new Date());
   const tomorrowStart = new Date(todayStart);
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-  const ownPatients = receptionistOwnPatientsWhere(user, createdById);
-  const ownVisits = receptionistOwnVisitsWhere(user, createdById);
-  const ownConsultations = receptionistOwnConsultationsWhere(user, createdById);
+  const ownPatients = {
+    ...receptionistOwnPatientsWhere(user, createdById),
+    ...(service ? { service } : {}),
+  };
+  const ownVisitsBase = receptionistOwnVisitsWhere(user, createdById);
+  const ownVisits: typeof ownVisitsBase =
+    service
+      ? {
+          AND: [
+            ownVisitsBase,
+            { patient: { service } },
+          ],
+        }
+      : ownVisitsBase;
   const scopedCashierId = receptionistScopeUserId(user, createdById);
+  const revenueOptions = service ? { patientService: service } : undefined;
   const weekStart = last7DayStarts()[0] ?? todayStart;
 
   const [
@@ -86,11 +97,11 @@ router.get("/reception", requireModule("reception"), async (req, res) => {
       where: { createdAt: { gte: todayStart }, ...ownVisits },
     }),
     scopedCashierId
-      ? aggregateCollectedForCashier(scopedCashierId, todayStart, tomorrowStart)
-      : aggregateCollectedToday(),
+      ? aggregateCollectedForCashier(scopedCashierId, todayStart, tomorrowStart, revenueOptions)
+      : aggregateCollectedToday(revenueOptions),
     prisma.consultation
       .findMany({
-        where: andWhere(labsPendingApprovalWhere(), ownConsultations),
+        where: labsPendingApprovalWhere(),
         select: { clinicalNotes: true },
       })
       .then((rows) => rows.filter((row) => hasUnpaidCashierQueueExams(row.clinicalNotes)).length),
@@ -109,7 +120,9 @@ router.get("/reception", requireModule("reception"), async (req, res) => {
             HospitalizationStatus.ACTIVE,
           ],
         },
-        ...(Object.keys(ownVisits).length ? { visit: ownVisits } : {}),
+        ...(Object.keys(ownVisitsBase).length || service
+          ? { visit: ownVisits }
+          : {}),
       },
     }),
     prisma.visit.findMany({
@@ -162,6 +175,7 @@ router.get("/reception", requireModule("reception"), async (req, res) => {
     malePatients,
     examPatientsCount,
     activityLast7Days,
+    serviceFilter: service || null,
   });
 });
 

@@ -15,7 +15,7 @@ import UiButton from '@/components/ui/UiButton.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 
 const props = withDefaults(
   defineProps<{
@@ -103,6 +103,10 @@ function exportExcel() {
   exportTableExcel('Historique des réclamations examens', reclamationExportColumns, rows.value)
 }
 
+function exportWord() {
+  void exportTableWord('Historique des réclamations examens', reclamationExportColumns, rows.value)
+}
+
 onMounted(load)
 
 watch(() => props.refreshKey, () => {
@@ -118,7 +122,7 @@ watch(() => props.refreshKey, () => {
     icon-variant="amber"
   >
     <template #actions>
-      <ExportButtons :disabled="loading || !rows.length" @pdf="exportPdf" @excel="exportExcel" />
+      <ExportButtons :disabled="loading || !rows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
       <UiButton variant="ghost" size="sm" :disabled="loading" :icon="RefreshCw" @click="load">
         {{ t('common.refresh') }}
       </UiButton>

@@ -25,7 +25,7 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import { confirmAppModal } from '@/lib/api-modal-helper'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 
 const surgeries = ref<SurgeryCaseRow[]>([])
 const loading = ref(false)
@@ -201,6 +201,10 @@ function exportExcel() {
   exportTableExcel('Opérations en attente', surgeryExportColumns, surgeries.value)
 }
 
+function exportWord() {
+  void exportTableWord('Opérations en attente', surgeryExportColumns, surgeries.value)
+}
+
 const { refresh: refreshList } = useSilentRefresh(
   ({ silent }) => load({ silent }),
   {
@@ -233,7 +237,7 @@ const { refresh: refreshList } = useSilentRefresh(
         icon-variant="amber"
       >
         <template #actions>
-          <ExportButtons :disabled="loading || !surgeries.length" @pdf="exportPdf" @excel="exportExcel" />
+          <ExportButtons :disabled="loading || !surgeries.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
           <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshList()">
             Actualiser
           </UiButton>

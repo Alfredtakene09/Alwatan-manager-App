@@ -4,7 +4,7 @@ import axios from 'axios'
 import { ArrowDownUp, Plus, RefreshCw, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import type { LabStockItemRecord } from '@/components/laboratoire/LabStockItemsPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
@@ -220,6 +220,10 @@ function exportExcel() {
   exportTableExcel(uiText('Mouvements stock labo'), exportColumns.value, tableRows.value)
 }
 
+function exportWord() {
+  void exportTableWord(uiText('Mouvements stock labo'), exportColumns.value, tableRows.value)
+}
+
 onMounted(async () => {
   await Promise.all([loadMovements(), loadItems()])
 })
@@ -234,7 +238,7 @@ defineExpose({ reload: loadMovements })
         <option value="">{{ uiText('Tous les articles') }}</option>
         <option v-for="item in items" :key="item.id" :value="item.id">{{ item.name }}</option>
       </select>
-      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
+      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
       <UiButton
         variant="ghost"
         size="sm"

@@ -16,6 +16,7 @@ import {
   Stethoscope,
   Printer,
   FileDown,
+  Pencil,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
@@ -35,6 +36,9 @@ import PatientMedicalHistory, {
   type MedicalHistoryEntry,
 } from '@/components/dossier/PatientMedicalHistory.vue'
 import PatientPaymentHistory from '@/components/dossier/PatientPaymentHistory.vue'
+import MedecinPrescriptionModal, {
+  type PrescriptionVisit,
+} from '@/components/MedecinPrescriptionModal.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -154,10 +158,21 @@ const uploadForm = ref({
 const reconsulting = ref(false)
 const deletingPatient = ref(false)
 const preserveTabOnReload = ref(false)
+const prescriptionVisit = ref<PrescriptionVisit | null>(null)
+const loadingEditDossier = ref(false)
 
 const canReconsult = computed(
   () => isMedecin.value && !!dossier.value?.reconsult?.canReconsult,
 )
+
+const editVisitId = computed(
+  () =>
+    dossier.value?.reconsult?.activeVisitId ??
+    dossier.value?.medicalHistory[0]?.visitId ??
+    null,
+)
+
+const canEditDossier = computed(() => isMedecin.value && !!editVisitId.value)
 
 const latestClinicalSummary = computed(() => {
   const entry = dossier.value?.medicalHistory[0]
@@ -381,6 +396,33 @@ async function startReconsult() {
       err.response?.data?.error || uiText('Impossible d’ouvrir la reconsultation.')
   } finally {
     reconsulting.value = false
+  }
+}
+
+async function openEditDossier(visitId?: string) {
+  const id = visitId || editVisitId.value
+  if (!id || !canEditDossier.value || loadingEditDossier.value) return
+  loadingEditDossier.value = true
+  dossierError.value = ''
+  try {
+    const { data } = await api.get<PrescriptionVisit>(`/visits/${id}`)
+    prescriptionVisit.value = data
+  } catch (error: unknown) {
+    await showApiErrorModal(error, uiText('Impossible d’ouvrir le dossier à modifier.'))
+  } finally {
+    loadingEditDossier.value = false
+  }
+}
+
+function closeEditDossier() {
+  prescriptionVisit.value = null
+}
+
+async function onDossierPrescriptionSaved() {
+  closeEditDossier()
+  if (selectedPatientId.value) {
+    preserveTabOnReload.value = true
+    await loadDossier(selectedPatientId.value)
   }
 }
 
@@ -636,6 +678,16 @@ onMounted(async () => {
           >
             <template #actions>
               <UiButton
+                v-if="canEditDossier"
+                variant="secondary"
+                size="sm"
+                :icon="Pencil"
+                :loading="loadingEditDossier"
+                @click="openEditDossier()"
+              >
+                {{ uiText('Modifier le dossier') }}
+              </UiButton>
+              <UiButton
                 v-if="canReconsult"
                 variant="primary"
                 size="sm"
@@ -781,11 +833,14 @@ onMounted(async () => {
               :show-open-lab-link="isMedecin"
               :patient="dossier.patient"
               expand-first
+              :continue-visit-id="dossier.reconsult?.activeVisitId"
+              :continue-loading="reconsulting || loadingEditDossier"
               :empty-message="
                 isMedecin
                   ? uiText('Aucune consultation, ordonnance ou examen enregistré pour ce patient.')
                   : undefined
               "
+              @continue-consultation="openEditDossier"
             />
           </UiCard>
 
@@ -906,6 +961,15 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <MedecinPrescriptionModal
+      :key="`${prescriptionVisit?.id ?? 'closed'}-notes`"
+      :visit="prescriptionVisit"
+      mode="edit"
+      start-tab="notes"
+      @close="closeEditDossier"
+      @saved="onDossierPrescriptionSaved"
+    />
   </div>
 </template>
 

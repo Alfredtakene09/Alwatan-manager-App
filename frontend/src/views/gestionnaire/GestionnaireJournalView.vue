@@ -5,6 +5,7 @@ import {
   BookOpen,
   FileDown,
   FileSpreadsheet,
+  FileText,
   History,
   Printer,
   RefreshCw,
@@ -15,7 +16,7 @@ import api from '@/api/client'
 import AmountFcfa from '@/components/ui/AmountFcfa.vue'
 import { currentMonthRangeToToday, formatDateRangeLabel, todayDateKey } from '@/lib/date-filters'
 import { CLINIC } from '@/lib/clinic'
-import { exportBasename, exportTableExcel, type ExportColumn } from '@/lib/table-export'
+import { exportBasename, exportTableExcel, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import { formatFcfa } from '@/lib/roles'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -308,6 +309,13 @@ function exportJournalExcel() {
   })
 }
 
+function exportJournalWord() {
+  if (!journalExportRows.value.length) return
+  void exportTableWord(`Livre journal — ${periodLabel.value}`, journalExportColumns, journalExportRows.value, {
+    filename: exportBasename(`livre-journal-${todayKey}`),
+  })
+}
+
 function exportJournalCsv() {
   if (!journal.value?.dailyByMonth.length) return
   const query = buildQuery({
@@ -557,6 +565,16 @@ onMounted(loadJournal)
             @click="exportJournalExcel"
           >
             Excel
+          </UiButton>
+          <UiButton
+            size="sm"
+            variant="outline"
+            :icon="FileText"
+            ui-action="export.word"
+            :disabled="loading || !journalExportRows.length"
+            @click="exportJournalWord"
+          >
+            Word
           </UiButton>
           <UiButton
             size="sm"
@@ -1540,7 +1558,7 @@ onMounted(loadJournal)
   }
 
   .journal-table--body-scroll tfoot {
-    display: table-footer-group !important;
+    display: table-row-group !important;
   }
 
   .journal-table--body-scroll tbody {
@@ -1548,8 +1566,8 @@ onMounted(loadJournal)
     overflow: visible !important;
   }
 
-  .journal-table--body-scroll thead,
-  .journal-table--body-scroll tfoot,
+  .journal-table--body-scroll thead tr,
+  .journal-table--body-scroll tfoot tr,
   .journal-table--body-scroll tbody tr {
     display: table-row !important;
   }

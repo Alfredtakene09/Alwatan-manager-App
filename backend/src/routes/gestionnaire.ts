@@ -18,6 +18,7 @@ import {
 } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
+import { listRecordedDiagnoses } from "../lib/recorded-diagnoses.js";
 import { resolveEmployeeClinicServiceLink } from "../lib/clinic-service-exam.js";
 import {
   getClinicServiceWithDoctors,
@@ -73,7 +74,7 @@ import {
   sumValidatedOvertimeByEmployee,
 } from "../lib/doctor-overtime.js";
 import { applyPendingShareClaimsToPayroll } from "../lib/doctor-share-claims.js";
-import { employeeSelect, serializeEmployee, dedupeEmployeesForSelection, isHiddenPlatformAdminEmployee, hiddenPlatformAdminEmployeeWhere } from "../lib/employee.js";
+import { employeeSelect, serializeEmployee, redactEmployeeCompensation, dedupeEmployeesForSelection, isHiddenPlatformAdminEmployee, hiddenPlatformAdminEmployeeWhere } from "../lib/employee.js";
 import {
   deleteOrDeactivateEmployee,
   doctorAvailabilitySlotsSchema,
@@ -89,7 +90,7 @@ import {
 } from "../lib/employee-photo.js";
 import { generateJournalDailyPdf, generatePayslipPdf } from "../lib/pdf-gestionnaire.js";
 import { UPLOADS_ROOT } from "../lib/patient-dossier.js";
-import { ROLE_LABELS } from "../lib/roles.js";
+import { ROLE_LABELS, canViewEmployeeCompensation } from "../lib/roles.js";
 
 const router = Router();
 router.use(requireAuth, requireModule("gestionnaire"));
@@ -716,9 +717,10 @@ router.get("/employees", async (req, res) => {
     orderBy: [{ firstName: "asc" }, { lastName: "asc" }],
     select: employeeSelect,
   });
+  const canView = !forSelection && canViewEmployeeCompensation(req.user!.role);
   const serialized = rows
     .filter((employee) => !isHiddenPlatformAdminEmployee(employee))
-    .map(serializeEmployee);
+    .map((employee) => redactEmployeeCompensation(serializeEmployee(employee), canView));
   return res.json(forSelection ? dedupeEmployeesForSelection(serialized) : serialized);
 });
 
@@ -1409,6 +1411,18 @@ router.get("/services", async (req, res) => {
 
   const activeOnly = req.query.activeOnly === "true";
   return res.json(await listClinicServicesWithDoctors(activeOnly));
+});
+
+router.get("/diagnoses", async (req, res) => {
+  const month = typeof req.query.month === "string" ? req.query.month : undefined;
+  const items = await listRecordedDiagnoses(month);
+  return res.json(
+    items.map((item) => ({
+      label: item.label,
+      count: item.count,
+      lastAt: item.lastAt.toISOString(),
+    })),
+  );
 });
 
 router.post("/services", async (req, res) => {

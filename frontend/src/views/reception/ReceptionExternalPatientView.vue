@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   UserRound,
   FlaskConical,
@@ -10,9 +10,11 @@ import {
   Pencil,
   CheckCircle2,
   Printer,
+  Percent,
+  Trash2,
 } from '@lucide/vue'
 import api from '@/api/client'
-import { showDuplicateModalFromError } from '@/lib/api-modal-helper'
+import { confirmAppModal, showApiErrorModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { parsePatientAge, splitPatientFullName } from '@/lib/patient-name'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
@@ -36,6 +38,7 @@ import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPati
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
+import UiInput from '@/components/ui/UiInput.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
@@ -45,6 +48,7 @@ import ReceptionQueueRowActions, {
 } from '@/components/reception/ReceptionQueueRowActions.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
+import { useAuthStore } from '@/stores/auth'
 
 type PatientRow = {
   id: string
@@ -95,6 +99,8 @@ type DraftNewPatient = {
 }
 
 const { uiText, localeCode } = useAppI18n()
+const auth = useAuthStore()
+const canDeleteExternal = computed(() => auth.user?.role === 'ADMIN')
 
 const search = ref('')
 const searchResults = ref<PatientRow[]>([])
@@ -126,8 +132,12 @@ const editForm = ref({
 const examsByKind = ref<ExamsByKind>(emptyExamsByKind())
 /** Montant opération personnalisé (depuis le sélecteur). */
 const operationAmountFcfa = ref<number | null>(null)
+const reductionFcfaInput = ref('')
+const reductionPercent = ref('')
+const EXTERNAL_REDUCTION_PERCENTS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50] as const
 const submitting = ref(false)
 const savingEdit = ref(false)
+const deletingExternal = ref(false)
 const message = ref('')
 const messageType = ref<'success' | 'error' | 'warning'>('success')
 
@@ -176,7 +186,7 @@ const canConfirmNewPatient = computed(() => {
 
 /** Enregistrement + prescription directe en une étape (sans encaissement ni médecin). */
 const canConfirmNewPatientWithExams = computed(
-  () => canConfirmNewPatient.value && newPatientExamCount.value > 0,
+  () => canConfirmNewPatient.value && newPatientExamCount.value > 0 && examNetFcfa.value > 0,
 )
 
 const canSaveEdit = computed(() => {
@@ -185,7 +195,7 @@ const canSaveEdit = computed(() => {
 })
 
 const canSubmitExams = computed(
-  () => !!activeRow.value && countExamsByKind(examsByKind.value) > 0,
+  () => !!activeRow.value && countExamsByKind(examsByKind.value) > 0 && examNetFcfa.value > 0,
 )
 
 const externalExamKinds = EXTERNAL_PATIENT_EXAM_KINDS
@@ -285,11 +295,14 @@ function resetExamsForm() {
   examsByKind.value = emptyExamsByKind()
   selectedDoctorId.value = ''
   operationAmountFcfa.value = null
+  reductionFcfaInput.value = ''
+  reductionPercent.value = ''
 }
 
 function examsPayload() {
   return {
     examsByKind: examsByKind.value,
+    reductionFcfa: examReductionFcfa.value,
     ...(
       (examsByKind.value.operation?.length ?? 0) > 0 && operationAmountFcfa.value != null
         ? { operationAmountFcfa: operationAmountFcfa.value }
@@ -311,6 +324,66 @@ function buildExamLinesFromForm(): LabExamLine[] {
     }
   }
   return lines
+}
+
+const examGrossFcfa = computed(() =>
+  buildExamLinesFromForm().reduce((sum, line) => sum + line.unitPriceFcfa, 0),
+)
+
+const examReductionFcfa = computed(() => {
+  const raw = Number.parseInt(String(reductionFcfaInput.value).replace(/\s/g, ''), 10)
+  if (!Number.isFinite(raw) || raw <= 0) return 0
+  return Math.min(raw, examGrossFcfa.value)
+})
+
+const examNetFcfa = computed(() => Math.max(0, examGrossFcfa.value - examReductionFcfa.value))
+
+function applyReductionPercent(value: string) {
+  reductionPercent.value = value
+  const pct = Number(value)
+  if (!value || !Number.isFinite(pct) || examGrossFcfa.value <= 0) {
+    if (!value) reductionFcfaInput.value = ''
+    else reductionFcfaInput.value = '0'
+    return
+  }
+  reductionFcfaInput.value = String(Math.round((examGrossFcfa.value * pct) / 100))
+}
+
+function onReductionFcfaInput(value: string) {
+  reductionFcfaInput.value = value
+  const amount = Number.parseInt(String(value).replace(/\s/g, ''), 10)
+  if (!Number.isFinite(amount) || amount <= 0 || examGrossFcfa.value <= 0) {
+    reductionPercent.value = ''
+    return
+  }
+  const match = EXTERNAL_REDUCTION_PERCENTS.find(
+    (pct) => Math.round((examGrossFcfa.value * pct) / 100) === amount,
+  )
+  reductionPercent.value = match != null ? String(match) : ''
+}
+
+watch(
+  [examGrossFcfa, examsByKind, operationAmountFcfa],
+  () => {
+    if (reductionPercent.value) {
+      applyReductionPercent(reductionPercent.value)
+      return
+    }
+    if (examReductionFcfa.value > examGrossFcfa.value) {
+      reductionFcfaInput.value = examGrossFcfa.value ? String(examGrossFcfa.value) : ''
+    }
+  },
+  { deep: true },
+)
+
+function printAmountsFromOrder(data?: { grossFcfa?: number; netFcfa?: number }) {
+  const grossFcfa = data?.grossFcfa ?? examGrossFcfa.value
+  const netFcfa = data?.netFcfa ?? examNetFcfa.value
+  return {
+    grossFcfa,
+    reductionFcfa: Math.max(0, grossFcfa - netFcfa),
+    totalFcfa: netFcfa,
+  }
 }
 
 function printExternalExamTickets(
@@ -477,7 +550,7 @@ function queueStatusVariant(row: ExternalQueueRow): 'success' | 'warning' | 'inf
 
 function externalRowActions(row: ExternalQueueRow): QueueRowAction[] {
   void localeCode.value
-  return [
+  const actions: QueueRowAction[] = [
     {
       key: 'exams',
       label: uiText('Examens'),
@@ -495,6 +568,16 @@ function externalRowActions(row: ExternalQueueRow): QueueRowAction[] {
     },
     { key: 'edit', label: uiText('Modifier'), icon: Pencil },
   ]
+  if (canDeleteExternal.value) {
+    actions.push({
+      key: 'delete',
+      label: uiText('Supprimer'),
+      icon: Trash2,
+      variant: 'danger',
+      disabled: deletingExternal.value,
+    })
+  }
+  return actions
 }
 
 function examsSummaryLabel(row: ExternalQueueRow) {
@@ -516,6 +599,46 @@ function onExternalRowAction(key: string, row: ExternalQueueRow) {
   if (key === 'exams') openExamsModal(row)
   if (key === 'print') void reprintExternalReceipt(row)
   if (key === 'edit') openEditModal(row)
+  if (key === 'delete') void deleteExternalRow(row)
+}
+
+async function deleteExternalRow(row: ExternalQueueRow) {
+  if (!canDeleteExternal.value || deletingExternal.value) return
+  const confirmed = await confirmAppModal({
+    type: 'DELETE',
+    title: uiText('Supprimer le dossier externe'),
+    message: translateTemplate(
+      'Supprimer le dossier externe de {code} — {name} ? Les factures examens seront remboursées et la ligne disparaîtra aussi des examens payés. Cette action est irréversible.',
+      {
+        code: row.patient.code,
+        name: fullName(row.patient.firstName, row.patient.lastName),
+      },
+    ),
+    confirmLabel: uiText('Supprimer'),
+  })
+  if (!confirmed) return
+
+  deletingExternal.value = true
+  message.value = ''
+  try {
+    const { data } = await api.delete<{ totalRefundedFcfa?: number }>(
+      `/visits/external-queue/${row.id}`,
+    )
+    if (activeRow.value?.id === row.id) {
+      showExamsModal.value = false
+      showEditModal.value = false
+      activeRow.value = null
+    }
+    message.value = translateTemplate('Dossier externe supprimé. Montant remboursé : {amount}.', {
+      amount: formatFcfa(data.totalRefundedFcfa ?? 0),
+    })
+    messageType.value = 'success'
+    await loadQueue()
+  } catch (error: unknown) {
+    await showApiErrorModal(error, uiText('Impossible de supprimer le dossier externe.'))
+  } finally {
+    deletingExternal.value = false
+  }
 }
 
 async function loadQueue() {
@@ -601,6 +724,8 @@ async function confirmNewPatient() {
       const { data } = await api.post<{
         visit?: { patient?: QueuePatient }
         invoice?: { invoiceNumber?: string } | null
+        grossFcfa?: number
+        netFcfa?: number
       }>('/visits/external-lab-order', {
         ...basePayload,
         service: serviceFromExams(examsByKind.value),
@@ -620,6 +745,7 @@ async function confirmNewPatient() {
       const printed = tryPrintExternalExamTickets(printedPatient, {
         invoiceNumber: data.invoice?.invoiceNumber,
         status: data.invoice ? 'Payé' : undefined,
+        ...printAmountsFromOrder(data),
       })
       notifyExternalOrderResult(
         printed,
@@ -676,6 +802,8 @@ async function submitExams() {
     const patientForPrint = activeRow.value.patient
     const { data } = await api.post<{
       invoice?: { invoiceNumber?: string } | null
+      grossFcfa?: number
+      netFcfa?: number
     }>('/visits/external-lab-order', {
       patientId: activeRow.value.patientId,
       ...examsPayload(),
@@ -685,6 +813,7 @@ async function submitExams() {
     const printed = tryPrintExternalExamTickets(patientForPrint, {
       invoiceNumber: data.invoice?.invoiceNumber,
       status: data.invoice ? 'Payé' : undefined,
+      ...printAmountsFromOrder(data),
     })
     notifyExternalOrderResult(
       printed,
@@ -916,6 +1045,39 @@ onMounted(() => {
               </option>
             </UiSelect>
           </div>
+          <div v-if="examGrossFcfa > 0" class="exam-reduction">
+            <div class="form-grid-2">
+              <UiSelect
+                :model-value="reductionPercent"
+                :label="uiText('Réduction (%)')"
+                @update:model-value="applyReductionPercent"
+              >
+                <option value="">{{ uiText('Aucune') }}</option>
+                <option v-for="pct in EXTERNAL_REDUCTION_PERCENTS" :key="pct" :value="String(pct)">
+                  {{ pct }} %
+                </option>
+              </UiSelect>
+              <UiInput
+                :model-value="reductionFcfaInput"
+                :label="uiText('Réduction (FCFA)')"
+                type="number"
+                placeholder="0"
+                :icon="Percent"
+                @update:model-value="onReductionFcfaInput"
+              />
+            </div>
+            <div class="form-grid-2">
+              <div class="total-preview">
+                <span>{{ uiText('Total catalogue') }}</span>
+                <strong>{{ formatFcfa(examGrossFcfa) }}</strong>
+                <small v-if="examReductionFcfa > 0">− {{ formatFcfa(examReductionFcfa) }}</small>
+              </div>
+              <div class="total-preview">
+                <span>{{ uiText('Net à payer') }}</span>
+                <strong>{{ formatFcfa(examNetFcfa) }}</strong>
+              </div>
+            </div>
+          </div>
         </section>
       </form>
 
@@ -1021,6 +1183,39 @@ onMounted(() => {
               {{ fullName(doctor.firstName, doctor.lastName) }}
             </option>
           </UiSelect>
+        </div>
+        <div v-if="examGrossFcfa > 0" class="exam-reduction">
+          <div class="form-grid-2">
+            <UiSelect
+              :model-value="reductionPercent"
+              :label="uiText('Réduction (%)')"
+              @update:model-value="applyReductionPercent"
+            >
+              <option value="">{{ uiText('Aucune') }}</option>
+              <option v-for="pct in EXTERNAL_REDUCTION_PERCENTS" :key="pct" :value="String(pct)">
+                {{ pct }} %
+              </option>
+            </UiSelect>
+            <UiInput
+              :model-value="reductionFcfaInput"
+              :label="uiText('Réduction (FCFA)')"
+              type="number"
+              placeholder="0"
+              :icon="Percent"
+              @update:model-value="onReductionFcfaInput"
+            />
+          </div>
+          <div class="form-grid-2">
+            <div class="total-preview">
+              <span>{{ uiText('Total catalogue') }}</span>
+              <strong>{{ formatFcfa(examGrossFcfa) }}</strong>
+              <small v-if="examReductionFcfa > 0">− {{ formatFcfa(examReductionFcfa) }}</small>
+            </div>
+            <div class="total-preview">
+              <span>{{ uiText('Net à payer') }}</span>
+              <strong>{{ formatFcfa(examNetFcfa) }}</strong>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1165,6 +1360,13 @@ onMounted(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.75rem;
+}
+
+.exam-reduction {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
 }
 
 .total-preview {

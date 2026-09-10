@@ -5,7 +5,11 @@ import api from '@/api/client'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
 import { formatFcfa } from '@/lib/roles'
-import { type LabFormPanel } from '@/lib/lab-form-panels'
+import { isNamedLabSectionTitle, type LabFormPanel } from '@/lib/lab-form-panels'
+import {
+  billingGroupForSectionTitle,
+  isPrimaryBillingSectionTitle,
+} from '@/lib/lab-routine-billing-groups'
 import {
   useLabPanelsStore,
   panelDtoToFormPanel,
@@ -224,29 +228,119 @@ function openEdit(id: string) {
   if (!panel) return
   editingId.value = id
   const linkedPrice = panel.examCatalogItems?.[0]?.priceFcfa
+  const fields = [...panel.fields]
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((field) =>
+      emptyField({
+        key: field.key,
+        section: field.section ?? '',
+        label: field.label,
+        unit: field.unit ?? '',
+        reference: field.reference ?? '',
+        defaultValue: field.defaultValue ?? '',
+        priceFcfa:
+          field.priceFcfa != null && field.priceFcfa > 0 ? String(field.priceFcfa) : '',
+        hasComment: field.hasComment === true,
+      }),
+    )
+  const sectionFirstIndex = new Map<string, number>()
+  const sectionSum = new Map<string, number>()
+  const allSectionTitles = fields
+    .map((field) => field.section.trim())
+    .filter((section) => isNamedLabSectionTitle(section))
+  fields.forEach((field, index) => {
+    const section = field.section.trim()
+    if (!isNamedLabSectionTitle(section)) return
+    if (!sectionFirstIndex.has(section)) sectionFirstIndex.set(section, index)
+    const price = parseOptionalFieldPrice(field.priceFcfa)
+    if (price) sectionSum.set(section, (sectionSum.get(section) ?? 0) + price)
+  })
+  // Prix de groupe lié (Urine+Disposite / Stool+Micro) → affiché sur la section primaire.
+  const groupPriceByPrimary = new Map<string, number>()
+  for (const [section, total] of sectionSum) {
+    const group = billingGroupForSectionTitle(section)
+    if (!group || !total) continue
+    const primaryOfGroup = allSectionTitles.find(
+      (title) =>
+        billingGroupForSectionTitle(title)?.id === group.id &&
+        isPrimaryBillingSectionTitle(title, allSectionTitles),
+    )
+    if (!primaryOfGroup) continue
+    if ((groupPriceByPrimary.get(primaryOfGroup) ?? 0) <= 0) {
+      groupPriceByPrimary.set(primaryOfGroup, total)
+    }
+  }
+  for (const [section, firstIndex] of sectionFirstIndex) {
+    const group = billingGroupForSectionTitle(section)
+    const primaryOfGroup = group
+      ? allSectionTitles.find(
+          (title) =>
+            billingGroupForSectionTitle(title)?.id === group.id &&
+            isPrimaryBillingSectionTitle(title, allSectionTitles),
+        )
+      : null
+    const total = group
+      ? groupPriceByPrimary.get(primaryOfGroup ?? section)
+      : sectionSum.get(section)
+    const isPrimary = !group || isPrimaryBillingSectionTitle(section, allSectionTitles)
+    fields[firstIndex].priceFcfa = isPrimary && total != null ? String(total) : ''
+    fields.forEach((field, index) => {
+      if (index !== firstIndex && field.section.trim() === section) field.priceFcfa = ''
+    })
+  }
   form.value = {
     label: panel.label,
     isEntry: panel.isEntry,
     active: panel.active,
     priceFcfa: linkedPrice != null && linkedPrice > 0 ? String(linkedPrice) : '',
-    fields: [...panel.fields]
-      .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map((field) =>
-        emptyField({
-          key: field.key,
-          section: field.section ?? '',
-          label: field.label,
-          unit: field.unit ?? '',
-          reference: field.reference ?? '',
-          defaultValue: field.defaultValue ?? '',
-          priceFcfa:
-            field.priceFcfa != null && field.priceFcfa > 0 ? String(field.priceFcfa) : '',
-          hasComment: field.hasComment === true,
-        }),
-      ),
+    fields,
   }
   if (!form.value.fields.length) form.value.fields.push(emptyField())
   showModal.value = true
+}
+
+function isNamedSectionField(field: FieldForm): boolean {
+  return isNamedLabSectionTitle(field.section)
+}
+
+function namedSectionTitlesInForm(): string[] {
+  return form.value.fields
+    .map((field) => field.section.trim())
+    .filter((section) => isNamedLabSectionTitle(section))
+}
+
+function isFirstNamedSectionField(index: number): boolean {
+  const section = form.value.fields[index]?.section.trim()
+  if (!isNamedLabSectionTitle(section)) return false
+  return form.value.fields.findIndex((field) => field.section.trim() === section) === index
+}
+
+/** Affiche le champ tarif : sections primaires (ou non liées) uniquement. */
+function showSectionPriceInput(index: number): boolean {
+  if (!isFirstNamedSectionField(index)) return false
+  const section = form.value.fields[index]?.section.trim()
+  return isPrimaryBillingSectionTitle(section, namedSectionTitlesInForm())
+}
+
+function linkedSectionPriceHint(index: number): string | null {
+  if (!isFirstNamedSectionField(index)) return null
+  const section = form.value.fields[index]?.section.trim()
+  if (!isNamedLabSectionTitle(section)) return null
+  const titles = namedSectionTitlesInForm()
+  if (isPrimaryBillingSectionTitle(section, titles)) return null
+  const group = billingGroupForSectionTitle(section)
+  if (!group) return null
+  return `Tarif lié à « ${group.label} » (même prix si l’une des sections du groupe est choisie)`
+}
+
+function sectionPriceLabel(index: number): string {
+  const section = form.value.fields[index]?.section.trim()
+  const group = billingGroupForSectionTitle(section)
+  if (group) {
+    if (group.id === 'urine') return uiText('Tarif Urine Analysis + Disposite (FCFA)')
+    if (group.id === 'stool') return uiText('Tarif Stool General + Miscroscopic (FCFA)')
+  }
+  return uiText('Tarif de la section (FCFA)')
 }
 
 function closeModal() {
@@ -275,20 +369,43 @@ function closePreview() {
 async function save() {
   const label = form.value.label.trim()
   const priceFcfa = Number(form.value.priceFcfa)
+  const allTitles = form.value.fields
+    .map((field) => field.section.trim())
+    .filter((section) => isNamedLabSectionTitle(section))
+  const seenNamedSections = new Set<string>()
   const fields = form.value.fields
     .filter((field) => field.label.trim())
-    .map((field) => ({
-      key: field.key.trim() || undefined,
-      // null explicite pour que la section vide efface bien l’ancienne valeur en base
-      section: field.section.trim() ? field.section.trim() : null,
-      label: field.label.trim(),
-      unit: field.unit.trim() || null,
-      reference: field.reference.trim() || null,
-      defaultValue: field.defaultValue.trim() || null,
-      priceFcfa: parseOptionalFieldPrice(field.priceFcfa),
-      hasComment: false,
-      type: 'text',
-    }))
+    .map((field) => {
+      const section = field.section.trim() ? field.section.trim() : null
+      let fieldPrice: number | null
+      if (section && isNamedLabSectionTitle(section)) {
+        if (seenNamedSections.has(section)) {
+          fieldPrice = null
+        } else {
+          seenNamedSections.add(section)
+          // Sections secondaires d’un groupe lié : pas de prix propre.
+          if (!isPrimaryBillingSectionTitle(section, allTitles)) {
+            fieldPrice = null
+          } else {
+            fieldPrice = parseOptionalFieldPrice(field.priceFcfa)
+          }
+        }
+      } else {
+        fieldPrice = parseOptionalFieldPrice(field.priceFcfa)
+      }
+      return {
+        key: field.key.trim() || undefined,
+        // null explicite pour que la section vide efface bien l’ancienne valeur en base
+        section,
+        label: field.label.trim(),
+        unit: field.unit.trim() || null,
+        reference: field.reference.trim() || null,
+        defaultValue: field.defaultValue.trim() || null,
+        priceFcfa: fieldPrice,
+        hasComment: false,
+        type: 'text' as const,
+      }
+    })
 
   if (label.length < 2) {
     message.value = uiText('Le nom du formulaire est obligatoire.')
@@ -541,7 +658,7 @@ onMounted(loadPanels)
         <p class="fields-hint">
           {{
             uiText(
-              'Prix par champ : utilisé si le médecin coche seulement certains labels ; sinon le tarif général de l’examen s’applique.',
+              'Avec une section (ex. Urine), saisissez un seul tarif pour toute la section. Urine Analysis + Disposite (et Stool + Miscroscopic) partagent un seul prix. Le tarif général du formulaire reste utilisé pour « Routine » entière.',
             )
           }}
         </p>
@@ -556,6 +673,21 @@ onMounted(loadPanels)
               <UiInput v-model="field.unit" label="Unité (optionnel)" placeholder="Ex. mg/dl" />
               <UiInput v-model="field.reference" label="Valeur de référence (optionnel)" placeholder="Ex. 0.6 - 1.1 mg/dl" />
               <UiInput
+                v-if="showSectionPriceInput(index)"
+                v-model="field.priceFcfa"
+                :label="sectionPriceLabel(index)"
+                type="number"
+                placeholder="Ex. 4000"
+                :required="false"
+              />
+              <p
+                v-else-if="linkedSectionPriceHint(index)"
+                class="field-linked-price-hint"
+              >
+                {{ linkedSectionPriceHint(index) }}
+              </p>
+              <UiInput
+                v-else-if="!isNamedSectionField(field)"
                 v-model="field.priceFcfa"
                 :label="uiText('Prix (optionnel)')"
                 type="number"
@@ -775,6 +907,18 @@ onMounted(loadPanels)
   font-size: 0.8125rem;
   line-height: 1.4;
   color: var(--text-muted);
+}
+
+.field-linked-price-hint {
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  background: var(--surface-muted, #eef2e6);
+  border: 1px solid var(--border);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  align-self: end;
 }
 
 .fields-empty {

@@ -28,8 +28,7 @@ import GestionnairePayrollPaymentModal, {
 } from '@/components/gestionnaire/GestionnairePayrollPaymentModal.vue'
 import GestionnaireRowAction from '@/components/gestionnaire/GestionnaireRowAction.vue'
 import GestionnaireRowActionGroup from '@/components/gestionnaire/GestionnaireRowActionGroup.vue'
-import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
-import { exportTableExcel, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import '@/assets/gestionnaire-page.css'
 
@@ -265,43 +264,37 @@ function toggleOne(id: string, checked: boolean) {
   selectedIds.value = [...set]
 }
 
-function payrollRowsToTableHtml() {
-  const rowsHtml = exportRows.value
-    .map(
-      (row) => `
-      <tr>
-        <td>${row.employee.fullName}</td>
-        <td>${row.employee.jobTitle ?? '—'}</td>
-        <td>${row.employee.service}</td>
-        <td>${formatFcfa(row.grossFcfa)}</td>
-        <td>${(row.pendingAdvancesFcfa ?? 0) > 0 ? `-${formatFcfa(row.pendingAdvancesFcfa ?? 0)}` : '—'}</td>
-        <td>${formatFcfa(row.netFcfa)}</td>
-        <td>${PAYROLL_STATUS_LABEL[row.status]}</td>
-      </tr>`,
-    )
-    .join('')
+function payrollExportTotals() {
+  const rows = exportRows.value
+  const gross = rows.reduce((sum, row) => sum + row.grossFcfa, 0)
+  const advances = rows.reduce((sum, row) => sum + (row.pendingAdvancesFcfa ?? 0), 0)
+  const net = rows.reduce((sum, row) => sum + row.netFcfa, 0)
+  return [
+    { label: 'Nombre de fiches', value: String(rows.length) },
+    { label: 'Total brut', value: formatFcfa(gross) },
+    { label: 'Total avances', value: formatFcfa(advances) },
+    { label: 'Total net', value: formatFcfa(net) },
+  ]
+}
 
-  return `
-    ${buildClinicPrintHeader(`Fiches de paie — ${periodLabel.value}`)}
-    <table>
-      <thead>
-        <tr>
-          <th>Employé</th><th>Poste</th><th>Service</th><th>Brut</th><th>Avances</th><th>Net</th><th>Statut</th>
-        </tr>
-      </thead>
-      <tbody>${rowsHtml}</tbody>
-    </table>
-  `
+function payrollExportShared() {
+  return {
+    captionRows: [{ label: 'Période', value: periodLabel.value }],
+    totalsRows: payrollExportTotals(),
+  }
 }
 
 function printPayrollRows() {
   if (!exportRows.value.length) return
-  openPrintDocument('Fiches de paie', payrollRowsToTableHtml(), { autoPrint: true, pageSize: 'A4' })
+  exportTablePdf(`Fiches de paie — ${periodLabel.value}`, payrollExportColumns, exportRows.value, {
+    ...payrollExportShared(),
+    autoPrint: true,
+  })
 }
 
 function exportPayrollPdf() {
   if (!exportRows.value.length) return
-  openPrintDocument('Fiches de paie (PDF)', payrollRowsToTableHtml(), { autoPrint: true, pageSize: 'A4' })
+  exportTablePdf(`Fiches de paie — ${periodLabel.value}`, payrollExportColumns, exportRows.value, payrollExportShared())
 }
 
 const payrollExportColumns: ExportColumn<PayrollRow>[] = [
@@ -319,7 +312,12 @@ const payrollExportColumns: ExportColumn<PayrollRow>[] = [
 
 function exportPayrollExcel() {
   if (!exportRows.value.length) return
-  exportTableExcel(`Fiches de paie — ${periodLabel.value}`, payrollExportColumns, exportRows.value)
+  exportTableExcel(`Fiches de paie — ${periodLabel.value}`, payrollExportColumns, exportRows.value, payrollExportShared())
+}
+
+function exportPayrollWord() {
+  if (!exportRows.value.length) return
+  void exportTableWord(`Fiches de paie — ${periodLabel.value}`, payrollExportColumns, exportRows.value, payrollExportShared())
 }
 
 watch(
@@ -471,6 +469,7 @@ defineExpose({ reload: loadPayroll })
         :show-pdf="false"
         :disabled="!exportRows.length"
         @excel="exportPayrollExcel"
+        @word="exportPayrollWord"
       />
     </div>
 

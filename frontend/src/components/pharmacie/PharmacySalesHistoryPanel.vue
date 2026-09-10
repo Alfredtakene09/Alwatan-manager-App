@@ -5,7 +5,7 @@ import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { CLINIC } from '@/lib/clinic'
 import { formatPatientTableDate } from '@/lib/patient-datatable-columns'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, openPrintDocument, reservePrintWindow, thermalIsRtl, thermalLocaleMetaRow, thermalThanksHtml, thermalTicketDirAttrs, thermalTicketRootClass } from '@/lib/print-document'
 import { formatAppDateTime } from '@/i18n/locale-format'
 import { useAppI18n } from '@/i18n/useAppI18n'
@@ -354,7 +354,20 @@ function exportExcel() {
     messageType.value = 'error'
     return
   }
-  exportTableExcel(uiText('Historique des ventes pharmacie'), exportColumns.value, tableRows.value)
+  exportTableExcel(uiText('Historique des ventes pharmacie'), exportColumns.value, tableRows.value, {
+    captionRows: exportCaption(),
+  })
+}
+
+function exportWord() {
+  if (!tableRows.value.length) {
+    message.value = uiText('Aucune vente à exporter.')
+    messageType.value = 'error'
+    return
+  }
+  void exportTableWord(uiText('Historique des ventes pharmacie'), exportColumns.value, tableRows.value, {
+    captionRows: exportCaption(),
+  })
 }
 
 onMounted(() => {
@@ -367,7 +380,7 @@ defineExpose({ reload: loadItems })
 <template>
   <PageTableSection embedded>
     <template #toolbar>
-      <ExportButtons :disabled="loading || !items.length" @pdf="exportPdf" @excel="exportExcel" />
+      <ExportButtons :disabled="loading || !items.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
       <UiInput v-model="filterFrom" label="Du" type="date" class="filter-field" />
       <UiInput v-model="filterTo" label="Au" type="date" class="filter-field" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">

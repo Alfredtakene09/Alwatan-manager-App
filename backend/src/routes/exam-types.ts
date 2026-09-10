@@ -22,6 +22,7 @@ import {
   suggestExamCatalogKindFromServiceName,
   isExamVisibleOnKindTab,
   examCatalogServiceScopeKey,
+  examCatalogWhereForServiceTab,
 } from "../lib/clinic-service-exam.js";
 import { ensureLabPanelLinkedToExam } from "../lib/exam-lab-panel.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
@@ -467,7 +468,7 @@ router.get("/catalog-by-service/:clinicServiceId", async (req, res) => {
   }
 
   const items = await prisma.examCatalogItem.findMany({
-    where: { clinicServiceId: service.id },
+    where: examCatalogWhereForServiceTab(service),
     orderBy: [{ kind: "asc" }, { sortOrder: "asc" }, { label: "asc" }],
     select: examCatalogSelect,
   });

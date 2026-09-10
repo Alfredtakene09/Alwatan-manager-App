@@ -1,7 +1,8 @@
 import type { PrismaClient } from "@prisma/client";
-import { InvoiceStatus, InvoiceType } from "@prisma/client";
+import { InvoiceStatus, InvoiceType, SurgeryStatus, VisitStatus } from "@prisma/client";
 import { buildExamSheetsByKind, type ExamKindSlug } from "./exam-billing.js";
 import {
+  hasLabResults,
   isExamKindPaid,
   LAB_BILLABLE_EXAM_KINDS,
   parsePaidExamKindsByKind,
@@ -9,6 +10,7 @@ import {
   removePaidExamKindMarker,
   removePrescribedExamLabelsFromNotes,
 } from "./lab-notes.js";
+import { isExternalPatientVisit } from "./visit-external.js";
 
 type Tx = Omit<
   PrismaClient,
@@ -190,4 +192,132 @@ export async function applyExamReclamationRefund(params: {
   });
 
   return { clinicalNotes: notes, totalRefundedFcfa };
+}
+
+/** Admin : annule toutes les factures examens payées et retire la prescription. */
+export async function voidAllPaidLabExams(params: {
+  tx: Tx;
+  consultation: {
+    id: string;
+    visitId: string;
+    clinicalNotes: string | null;
+    labSentToLabAt: Date | null;
+    visit: {
+      invoices: VisitInvoiceRow[];
+    };
+  };
+}): Promise<{ clinicalNotes: string; totalRefundedFcfa: number }> {
+  const notes = params.consultation.clinicalNotes ?? "";
+  if (hasLabResults(notes)) {
+    throw new ReclamationRefundError(
+      "LAB_RESULTS_LOCKED",
+      "Impossible de supprimer : des résultats laboratoire sont déjà validés.",
+    );
+  }
+
+  const surgery = await params.tx.surgeryCase.findUnique({
+    where: { visitId: params.consultation.visitId },
+    select: { id: true, status: true },
+  });
+  if (
+    surgery &&
+    (surgery.status === SurgeryStatus.IN_PROGRESS || surgery.status === SurgeryStatus.COMPLETED)
+  ) {
+    throw new ReclamationRefundError(
+      "SURGERY_LOCKED",
+      "Impossible de supprimer : l'opération est déjà en cours ou effectuée.",
+    );
+  }
+
+  const paidKinds = new Set(Object.keys(parsePaidExamKindsByKind(notes)) as ExamKindSlug[]);
+  const examLines: ExamRefundLine[] = buildExamSheetsByKind(notes, { billableOnly: false }).flatMap(
+    (sheet) => {
+      if (!paidKinds.has(sheet.kind)) return [];
+      return sheet.lines.map((line) => ({
+        examKind: sheet.kind,
+        examLabel: line.label,
+        unitPriceFcfa: line.unitPriceFcfa,
+      }));
+    },
+  );
+
+  let result = { clinicalNotes: notes, totalRefundedFcfa: 0 };
+  if (examLines.length) {
+    result = await applyExamReclamationRefund({
+      tx: params.tx,
+      consultation: params.consultation,
+      examLines,
+    });
+  } else {
+    let stripped = notes;
+    for (const kind of paidKinds) {
+      stripped = removePaidExamKindMarker(stripped, kind);
+    }
+    result = { clinicalNotes: stripped, totalRefundedFcfa: 0 };
+    await params.tx.consultation.update({
+      where: { id: params.consultation.id },
+      data: { clinicalNotes: stripped, labSentToLabAt: null },
+    });
+  }
+
+  await params.tx.invoice.updateMany({
+    where: {
+      visitId: params.consultation.visitId,
+      type: InvoiceType.LAB_EXAM,
+      status: { not: InvoiceStatus.CANCELLED },
+    },
+    data: { status: InvoiceStatus.CANCELLED },
+  });
+
+  await params.tx.consultation.update({
+    where: { id: params.consultation.id },
+    data: {
+      labExamReductionFcfa: 0,
+      labSentToLabAt: null,
+      labApprovedById: null,
+    },
+  });
+
+  if (
+    surgery &&
+    (surgery.status === SurgeryStatus.PAID || surgery.status === SurgeryStatus.AUTHORIZED)
+  ) {
+    await params.tx.surgeryCase.update({
+      where: { id: surgery.id },
+      data: {
+        status: SurgeryStatus.QUOTED,
+        paidAt: null,
+        authorizedAt: null,
+        accountantId: null,
+      },
+    });
+  }
+
+  const visit = await params.tx.visit.findUnique({
+    where: { id: params.consultation.visitId },
+    select: { notes: true, status: true },
+  });
+  if (isExternalPatientVisit(visit?.notes) && visit?.status !== VisitStatus.CANCELLED) {
+    if (
+      surgery &&
+      surgery.status !== SurgeryStatus.IN_PROGRESS &&
+      surgery.status !== SurgeryStatus.COMPLETED
+    ) {
+      await params.tx.surgeryCase.update({
+        where: { id: surgery.id },
+        data: {
+          status: SurgeryStatus.CANCELLED,
+          paidAt: null,
+          authorizedAt: null,
+          accountantId: null,
+        },
+      });
+    }
+    await params.tx.visit.update({
+      where: { id: params.consultation.visitId },
+      data: { status: VisitStatus.CANCELLED },
+    });
+  }
+
+  return result;
 }

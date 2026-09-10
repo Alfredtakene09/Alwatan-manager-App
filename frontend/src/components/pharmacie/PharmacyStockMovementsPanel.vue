@@ -4,7 +4,8 @@ import axios from 'axios'
 import { Plus, RefreshCw, Save, ArrowDownUp } from '@lucide/vue'
 import api from '@/api/client'
 import { canWritePharmacyCatalog, formatFcfa, fullName } from '@/lib/roles'
-import { exportTableExcel, exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
+import { cancelPrintWindow, reservePrintWindow } from '@/lib/print-document'
 import type { PharmacyProductRecord } from '@/components/pharmacie/PharmacyProductsPanel.vue'
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
@@ -50,6 +51,7 @@ const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const modalOpen = ref(false)
 const filterProductId = ref('')
+const filterMonth = ref('')
 
 const formType = ref<'ENTRY' | 'EXIT' | 'ADJUSTMENT'>('ENTRY')
 const formProductId = ref('')
@@ -112,12 +114,31 @@ async function loadReferenceData() {
   suppliers.value = suppliersRes.data
 }
 
+function movementListParams(limit?: number) {
+  return {
+    ...(filterProductId.value ? { productId: filterProductId.value } : {}),
+    ...(filterMonth.value ? { month: filterMonth.value } : {}),
+    ...(limit ? { limit } : {}),
+  }
+}
+
+function monthCaptionLabel() {
+  if (!filterMonth.value) return uiText('Tous les mouvements')
+  const [year, month] = filterMonth.value.split('-').map(Number)
+  if (!year || !month) return filterMonth.value
+  return new Date(year, month - 1, 1).toLocaleDateString(localeCode.value === 'ar' ? 'ar-TD' : localeCode.value === 'en' ? 'en-GB' : 'fr-FR', {
+    month: 'long',
+    year: 'numeric',
+  })
+}
+
 async function loadMovements() {
   loading.value = true
   message.value = ''
   try {
-    const params = filterProductId.value ? { productId: filterProductId.value } : undefined
-    const { data } = await api.get<StockMovementRecord[]>('/pharmacie/stock-movements', { params })
+    const { data } = await api.get<StockMovementRecord[]>('/pharmacie/stock-movements', {
+      params: movementListParams(),
+    })
     movements.value = data
   } catch {
     message.value = 'Impossible de charger les mouvements.'
@@ -230,12 +251,102 @@ const movementExportColumns = computed<ExportColumn<MovementExportRow>[]>(() => 
   ]
 })
 
-function exportPdf() {
-  exportTablePdf(uiText('Mouvements de stock pharmacie'), movementExportColumns.value, tableRows.value)
+function movementTotals(source: StockMovementRecord[]) {
+  const entries = source.filter((m) => m.type === 'ENTRY')
+  const exits = source.filter((m) => m.type === 'EXIT' || m.type === 'DISPENSATION')
+  const entryQty = entries.reduce((sum, m) => sum + m.quantity, 0)
+  const exitQty = exits.reduce((sum, m) => sum + m.quantity, 0)
+  return [
+    { label: uiText('Nombre de mouvements'), value: String(source.length) },
+    { label: uiText('Quantité entrée'), value: String(entryQty) },
+    { label: uiText('Quantité sortie'), value: String(exitQty) },
+  ]
 }
 
-function exportExcel() {
-  exportTableExcel(uiText('Mouvements de stock pharmacie'), movementExportColumns.value, tableRows.value)
+function mapMovementExportRows(source: StockMovementRecord[]) {
+  return source.map((m) => ({
+    id: m.id,
+    date: new Date(m.createdAt).toLocaleString('fr-FR'),
+    dateSort: new Date(m.createdAt).getTime(),
+    productName: m.product.name,
+    typeLabel: uiText(movementTypeLabels[m.type]),
+    typeVariant: movementTypeVariants[m.type],
+    quantity: m.quantity,
+    stockAfter: m.stockAfter,
+    supplierName: m.supplier?.name ?? '—',
+    userName: fullName(m.user.firstName, m.user.lastName),
+    reference: m.reference?.trim() || '—',
+    unitCost: m.unitCostFcfa ? formatFcfa(m.unitCostFcfa) : '—',
+  }))
+}
+
+async function fetchExportMovements() {
+  const { data } = await api.get<StockMovementRecord[]>('/pharmacie/stock-movements', {
+    params: movementListParams(10_000),
+  })
+  return data
+}
+
+function movementExportShared(source: Awaited<ReturnType<typeof fetchExportMovements>>) {
+  return {
+    captionRows: [
+      { label: uiText('Périmètre'), value: monthCaptionLabel() },
+      ...(filterProductId.value
+        ? [{ label: uiText('Produit'), value: products.value.find((p) => p.id === filterProductId.value)?.name ?? '' }]
+        : []),
+      ...(source.length >= 10_000
+        ? [{ label: uiText('Limitation'), value: uiText('Limité aux 10000 derniers mouvements') }]
+        : []),
+    ],
+    totalsRows: movementTotals(source),
+  }
+}
+
+async function exportPdf() {
+  reservePrintWindow('A4')
+  try {
+    const source = await fetchExportMovements()
+    exportTablePdf(
+      uiText('Mouvements de stock pharmacie'),
+      movementExportColumns.value,
+      mapMovementExportRows(source),
+      movementExportShared(source),
+    )
+  } catch {
+    cancelPrintWindow()
+    message.value = 'Impossible de charger les mouvements.'
+    messageType.value = 'error'
+  }
+}
+
+async function exportExcel() {
+  try {
+    const source = await fetchExportMovements()
+    exportTableExcel(
+      uiText('Mouvements de stock pharmacie'),
+      movementExportColumns.value,
+      mapMovementExportRows(source),
+      movementExportShared(source),
+    )
+  } catch {
+    message.value = 'Impossible de charger les mouvements.'
+    messageType.value = 'error'
+  }
+}
+
+async function exportWord() {
+  try {
+    const source = await fetchExportMovements()
+    await exportTableWord(
+      uiText('Mouvements de stock pharmacie'),
+      movementExportColumns.value,
+      mapMovementExportRows(source),
+      movementExportShared(source),
+    )
+  } catch {
+    message.value = 'Impossible de charger les mouvements.'
+    messageType.value = 'error'
+  }
 }
 
 defineExpose({ reload })
@@ -248,7 +359,14 @@ defineExpose({ reload })
         <option value="">{{ uiText('Tous les produits') }}</option>
         <option v-for="p in products" :key="p.id" :value="p.id">{{ p.name }}</option>
       </select>
-      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" />
+      <input
+        v-model="filterMonth"
+        type="month"
+        class="filter-select"
+        :aria-label="uiText('Filtrer par mois')"
+        @change="loadMovements"
+      />
+      <ExportButtons :disabled="loading" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="reload">
         {{ uiText('Actualiser') }}
       </UiButton>
@@ -266,6 +384,9 @@ defineExpose({ reload })
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
 
     <p v-if="!loading && !movements.length" class="empty">{{ uiText('Aucun mouvement enregistré') }}</p>
+    <p v-else-if="!loading && movements.length" class="hint">
+      {{ uiText('L’écran affiche les 200 derniers mouvements. L’export PDF/Excel inclut tout le mois sélectionné (ou tout l’historique), jusqu’à 10 000 lignes.') }}
+    </p>
     <div v-else class="simple-table-shell" :class="{ 'simple-table-shell--fill': true }">
       <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
         <span class="simple-table-spinner" aria-hidden="true" />

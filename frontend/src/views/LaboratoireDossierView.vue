@@ -405,10 +405,10 @@ async function savePrintAndComplete() {
     message:
       missingCount > 0
         ? uiText(
-            'Certains examens prescrits sont encore vides. Enregistrer, imprimer les résultats saisis (une page par examen) et clôturer le dossier ?',
+            'Certains examens prescrits sont encore vides. Enregistrer, imprimer les résultats saisis dans un seul document et clôturer le dossier ?',
           )
         : uiText(
-            'Enregistrer tous les résultats, imprimer un fichier (une page par examen) et transmettre au médecin ?',
+            'Enregistrer tous les résultats, imprimer un seul document et transmettre au médecin ?',
           ),
     confirmLabel: uiText('Enregistrer, imprimer et clôturer'),
     type: 'CONFIRM',
@@ -474,7 +474,7 @@ async function savePanel() {
         latest,
         panels.map((panel) => panel.slug),
       )
-      showMessage(uiText('Formulaires modifiés et envoyés à l’impression (une page par examen).'))
+      showMessage(uiText('Formulaires modifiés et envoyés à l’impression (un seul document pour le dossier).'))
     } else {
       printAllPanels(
         latest,

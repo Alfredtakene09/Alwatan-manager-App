@@ -29,6 +29,7 @@ Thumbs.db
 .vscode/
 .idea/
 .tmp-pdf/
+frontend/tmp-word-samples/
 *.log
 npm-debug.log*
 yarn-debug.log*
