@@ -64,7 +64,7 @@ export function panelDtoToFormPanel(dto: LabPanelDto): LabFormPanel {
       priceFcfa:
         field.priceFcfa != null && field.priceFcfa > 0 ? field.priceFcfa : undefined,
       hasComment: field.hasComment === true,
-      type: 'text',
+      type: field.type === 'textarea' ? 'textarea' : 'text',
     })
   }
 

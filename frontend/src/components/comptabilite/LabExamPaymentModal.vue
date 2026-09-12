@@ -37,7 +37,7 @@ import {
   type LabExamPendingItem,
 } from '@/lib/lab-exam-pending'
 import { loadExamCatalog } from '@/lib/exam-catalog/store'
-import { extractBasePanelLabel } from '@/lib/lab-prescribed-panels'
+import { primaryPrescribedSectionOrExamName } from '@/lib/lab-prescribed-panels'
 import { translateExamName } from '@/i18n/translate'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -233,11 +233,10 @@ function close() {
   emit('close')
 }
 
-/** Affichage compact : « Biochimie (Formulaire principal: …) » → « Biochimie ». */
+/** Affichage compact : section si présente (ex. « Stool General »), sinon nom d’examen. */
 function formatExamLineLabel(label: string) {
   void localeCode.value
-  const base = extractBasePanelLabel(label).trim() || label.trim()
-  return translateExamName(base)
+  return translateExamName(primaryPrescribedSectionOrExamName(label))
 }
 
 function examCountLabel(count: number) {

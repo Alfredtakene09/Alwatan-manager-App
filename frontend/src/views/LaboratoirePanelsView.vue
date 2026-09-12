@@ -40,6 +40,7 @@ type FieldForm = {
   /** Tarif partiel optionnel (chaîne pour input number). */
   priceFcfa: string
   hasComment: boolean
+  type: 'text' | 'textarea'
 }
 
 const labPanels = useLabPanelsStore()
@@ -50,6 +51,8 @@ const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
+/** Erreur affichée dans la modale (sinon masquée derrière le overlay). */
+const modalError = ref('')
 
 const showModal = ref(false)
 const editingId = ref<string | null>(null)
@@ -183,6 +186,7 @@ function emptyField(partial?: Partial<Omit<FieldForm, 'uid'>>): FieldForm {
     defaultValue: '',
     priceFcfa: '',
     hasComment: false,
+    type: 'text',
     ...partial,
   }
 }
@@ -219,6 +223,7 @@ function removeField(index: number) {
 
 function openCreate() {
   editingId.value = null
+  modalError.value = ''
   form.value = { label: '', isEntry: true, active: true, priceFcfa: '', fields: [emptyField()] }
   showModal.value = true
 }
@@ -227,6 +232,7 @@ function openEdit(id: string) {
   const panel = panelsById.value.get(id)
   if (!panel) return
   editingId.value = id
+  modalError.value = ''
   const linkedPrice = panel.examCatalogItems?.[0]?.priceFcfa
   const fields = [...panel.fields]
     .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -241,6 +247,7 @@ function openEdit(id: string) {
         priceFcfa:
           field.priceFcfa != null && field.priceFcfa > 0 ? String(field.priceFcfa) : '',
         hasComment: field.hasComment === true,
+        type: field.type === 'textarea' ? 'textarea' : 'text',
       }),
     )
   const sectionFirstIndex = new Map<string, number>()
@@ -346,6 +353,17 @@ function sectionPriceLabel(index: number): string {
 function closeModal() {
   showModal.value = false
   editingId.value = null
+  modalError.value = ''
+}
+
+/** Tarif formulaire : saisie UI, sinon prix catalogue déjà lié (édition). */
+function resolvePanelPriceFcfa(): number | null {
+  const typed = Number(form.value.priceFcfa)
+  if (Number.isFinite(typed) && Number.isInteger(typed) && typed >= 1) return typed
+  if (!editingId.value) return null
+  const linked = panelsById.value.get(editingId.value)?.examCatalogItems?.[0]?.priceFcfa
+  if (linked != null && Number.isFinite(linked) && linked >= 1) return Math.trunc(linked)
+  return null
 }
 
 function openPreview(id: string) {
@@ -367,8 +385,9 @@ function closePreview() {
 }
 
 async function save() {
+  modalError.value = ''
   const label = form.value.label.trim()
-  const priceFcfa = Number(form.value.priceFcfa)
+  const priceFcfa = resolvePanelPriceFcfa()
   const allTitles = form.value.fields
     .map((field) => field.section.trim())
     .filter((section) => isNamedLabSectionTitle(section))
@@ -402,22 +421,23 @@ async function save() {
         reference: field.reference.trim() || null,
         defaultValue: field.defaultValue.trim() || null,
         priceFcfa: fieldPrice,
-        hasComment: false,
-        type: 'text' as const,
+        hasComment: field.hasComment === true,
+        type: field.type === 'textarea' ? ('textarea' as const) : ('text' as const),
       }
     })
 
   if (label.length < 2) {
-    message.value = uiText('Le nom du formulaire est obligatoire.')
-    messageType.value = 'error'
+    modalError.value = uiText('Le nom du formulaire est obligatoire.')
     return
   }
 
-  if (!Number.isFinite(priceFcfa) || !Number.isInteger(priceFcfa) || priceFcfa < 1) {
-    message.value = uiText('Le tarif est obligatoire et doit être supérieur à 0.')
-    messageType.value = 'error'
+  if (priceFcfa == null) {
+    modalError.value = uiText('Le tarif est obligatoire et doit être supérieur à 0.')
     return
   }
+
+  // Garde le tarif visible si on a repris le prix catalogue lié.
+  if (!form.value.priceFcfa.trim()) form.value.priceFcfa = String(priceFcfa)
 
   saving.value = true
   resetMessages()
@@ -462,8 +482,7 @@ async function save() {
       'error' in error.response.data
         ? String((error.response.data as { error?: unknown }).error ?? '')
         : ''
-    message.value = apiError.trim() || 'Enregistrement impossible. Vérifiez les champs.'
-    messageType.value = 'error'
+    modalError.value = apiError.trim() || 'Enregistrement impossible. Vérifiez les champs.'
   } finally {
     saving.value = false
   }
@@ -634,6 +653,7 @@ onMounted(loadPanels)
       @close="closeModal"
     >
       <section class="form-panel">
+        <UiAlert v-if="modalError" type="error" :message="modalError" />
         <div class="form-grid-2">
           <UiInput v-model="form.label" label="Nom du formulaire" placeholder="Ex. Bilan rénal" />
           <UiInput
@@ -699,6 +719,10 @@ onMounted(loadPanels)
                 :label="uiText('Texte par défaut (prérempli à la saisie)')"
                 placeholder="Ex. Negative(-ve)"
               />
+              <label class="field-comment-toggle">
+                <input v-model="field.hasComment" type="checkbox" />
+                {{ uiText('Activer le commentaire sur ce champ') }}
+              </label>
             </div>
             <button
               type="button"
@@ -919,6 +943,25 @@ onMounted(loadPanels)
   font-weight: 600;
   color: var(--text-muted);
   align-self: end;
+}
+
+.field-comment-toggle {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.field-comment-toggle input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent-500, #3b6d11);
 }
 
 .fields-empty {
