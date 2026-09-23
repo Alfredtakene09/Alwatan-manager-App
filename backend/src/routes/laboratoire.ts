@@ -18,11 +18,13 @@ import {
   hasFilledLabPanelResults,
   hasLabExamsPrescribed,
   isLabPanelSlug,
+  labelForSlug,
   labPanelValuesHaveEntry,
   parseLabPanelReceivedAt,
   parseLabPanelResults,
   upsertLabPanelResult,
 } from "../lib/lab-panel-results.js";
+import { backfillLabSentToLabAtForPaidQueue } from "../lib/lab-receptionist-backfill.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 import type { AppUserRole } from "../lib/roles.js";
 
@@ -107,25 +109,56 @@ async function resolvePrescribedPanels(clinicalNotes?: string | null) {
     }));
 }
 
-async function findLabVisit(visitId: string) {
+type LabWriteBlockReason =
+  | "NOT_FOUND"
+  | "NO_CONSULTATION"
+  | "NOT_SENT_OR_UNPAID"
+  | "NO_LAB_CONTEXT";
+
+/**
+ * Lecture/écriture labo : dossiers en attente OU déjà clôturés (modification depuis Terminés).
+ */
+async function findLabVisitForWrite(visitId: string): Promise<{
+  visit: NonNullable<Awaited<ReturnType<typeof findLabVisitForRead>>>;
+  blockReason?: undefined;
+} | {
+  visit: null;
+  blockReason: LabWriteBlockReason;
+}> {
   const visit = await prisma.visit.findFirst({
-    where: {
-      id: visitId,
-      consultation: { is: labsWaitingWhere() },
-    },
+    where: { id: visitId },
     include: visitInclude,
   });
+  if (!visit) return { visit: null, blockReason: "NOT_FOUND" };
+  if (!visit.consultation) return { visit: null, blockReason: "NO_CONSULTATION" };
 
-  if (!visit?.consultation) return null;
-  if (
-    !hasPaidLabWorkPending(
-      visit.consultation.clinicalNotes,
-      visit.consultation.labSentToLabAt,
-    )
-  ) {
-    return null;
+  const notes = visit.consultation.clinicalNotes;
+  const sentAt = visit.consultation.labSentToLabAt;
+  const completed = hasLabResults(notes);
+  const waitingPaid = hasPaidLabWorkPending(notes, sentAt);
+  const hasContext = hasLabDossierContext(notes, sentAt);
+  const hasFilled = hasFilledLabPanelResults(notes);
+
+  if (!hasContext) return { visit: null, blockReason: "NO_LAB_CONTEXT" };
+  // Attente, déjà clôturé, ou résultats déjà saisis (resaisie / correction).
+  if (completed || waitingPaid || hasFilled) return { visit };
+  return { visit: null, blockReason: "NOT_SENT_OR_UNPAID" };
+}
+
+function labWriteBlockMessage(reason: LabWriteBlockReason, panelLabel?: string): string {
+  const panelHint = panelLabel ? ` (formulaire « ${panelLabel} »)` : "";
+  switch (reason) {
+    case "NOT_FOUND":
+      return `Dossier laboratoire introuvable${panelHint}.`;
+    case "NO_CONSULTATION":
+      return `Aucune consultation liée à ce dossier${panelHint}.`;
+    case "NOT_SENT_OR_UNPAID":
+      return `Impossible d'enregistrer${panelHint} : examens non envoyés au labo ou non payés.`;
+    case "NO_LAB_CONTEXT":
+      return `Impossible d'enregistrer${panelHint} : aucun examen laboratoire prescrit pour ce dossier.`;
+    default:
+      return `Enregistrement impossible${panelHint}.`;
   }
-  return visit;
 }
 
 function hasLabDossierContext(
@@ -151,14 +184,22 @@ async function findLabVisitForRead(visitId: string) {
   return visit;
 }
 
+const LAB_QUEUE_TAKE = 2000;
+
+const labWaitingOrderBy = [
+  { consultation: { labSentToLabAt: "desc" as const } },
+  { consultation: { updatedAt: "desc" as const } },
+];
+
 router.get("/queue", async (_req, res) => {
+  await backfillLabSentToLabAtForPaidQueue();
   const visits = await prisma.visit.findMany({
     where: {
       consultation: { is: labsWaitingWhere() },
     },
     include: visitInclude,
-    orderBy: { updatedAt: "desc" },
-    take: 100,
+    orderBy: labWaitingOrderBy,
+    take: LAB_QUEUE_TAKE,
   });
 
   return res.json(
@@ -173,6 +214,7 @@ router.get("/queue", async (_req, res) => {
 
 /** Compteurs cloche labo : examens en attente / récents (transférés < 24 h). */
 router.get("/alerts", async (_req, res) => {
+  await backfillLabSentToLabAtForPaidQueue();
   const visits = await prisma.visit.findMany({
     where: {
       consultation: { is: labsWaitingWhere() },
@@ -183,8 +225,8 @@ router.get("/alerts", async (_req, res) => {
       patient: { select: { code: true, firstName: true, lastName: true } },
       consultation: { select: { clinicalNotes: true, labSentToLabAt: true } },
     },
-    orderBy: { updatedAt: "desc" },
-    take: 100,
+    orderBy: labWaitingOrderBy,
+    take: LAB_QUEUE_TAKE,
   });
 
   const recentCutoff = Date.now() - 24 * 60 * 60 * 1000;
@@ -277,26 +319,60 @@ router.get("/visits/:visitId", async (req, res) => {
 
 router.put("/visits/:visitId/panels/:panelSlug", async (req, res) => {
   const panelSlug = String(req.params.panelSlug);
-  if (!isLabPanelSlug(panelSlug)) {
-    return res.status(400).json({ error: "Type de formulaire invalide" });
+  const dbPanel = await prisma.labPanel.findUnique({
+    where: { slug: panelSlug },
+    select: { slug: true, label: true },
+  });
+  if (!isLabPanelSlug(panelSlug) && !dbPanel) {
+    return res.status(400).json({
+      error: `Formulaire inconnu « ${panelSlug} ». Vérifiez que le formulaire existe dans Laboratoire → Formulaires.`,
+      code: "INVALID_PANEL_SLUG",
+      panelSlug,
+    });
   }
+  if (dbPanel && !isLabPanelSlug(panelSlug)) {
+    await refreshLabPanelRegistry();
+  }
+  const panelLabel = dbPanel?.label?.trim() || labelForSlug(panelSlug);
 
   try {
-    const body = panelSchema.parse(req.body);
-    if (!labPanelValuesHaveEntry(body.values)) {
+    const parsed = panelSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const detail = parsed.error.issues
+        .map((issue) => `${issue.path.join(".") || "données"}: ${issue.message}`)
+        .slice(0, 3)
+        .join(" ; ");
       return res.status(400).json({
-        error: "Remplissez au moins un résultat avant d'enregistrer.",
+        error: `Données invalides pour « ${panelLabel} »${detail ? ` — ${detail}` : "."}`,
+        code: "INVALID_PANEL_PAYLOAD",
+        panelSlug,
+        panelLabel,
       });
     }
-    const visit = await findLabVisit(String(req.params.visitId));
-    if (!visit?.consultation) {
-      return res.status(404).json({ error: "Dossier laboratoire introuvable" });
+
+    if (!labPanelValuesHaveEntry(parsed.data.values)) {
+      return res.status(400).json({
+        error: `Remplissez au moins un résultat dans « ${panelLabel} » avant d'enregistrer.`,
+        code: "EMPTY_PANEL_VALUES",
+        panelSlug,
+        panelLabel,
+      });
+    }
+
+    const { visit, blockReason } = await findLabVisitForWrite(String(req.params.visitId));
+    if (!visit?.consultation || blockReason) {
+      return res.status(404).json({
+        error: labWriteBlockMessage(blockReason ?? "NOT_FOUND", panelLabel),
+        code: blockReason ?? "NOT_FOUND",
+        panelSlug,
+        panelLabel,
+      });
     }
 
     const withPanel = upsertLabPanelResult(
       visit.consultation.clinicalNotes,
       panelSlug,
-      body.values,
+      parsed.data.values,
     );
 
     const recordedById = req.user?.id;
@@ -313,16 +389,28 @@ router.put("/visits/:visitId/panels/:panelSlug", async (req, res) => {
     return res.json({
       panelResults: parseLabPanelResults(consultation.clinicalNotes),
       completed: hasLabResults(consultation.clinicalNotes),
+      panelSlug,
+      panelLabel,
     });
-  } catch {
-    return res.status(400).json({ error: "Données invalides" });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "erreur inconnue";
+    console.error(`[laboratoire] save panel ${panelSlug}:`, error);
+    return res.status(500).json({
+      error: `Échec d'enregistrement de « ${panelLabel} » : ${detail}`,
+      code: "PANEL_SAVE_FAILED",
+      panelSlug,
+      panelLabel,
+    });
   }
 });
 
 router.post("/visits/:visitId/complete", async (req, res) => {
   const visit = await findLabVisitForRead(String(req.params.visitId));
   if (!visit?.consultation) {
-    return res.status(404).json({ error: "Dossier laboratoire introuvable" });
+    return res.status(404).json({
+      error: "Dossier laboratoire introuvable — impossible de clôturer.",
+      code: "NOT_FOUND",
+    });
   }
 
   const recordedById = req.user?.id;
@@ -334,28 +422,39 @@ router.post("/visits/:visitId/complete", async (req, res) => {
         data: { labRecordedById: recordedById, labRecordedAt: new Date() },
       });
     }
-    return res.json({ ok: true });
+    return res.json({ ok: true, alreadyCompleted: true });
   }
 
   if (!hasFilledLabPanelResults(visit.consultation.clinicalNotes)) {
     return res.status(400).json({
-      error: "Aucun résultat saisi — impossible de clôturer le dossier.",
+      error:
+        "Aucun résultat saisi — impossible de clôturer. Remplissez au moins un examen prescrit puis réessayez.",
+      code: "NO_FILLED_RESULTS",
     });
   }
 
-  const clinicalNotes = appendLabResultsCompletion(visit.consultation.clinicalNotes);
+  try {
+    const clinicalNotes = appendLabResultsCompletion(visit.consultation.clinicalNotes);
 
-  await prisma.consultation.update({
-    where: { id: visit.consultation.id },
-    data: {
-      clinicalNotes,
-      ...(recordedById && !visit.consultation.labRecordedById
-        ? { labRecordedById: recordedById, labRecordedAt: new Date() }
-        : {}),
-    },
-  });
+    await prisma.consultation.update({
+      where: { id: visit.consultation.id },
+      data: {
+        clinicalNotes,
+        ...(recordedById && !visit.consultation.labRecordedById
+          ? { labRecordedById: recordedById, labRecordedAt: new Date() }
+          : {}),
+      },
+    });
 
-  return res.json({ ok: true });
+    return res.json({ ok: true });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "erreur inconnue";
+    console.error("[laboratoire] complete visit:", error);
+    return res.status(500).json({
+      error: `Échec de clôture du dossier : ${detail}`,
+      code: "COMPLETE_FAILED",
+    });
+  }
 });
 
 export default router;

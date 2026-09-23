@@ -4,11 +4,12 @@ import {
   HospitalizationStatus,
   InvoiceStatus,
   InvoiceType,
+  PatientCategory,
   VisitStatus,
   type Prisma,
 } from "@prisma/client";
 import { prisma } from "../lib/db.js";
-import { comptabilitePatientWhere } from "../lib/patient-billing.js";
+import { comptabilitePatientWhere, isComptabiliteBillablePatient } from "../lib/patient-billing.js";
 import {
   ensureHospitalizationFromReferral,
   hospitalisationPrescriptionLabel,
@@ -16,17 +17,20 @@ import {
   syncHospitalizationReferralsFromPaymentQueue,
   syncMissingHospitalizationReferrals,
 } from "../lib/hospitalization-referral.js";
-import { generateInvoiceNumber } from "../lib/patient-code.js";
+import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.js";
 import { immediatePaidInvoiceData } from "../lib/invoice-paid.js";
 import {
   assertRoomAvailableForAdmission,
   computeRoomTypeAvailability,
   enrichRoomsWithStatus,
   ensureDefaultBedsForRoom,
+  ensureDefaultBedsForRooms,
 } from "../lib/hospitalization-rooms.js";
 import { findDuplicateRoomByName } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
+import { ageUnitSchema, refinePatientAge } from "../lib/patient-age.js";
+import { deleteHospitalizationAndRefund } from "../lib/delete-hospitalization.js";
 import { requireAuth, requireModule, requireManageAccess, requireUiAction } from "../middleware/auth.js";
 
 const router = Router();
@@ -148,6 +152,59 @@ const dischargeSchema = z.object({
   endDate: z.string(),
 });
 
+const directAdmitSchema = z
+  .object({
+    patientId: z.string().min(1).optional(),
+    firstName: z.string().min(2).optional(),
+    lastName: z.string().min(2).optional(),
+    age: z.number().int().min(0).optional(),
+    ageUnit: ageUnitSchema,
+    phone: z.string().optional(),
+    gender: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.patientId) return;
+    if (!data.firstName || !data.lastName) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Patient existant ou nouveau patient requis",
+        path: ["patientId"],
+      });
+      return;
+    }
+    refinePatientAge(data, ctx);
+  });
+
+const admitDirectSchema = directAdmitSchema.and(
+  z.object({
+    roomId: z.string().min(1),
+    bedId: z.string().optional(),
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    reductionFcfa: z.coerce.number().int().min(0).default(0),
+    service: z.string().optional(),
+    attendingDoctor: z.string().optional(),
+    attendingDoctorId: z.string().optional(),
+    doctorInstructions: z.string().optional(),
+    paidNow: z.boolean().optional().default(true),
+  }),
+);
+
+const hospitalizationInclude = {
+  visit: {
+    include: {
+      patient: true,
+      assignedDoctor: true,
+      consultation: { include: { doctor: true } },
+    },
+  },
+  room: true,
+  bed: true,
+  attendingDoctorUser: {
+    select: { id: true, firstName: true, lastName: true },
+  },
+} as const;
+
 router.get("/", async (req, res) => {
   try {
     const patientWhere = comptabilitePatientWhere();
@@ -169,12 +226,20 @@ router.get("/", async (req, res) => {
       }
     }
 
-    const [rooms, hospitalizations] = await Promise.all([
-      prisma.room.findMany({
+    let rooms = await prisma.room.findMany({
+      include: { beds: { orderBy: { code: "asc" } } },
+      orderBy: [{ type: "asc" }, { name: "asc" }],
+    });
+    const roomsMissingBeds = rooms.filter((room) => room.beds.length === 0);
+    if (roomsMissingBeds.length) {
+      await prisma.$transaction((tx) => ensureDefaultBedsForRooms(tx, roomsMissingBeds));
+      rooms = await prisma.room.findMany({
         include: { beds: { orderBy: { code: "asc" } } },
         orderBy: [{ type: "asc" }, { name: "asc" }],
-      }),
-      prisma.hospitalization.findMany({
+      });
+    }
+
+    const hospitalizations = await prisma.hospitalization.findMany({
         where: {
           status: { not: HospitalizationStatus.CANCELLED },
           visit: { patient: comptabilitePatientWhere() },
@@ -194,8 +259,7 @@ router.get("/", async (req, res) => {
           },
         },
         orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-      }),
-    ]);
+    });
 
     const roomsWithStatus = enrichRoomsWithStatus(rooms, hospitalizations);
     const freeRooms = roomsWithStatus.filter((room) => room.status === "LIBRE").length;
@@ -365,6 +429,269 @@ router.post("/actions", async (req, res) => {
       return res.json({ hospitalization });
     }
 
+    if (action === "create_direct") {
+      const body = directAdmitSchema.parse(req.body);
+
+      const result = await prisma.$transaction(async (tx) => {
+        let patientId = body.patientId?.trim() || null;
+
+        if (patientId) {
+          const existing = await tx.patient.findFirst({
+            where: { id: patientId, ...comptabilitePatientWhere() },
+          });
+          if (!existing) throw new Error("PATIENT_NOT_FOUND");
+          if (!isComptabiliteBillablePatient(existing.category)) {
+            throw new Error("PATIENT_NOT_BILLABLE");
+          }
+        } else {
+          const patient = await tx.patient.create({
+            data: {
+              code: await generatePatientCode(tx),
+              firstName: body.firstName!.trim(),
+              lastName: body.lastName!.trim(),
+              age: body.age,
+              ageUnit: body.ageUnit,
+              phone: body.phone?.trim() || null,
+              gender: body.gender?.trim() || null,
+              category: PatientCategory.STANDARD,
+              createdById: user.id,
+            },
+          });
+          patientId = patient.id;
+        }
+
+        const activeHospitalization = await tx.hospitalization.findFirst({
+          where: {
+            visit: { patientId },
+            status: {
+              in: [
+                HospitalizationStatus.REQUESTED,
+                HospitalizationStatus.RESERVED,
+                HospitalizationStatus.ACTIVE,
+              ],
+            },
+          },
+          include: hospitalizationInclude,
+        });
+
+        if (activeHospitalization) {
+          if (isHospitalizationPendingAdmission(activeHospitalization)) {
+            return { hospitalization: activeHospitalization, reused: true as const };
+          }
+          throw new Error("ACTIVE_HOSPITALIZATION");
+        }
+
+        const visit = await tx.visit.create({
+          data: {
+            patientId,
+            status: VisitStatus.NEEDS_HOSPITALIZATION,
+            notes: "Hospitalisation — admission réception",
+          },
+        });
+
+        await ensureHospitalizationFromReferral(tx, visit.id, "Hospitalisation");
+
+        const hospitalization = await tx.hospitalization.findUniqueOrThrow({
+          where: { visitId: visit.id },
+          include: hospitalizationInclude,
+        });
+
+        return { hospitalization, reused: false as const };
+      });
+
+      return res.status(result.reused ? 200 : 201).json(result);
+    }
+
+    if (action === "admit_direct") {
+      const body = admitDirectSchema.parse(req.body);
+      const attending = await resolveAttendingDoctorFields(body);
+
+      const result = await prisma.$transaction(async (tx) => {
+        let patientId = body.patientId?.trim() || null;
+
+        if (patientId) {
+          const existing = await tx.patient.findFirst({
+            where: { id: patientId, ...comptabilitePatientWhere() },
+          });
+          if (!existing) throw new Error("PATIENT_NOT_FOUND");
+          if (!isComptabiliteBillablePatient(existing.category)) {
+            throw new Error("PATIENT_NOT_BILLABLE");
+          }
+        } else {
+          const patient = await tx.patient.create({
+            data: {
+              code: await generatePatientCode(tx),
+              firstName: body.firstName!.trim(),
+              lastName: body.lastName!.trim(),
+              age: body.age,
+              ageUnit: body.ageUnit,
+              phone: body.phone?.trim() || null,
+              gender: body.gender?.trim() || null,
+              category: PatientCategory.STANDARD,
+              createdById: user.id,
+            },
+          });
+          patientId = patient.id;
+        }
+
+        const blocking = await tx.hospitalization.findFirst({
+          where: {
+            visit: { patientId },
+            status: {
+              in: [
+                HospitalizationStatus.REQUESTED,
+                HospitalizationStatus.RESERVED,
+                HospitalizationStatus.ACTIVE,
+              ],
+            },
+          },
+        });
+        if (blocking && !isHospitalizationPendingAdmission(blocking)) {
+          throw new Error("ACTIVE_HOSPITALIZATION");
+        }
+
+        let hospitalizationId = blocking?.id ?? null;
+        if (!hospitalizationId) {
+          const visit = await tx.visit.create({
+            data: {
+              patientId,
+              status: VisitStatus.NEEDS_HOSPITALIZATION,
+              notes: "Hospitalisation — admission réception",
+            },
+          });
+          await ensureHospitalizationFromReferral(tx, visit.id, "Hospitalisation");
+          const created = await tx.hospitalization.findUniqueOrThrow({
+            where: { visitId: visit.id },
+            select: { id: true },
+          });
+          hospitalizationId = created.id;
+        }
+
+        const { room, bed } = await assertRoomAvailableForAdmission(
+          tx,
+          body.roomId,
+          hospitalizationId,
+          { bedId: body.bedId },
+        );
+
+        const startDate = parseIsoDate(body.startDate);
+        const endDate = parseIsoDate(body.endDate);
+        const nights = computeStayNights(body.startDate, body.endDate);
+        const grossFcfa = nights * room.dailyRateFcfa;
+        const reductionFcfa = Math.min(Math.max(0, body.reductionFcfa), grossFcfa);
+        const totalDueFcfa = Math.max(0, grossFcfa - reductionFcfa);
+
+        const paidNow = body.paidNow !== false;
+        const hospitalization = await tx.hospitalization.update({
+          where: { id: hospitalizationId },
+          data: {
+            roomId: room.id,
+            bedId: bed?.id ?? null,
+            accountantId: user.id,
+            roomType: room.type,
+            dailyRateFcfa: room.dailyRateFcfa,
+            depositFcfa: 0,
+            reductionFcfa,
+            nightsCount: nights,
+            totalDueFcfa,
+            status: HospitalizationStatus.ACTIVE,
+            startDate,
+            endDate,
+            service: body.service?.trim() || "Hospitalisation",
+            attendingDoctor: attending.attendingDoctor,
+            attendingDoctorId: attending.attendingDoctorId,
+            doctorInstructions: body.doctorInstructions?.trim() || null,
+            paidAt: paidNow && totalDueFcfa > 0 ? new Date() : null,
+          },
+          include: hospitalizationInclude,
+        });
+
+        const invoice =
+          totalDueFcfa > 0
+            ? await tx.invoice.create({
+                data: {
+                  invoiceNumber: await generateInvoiceNumber(tx),
+                  patientId: hospitalization.visit.patientId,
+                  visitId: hospitalization.visitId,
+                  hospitalizationId: hospitalization.id,
+                  type: InvoiceType.HOSPITALIZATION_FINAL,
+                  issuedById: user.id,
+                  ...(paidNow
+                    ? immediatePaidInvoiceData(totalDueFcfa, user.id)
+                    : {
+                        amountFcfa: totalDueFcfa,
+                        paidAmountFcfa: 0,
+                        status: InvoiceStatus.PENDING,
+                        paidAt: null,
+                      }),
+                },
+              })
+            : null;
+
+        await tx.visit.update({
+          where: { id: hospitalization.visitId },
+          data: { status: VisitStatus.IN_TREATMENT },
+        });
+
+        return { hospitalization, invoice, nights, totalDueFcfa, reductionFcfa, paidNow };
+      });
+
+      return res.status(201).json(result);
+    }
+
+    if (action === "collect_payment") {
+      const hospitalizationId = z.string().min(1).parse(req.body.hospitalizationId);
+      const result = await prisma.$transaction(async (tx) => {
+        const hospitalization = await tx.hospitalization.findUnique({
+          where: { id: hospitalizationId },
+          include: { visit: true },
+        });
+        if (!hospitalization) throw new Error("NOT_FOUND");
+        if (hospitalization.paidAt) throw new Error("ALREADY_PAID");
+        const totalDueFcfa = Math.max(0, hospitalization.totalDueFcfa);
+        if (totalDueFcfa <= 0) throw new Error("NOTHING_TO_COLLECT");
+
+        const pending = await tx.invoice.findFirst({
+          where: {
+            hospitalizationId: hospitalization.id,
+            status: InvoiceStatus.PENDING,
+            type: { in: [InvoiceType.HOSPITALIZATION_FINAL, InvoiceType.HOSPITALIZATION_DEPOSIT] },
+          },
+          orderBy: { createdAt: "desc" },
+        });
+
+        const paidAt = new Date();
+        const invoice = pending
+          ? await tx.invoice.update({
+              where: { id: pending.id },
+              data: {
+                ...immediatePaidInvoiceData(totalDueFcfa, user.id),
+                paidAt,
+              },
+            })
+          : await tx.invoice.create({
+              data: {
+                invoiceNumber: await generateInvoiceNumber(tx),
+                patientId: hospitalization.visit.patientId,
+                visitId: hospitalization.visitId,
+                hospitalizationId: hospitalization.id,
+                type: InvoiceType.HOSPITALIZATION_FINAL,
+                issuedById: user.id,
+                ...immediatePaidInvoiceData(totalDueFcfa, user.id),
+              },
+            });
+
+        const updated = await tx.hospitalization.update({
+          where: { id: hospitalization.id },
+          data: { paidAt, accountantId: user.id },
+          include: hospitalizationInclude,
+        });
+
+        return { hospitalization: updated, invoice, totalDueFcfa };
+      });
+      return res.json(result);
+    }
+
     if (action === "reserve_room" || action === "reserve_bed") {
       const data = hospitalizationSchema.parse(req.body);
       const attending = await resolveAttendingDoctorFields(data);
@@ -520,6 +847,14 @@ router.post("/actions", async (req, res) => {
       return res.json(result);
     }
 
+    if (action === "delete") {
+      const hospitalizationId = z.string().min(1).parse(req.body.hospitalizationId);
+      const result = await prisma.$transaction((tx) =>
+        deleteHospitalizationAndRefund(tx, hospitalizationId),
+      );
+      return res.json({ ok: true, refundedFcfa: result.refundedFcfa });
+    }
+
     return res.status(400).json({ error: "Action inconnue" });
   } catch (error) {
     console.error("[hospitalisation/actions]", action, error);
@@ -545,6 +880,26 @@ router.post("/actions", async (req, res) => {
     }
     if (error instanceof Error && error.message === "INVALID_DATES") {
       return res.status(400).json({ error: "Dates de séjour invalides" });
+    }
+    if (error instanceof Error && error.message === "PATIENT_NOT_FOUND") {
+      return res.status(404).json({ error: "Patient introuvable" });
+    }
+    if (error instanceof Error && error.message === "PATIENT_NOT_BILLABLE") {
+      return res.status(400).json({ error: "Ce patient ne peut pas être facturé pour une hospitalisation." });
+    }
+    if (error instanceof Error && error.message === "ACTIVE_HOSPITALIZATION") {
+      return res.status(409).json({
+        error: "Ce patient a déjà une hospitalisation en cours.",
+      });
+    }
+    if (error instanceof Error && error.message === "ALREADY_PAID") {
+      return res.status(409).json({ error: "Cette hospitalisation est déjà encaissée." });
+    }
+    if (error instanceof Error && error.message === "NOTHING_TO_COLLECT") {
+      return res.status(400).json({ error: "Aucun montant à encaisser." });
+    }
+    if (error instanceof Error && error.message === "NOT_FOUND") {
+      return res.status(404).json({ error: "Hospitalisation introuvable" });
     }
     const detail = error instanceof Error ? error.message : "Erreur inconnue";
     return res.status(400).json({ error: "Opération impossible", detail });

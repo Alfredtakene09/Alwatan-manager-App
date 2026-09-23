@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RefreshCw } from '@lucide/vue'
 import api from '@/api/client'
 import {
   buildClinicPrintHeader,
@@ -13,7 +12,6 @@ import {
   rowsToHtmlTable,
   type ExportColumn,
 } from '@/lib/table-export'
-import UiButton from '@/components/ui/UiButton.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import '@/assets/simple-table.css'
@@ -157,10 +155,7 @@ defineExpose({ reload: loadAlerts })
       <div class="page-table-toolbar">
         <strong class="panel-table-title">Alertes stock</strong>
         <ExportButtons :disabled="loading || !hasAlertRows" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadAlerts">
-          Actualiser
-        </UiButton>
-      </div>
+        </div>
 
       <UiAlert v-if="message" type="error" :message="message" class="panel-alert" />
 

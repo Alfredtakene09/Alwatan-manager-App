@@ -1,14 +1,23 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { BedDouble, RefreshCw, ShieldCheck } from '@lucide/vue'
+import { useRoute, useRouter } from 'vue-router'
+import { BedDouble, Plus, RefreshCw, Search, ShieldCheck } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
-import { printHospitalizationAdmission, type HospitalizationAdmissionForm } from '@/lib/hospitalization-admission'
+import {
+  admissionFormFromHospitalization,
+  HOSPITALIZATION_STATUS_LABELS,
+  hospitalizationStayDays,
+  printHospitalizationAdmission,
+  type HospitalizationAdmissionForm,
+} from '@/lib/hospitalization-admission'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import HospitalizationAdmissionModal, {
   type AdmissionRoomTypeOption,
 } from '@/components/hospitalisation/HospitalizationAdmissionModal.vue'
 import HospitalizationDischargeModal from '@/components/hospitalisation/HospitalizationDischargeModal.vue'
+import HospitalizationDirectAdmitModal from '@/components/hospitalisation/HospitalizationDirectAdmitModal.vue'
 import HospitalizationsQueueDataTable from '@/components/ui/HospitalizationsQueueDataTable.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -16,6 +25,9 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiBadge from '@/components/ui/UiBadge.vue'
 import { useSilentRefresh } from '@/composables/useSilentRefresh'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import '@/assets/comptabilite-section.css'
 
 type HospRow = {
@@ -28,6 +40,7 @@ type HospRow = {
   endDate?: string | null
   dailyRateFcfa?: number
   startDate?: string | null
+  paidAt?: string | Date | null
   service?: string | null
   attendingDoctor?: string | null
   attendingDoctorId?: string | null
@@ -49,7 +62,16 @@ type HospRow = {
   attendingDoctorUser?: { id: string; firstName: string; lastName: string } | null
 }
 
+withDefaults(
+  defineProps<{
+    embedded?: boolean
+  }>(),
+  { embedded: false },
+)
+
 const route = useRoute()
+const router = useRouter()
+const { uiText, localeCode, dateText } = useAppI18n()
 
 const data = ref<{
   rooms: Array<{
@@ -78,41 +100,65 @@ const data = ref<{
 const loading = ref(false)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
-const tab = ref<'plan' | 'queue' | 'hospitalized'>('queue')
+const tab = ref<'plan' | 'hospitalized'>('hospitalized')
 const admissionHospId = ref<string | null>(null)
 const admissionMode = ref<'create' | 'edit' | 'view'>('create')
 const admissionSubmitting = ref(false)
 const dischargeHospId = ref<string | null>(null)
 const dischargeSubmitting = ref(false)
+const directAdmitOpen = ref(false)
 
 const focusedVisitId = computed(() =>
   typeof route.query.visitId === 'string' ? route.query.visitId : null,
 )
 
-function isHospitalizedPatient(h: HospRow) {
-  return (
-    h.status === 'DISCHARGED' ||
-    h.status === 'ACTIVE' ||
-    (Boolean(h.room) && Boolean(h.startDate))
-  )
+const labels = computed(() => {
+  void localeCode.value
+  return {
+    rooms: uiText('Salles'),
+    freeRooms: uiText('Salles libres'),
+    occupiedRooms: uiText('Salles occupées'),
+    pending: uiText('En attente'),
+    planTab: uiText('Plan des salles'),
+    refresh: uiText('Actualiser'),
+    newAdmission: uiText('Nouvelle hospitalisation'),
+    available: uiText('Disponible'),
+    hospEmpty: uiText('Aucun patient hospitalisé pour le moment'),
+    loading: uiText('Chargement…'),
+  }
+})
+
+function persistTabInQuery(next: typeof tab.value) {
+  const raw = route.query.tab
+  const current =
+    raw === 'hospitaliser' || raw === 'queue' ? 'hospitalized' : raw
+  if (current === next) return
+  void router.replace({ query: { ...route.query, tab: next } })
 }
 
-function isPendingAdmission(h: HospRow) {
-  if (h.status === 'DISCHARGED' || h.status === 'CANCELLED') return false
-  return !isHospitalizedPatient(h)
+function selectTab(next: typeof tab.value) {
+  tab.value = next
+  persistTabInQuery(tab.value)
 }
 
 function applyRouteQuery() {
   const qTab = route.query.tab
-  if (qTab === 'queue' || qTab === 'plan' || qTab === 'hospitalized' || qTab === 'hospitaliser') {
-    tab.value = qTab === 'hospitaliser' ? 'hospitalized' : (qTab as typeof tab.value)
+  if (qTab === 'plan') {
+    tab.value = 'plan'
+  } else if (
+    qTab === 'queue' ||
+    qTab === 'hospitalized' ||
+    qTab === 'hospitaliser'
+  ) {
+    tab.value = 'hospitalized'
   }
 
   const visitId = typeof route.query.visitId === 'string' ? route.query.visitId : null
   if (!visitId || !data.value) return
   const hosp = data.value.hospitalizations.find((row) => row.visit.id === visitId)
-  if (hosp && isHospitalizedPatient(hosp)) {
+  if (hosp) {
     tab.value = 'hospitalized'
+    persistTabInQuery('hospitalized')
   }
 }
 
@@ -138,6 +184,7 @@ const admissionRoomTypeOptions = computed((): AdmissionRoomTypeOption[] => {
         autoRoomId: fromApi.autoRoomId,
         autoBedId: fromApi.autoBedId ?? null,
         availableBeds: fromApi.availableBeds ?? [],
+        availableRooms: fromApi.availableRooms ?? [],
         blockedReason: fromApi.blockedReason,
       }
     }
@@ -155,18 +202,198 @@ const admissionRoomTypeOptions = computed((): AdmissionRoomTypeOption[] => {
       autoRoomId: firstRoom?.id ?? null,
       autoBedId: null,
       availableBeds: [],
+      availableRooms: roomsOfType.map((room) => ({
+        id: room.id,
+        name: room.name,
+        dailyRateFcfa: room.dailyRateFcfa,
+        autoBedId: null,
+        availableBeds: [],
+      })),
       blockedReason: null,
     }
   })
 })
 
-const pendingHospitalizations = computed(() =>
-  (data.value?.hospitalizations ?? []).filter((h) => isPendingAdmission(h)),
+const hospitalizedPatients = computed(() =>
+  (data.value?.hospitalizations ?? []).filter((h) => h.status !== 'CANCELLED'),
 )
 
-const hospitalizedPatients = computed(() =>
-  (data.value?.hospitalizations ?? []).filter((h) => isHospitalizedPatient(h)),
+type RoomFilter = 'ALL' | 'VIP' | 'SIMPLE'
+
+const listSearch = ref('')
+const roomFilter = ref<RoomFilter>('ALL')
+const dateFrom = ref('')
+const dateTo = ref('')
+
+function stayDateIso(value?: string | Date | null) {
+  if (!value) return ''
+  const match = String(value).match(/^(\d{4}-\d{2}-\d{2})/)
+  return match?.[1] ?? ''
+}
+
+function hospDoctorName(row: HospRow) {
+  if (row.attendingDoctor?.trim()) return row.attendingDoctor.trim()
+  const doctor =
+    row.attendingDoctorUser ?? row.visit.consultation?.doctor ?? row.visit.assignedDoctor
+  return doctor ? `Dr ${fullName(doctor.firstName, doctor.lastName)}` : ''
+}
+
+function isUnpaidStay(row: HospRow) {
+  return !row.paidAt && (row.totalDueFcfa ?? 0) > 0 && Boolean(row.startDate)
+}
+
+function matchesRoomFilter(row: HospRow) {
+  if (roomFilter.value === 'ALL') return true
+  return (row.room?.type ?? row.roomType) === roomFilter.value
+}
+
+function matchesDateFilter(row: HospRow) {
+  if (!dateFrom.value && !dateTo.value) return true
+  const start = stayDateIso(row.startDate)
+  if (!start) return false
+  if (dateFrom.value && start < dateFrom.value) return false
+  if (dateTo.value && start > dateTo.value) return false
+  return true
+}
+
+function matchesSearchFilter(row: HospRow) {
+  const q = listSearch.value.trim().toLowerCase()
+  if (!q) return true
+  const haystack = [
+    row.visit.patient.code,
+    row.visit.patient.firstName,
+    row.visit.patient.lastName,
+    row.visit.patient.phone ?? '',
+    hospDoctorName(row),
+    row.room?.name ?? '',
+  ]
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(q)
+}
+
+const filteredHospitalizedPatients = computed(() =>
+  hospitalizedPatients.value.filter(
+    (row) => matchesRoomFilter(row) && matchesDateFilter(row) && matchesSearchFilter(row),
+  ),
 )
+
+const hasActiveListFilters = computed(
+  () =>
+    Boolean(listSearch.value.trim()) ||
+    roomFilter.value !== 'ALL' ||
+    Boolean(dateFrom.value) ||
+    Boolean(dateTo.value),
+)
+
+function resetListFilters() {
+  listSearch.value = ''
+  roomFilter.value = 'ALL'
+  dateFrom.value = ''
+  dateTo.value = ''
+}
+
+function setListDatesToToday() {
+  const today = new Date()
+  const iso = [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, '0'),
+    String(today.getDate()).padStart(2, '0'),
+  ].join('-')
+  dateFrom.value = iso
+  dateTo.value = iso
+}
+
+function stayStatusLabel(row: HospRow) {
+  if (isUnpaidStay(row)) return uiText('En attente de paiement')
+  return uiText(HOSPITALIZATION_STATUS_LABELS[row.status] ?? row.status)
+}
+
+type HospExportRow = {
+  code: string
+  patient: string
+  phone: string
+  doctor: string
+  roomType: string
+  days: string
+  status: string
+  entry: string
+  exit: string
+  amount: string
+}
+
+const hospExportColumns: ExportColumn<HospExportRow>[] = [
+  { header: 'Matricule', value: (r) => r.code },
+  { header: 'Patient', value: (r) => r.patient },
+  { header: 'Téléphone', value: (r) => r.phone },
+  { header: 'Médecin', value: (r) => r.doctor },
+  { header: 'Chambre', value: (r) => r.roomType },
+  { header: 'Jours', value: (r) => r.days },
+  { header: 'Statut', value: (r) => r.status },
+  { header: 'Entrée', value: (r) => r.entry },
+  { header: 'Sortie', value: (r) => r.exit },
+  { header: 'Montant', value: (r) => r.amount },
+]
+
+const hospExportRows = computed<HospExportRow[]>(() =>
+  filteredHospitalizedPatients.value.map((row) => {
+    const days = hospitalizationStayDays(row)
+    const type = row.room?.type ?? row.roomType
+    return {
+      code: row.visit.patient.code,
+      patient: fullName(row.visit.patient.firstName, row.visit.patient.lastName),
+      phone: row.visit.patient.phone || '—',
+      doctor: hospDoctorName(row) || '—',
+      roomType: type === 'VIP' ? 'VIP' : type === 'SIMPLE' ? uiText('Simple') : '—',
+      days: days > 0 ? String(days) : '—',
+      status: stayStatusLabel(row),
+      entry: row.startDate ? dateText(row.startDate) : '—',
+      exit: row.endDate ? dateText(row.endDate) : '—',
+      amount:
+        row.totalDueFcfa && row.totalDueFcfa > 0
+          ? formatFcfa(row.totalDueFcfa)
+          : row.dailyRateFcfa
+            ? `${formatFcfa(row.dailyRateFcfa)}/${uiText('nuit')}`
+            : '—',
+    }
+  }),
+)
+
+function hospFilterCaption() {
+  const parts: string[] = []
+  const q = listSearch.value.trim()
+  if (q) parts.push(`${uiText('Recherche')} : ${q}`)
+  if (roomFilter.value === 'VIP') parts.push(`${uiText('Chambre')} : VIP`)
+  if (roomFilter.value === 'SIMPLE') parts.push(`${uiText('Chambre')} : ${uiText('Simple')}`)
+  if (dateFrom.value || dateTo.value) {
+    parts.push(`${uiText('Du')} ${dateFrom.value || '…'} ${uiText('Au')} ${dateTo.value || '…'}`)
+  }
+  return parts.length ? parts.join(' · ') : uiText('Aucun filtre')
+}
+
+function hospExportShared() {
+  return {
+    captionRows: [{ label: uiText('Filtres'), value: hospFilterCaption() }],
+    totalsRows: [
+      { label: uiText('Nombre de séjours'), value: String(hospExportRows.value.length) },
+    ],
+  }
+}
+
+function exportHospPdf() {
+  if (!hospExportRows.value.length) return
+  exportTablePdf(uiText('Patients hospitalisés'), hospExportColumns, hospExportRows.value, hospExportShared())
+}
+
+function exportHospExcel() {
+  if (!hospExportRows.value.length) return
+  exportTableExcel(uiText('Patients hospitalisés'), hospExportColumns, hospExportRows.value, hospExportShared())
+}
+
+function exportHospWord() {
+  if (!hospExportRows.value.length) return
+  void exportTableWord(uiText('Patients hospitalisés'), hospExportColumns, hospExportRows.value, hospExportShared())
+}
 
 const admissionHosp = computed(() => {
   if (!admissionHospId.value) return null
@@ -206,6 +433,83 @@ function openDischarge(hospId: string) {
   dischargeHospId.value = hospId
 }
 
+function openDirectAdmit() {
+  directAdmitOpen.value = true
+}
+
+function reprintReceipt(hospId: string) {
+  const hosp = data.value?.hospitalizations.find((row) => row.id === hospId)
+  if (!hosp) return
+  printHospitalizationAdmission(
+    admissionFormFromHospitalization({
+      ...hosp,
+      dailyRateFcfa: hosp.dailyRateFcfa ?? 0,
+    }),
+    { autoPrint: true },
+  )
+}
+
+async function deleteHospitalization(hospId: string) {
+  const hosp = data.value?.hospitalizations.find((row) => row.id === hospId)
+  if (!hosp) return
+  const patient = hosp.visit.patient
+  const amount = Math.max(0, hosp.totalDueFcfa ?? 0)
+  const confirmed = await confirmAppModal({
+    type: 'DELETE',
+    title: uiText("Supprimer l'hospitalisation"),
+    message: translateTemplate(
+      'Supprimer l’hospitalisation de {code} — {name} ? Le montant encaissé ({amount}) sera retiré du compte. Cette action est irréversible.',
+      {
+        code: patient.code,
+        name: fullName(patient.firstName, patient.lastName),
+        amount: formatFcfa(amount),
+      },
+    ),
+    confirmLabel: uiText('Supprimer'),
+  })
+  if (!confirmed) return
+
+  try {
+    const { data: res } = await api.post<{ refundedFcfa?: number }>('/hospitalisation/actions', {
+      action: 'delete',
+      hospitalizationId: hospId,
+    })
+    message.value = translateTemplate("Hospitalisation supprimée. Montant retiré du compte : {amount}.", {
+      amount: formatFcfa(res.refundedFcfa ?? amount),
+    })
+    messageType.value = 'success'
+    if (admissionHospId.value === hospId) closeAdmission()
+    if (dischargeHospId.value === hospId) closeDischarge()
+    await load()
+  } catch (error: unknown) {
+    await showApiErrorModal(error, uiText("Impossible de supprimer l'hospitalisation."))
+  }
+}
+
+async function collectPayment(hospId: string) {
+  const hosp = data.value?.hospitalizations.find((row) => row.id === hospId)
+  if (!hosp) return
+  try {
+    await api.post('/hospitalisation/actions', {
+      action: 'collect_payment',
+      hospitalizationId: hospId,
+    })
+    printHospitalizationAdmission(
+      admissionFormFromHospitalization({
+        ...hosp,
+        dailyRateFcfa: hosp.dailyRateFcfa ?? 0,
+        paidAt: new Date().toISOString(),
+      }),
+      { autoPrint: true },
+    )
+    message.value = uiText('Paiement encaissé.')
+    messageType.value = 'success'
+    await load()
+  } catch (error: unknown) {
+    await showApiErrorModal(error, uiText("Impossible d'encaisser l'hospitalisation."))
+  }
+}
+
 function closeDischarge() {
   dischargeHospId.value = null
   dischargeSubmitting.value = false
@@ -226,6 +530,27 @@ async function load(opts?: { silent?: boolean }) {
   }
 }
 
+async function onDirectAdmitConfirmed(payload: {
+  printForm: HospitalizationAdmissionForm
+  nights: number
+  totalDueFcfa: number
+}) {
+  directAdmitOpen.value = false
+  try {
+    await printHospitalizationAdmission(payload.printForm)
+  } catch {
+    /* impression non bloquante */
+  }
+  message.value = payload.totalDueFcfa
+    ? uiText('Admission validée — {amount} ({nights} nuitée(s))')
+        .replace('{amount}', formatFcfa(payload.totalDueFcfa))
+        .replace('{nights}', String(payload.nights))
+    : uiText('Admission validée — {nights} nuitée(s).').replace('{nights}', String(payload.nights))
+  messageType.value = 'success'
+  selectTab('hospitalized')
+  await load()
+}
+
 async function confirmAdmission(payload: HospitalizationAdmissionForm & { hospitalizationId: string; roomId?: string; bedId?: string }) {
   admissionSubmitting.value = true
   try {
@@ -241,7 +566,9 @@ async function confirmAdmission(payload: HospitalizationAdmissionForm & { hospit
         attendingDoctorId: payload.attendingDoctorId || undefined,
         doctorInstructions: payload.doctorInstructions,
       })
-      message.value = `Séjour mis à jour — ${res.nights} nuitée(s), total ${formatFcfa(res.totalDueFcfa)}`
+      message.value = uiText('Séjour mis à jour — {nights} nuitée(s), total {amount}')
+        .replace('{nights}', String(res.nights))
+        .replace('{amount}', formatFcfa(res.totalDueFcfa))
       messageType.value = 'success'
       closeAdmission()
       await load()
@@ -265,19 +592,21 @@ async function confirmAdmission(payload: HospitalizationAdmissionForm & { hospit
     })
     printHospitalizationAdmission(payload)
     message.value = res.totalDueFcfa
-      ? `Admission validée — ${formatFcfa(res.totalDueFcfa)} (${res.nights} nuitée(s))`
-      : `Admission validée — ${res.nights} nuitée(s).`
+      ? uiText('Admission validée — {amount} ({nights} nuitée(s))')
+          .replace('{amount}', formatFcfa(res.totalDueFcfa))
+          .replace('{nights}', String(res.nights))
+      : uiText('Admission validée — {nights} nuitée(s).').replace('{nights}', String(res.nights))
     messageType.value = 'success'
     closeAdmission()
-    tab.value = 'hospitalized'
+    selectTab('hospitalized')
     await load()
   } catch (error: unknown) {
     const apiError = error as { response?: { data?: { error?: string; detail?: string } } }
     const detail = apiError.response?.data?.detail
     const label = apiError.response?.data?.error
     message.value = detail
-      ? `${label ?? 'Erreur'} : ${detail}`
-      : (label ?? 'Chambre indisponible ou erreur lors de l\'admission.')
+      ? `${label ?? uiText('Erreur')} : ${detail}`
+      : (label ?? uiText("Chambre indisponible ou erreur lors de l'admission."))
     messageType.value = 'error'
   } finally {
     admissionSubmitting.value = false
@@ -292,12 +621,14 @@ async function confirmDischarge(payload: { hospitalizationId: string; endDate: s
       hospitalizationId: payload.hospitalizationId,
       endDate: payload.endDate,
     })
-    message.value = `Sortie validée — ${res.nights} nuitée(s), total ${formatFcfa(res.totalDue)}`
+    message.value = uiText('Sortie validée — {nights} nuitée(s), total {amount}')
+      .replace('{nights}', String(res.nights))
+      .replace('{amount}', formatFcfa(res.totalDue))
     messageType.value = 'success'
     closeDischarge()
     await load()
   } catch {
-    message.value = 'Erreur lors de la clôture.'
+    message.value = uiText('Erreur lors de la clôture.')
     messageType.value = 'error'
   } finally {
     dischargeSubmitting.value = false
@@ -308,7 +639,7 @@ const { refresh: refreshData } = useSilentRefresh(
   ({ silent }) => load({ silent }),
   {
     intervalMs: 30_000,
-    enabled: () => !admissionHospId.value && !dischargeHospId.value,
+    enabled: () => !admissionHospId.value && !dischargeHospId.value && !directAdmitOpen.value,
   },
 )
 
@@ -318,54 +649,75 @@ watch(() => route.query, () => {
   applyRouteQuery()
   scrollToFocusedVisit()
 })
+
+watch([dateFrom, dateTo], () => {
+  if (dateFrom.value && dateTo.value && dateFrom.value > dateTo.value) {
+    dateTo.value = dateFrom.value
+  }
+})
 </script>
 
 <template>
-  <div>
+  <div :class="{ 'hospitalisation-embedded': embedded }">
     <UiPageHeader
+      v-if="!embedded"
       title="Hospitalisation"
-      subtitle="Plan des salles, attribution et clôture des hospitalisations prescrites"
+      subtitle="Choisir un patient, attribuer une salle et encaisser l'hospitalisation"
       :icon="BedDouble"
-    />
+    >
+      <template #actions>
+        <UiButton :icon="Plus" @click="openDirectAdmit">
+          {{ labels.newAdmission }}
+        </UiButton>
+      </template>
+    </UiPageHeader>
+
+    <div v-else class="hospitalisation-embedded__actions">
+      <UiButton :icon="Plus" @click="openDirectAdmit">
+        {{ labels.newAdmission }}
+      </UiButton>
+    </div>
 
     <UiAlert v-if="message" :type="messageType" :message="message" />
 
     <template v-if="data">
       <div class="stats-row">
       <div class="stat-card card-accent card-accent--green">
-        <span>Salles</span>
+        <span>{{ labels.rooms }}</span>
         <strong>{{ data.stats.roomCount }}</strong>
       </div>
       <div class="stat-card card-accent card-accent--green">
-        <span>Salles libres</span>
+        <span>{{ labels.freeRooms }}</span>
         <strong>{{ data.stats.freeRooms }}</strong>
       </div>
       <div class="stat-card card-accent card-accent--green">
-        <span>Salles occupées</span>
+        <span>{{ labels.occupiedRooms }}</span>
         <strong>{{ data.stats.occupiedRooms }}</strong>
       </div>
       <div class="stat-card card-accent card-accent--green">
-        <span>En attente</span>
+        <span>{{ labels.pending }}</span>
         <strong>{{ data.stats.pendingHospitalizations }}</strong>
       </div>
     </div>
 
-    <div class="tabs">
-      <button :class="{ active: tab === 'plan' }" @click="tab = 'plan'">Plan des salles</button>
-      <button :class="{ active: tab === 'queue' }" @click="tab = 'queue'">
-        Hospitalisations
-        <span v-if="pendingHospitalizations.length" class="tab-count">{{ pendingHospitalizations.length }}</span>
-      </button>
-      <button :class="{ active: tab === 'hospitalized' }" @click="tab = 'hospitalized'">
-        Hospitaliser
+    <div v-if="!embedded" class="tabs">
+      <button :class="{ active: tab === 'plan' }" @click="selectTab('plan')">{{ labels.planTab }}</button>
+      <button :class="{ active: tab === 'hospitalized' }" @click="selectTab('hospitalized')">
+        {{ uiText('Patients hospitalisés') }}
         <span v-if="hospitalizedPatients.length" class="tab-count">{{ hospitalizedPatients.length }}</span>
       </button>
     </div>
 
     <template v-if="tab === 'plan'">
-      <UiCard title="Plan des salles" description="Suivi en temps réel — [LIBRE] / [OCCUPÉ]" :icon="BedDouble" icon-variant="blue" class="compta-section">
+      <UiCard
+        title="Plan des salles"
+        description="Suivi en temps réel — [LIBRE] / [OCCUPÉ]"
+        :icon="BedDouble"
+        icon-variant="blue"
+        class="compta-section"
+      >
         <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshData()">Actualiser</UiButton>
+          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshData()">{{ labels.refresh }}</UiButton>
         </template>
         <div class="rooms-grid">
           <div
@@ -378,43 +730,14 @@ watch(() => route.query, () => {
               <strong>{{ room.name }}</strong>
               <UiBadge :variant="room.status === 'LIBRE' ? 'success' : 'danger'">[{{ room.status }}]</UiBadge>
             </div>
-            <UiBadge variant="info">{{ room.type }}</UiBadge>
+            <UiBadge variant="info">{{ room.type === 'SIMPLE' ? uiText('Simple') : room.type }}</UiBadge>
             <p v-if="room.currentPatient" class="room-patient">
               <ShieldCheck :size="14" />
               {{ fullName(room.currentPatient.firstName, room.currentPatient.lastName) }}
             </p>
-            <p v-else class="room-empty">Disponible</p>
+            <p v-else class="room-empty">{{ labels.available }}</p>
           </div>
         </div>
-      </UiCard>
-    </template>
-
-    <template v-if="tab === 'queue'">
-      <UiCard
-        title="Hospitalisations en attente"
-        description="Patients orientés par les médecins pour hospitalisation (payés ou non)"
-        :icon="BedDouble"
-        icon-variant="blue"
-        class="compta-section"
-      >
-        <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshData()">Actualiser</UiButton>
-        </template>
-
-        <p v-if="!loading && !pendingHospitalizations.length" class="compta-empty">
-          Aucun patient orienté pour hospitalisation
-        </p>
-        <HospitalizationsQueueDataTable
-          v-else
-          fill
-          :items="pendingHospitalizations"
-          :loading="loading && !pendingHospitalizations.length"
-          :focused-visit-id="focusedVisitId"
-          @admit="openAdmission"
-          @view="openView"
-          @edit="openEdit"
-          @discharge="openDischarge"
-        />
       </UiCard>
     </template>
 
@@ -427,25 +750,82 @@ watch(() => route.query, () => {
         class="compta-section"
       >
         <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshData()">Actualiser</UiButton>
+          <ExportButtons
+            :disabled="loading || !hospExportRows.length"
+            @pdf="exportHospPdf"
+            @excel="exportHospExcel"
+            @word="exportHospWord"
+          />
+          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshData()">{{ labels.refresh }}</UiButton>
         </template>
 
+        <div class="hosp-toolbar">
+          <div class="hosp-toolbar__row">
+            <label class="hosp-search">
+              <Search :size="16" aria-hidden="true" />
+              <input
+                v-model="listSearch"
+                type="search"
+                :placeholder="uiText('Rechercher par matricule, nom, médecin…')"
+                :aria-label="uiText('Recherche')"
+              />
+            </label>
+
+            <select v-model="roomFilter" class="hosp-select" :aria-label="uiText('Chambre')">
+              <option value="ALL">{{ uiText('Toutes les chambres') }}</option>
+              <option value="VIP">VIP</option>
+              <option value="SIMPLE">{{ uiText('Simple') }}</option>
+            </select>
+
+            <label class="hosp-date">
+              <span>{{ uiText('Du') }}</span>
+              <input v-model="dateFrom" type="date" :max="dateTo || undefined" :aria-label="uiText('Du')" />
+            </label>
+            <label class="hosp-date">
+              <span>{{ uiText('Au') }}</span>
+              <input v-model="dateTo" type="date" :min="dateFrom || undefined" :aria-label="uiText('Au')" />
+            </label>
+            <UiButton size="sm" variant="outline" @click="setListDatesToToday">
+              {{ uiText("Aujourd'hui") }}
+            </UiButton>
+            <UiButton v-if="hasActiveListFilters" size="sm" variant="ghost" @click="resetListFilters">
+              {{ uiText('Effacer') }}
+            </UiButton>
+            <span class="hosp-toolbar__count">
+              {{ uiText('{n} séjour(s)').replace('{n}', String(filteredHospitalizedPatients.length)) }}
+            </span>
+          </div>
+        </div>
+
         <p v-if="!loading && !hospitalizedPatients.length" class="compta-empty">
-          Aucun patient hospitalisé pour le moment
+          {{ labels.hospEmpty }}
+        </p>
+        <p v-else-if="!loading && hospitalizedPatients.length && !filteredHospitalizedPatients.length" class="compta-empty">
+          {{ uiText('Aucune ligne ne correspond aux filtres.') }}
         </p>
         <HospitalizationsQueueDataTable
           v-else
           fill
-          :items="hospitalizedPatients"
+          :items="filteredHospitalizedPatients"
           :loading="loading && !hospitalizedPatients.length"
           :focused-visit-id="focusedVisitId"
           @admit="openAdmission"
           @view="openView"
           @edit="openEdit"
           @discharge="openDischarge"
+          @print="reprintReceipt"
+          @delete="deleteHospitalization"
+          @collect="collectPayment"
         />
       </UiCard>
     </template>
+
+    <HospitalizationDirectAdmitModal
+      :open="directAdmitOpen"
+      :room-types="admissionRoomTypeOptions"
+      @close="directAdmitOpen = false"
+      @confirmed="onDirectAdmitConfirmed"
+    />
 
     <HospitalizationAdmissionModal
       :hosp="admissionHosp"
@@ -464,11 +844,79 @@ watch(() => route.query, () => {
     />
     </template>
 
-    <p v-else-if="loading" class="compta-empty">Chargement…</p>
+    <p v-else-if="loading" class="compta-empty">{{ labels.loading }}</p>
   </div>
 </template>
 
 <style scoped>
+.hosp-toolbar {
+  margin-bottom: 0.85rem;
+}
+
+.hosp-toolbar__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hosp-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1 1 14rem;
+  min-width: min(100%, 14rem);
+  padding: 0.42rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--text-muted);
+}
+
+.hosp-search input {
+  width: 100%;
+  border: 0;
+  outline: none;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
+  background: transparent;
+}
+
+.hosp-select,
+.hosp-date input {
+  padding: 0.42rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+
+.hosp-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.hosp-toolbar__count {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.hospitalisation-embedded__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
 .stats-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -537,7 +985,7 @@ watch(() => route.query, () => {
 
 .rooms-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 0.75rem;
 }
 
@@ -579,9 +1027,40 @@ watch(() => route.query, () => {
   color: var(--text-muted);
 }
 
+@media (max-width: 1023px) {
+  .stats-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .stat-card {
+    padding: 0.55rem 0.7rem;
+  }
+
+  .stat-card strong {
+    font-size: var(--density-stat-value);
+  }
+
+  .rooms-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.5rem;
+  }
+
+  .tabs button {
+    padding: 0.4rem 0.7rem;
+    font-size: 0.8rem;
+  }
+}
+
 @media (max-width: 768px) {
   .stats-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 639px) {
+  .room-card {
+    padding: 0.55rem;
   }
 }
 </style>

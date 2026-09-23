@@ -16,6 +16,7 @@ import {
   netAfterExpenses,
   sumExpensesForCashierOnDate,
 } from "../lib/cashier-personal-stats.js";
+import { buildDayClosureSalesSummary } from "../lib/day-closure-sales.js";
 import { DEFAULT_EXPENSE_INDICES } from "../lib/expense-indices-seed.js";
 import { requireAuth, requireAnyModule } from "../middleware/auth.js";
 
@@ -429,25 +430,27 @@ async function buildDayClosureSnapshot(userId: string, businessDate: Date) {
   const dayEnd = new Date(dayStart);
   dayEnd.setDate(dayEnd.getDate() + 1);
 
-  const [collected, expenses, visitsToday, registeredToday, dbUser] = await Promise.all([
+  const [collected, expenses, visitsToday, registeredToday, dbUser, sales] = await Promise.all([
     aggregateCollectedForCashier(userId, dayStart, dayEnd),
     sumExpensesForCashierOnDate(userId, dayStart),
     prisma.visit.count({ where: { createdAt: { gte: dayStart, lt: dayEnd } } }),
     prisma.patient.count({ where: { createdAt: { gte: dayStart, lt: dayEnd } } }),
     prisma.user.findUnique({
       where: { id: userId },
-      select: { cashShiftSlot: true, firstName: true, lastName: true },
+      select: { cashShiftSlot: true, firstName: true, lastName: true, username: true },
     }),
+    buildDayClosureSalesSummary(userId, dayStart, dayEnd),
   ]);
 
   const shiftSlot = dbUser?.cashShiftSlot ?? inferShiftSlotFromDate(new Date());
-  const netFcfa = netAfterExpenses(collected.totalFcfa, expenses.totalFcfa);
+  const collectedFcfa = sales.collectedFcfa || collected.totalFcfa;
+  const netFcfa = netAfterExpenses(collectedFcfa, expenses.totalFcfa);
 
   return {
     businessDate: formatBusinessDate(dayStart),
     shiftSlot,
     shiftLabel: shiftSlot ? SHIFT_SLOT_LABELS[shiftSlot] : null,
-    collectedFcfa: collected.totalFcfa,
+    collectedFcfa,
     expensesFcfa: expenses.totalFcfa,
     netFcfa,
     visitsToday,
@@ -456,7 +459,11 @@ async function buildDayClosureSnapshot(userId: string, businessDate: Date) {
     examsFcfa: collected.examsFcfa,
     surgeryFcfa: collected.surgeryFcfa,
     hospitalizationFcfa: collected.hospitalizationFcfa,
+    serviceLines: sales.serviceLines,
+    reductionFcfa: sales.reductionFcfa,
+    saleFcfa: sales.saleFcfa || collectedFcfa,
     receptionistName: dbUser ? `${dbUser.firstName} ${dbUser.lastName}`.trim() : "",
+    receptionistUsername: dbUser?.username?.trim() || "",
   };
 }
 

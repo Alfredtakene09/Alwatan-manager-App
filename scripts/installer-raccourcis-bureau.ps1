@@ -1,4 +1,5 @@
-# Crée sur le Bureau les raccourcis Serveur et Client avec le logo alwatan.ico.
+# Crée sur le Bureau le raccourci unique « Alwatan Manager ».
+# Serveur et clients : meme demarrage (detection auto).
 param([switch]$Quiet)
 
 . "$PSScriptRoot\_alwatan-common.ps1"
@@ -10,27 +11,43 @@ if (-not $icon) {
     exit 1
 }
 
+$mainLauncher = Update-AlwatanSilentLauncher -ScriptBaseName 'demarrer-alwatan'
 $serverLauncher = Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-serveur' -ExtraArgs '-Production'
-$serverAutoLauncher = Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-serveur-auto'
 $clientLauncher = Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-client'
 
+$mainShortcut = New-AlwatanDesktopShortcut `
+    -Name 'Alwatan Manager' `
+    -LauncherPath $mainLauncher `
+    -Description 'Demarrer Alwatan (serveur ou client — Ethernet, hors ligne)' `
+    -IconPath $icon
+
+# Raccourcis avances (optionnels) — utiles si on force un role
 $serverShortcut = New-AlwatanDesktopShortcut `
     -Name 'Alwatan Manager (Serveur)' `
     -LauncherPath $serverLauncher `
-    -Description 'Démarrer Alwatan (mode cabinet, port 4000 — réseau / démarrage auto)' `
+    -Description 'Forcer demarrage serveur cabinet (port 4000)' `
     -IconPath $icon
 
 $clientShortcut = New-AlwatanDesktopShortcut `
     -Name 'Alwatan Manager (Client)' `
     -LauncherPath $clientLauncher `
-    -Description 'Ouvrir Alwatan Manager depuis un poste client' `
+    -Description 'Forcer ouverture client reseau' `
     -IconPath $icon
 
-$serverAutoShortcut = New-AlwatanDesktopShortcut `
-    -Name 'Alwatan Manager (Serveur Auto)' `
-    -LauncherPath $serverAutoLauncher `
-    -Description 'Mode développeur uniquement (Vite 5173) — ne pas utiliser pour les postes clients' `
-    -IconPath $icon
+# Supprimer l'ancien raccourci « Serveur Auto » (dev) qui creait de la confusion
+$desktop = [Environment]::GetFolderPath('Desktop')
+foreach ($obsolete in @(
+    'Alwatan Manager (Serveur Auto).lnk',
+    'Ouvrir Alwatan (reseau).lnk',
+    'Ouvrir Alwatan (reseau).url',
+    'Ouvrir Alwatan (reseau).bat',
+    'Alwatan Manager (Wi-Fi).url'
+)) {
+    $p = Join-Path $desktop $obsolete
+    if (Test-Path $p) {
+        Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+    }
+}
 
 $configPath = Get-AlwatanServerConfigPath
 $examplePath = Join-Path $PSScriptRoot 'alwatan-server.txt.example'
@@ -39,22 +56,29 @@ if (-not (Test-Path $configPath) -and (Test-Path $examplePath)) {
 }
 
 Write-Host ''
-Write-Host 'Raccourcis créés sur le Bureau :' -ForegroundColor Green
+Write-Host 'Raccourcis crees sur le Bureau :' -ForegroundColor Green
+Write-Host "  $mainShortcut   <- utiliser celui-ci"
 Write-Host "  $serverShortcut"
-Write-Host "  $serverAutoShortcut"
 Write-Host "  $clientShortcut"
-Write-Host "  Icône : $icon"
+Write-Host "  Icone : $icon"
 Write-Host ''
-Write-Host 'Utilisation :' -ForegroundColor Cyan
-Write-Host '  • Poste serveur (cabinet) : « Alwatan Manager (Serveur) » — port 4000'
-Write-Host '  • Développement seul : « Alwatan Manager (Serveur Auto) » — ne pas pour les clients'
-Write-Host '  • Autres postes : « Alwatan Manager (Client) »'
+Write-Host 'Utilisation (sans Internet) :' -ForegroundColor Cyan
+Write-Host '  1) Cable Ethernet branche, IP affichee'
+Write-Host '  2) Double-clic « Alwatan Manager » (ou DEMARRER-ALWATAN.cmd)'
+Write-Host '  3) Sur le serveur : l''app demarre + IP Ethernet affichee'
+Write-Host '  4) Sur les clients : l''app s''ouvre sur cette IP'
 Write-Host ''
-Write-Host "Configuration réseau (clients) : $configPath" -ForegroundColor DarkGray
-Write-Host ''
-Write-Host 'Pour les postes sans le projet : exécutez creer-setup-client.cmd' -ForegroundColor DarkGray
+Write-Host "Config clients : $configPath" -ForegroundColor DarkGray
 Write-Host ''
 
 if (-not $Quiet) {
-    Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Les raccourcis ont été recréés sur le Bureau.`n`n• Serveur : mode cabinet (port 4000) — à utiliser au quotidien et après arrêt`n• Serveur Auto : développement uniquement — pas pour les postes clients`n• Client : ouvrir l'appli depuis un autre PC"
+    Show-AlwatanMessage -Title 'Alwatan Manager' -Message @"
+Raccourci principal : « Alwatan Manager »
+
+Fonctionne hors ligne avec Ethernet :
+• PC serveur = demarre l'application
+• PC client  = ouvre l'application sur le reseau
+
+Aussi disponible : DEMARRER-ALWATAN.cmd a la racine du projet.
+"@
 }

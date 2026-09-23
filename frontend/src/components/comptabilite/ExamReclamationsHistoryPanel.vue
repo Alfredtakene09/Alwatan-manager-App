@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch, computed } from 'vue'
-import { ClipboardList, RefreshCw } from '@lucide/vue'
+import { ClipboardList } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { EXAM_KIND_LABELS, type ExamKindSlug } from '@/lib/exam-catalog/types'
@@ -11,7 +11,6 @@ import {
   type ExamReclamationStatus,
 } from '@/lib/exam-reclamation'
 import UiCard from '@/components/ui/UiCard.vue'
-import UiButton from '@/components/ui/UiButton.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -80,6 +79,11 @@ function examsSummary(row: ExamReclamationRow) {
   return row.examLabel ? examNameText(row.examLabel) : '—'
 }
 
+function authorName(row: ExamReclamationRow) {
+  if (!row.createdBy) return '—'
+  return fullName(row.createdBy.firstName, row.createdBy.lastName) || row.createdBy.username || '—'
+}
+
 const reclamationExportColumns: ExportColumn<ExamReclamationRow>[] = [
   { header: 'Date', value: (r) => formatDate(r.createdAt) },
   {
@@ -92,6 +96,7 @@ const reclamationExportColumns: ExportColumn<ExamReclamationRow>[] = [
   { header: 'Examens', value: (r) => examsSummary(r) },
   { header: 'Montant', value: (r) => formatFcfa(r.totalFcfa) },
   { header: 'Motif', value: (r) => reasonLabel(r.reason) },
+  { header: 'Auteur', value: (r) => authorName(r) },
   { header: 'Statut', value: (r) => statusLabel(r.status) },
 ]
 
@@ -123,9 +128,6 @@ watch(() => props.refreshKey, () => {
   >
     <template #actions>
       <ExportButtons :disabled="loading || !rows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-      <UiButton variant="ghost" size="sm" :disabled="loading" :icon="RefreshCw" @click="load">
-        {{ t('common.refresh') }}
-      </UiButton>
     </template>
 
     <p v-if="loading" class="hint">{{ t('common.Chargement…') }}</p>
@@ -140,6 +142,7 @@ watch(() => props.refreshKey, () => {
             <th>{{ uiText('Examens') }}</th>
             <th>{{ uiText('Montant') }}</th>
             <th>{{ uiText('Motif') }}</th>
+            <th>{{ uiText('Auteur') }}</th>
             <th>{{ uiText('Statut') }}</th>
           </tr>
         </thead>
@@ -159,6 +162,10 @@ watch(() => props.refreshKey, () => {
             </td>
             <td class="amount">{{ formatFcfa(row.totalFcfa ?? 0) }}</td>
             <td>{{ reasonLabel(row.reason) }}</td>
+            <td>
+              <strong>{{ authorName(row) }}</strong>
+              <span v-if="row.createdBy?.username" class="sub">{{ row.createdBy.username }}</span>
+            </td>
             <td>
               <span class="status" :class="STATUS_CLASS[row.status]">
                 {{ statusLabel(row.status) }}

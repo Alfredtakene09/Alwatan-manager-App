@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
-import { Plus, RefreshCw, Save, ArrowDownUp } from '@lucide/vue'
+import { Plus, Save, ArrowDownUp } from '@lucide/vue'
 import api from '@/api/client'
 import { canWritePharmacyCatalog, formatFcfa, fullName } from '@/lib/roles'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
@@ -367,9 +367,6 @@ defineExpose({ reload })
         @change="loadMovements"
       />
       <ExportButtons :disabled="loading" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-      <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="reload">
-        {{ uiText('Actualiser') }}
-      </UiButton>
       <UiButton
         v-if="canManageCatalog"
         variant="primary"

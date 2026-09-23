@@ -15,6 +15,7 @@ import {
 } from "@prisma/client";
 import { parseShiftSlot } from "../lib/cash-shift.js";
 import { prisma } from "../lib/db.js";
+import { ensureDefaultBedsForRoom } from "../lib/hospitalization-rooms.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
 import { listRecordedDiagnoses } from "../lib/recorded-diagnoses.js";
 import { resolveEmployeeClinicServiceLink } from "../lib/clinic-service-exam.js";
@@ -70,6 +71,11 @@ import {
   employeePayrollInclude,
   serializePayrollRow,
 } from "../lib/admin-payroll.js";
+import {
+  isPayrollLinkedExpenseId,
+  listPaidPayrollExpenseCores,
+  payrollExpenseMutationBlockedMessage,
+} from "../lib/payroll-expenses.js";
 import {
   deductPendingAdvancesForPayroll,
   salaryAdvanceInclude,
@@ -1251,7 +1257,14 @@ router.post("/rooms", async (req, res) => {
         ),
       );
     }
-    const item = await prisma.room.create({ data: body });
+    const item = await prisma.$transaction(async (tx) => {
+      const created = await tx.room.create({ data: body });
+      await ensureDefaultBedsForRoom(tx, created);
+      return tx.room.findUniqueOrThrow({
+        where: { id: created.id },
+        include: { beds: { orderBy: { code: "asc" } } },
+      });
+    });
     return res.status(201).json(item);
   } catch {
     return res.status(400).json({ error: "Données invalides" });
@@ -1261,7 +1274,14 @@ router.post("/rooms", async (req, res) => {
 router.put("/rooms/:id", async (req, res) => {
   try {
     const body = roomSchema.partial().parse(req.body);
-    const item = await prisma.room.update({ where: { id: req.params.id }, data: body });
+    const item = await prisma.$transaction(async (tx) => {
+      const updated = await tx.room.update({ where: { id: req.params.id }, data: body });
+      await ensureDefaultBedsForRoom(tx, updated);
+      return tx.room.findUniqueOrThrow({
+        where: { id: updated.id },
+        include: { beds: { orderBy: { code: "asc" } } },
+      });
+    });
     return res.json(item);
   } catch {
     return res.status(400).json({ error: "Mise à jour impossible" });
@@ -1314,6 +1334,7 @@ function serializeAdminExpense(row: {
     comment: row.comment,
     rejectionReason: row.rejectionReason,
     createdAt: row.createdAt.toISOString(),
+    source: "clinic" as const,
   };
 }
 
@@ -1351,8 +1372,34 @@ router.get("/expenses", async (req, res) => {
     orderBy: { createdAt: "desc" },
     take: 500,
   });
+  const clinicRows = rows.map(serializeAdminExpense);
+  const payrollRange = where.businessDate
+    ? { from: where.businessDate.gte, to: where.businessDate.lt }
+    : undefined;
+  const payrollRows =
+    where.status === ClinicExpenseStatus.PENDING
+      ? []
+      : (await listPaidPayrollExpenseCores(payrollRange)).map((row) => ({
+          id: row.id,
+          date: row.date,
+          businessDate: row.date,
+          categoryCode: "AUTRE" as const,
+          amountFcfa: row.amountFcfa,
+          label: row.description,
+          description: row.description,
+          category: row.category,
+          status: ClinicExpenseStatus.VALIDATED,
+          statusLabel: "Validée",
+          comment: row.comment,
+          rejectionReason: null,
+          createdAt: row.paidAt.toISOString(),
+          source: row.source,
+        }));
+  const merged = [...clinicRows, ...payrollRows].sort((a, b) =>
+    a.date === b.date ? 0 : a.date < b.date ? 1 : -1,
+  );
 
-  return res.json(rows.map(serializeAdminExpense));
+  return res.json(merged);
 });
 
 router.post("/expenses", requireUiAction("comptabilite.depenses"), async (req, res) => {
@@ -1400,6 +1447,9 @@ router.post("/expenses", requireUiAction("comptabilite.depenses"), async (req, r
 
 router.put("/expenses/:id", requireUiAction("comptabilite.depenses"), async (req, res) => {
   const user = req.user!;
+  if (isPayrollLinkedExpenseId(String(req.params.id))) {
+    return res.status(409).json({ error: payrollExpenseMutationBlockedMessage() });
+  }
   try {
     const body = adminExpenseSchema.parse(req.body);
     const existing = await prisma.clinicExpense.findUnique({ where: { id: String(req.params.id) } });
@@ -1433,6 +1483,9 @@ router.put("/expenses/:id", requireUiAction("comptabilite.depenses"), async (req
 });
 
 router.delete("/expenses/:id", requireUiAction("comptabilite.depenses"), async (req, res) => {
+  if (isPayrollLinkedExpenseId(String(req.params.id))) {
+    return res.status(409).json({ error: payrollExpenseMutationBlockedMessage() });
+  }
   const row = await prisma.clinicExpense.findUnique({ where: { id: String(req.params.id) } });
   if (!row) return res.status(404).json({ error: "Dépense introuvable" });
   await prisma.clinicExpense.delete({ where: { id: row.id } });
@@ -1441,6 +1494,9 @@ router.delete("/expenses/:id", requireUiAction("comptabilite.depenses"), async (
 
 router.patch("/expenses/:id/validate", requireUiAction("comptabilite.depenses"), async (req, res) => {
   const user = req.user!;
+  if (isPayrollLinkedExpenseId(String(req.params.id))) {
+    return res.status(409).json({ error: payrollExpenseMutationBlockedMessage() });
+  }
   const row = await prisma.clinicExpense.findUnique({ where: { id: String(req.params.id) } });
   if (!row) return res.status(404).json({ error: "Dépense introuvable" });
   if (row.status !== ClinicExpenseStatus.PENDING) {
@@ -1471,6 +1527,9 @@ router.patch("/expenses/:id/validate", requireUiAction("comptabilite.depenses"),
 
 router.patch("/expenses/:id/reject", requireUiAction("comptabilite.depenses"), async (req, res) => {
   const user = req.user!;
+  if (isPayrollLinkedExpenseId(String(req.params.id))) {
+    return res.status(409).json({ error: payrollExpenseMutationBlockedMessage() });
+  }
   const reason =
     typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
   if (reason.length < 3) {

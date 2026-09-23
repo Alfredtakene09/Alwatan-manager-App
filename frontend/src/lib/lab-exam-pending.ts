@@ -21,6 +21,7 @@ export type LabExamPendingItem = {
   id: string
   visitId?: string
   updatedAt: string
+  createdAt?: string
   examLines: LabExamLine[]
   examsByKind: ExamsByKindBlocks
   grossFcfa: number

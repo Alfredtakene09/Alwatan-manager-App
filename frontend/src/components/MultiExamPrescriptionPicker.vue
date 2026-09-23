@@ -51,6 +51,12 @@ import { translateTemplate } from '@/lib/dashboard-i18n'
 
 type ActivePanel = 'consultation' | ExamKindSlug | `specialty:${string}`
 
+export type OperationAssistantPayload = {
+  anesthesiologistId?: string | null
+  anesthesiologistName?: string | null
+  anesthesiologistPercent: number
+}
+
 const props = withDefaults(
   defineProps<{
     modelValue: ExamsByKind
@@ -73,6 +79,8 @@ const props = withDefaults(
     hideConsultationTab?: boolean
     /** Montant opération (FCFA) — modifiable à la sélection, appliqué aux % parties prenantes. */
     operationAmountFcfa?: number | null
+    /** Assistant chirurgie choisi pour l’envoi (sans enregistrement catalogue séparé). */
+    operationAssistant?: OperationAssistantPayload | null
   }>(),
   {
     comments: () => emptyExamCommentsByKind(),
@@ -82,6 +90,7 @@ const props = withDefaults(
     showConsultation: true,
     hideConsultationTab: false,
     operationAmountFcfa: null,
+    operationAssistant: null,
   },
 )
 
@@ -90,6 +99,7 @@ const emit = defineEmits<{
   'update:comments': [value: ExamCommentsByKind]
   'update:hospitalisationDays': [value: number | null]
   'update:operationAmountFcfa': [value: number | null]
+  'update:operationAssistant': [value: OperationAssistantPayload | null]
   'active-service-change': [
     payload: {
       kind: ExamKindSlug | 'consultation' | null
@@ -533,30 +543,72 @@ const selectedOperationExam = computed<CatalogExam | null>(() => {
 })
 
 /** Opération retenue dans le panier (tous onglets) — pour le prix et les parts. */
+const cartOperationLabel = computed(() => (examsByKind.value.operation ?? []).find(Boolean) ?? null)
+
+const operationAmountDraft = ref('')
+const lastSyncedOperationLabel = ref<string | null>(null)
+
 const cartOperationExam = computed<CatalogExam | null>(() => {
   void catalogEpoch.value
-  const label = (examsByKind.value.operation ?? [])[0]
+  const label = cartOperationLabel.value
   if (!label) return null
   const serviceId = activeSpecialtyClinicServiceId.value
-  return (
+  const fromCatalog =
     getCatalogForKind('operation', props.doctorId, props.serviceId, serviceId).find(
       (exam) => exam.label === label,
     ) ??
     getCatalogForKind('operation', props.doctorId, props.serviceId).find(
       (exam) => exam.label === label,
-    ) ??
-    null
-  )
+    )
+  if (fromCatalog) return fromCatalog
+  // Opération saisie libre (pas encore au catalogue)
+  return {
+    id: `custom:${label}`,
+    code: 'CUSTOM',
+    label,
+    category: 'MOYENNE_B',
+    priceFcfa: Math.max(0, Math.round(Number(operationAmountDraft.value) || 0)),
+    surgeonPercent: 70,
+    anesthesiologistPercent: 0,
+    hasAssistant: false,
+  }
 })
 
-const showOperationPricePanel = computed(() => !!cartOperationExam.value)
-
-const showOperationAssistantPanel = computed(
-  () => props.showConsultation && !!selectedOperationExam.value,
+const showCustomOperationPanel = computed(
+  () => props.showConsultation && (activeKind.value === 'operation' || !!cartOperationLabel.value),
 )
 
-const operationAmountDraft = ref('')
-const lastSyncedOperationLabel = ref<string | null>(null)
+const showOperationPricePanel = computed(() => !!cartOperationLabel.value)
+
+const showOperationAssistantPanel = computed(
+  () => props.showConsultation && !!cartOperationLabel.value,
+)
+
+const customOpName = ref('')
+const customOpMessage = ref('')
+const customOpMessageType = ref<'success' | 'error'>('success')
+
+function addCustomOperation() {
+  const label = customOpName.value.trim()
+  if (label.length < 2) {
+    customOpMessageType.value = 'error'
+    customOpMessage.value = uiText('Saisissez le nom de l’opération (2 caractères min.).')
+    return
+  }
+  const amount = Math.max(0, Math.round(Number(operationAmountDraft.value) || 0))
+  if (amount <= 0) {
+    customOpMessageType.value = 'error'
+    customOpMessage.value = uiText('Indiquez le prix de l’opération.')
+    return
+  }
+  updateKind('operation', [label])
+  emit('update:operationAmountFcfa', amount)
+  operationAmountDraft.value = String(amount)
+  lastSyncedOperationLabel.value = label
+  customOpMessageType.value = 'success'
+  customOpMessage.value = uiText('Opération ajoutée — choisissez un assistant si besoin, puis envoyez.')
+  activePanel.value = 'operation'
+}
 
 function emitOperationAmount(raw: string | number | null) {
   if (raw == null || raw === '') {
@@ -581,10 +633,16 @@ const operationSharePreview = computed(() => {
   const exam = cartOperationExam.value
   const total = Math.max(0, Math.round(Number(operationAmountDraft.value) || 0))
   if (!exam || total <= 0) return null
-  const surgeonPct = Math.min(100, Math.max(0, Math.round(exam.surgeonPercent ?? 0)))
+  const surgeonPct = Math.min(100, Math.max(0, Math.round(exam.surgeonPercent ?? 70)))
+  const formAssistantPct = assistantForm.value.withAssistant
+    ? Math.min(99, Math.max(0, Math.round(Number(assistantForm.value.percent) || 0)))
+    : 0
   const assistantPct = Math.min(
     100,
-    Math.max(0, Math.round(exam.anesthesiologistPercent ?? 0)),
+    Math.max(
+      0,
+      formAssistantPct || Math.round(exam.anesthesiologistPercent ?? 0),
+    ),
   )
   const clinicPct = clinicPercentFromSplits(surgeonPct, assistantPct)
   const surgeonShareFcfa = Math.round((total * surgeonPct) / 100)
@@ -618,8 +676,11 @@ async function loadAssistantDoctors() {
 }
 
 function syncAssistantFormFromSelection() {
-  const exam = selectedOperationExam.value
-  if (!exam) return
+  const exam = cartOperationExam.value ?? selectedOperationExam.value
+  if (!exam) {
+    emit('update:operationAssistant', null)
+    return
+  }
   const hasAssistant = !!exam.hasAssistant
   assistantForm.value = {
     withAssistant: true,
@@ -634,11 +695,45 @@ function syncAssistantFormFromSelection() {
     assistantForm.value.withAssistant = true
   }
   assistantMessage.value = ''
+  emitOperationAssistant()
+}
+
+function emitOperationAssistant() {
+  if (!cartOperationLabel.value) {
+    emit('update:operationAssistant', null)
+    return
+  }
+  if (!assistantForm.value.withAssistant) {
+    emit('update:operationAssistant', { anesthesiologistPercent: 0 })
+    return
+  }
+  const percent = Math.min(99, Math.max(1, Math.round(Number(assistantForm.value.percent) || 10)))
+  const hasDoctor = assistantForm.value.mode === 'select' && assistantForm.value.doctorId
+  const hasName =
+    assistantForm.value.mode === 'custom' && assistantForm.value.name.trim().length >= 2
+  if (!hasDoctor && !hasName) {
+    emit('update:operationAssistant', null)
+    return
+  }
+  emit('update:operationAssistant', {
+    anesthesiologistPercent: percent,
+    anesthesiologistId: hasDoctor ? assistantForm.value.doctorId : null,
+    anesthesiologistName: hasName ? assistantForm.value.name.trim() : null,
+  })
 }
 
 async function saveOperationAssistant() {
-  const exam = selectedOperationExam.value
+  const exam = selectedOperationExam.value ?? cartOperationExam.value
   if (!exam) return
+
+  emitOperationAssistant()
+
+  // Opération libre : l’assistant part avec l’envoi (pas de fiche catalogue).
+  if (exam.id.startsWith('custom:')) {
+    assistantMessageType.value = 'success'
+    assistantMessage.value = uiText('Assistant prêt — il sera enregistré à l’envoi de la prescription.')
+    return
+  }
 
   if (!assistantForm.value.withAssistant) {
     assistantSaving.value = true
@@ -725,11 +820,19 @@ watch(
 )
 
 watch(
-  selectedOperationExam,
+  cartOperationExam,
   () => {
     syncAssistantFormFromSelection()
   },
   { immediate: true },
+)
+
+watch(
+  assistantForm,
+  () => {
+    emitOperationAssistant()
+  },
+  { deep: true },
 )
 
 watch(
@@ -739,6 +842,7 @@ watch(
       lastSyncedOperationLabel.value = null
       operationAmountDraft.value = ''
       emit('update:operationAmountFcfa', null)
+      emit('update:operationAssistant', null)
       return
     }
     const sameLabel = lastSyncedOperationLabel.value === exam.label
@@ -752,8 +856,10 @@ watch(
         ? Math.max(0, Math.round(props.operationAmountFcfa))
         : null
     const amount = fromParent ?? Math.max(0, Math.round(exam.priceFcfa || 0))
-    operationAmountDraft.value = String(amount)
-    emit('update:operationAmountFcfa', amount)
+    if (amount > 0 || exam.id.startsWith('custom:')) {
+      operationAmountDraft.value = amount > 0 ? String(amount) : operationAmountDraft.value
+      if (amount > 0) emit('update:operationAmountFcfa', amount)
+    }
   },
   { immediate: true },
 )
@@ -987,6 +1093,41 @@ watch(
       />
 
       <section
+        v-if="showCustomOperationPanel"
+        class="multi-exam-picker__custom-op"
+      >
+        <header class="multi-exam-picker__price-head">
+          <h4>{{ uiText('Saisir une opération') }}</h4>
+          <p>{{ uiText('Nom et prix libres — ou choisissez une opération du catalogue ci-dessous.') }}</p>
+        </header>
+        <div class="multi-exam-picker__custom-op-grid">
+          <UiInput
+            v-model="customOpName"
+            :label="uiText('Nom de l’opération')"
+            :placeholder="uiText('Ex. Appendicectomie')"
+          />
+          <UiInput
+            :model-value="operationAmountDraft"
+            :label="uiText('Prix (FCFA)')"
+            type="number"
+            min="0"
+            step="1"
+            @update:model-value="onOperationAmountInput"
+          />
+          <UiButton type="button" size="sm" @click="addCustomOperation">
+            {{ uiText('Ajouter l’opération') }}
+          </UiButton>
+        </div>
+        <p
+          v-if="customOpMessage"
+          class="multi-exam-picker__assistant-msg"
+          :class="`multi-exam-picker__assistant-msg--${customOpMessageType}`"
+        >
+          {{ customOpMessage }}
+        </p>
+      </section>
+
+      <section
         v-if="showOperationPricePanel && cartOperationExam"
         class="multi-exam-picker__price"
       >
@@ -1036,33 +1177,33 @@ watch(
       </section>
 
       <section
-        v-if="showOperationAssistantPanel && selectedOperationExam"
+        v-if="showOperationAssistantPanel && cartOperationExam"
         class="multi-exam-picker__assistant"
       >
         <header class="multi-exam-picker__assistant-head">
           <h4>{{ uiText('Assistant chirurgie') }}</h4>
           <p>
             {{
-              selectedOperationExam.hasAssistant
+              cartOperationExam.hasAssistant
                 ? translateTemplate('Déjà lié à « {op} » — vous pouvez modifier.', {
-                    op: selectedOperationExam.label,
+                    op: cartOperationExam.label,
                   })
-                : translateTemplate('Aucun assistant sur « {op} » — liez-en un maintenant.', {
-                    op: selectedOperationExam.label,
+                : translateTemplate('Choisissez un assistant pour « {op} » (optionnel).', {
+                    op: cartOperationExam.label,
                   })
             }}
           </p>
         </header>
 
-        <p v-if="selectedOperationExam.hasAssistant" class="multi-exam-picker__assistant-current">
+        <p v-if="cartOperationExam.hasAssistant" class="multi-exam-picker__assistant-current">
           {{
-            selectedOperationExam.anesthesiologistName
+            cartOperationExam.anesthesiologistName
               ? translateTemplate('Actuel : {name} ({pct} %)', {
-                  name: selectedOperationExam.anesthesiologistName,
-                  pct: selectedOperationExam.anesthesiologistPercent ?? 0,
+                  name: cartOperationExam.anesthesiologistName,
+                  pct: cartOperationExam.anesthesiologistPercent ?? 0,
                 })
               : translateTemplate('Actuel : assistant ({pct} %)', {
-                  pct: selectedOperationExam.anesthesiologistPercent ?? 0,
+                  pct: cartOperationExam.anesthesiologistPercent ?? 0,
                 })
           }}
         </p>
@@ -1541,6 +1682,29 @@ watch(
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
+}
+
+.multi-exam-picker__custom-op {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--primary-100);
+  background: var(--surface-muted, #f8fafc);
+}
+
+.multi-exam-picker__custom-op-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr auto;
+  gap: 0.65rem;
+  align-items: end;
+}
+
+@media (max-width: 720px) {
+  .multi-exam-picker__custom-op-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .multi-exam-picker__assistant-msg {

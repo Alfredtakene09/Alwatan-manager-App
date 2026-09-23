@@ -64,6 +64,11 @@ import {
   getPayrollPeriodSummaries,
 } from "../lib/admin-payroll.js";
 import {
+  isPayrollLinkedExpenseId,
+  listPaidPayrollExpenseCores,
+  payrollExpenseMutationBlockedMessage,
+} from "../lib/payroll-expenses.js";
+import {
   deductPendingAdvancesForPayroll,
   salaryAdvanceInclude,
   serializeSalaryAdvance,
@@ -295,6 +300,7 @@ function serializeGestionnaireExpense(row: {
     status: row.status,
     statusLabel: STATUS[row.status],
     comment: row.comment,
+    source: "clinic" as const,
     recordedByName: row.recordedBy ? mapExpenseUserLabel(row.recordedBy) : null,
     recordedByRole: row.recordedBy?.role ?? null,
     recordedByRoleLabel: row.recordedBy ? ROLE_LABELS[row.recordedBy.role] : null,
@@ -570,7 +576,38 @@ router.get("/expenses", async (req, res) => {
     orderBy: { createdAt: "desc" },
     take: 200,
   });
-  return res.json(rows.map(serializeGestionnaireExpense));
+  const clinicRows = rows.map(serializeGestionnaireExpense);
+  const payrollRows =
+    filter === "pending"
+      ? []
+      : (
+          await listPaidPayrollExpenseCores(
+            filter === "month" ? { from: monthStart, to: monthEnd } : undefined,
+          )
+        ).map((row) => ({
+          id: row.id,
+          date: row.date,
+          category: row.category,
+          categoryIcon: null,
+          categoryColor: "#7c3aed",
+          expenseCategoryId: null,
+          description: row.description,
+          amountFcfa: row.amountFcfa,
+          beneficiary: row.beneficiary,
+          paymentMethod: null,
+          receiptPath: null,
+          status: ClinicExpenseStatus.VALIDATED,
+          statusLabel: "Validée",
+          comment: row.comment,
+          source: row.source,
+          recordedByName: row.recordedByName,
+          recordedByRole: row.recordedByRole,
+          recordedByRoleLabel: row.recordedByRoleLabel,
+        }));
+  const merged = [...clinicRows, ...payrollRows].sort((a, b) =>
+    a.date === b.date ? 0 : a.date < b.date ? 1 : -1,
+  );
+  return res.json(merged);
 });
 
 router.post("/expenses", requireUiAction("comptabilite.depenses"), expenseUpload.single("receipt"), async (req, res) => {
@@ -607,6 +644,9 @@ router.post("/expenses", requireUiAction("comptabilite.depenses"), expenseUpload
 
 router.put("/expenses/:id", requireUiAction("comptabilite.depenses"), expenseUpload.single("receipt"), async (req, res) => {
   const user = req.user!;
+  if (isPayrollLinkedExpenseId(String(req.params.id))) {
+    return res.status(409).json({ error: payrollExpenseMutationBlockedMessage() });
+  }
   const row = await prisma.clinicExpense.findUnique({
     where: { id: String(req.params.id) },
     include: gestionnaireExpenseInclude,
@@ -644,6 +684,9 @@ router.put("/expenses/:id", requireUiAction("comptabilite.depenses"), expenseUpl
 });
 
 router.delete("/expenses/:id", requireUiAction("comptabilite.depenses"), async (req, res) => {
+  if (isPayrollLinkedExpenseId(String(req.params.id))) {
+    return res.status(409).json({ error: payrollExpenseMutationBlockedMessage() });
+  }
   const row = await prisma.clinicExpense.findUnique({ where: { id: String(req.params.id) } });
   if (!row) return res.status(404).json({ error: "Dépense introuvable" });
 
@@ -662,6 +705,9 @@ router.delete("/expenses/:id", requireUiAction("comptabilite.depenses"), async (
 
 router.patch("/expenses/:id/validate", requireUiAction("comptabilite.depenses"), async (req, res) => {
   const user = req.user!;
+  if (isPayrollLinkedExpenseId(String(req.params.id))) {
+    return res.status(409).json({ error: payrollExpenseMutationBlockedMessage() });
+  }
   const row = await prisma.clinicExpense.findUnique({
     where: { id: String(req.params.id) },
     include: { expenseCategory: true },
@@ -684,6 +730,9 @@ router.patch("/expenses/:id/validate", requireUiAction("comptabilite.depenses"),
 
 router.patch("/expenses/:id/reject", requireUiAction("comptabilite.depenses"), async (req, res) => {
   const user = req.user!;
+  if (isPayrollLinkedExpenseId(String(req.params.id))) {
+    return res.status(409).json({ error: payrollExpenseMutationBlockedMessage() });
+  }
   const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
   if (reason.length < 3) {
     return res.status(400).json({ error: "Justification requise" });

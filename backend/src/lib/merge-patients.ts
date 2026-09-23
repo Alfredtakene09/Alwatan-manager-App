@@ -15,6 +15,17 @@ export function isUsablePatientPhone(value?: string | null) {
   return normalizePatientPhone(value).length >= 6;
 }
 
+/** Même identité téléphonique : réenregistrement → même dossier. */
+export function phonesMatchForDossierReuse(
+  incomingPhone?: string | null,
+  existingPhone?: string | null,
+) {
+  if (!isUsablePatientPhone(incomingPhone) || !isUsablePatientPhone(existingPhone)) {
+    return false;
+  }
+  return normalizePatientPhone(incomingPhone) === normalizePatientPhone(existingPhone);
+}
+
 /**
  * Plus ancien dossier avec même nom + prénom + numéro de téléphone.
  * Utilisé pour fusionner un réenregistrement (option A) au stade médecin / facture.

@@ -17,6 +17,7 @@
  *   npm run db:purge-patients-expenses -- --confirm
  */
 import { prisma } from "../src/lib/db.js";
+import { runWithAppDataDeleteUnlock } from "../src/lib/db-delete-guard.js";
 
 const confirmed =
   process.env.PURGE_PATIENTS_EXPENSES_CONFIRM === "1" ||
@@ -128,7 +129,7 @@ async function main() {
   console.log("");
   console.log("Suppression en cours…");
 
-  await purge();
+  await runWithAppDataDeleteUnlock("script", () => purge());
 
   const after = await countSnapshot();
   console.log("");

@@ -37,6 +37,6 @@ export type ExamReclamationRow = {
   updatedAt: string
   resolvedAt: string | null
   patient: { code: string; firstName: string; lastName: string }
-  createdBy: { firstName: string; lastName: string }
+  createdBy: { firstName: string; lastName: string; username?: string } | null
   handledBy: { firstName: string; lastName: string } | null
 }

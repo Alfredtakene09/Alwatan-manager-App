@@ -17,6 +17,7 @@ import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { parsePatientAge, splitPatientFullName } from '@/lib/patient-name'
+import { parsePrescribedExamsByKind, hasLabResults } from '@/lib/lab-notes'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
 import MultiExamPrescriptionPicker from '@/components/MultiExamPrescriptionPicker.vue'
 import {
@@ -86,6 +87,7 @@ type ExternalQueueRow = {
   labSentToLabAt: string | null
   service?: string | null
   clinicalNotes?: string | null
+  doctorId?: string | null
   doctor?: { firstName: string; lastName: string } | null
   patient: QueuePatient
 }
@@ -189,9 +191,17 @@ const canConfirmNewPatientWithExams = computed(
   () => canConfirmNewPatient.value && newPatientExamCount.value > 0 && examNetFcfa.value > 0,
 )
 
+const editExamsLocked = computed(() =>
+  hasLabResults(activeRow.value?.clinicalNotes ?? null),
+)
+
 const canSaveEdit = computed(() => {
   const { firstName, lastName } = editParsedName.value
-  return firstName.length >= 2 && lastName.length >= 2 && editParsedAge.value !== null
+  if (firstName.length < 2 || lastName.length < 2 || editParsedAge.value === null) return false
+  if (editExamsLocked.value) return true
+  if (activeRow.value?.hasExams) return newPatientExamCount.value > 0 && examNetFcfa.value > 0
+  if (newPatientExamCount.value > 0) return examNetFcfa.value > 0
+  return true
 })
 
 const canSubmitExams = computed(
@@ -518,7 +528,8 @@ function closeExamsModal() {
   activeRow.value = null
 }
 
-function openEditModal(row: ExternalQueueRow) {
+async function openEditModal(row: ExternalQueueRow) {
+  activeRow.value = row
   editingPatientId.value = row.patientId
   editForm.value = {
     fullName: fullName(row.patient.firstName, row.patient.lastName),
@@ -527,12 +538,41 @@ function openEditModal(row: ExternalQueueRow) {
     phone: row.patient.phone ?? '',
     gender: row.patient.gender ?? 'F',
   }
+  resetExamsForm()
+  selectedDoctorId.value = row.doctorId ?? ''
+  try {
+    await loadExamCatalog()
+  } catch {
+    /* catalogue facultatif */
+  }
+  const byKind = parsePrescribedExamsByKind(row.clinicalNotes)
+  examsByKind.value = {
+    ...emptyExamsByKind(),
+    ...byKind,
+  }
+  const opLabels = byKind.operation ?? []
+  if (opLabels.length) {
+    const otherGross = (['specialty', 'examen', 'radio', 'echo', 'odonto'] as ExamKindSlug[]).reduce(
+      (sum, kind) =>
+        sum + (byKind[kind] ?? []).reduce((inner, label) => inner + getLabExamPriceFcfa(label), 0),
+      0,
+    )
+    const remaining = Math.max(0, row.grossFcfa - otherGross)
+    operationAmountFcfa.value = remaining > 0 ? Math.round(remaining / opLabels.length) : null
+  }
+  const reduction = Math.max(0, row.grossFcfa - row.netFcfa)
+  reductionFcfaInput.value = reduction > 0 ? String(reduction) : ''
+  onReductionFcfaInput(reductionFcfaInput.value)
   showEditModal.value = true
 }
 
 function closeEditModal() {
   showEditModal.value = false
   editingPatientId.value = null
+  if (!showExamsModal.value) {
+    activeRow.value = null
+    resetExamsForm()
+  }
 }
 
 function queueStatusLabel(row: ExternalQueueRow) {
@@ -598,7 +638,7 @@ function serviceDisplayLabel(service: string | null | undefined) {
 function onExternalRowAction(key: string, row: ExternalQueueRow) {
   if (key === 'exams') openExamsModal(row)
   if (key === 'print') void reprintExternalReceipt(row)
-  if (key === 'edit') openEditModal(row)
+  if (key === 'edit') void openEditModal(row)
   if (key === 'delete') void deleteExternalRow(row)
 }
 
@@ -844,33 +884,52 @@ async function submitExams() {
 }
 
 async function saveEdit() {
-  if (!canSaveEdit.value || !editingPatientId.value) return
+  if (!canSaveEdit.value || !editingPatientId.value || !activeRow.value) return
+  const { firstName, lastName } = editParsedName.value
+  const age = editParsedAge.value
+  const wantsExams = !editExamsLocked.value && newPatientExamCount.value > 0
+  if (wantsExams) reservePrintWindow('80mm')
   savingEdit.value = true
   message.value = ''
   try {
-    const { firstName, lastName } = editParsedName.value
-    const age = editParsedAge.value
-    await api.patch(`/patients/${editingPatientId.value}`, {
+    const { data } = await api.patch<{
+      visit?: { patient?: QueuePatient }
+      invoice?: { invoiceNumber?: string } | null
+      grossFcfa?: number
+      netFcfa?: number
+    }>(`/visits/external-queue/${activeRow.value.id}`, {
       firstName,
       lastName,
       age: age ?? undefined,
       ageUnit: editForm.value.ageUnit,
       phone: editForm.value.phone.trim() || undefined,
       gender: editForm.value.gender,
+      doctorId: selectedDoctorId.value || undefined,
+      service: wantsExams ? serviceFromExams(examsByKind.value) ?? activeRow.value.service ?? undefined : undefined,
+      ...(wantsExams ? examsPayload() : {}),
     })
-    message.value = uiText('Informations patient mises à jour.')
-    messageType.value = 'success'
+    if (wantsExams) {
+      const printedPatient = data.visit?.patient ?? activeRow.value.patient
+      const printed = tryPrintExternalExamTickets(printedPatient, {
+        invoiceNumber: data.invoice?.invoiceNumber ?? activeRow.value.invoiceNumber,
+        status: data.invoice || activeRow.value.invoiced ? 'Payé' : undefined,
+        ...printAmountsFromOrder(data),
+      })
+      notifyExternalOrderResult(
+        printed,
+        uiText('Dossier externe mis à jour — identité, examens et montant enregistrés.'),
+      )
+    } else {
+      message.value = uiText('Informations patient mises à jour.')
+      messageType.value = 'success'
+    }
     closeEditModal()
     await loadQueue()
   } catch (error: unknown) {
+    if (wantsExams) cancelPrintWindow()
     const shown = await showDuplicateModalFromError(error)
     if (!shown) {
-      const apiMessage =
-        error && typeof error === 'object' && 'response' in error
-          ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
-          : undefined
-      message.value = apiMessage ?? uiText('Erreur lors de la modification.')
-      messageType.value = 'error'
+      await showApiErrorModal(error, uiText('Erreur lors de la modification.'))
     }
   } finally {
     savingEdit.value = false
@@ -1112,8 +1171,10 @@ onMounted(() => {
     <UiFormModal
       v-if="showEditModal"
       title-id="edit-modal-title"
-      :title="uiText('Modifier le patient')"
+      :title="uiText('Modifier le dossier externe')"
+      :subtitle="activePatientLabel"
       :icon="Pencil"
+      size="wide"
       @close="closeEditModal"
     >
       <form
@@ -1121,13 +1182,91 @@ onMounted(() => {
         class="ui-form-modal__form reception-modal-form"
         @submit.prevent="saveEdit"
       >
-        <ReceptionPatientIdentityFields
-          v-model:full-name="editForm.fullName"
-          v-model:age="editForm.age"
-          v-model:age-unit="editForm.ageUnit"
-          v-model:phone="editForm.phone"
-          v-model:gender="editForm.gender"
+        <section class="form-panel">
+          <h3 class="form-panel__title">
+            <UserRound :size="14" />
+            {{ uiText('Informations patient') }}
+          </h3>
+          <ReceptionPatientIdentityFields
+            v-model:full-name="editForm.fullName"
+            v-model:age="editForm.age"
+            v-model:age-unit="editForm.ageUnit"
+            v-model:phone="editForm.phone"
+            v-model:gender="editForm.gender"
+          />
+        </section>
+
+        <UiAlert
+          v-if="editExamsLocked"
+          type="warning"
+          :message="uiText('Examens verrouillés : résultats déjà validés. Seule l’identité peut être modifiée.')"
         />
+
+        <section v-else class="form-panel form-panel--accent">
+          <h3 class="form-panel__title">
+            <FlaskConical :size="14" />
+            {{ formLabels.prescription }}
+          </h3>
+          <p class="form-panel__hint">
+            {{
+              uiText(
+                'Modifiez le service, les examens, le montant et la réduction. Le médecin est facultatif.',
+              )
+            }}
+          </p>
+          <MultiExamPrescriptionPicker
+            v-model="examsByKind"
+            v-model:operation-amount-fcfa="operationAmountFcfa"
+            :kinds="externalExamKinds"
+            :show-comments="false"
+            :show-consultation="false"
+            @active-service-change="onActiveServiceChange"
+          />
+          <div class="doctor-service-row">
+            <UiSelect
+              v-model="selectedDoctorId"
+              :label="uiText('Médecin (optionnel)')"
+            >
+              <option value="">{{ uiText('Aucun (optionnel)') }}</option>
+              <option v-for="doctor in doctorsSorted" :key="doctor.id" :value="doctor.id">
+                {{ fullName(doctor.firstName, doctor.lastName) }}
+              </option>
+            </UiSelect>
+          </div>
+          <div v-if="examGrossFcfa > 0" class="exam-reduction">
+            <div class="form-grid-2">
+              <UiSelect
+                :model-value="reductionPercent"
+                :label="uiText('Réduction (%)')"
+                @update:model-value="applyReductionPercent"
+              >
+                <option value="">{{ uiText('Aucune') }}</option>
+                <option v-for="pct in EXTERNAL_REDUCTION_PERCENTS" :key="pct" :value="String(pct)">
+                  {{ pct }} %
+                </option>
+              </UiSelect>
+              <UiInput
+                :model-value="reductionFcfaInput"
+                :label="uiText('Réduction (FCFA)')"
+                type="number"
+                placeholder="0"
+                :icon="Percent"
+                @update:model-value="onReductionFcfaInput"
+              />
+            </div>
+            <div class="form-grid-2">
+              <div class="total-preview">
+                <span>{{ uiText('Total catalogue') }}</span>
+                <strong>{{ formatFcfa(examGrossFcfa) }}</strong>
+                <small v-if="examReductionFcfa > 0">− {{ formatFcfa(examReductionFcfa) }}</small>
+              </div>
+              <div class="total-preview">
+                <span>{{ uiText('Net à payer') }}</span>
+                <strong>{{ formatFcfa(examNetFcfa) }}</strong>
+              </div>
+            </div>
+          </div>
+        </section>
       </form>
 
       <template #footer>

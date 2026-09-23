@@ -171,10 +171,10 @@ router.get("/:patientId", requireAnyModule(...DOSSIER_MODULES), async (req, res)
 
   if (!patient) return res.status(404).json({ error: "Patient introuvable" });
 
-  const doctorScope = req.user!.role === "MEDECIN" ? req.user!.id : undefined;
-  if (doctorScope) {
+  const isMedecin = req.user!.role === "MEDECIN";
+  if (isMedecin) {
     const linkedToPatient = await prisma.visit.findFirst({
-      where: { patientId, ...medecinMatchWhere(doctorScope) },
+      where: { patientId, ...medecinMatchWhere(req.user!.id) },
       select: { id: true },
     });
     if (!linkedToPatient) {
@@ -184,11 +184,12 @@ router.get("/:patientId", requireAnyModule(...DOSSIER_MODULES), async (req, res)
     }
   }
 
-  const canViewAllClinical = canViewClinicalConsultationDetails(req.user!.role);
+  // Médecin lié (réenregistrement / transfert inclus) : dossier clinique complet.
+  const canViewAllClinical =
+    canViewClinicalConsultationDetails(req.user!.role) || isMedecin;
   const medicalHistory = await getPatientMedicalHistory(patientId, {
-    doctorScope,
     canViewAllClinicalDetails: canViewAllClinical,
-    viewerDoctorId: req.user!.role === "MEDECIN" ? req.user!.id : null,
+    viewerDoctorId: isMedecin ? req.user!.id : null,
   });
 
   const dossier = await ensurePatientDossier(patientId);

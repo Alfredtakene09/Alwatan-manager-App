@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   LayoutDashboard,
   Search,
@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   CircleDollarSign,
   Clock,
+  BedDouble,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal, showSuccessModal, showValidationErrorModal } from '@/lib/api-modal-helper'
@@ -66,6 +67,7 @@ import PatientsDataTable from '@/components/ui/PatientsDataTable.vue'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
 import ReceptionReductionFields from '@/components/reception/ReceptionReductionFields.vue'
 import DoctorSharesReceivablePanel from '@/components/reception/DoctorSharesReceivablePanel.vue'
+import HospitalisationView from '@/views/HospitalisationView.vue'
 import { matchReceptionReductionPercent } from '@/lib/reception-reduction'
 
 type ReceptionStats = {
@@ -96,8 +98,18 @@ type Patient = {
   category?: PatientCategory
   treatingDoctorId?: string | null
   treatingDoctor?: Doctor | null
+  createdBy?: { id: string; firstName: string; lastName: string } | null
   createdAt?: string
   canDelete?: boolean
+  consultationPayment?: {
+    invoiceId: string
+    invoiceNumber: string
+    status: string
+    amountFcfa: number
+    paidAmountFcfa: number
+    remainingFcfa: number
+    payable: boolean
+  } | null
 }
 
 type Doctor = DoctorOption
@@ -120,6 +132,7 @@ type PatientDetail = Patient & {
     invoiceNumber?: string | null
     totalFcfa?: number | null
   } | null
+  consultationPayment?: Patient['consultationPayment']
 }
 
 type ReceiptData = {
@@ -151,7 +164,11 @@ type DayClosureStatus = {
   examsFcfa?: number
   surgeryFcfa?: number
   hospitalizationFcfa?: number
+  serviceLines?: Array<{ label: string; qty: number; totalFcfa: number }>
+  reductionFcfa?: number
+  saleFcfa?: number
   receptionistName: string
+  receptionistUsername?: string
   closed: boolean
   closure: {
     id: string
@@ -164,19 +181,53 @@ type DayClosureStatus = {
 
 const { uiText, clinicServiceText, dateText, localeCode } = useAppI18n()
 const auth = useAuthStore()
+const route = useRoute()
 const router = useRouter()
 const printingPatientId = ref<string | null>(null)
 
-type ReceptionPageTab = 'enregistrement' | 'doctor-shares'
+type HospitalisationPageTab = 'plan' | 'queue' | 'hospitalized'
+type ReceptionPageTab = 'enregistrement' | 'doctor-shares' | HospitalisationPageTab
+
+const HOSPITALISATION_TABS: HospitalisationPageTab[] = ['plan', 'queue', 'hospitalized']
+
 const canSeeDoctorSharesTab = computed(() =>
   Boolean(auth.user && isDirectionOrGestionnaire(auth.user.role)),
 )
 const activeReceptionTab = ref<ReceptionPageTab>('enregistrement')
+const isHospitalisationTab = computed(() =>
+  HOSPITALISATION_TABS.includes(activeReceptionTab.value as HospitalisationPageTab),
+)
+
+function tabFromRouteQuery(): ReceptionPageTab {
+  const raw = route.query.tab
+  if (raw === 'plan' || raw === 'hospitalized') return raw
+  if (raw === 'queue' || raw === 'hospitaliser') return 'hospitalized'
+  if (raw === 'doctor-shares' && canSeeDoctorSharesTab.value) return 'doctor-shares'
+  return 'enregistrement'
+}
+
+function persistReceptionTab(next: ReceptionPageTab) {
+  const current = tabFromRouteQuery()
+  if (current === next) return
+  const query = { ...route.query }
+  if (next === 'enregistrement') {
+    delete query.tab
+  } else {
+    query.tab = next
+  }
+  void router.replace({ query })
+}
+
+function selectReceptionTab(next: ReceptionPageTab) {
+  activeReceptionTab.value = next
+  persistReceptionTab(next)
+}
 
 const receptionTabs = computed(() => {
   void localeCode.value
   const tabs: Array<{ id: ReceptionPageTab; label: string; icon: typeof UserPlus }> = [
     { id: 'enregistrement', label: uiText('Enregistrement'), icon: UserPlus },
+    { id: 'plan', label: uiText('Plan des salles'), icon: LayoutDashboard },
   ]
   if (canSeeDoctorSharesTab.value) {
     tabs.push({
@@ -190,9 +241,17 @@ const receptionTabs = computed(() => {
 
 watch(canSeeDoctorSharesTab, (canSee) => {
   if (!canSee && activeReceptionTab.value === 'doctor-shares') {
-    activeReceptionTab.value = 'enregistrement'
+    selectReceptionTab('enregistrement')
   }
 })
+
+watch(
+  () => route.query.tab,
+  () => {
+    activeReceptionTab.value = tabFromRouteQuery()
+  },
+  { immediate: true },
+)
 
 function currentReceptionistName() {
   return auth.user ? fullName(auth.user.firstName, auth.user.lastName) : undefined
@@ -212,6 +271,13 @@ const services = ref<ServiceOption[]>([])
 const listFrom = ref(todayInputValue())
 const listTo = ref(todayInputValue())
 const serviceFilter = ref('')
+const receptionists = ref<{ id: string; name: string }[]>([])
+const filterReceptionistId = ref('')
+const canFilterByReceptionist = computed(() => auth.user?.role !== 'RECEPTIONNISTE')
+const selectedReceptionistName = computed(() => {
+  if (!filterReceptionistId.value) return ''
+  return receptionists.value.find((item) => item.id === filterReceptionistId.value)?.name ?? ''
+})
 const sortedDoctors = computed(() =>
   [...doctors.value].sort((a, b) => {
     const byLast = a.lastName.localeCompare(b.lastName, 'fr', { sensitivity: 'base' })
@@ -536,7 +602,9 @@ const patientsPanelSubtitle = computed(() => {
   const scope =
     auth.user?.role === 'RECEPTIONNISTE'
       ? uiText('Vos dossiers créés à la réception')
-      : uiText('Liste des dossiers créés à la réception')
+      : selectedReceptionistName.value
+        ? translateTemplate('Dossiers enregistrés par {name}', { name: selectedReceptionistName.value })
+        : uiText('Liste des dossiers créés à la réception')
   const servicePart = serviceFilter.value.trim()
     ? translateTemplate(' — {service}', {
         service: clinicServiceText(serviceFilter.value.trim()),
@@ -560,12 +628,18 @@ const dashboardStats = computed(() => {
   const serviceHint = serviceFilter.value.trim()
     ? clinicServiceText(serviceFilter.value.trim())
     : ''
+  const periodLabel = isListDateToday.value
+    ? uiText("aujourd'hui")
+    : listDateLabel.value
   return [
   {
     id: 'today',
     label: serviceHint
-      ? translateTemplate("Inscrits aujourd'hui · {service}", { service: serviceHint })
-      : 'Inscrits aujourd\'hui',
+      ? translateTemplate('Inscrits {period} · {service}', {
+          period: periodLabel,
+          service: serviceHint,
+        })
+      : translateTemplate('Inscrits {period}', { period: periodLabel }),
     value: stats.value.registeredToday,
     hint: translateTemplate('{n} passage(s) enregistré(s)', { n: stats.value.visitsToday }),
     icon: CalendarDays,
@@ -620,9 +694,19 @@ let searchTimer: ReturnType<typeof setTimeout> | undefined
 async function loadReceptionStats() {
   loadingStats.value = true
   try {
+    let from = listFrom.value || todayInputValue()
+    let to = listTo.value || from
+    if (from > to) {
+      ;[from, to] = [to, from]
+    }
     const { data } = await api.get<ReceptionStats>('/patients/reception-stats', {
       params: {
+        createdById: canFilterByReceptionist.value
+          ? filterReceptionistId.value || undefined
+          : undefined,
         service: serviceFilter.value.trim() || undefined,
+        from,
+        to,
       },
     })
     stats.value = data
@@ -651,6 +735,7 @@ function printDayClosure(data: DayClosureStatus) {
       businessDate: data.businessDate,
       closedAt,
       receptionistName: data.receptionistName || currentReceptionistName() || '—',
+      receptionistUsername: data.receptionistUsername || auth.user?.username || null,
       shiftLabel: data.shiftLabel,
       collectedFcfa: data.closure?.collectedFcfa ?? data.collectedFcfa,
       expensesFcfa: data.closure?.expensesFcfa ?? data.expensesFcfa,
@@ -661,6 +746,9 @@ function printDayClosure(data: DayClosureStatus) {
       examsFcfa: data.examsFcfa,
       surgeryFcfa: data.surgeryFcfa,
       hospitalizationFcfa: data.hospitalizationFcfa,
+      serviceLines: data.serviceLines,
+      reductionFcfa: data.reductionFcfa,
+      saleFcfa: data.saleFcfa,
     }),
     { pageSize: '80mm' },
   )
@@ -729,12 +817,28 @@ async function loadPatients() {
         q: search.value.trim() || undefined,
         from,
         to,
+        createdById: canFilterByReceptionist.value
+          ? filterReceptionistId.value || undefined
+          : undefined,
         service: serviceFilter.value.trim() || undefined,
       },
     })
     patients.value = sortPatientsNewestFirst(data)
   } finally {
     loadingPatients.value = false
+  }
+}
+
+async function loadReceptionists() {
+  if (!canFilterByReceptionist.value) {
+    receptionists.value = []
+    return
+  }
+  try {
+    const { data } = await api.get<{ id: string; name: string }[]>('/patients/receptionists')
+    receptionists.value = Array.isArray(data) ? data : []
+  } catch {
+    receptionists.value = []
   }
 }
 
@@ -764,6 +868,7 @@ async function loadServices() {
 
 async function refreshAll() {
   await Promise.all([
+    loadReceptionists(),
     loadPatients(),
     loadReceptionStats(),
     loadDayClosure(),
@@ -925,8 +1030,14 @@ async function printReceipt(r: ReceiptData) {
   })
 }
 
-async function printDetailReceipt(detail: PatientDetail) {
-  if (!detail.waitingVisit) {
+async function printDetailReceipt(
+  detail: PatientDetail,
+  listPayment?: Patient['consultationPayment'],
+) {
+  const visit = detail.waitingVisit
+  const payment = detail.consultationPayment ?? listPayment ?? null
+
+  if (!visit && !payment) {
     cancelPrintWindow()
     showAlert(
       'Aucune consultation en cours à imprimer. Ouvrez le dossier, vérifiez le médecin et le montant, puis enregistrez à nouveau.',
@@ -935,30 +1046,33 @@ async function printDetailReceipt(detail: PatientDetail) {
     return
   }
 
-  const visit = detail.waitingVisit
-  const amount = visit.consultationFeeFcfa ?? visit.consultationAmountFcfa ?? 0
-  const reduction = visit.reductionFcfa ?? 0
-  const total = visit.totalFcfa ?? Math.max(0, amount - reduction)
+  const reduction = Math.max(0, visit?.reductionFcfa ?? 0)
+  const feeFromVisit =
+    Number(visit?.consultationFeeFcfa) || Number(visit?.consultationAmountFcfa) || 0
+  const invoiceNet = Number(visit?.totalFcfa) || Number(payment?.amountFcfa) || 0
+  const amount = feeFromVisit > 0 ? feeFromVisit : invoiceNet > 0 ? invoiceNet + reduction : 0
+  const total = invoiceNet > 0 ? invoiceNet : Math.max(0, amount - reduction)
+  const exempt = isExemptCategory(detail.category ?? 'STANDARD')
 
-  if (amount <= 0 && !isExemptCategory(detail.category ?? 'STANDARD')) {
+  if (amount <= 0 && total <= 0 && !exempt) {
     cancelPrintWindow()
     showAlert('Aucun montant de consultation à imprimer.', 'error')
     return
   }
 
-  const doctorName = visit.doctor
+  const doctorName = visit?.doctor
     ? `Dr ${fullName(visit.doctor.firstName, visit.doctor.lastName)}`
     : '—'
 
-  const invoiceNumber = visit.invoiceNumber ?? undefined
+  const invoiceNumber = visit?.invoiceNumber ?? payment?.invoiceNumber ?? undefined
 
   await printReceipt({
     patientCode: detail.code,
     patientName: fullName(detail.firstName, detail.lastName),
     doctorName,
-    amount: isExemptCategory(detail.category ?? 'STANDARD') ? 0 : amount,
-    reduction: isExemptCategory(detail.category ?? 'STANDARD') ? 0 : reduction,
-    total: isExemptCategory(detail.category ?? 'STANDARD') ? 0 : total,
+    amount: exempt ? 0 : amount,
+    reduction: exempt ? 0 : reduction,
+    total: exempt ? 0 : total,
     invoiceNumber,
     date: new Date().toLocaleString('fr-FR'),
     age: detail.age,
@@ -1028,7 +1142,9 @@ async function createPatientAndVisit() {
     })
     showAlert(
       translateTemplate(
-        'Dossier {code} enregistré — {name} est en attente de consultation.',
+        data.linkedExistingDossier
+          ? 'Dossier {code} rouvert — {name} : historique complet transmis au médecin.'
+          : 'Dossier {code} enregistré — {name} est en attente de consultation.',
         {
           code: patient.code,
           name: fullName(patient.firstName, patient.lastName),
@@ -1058,7 +1174,7 @@ function printPatientReceipt(patient: Patient) {
   printingPatientId.value = patient.id
   reservePrintWindow('80mm')
   loadPatientDetail(patient.id)
-    .then(printDetailReceipt)
+    .then((detail) => printDetailReceipt(detail, patient.consultationPayment))
     .catch(() => {
       cancelPrintWindow()
       showAlert('Impossible d\'imprimer le reçu.', 'error')
@@ -1341,9 +1457,15 @@ watch(search, () => {
 
 watch([listFrom, listTo], () => {
   loadPatients()
+  loadReceptionStats()
 })
 
 watch(serviceFilter, () => {
+  loadPatients()
+  loadReceptionStats()
+})
+
+watch(filterReceptionistId, () => {
   loadPatients()
   loadReceptionStats()
 })
@@ -1385,7 +1507,7 @@ onUnmounted(clearAlert)
             :icon="Clock"
             @click="router.push('/reception/en-attente-paiement')"
           >
-            En attente de paiement
+            {{ uiText('En attente de paiement') }}
           </UiButton>
           <UiButton
             v-if="dayClosure?.closed"
@@ -1394,7 +1516,7 @@ onUnmounted(clearAlert)
             :disabled="loadingDayClosure"
             @click="dayClosure && printDayClosure(dayClosure)"
           >
-            Journée clôturée
+            {{ uiText('Journée clôturée') }}
           </UiButton>
           <UiButton
             v-else
@@ -1403,13 +1525,19 @@ onUnmounted(clearAlert)
             :loading="closingDay || loadingDayClosure"
             @click="closeReceptionDay"
           >
-            Clôturer la journée
+            {{ uiText('Clôturer la journée') }}
+          </UiButton>
+          <UiButton
+            variant="primary"
+            :icon="BedDouble"
+            @click="selectReceptionTab('hospitalized')"
+          >
+            {{ uiText('Hospitalisation') }}
           </UiButton>
         </template>
       </UiPageHeader>
 
       <div
-        v-if="canSeeDoctorSharesTab"
         class="reception-page-tabs"
         role="tablist"
         :aria-label="uiText('Sections réception')"
@@ -1422,7 +1550,7 @@ onUnmounted(clearAlert)
           class="reception-page-tabs__btn"
           :class="{ 'reception-page-tabs__btn--active': activeReceptionTab === tab.id }"
           :aria-selected="activeReceptionTab === tab.id"
-          @click="activeReceptionTab = tab.id"
+          @click="selectReceptionTab(tab.id)"
         >
           <component :is="tab.icon" :size="16" />
           {{ tab.label }}
@@ -1433,7 +1561,7 @@ onUnmounted(clearAlert)
         v-if="canSeeDoctorSharesTab && activeReceptionTab === 'doctor-shares'"
       />
 
-      <template v-if="!canSeeDoctorSharesTab || activeReceptionTab === 'enregistrement'">
+      <template v-if="activeReceptionTab === 'enregistrement'">
       <UiAlert v-if="message" :type="messageType" :message="message" class="page-alert" />
 
       <div class="stats-grid" :class="{ 'stats-grid--loading': loadingStats }">
@@ -1459,9 +1587,14 @@ onUnmounted(clearAlert)
 
       <div class="patients-panel-sticky">
         <div class="table-toolbar">
-          <div class="table-toolbar__title">
-            <h3>{{ uiText('Patients enregistrés') }}</h3>
-            <p>{{ patientsPanelSubtitle }}</p>
+          <div class="table-toolbar__top">
+            <div class="table-toolbar__title">
+              <h3>{{ uiText('Patients enregistrés') }}</h3>
+              <p>{{ patientsPanelSubtitle }}</p>
+            </div>
+            <UiButton variant="primary" class="table-toolbar__new" @click="openModal">
+              Nouveau
+            </UiButton>
           </div>
 
           <div class="table-toolbar__filters">
@@ -1496,6 +1629,16 @@ onUnmounted(clearAlert)
               </button>
             </div>
 
+            <label v-if="canFilterByReceptionist" class="receptionist-filter">
+              <span class="date-filter__label">{{ uiText('Réceptionniste') }}</span>
+              <select v-model="filterReceptionistId" class="receptionist-filter__select">
+                <option value="">{{ uiText('Tous les réceptionnistes') }}</option>
+                <option v-for="item in receptionists" :key="item.id" :value="item.id">
+                  {{ item.name }}
+                </option>
+              </select>
+            </label>
+
             <div class="table-toolbar__search">
               <div class="search-compact">
                 <Search :size="16" class="search-compact__icon" />
@@ -1519,17 +1662,17 @@ onUnmounted(clearAlert)
               <span class="search-count">{{ searchLabel }}</span>
             </div>
           </div>
-
-          <UiButton variant="primary" class="table-toolbar__new" @click="openModal">
-            Nouveau
-          </UiButton>
         </div>
       </div>
       </template>
     </section>
 
+    <section v-if="isHospitalisationTab" class="dashboard-body dashboard-body--hospitalisation">
+      <HospitalisationView embedded />
+    </section>
+
     <section
-      v-if="!canSeeDoctorSharesTab || activeReceptionTab === 'enregistrement'"
+      v-if="activeReceptionTab === 'enregistrement'"
       class="dashboard-body"
     >
       <div class="patients-table-card">
@@ -1540,6 +1683,7 @@ onUnmounted(clearAlert)
             :loading="loadingPatients || !!deletingPatientId"
             :service-options="serviceFilterOptions"
             v-model:service-filter="serviceFilter"
+            :show-receptionist="canFilterByReceptionist"
             show-print
             :printing-patient-id="printingPatientId"
             @print="printPatientReceipt"
@@ -1552,7 +1696,7 @@ onUnmounted(clearAlert)
     </section>
 
     <UiFormModal
-      v-if="showModal && (!canSeeDoctorSharesTab || activeReceptionTab === 'enregistrement')"
+      v-if="showModal && activeReceptionTab === 'enregistrement'"
       title-id="modal-title"
       title="Nouveau patient"
       subtitle="Enregistrement et consultation"
@@ -1911,18 +2055,23 @@ onUnmounted(clearAlert)
 .reception-dashboard {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
-  height: calc(100dvh - 9rem);
+  gap: 0.5rem;
+  height: calc(100dvh - 7.5rem);
   min-height: 0;
+  overflow: hidden;
 }
 
 .dashboard-sticky {
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(48dvh, 26rem);
+  overflow-x: hidden;
+  overflow-y: auto;
   position: sticky;
   top: 0;
   z-index: 30;
-  margin: -1.75rem -2rem 0;
-  padding: 0.875rem 2rem 1.125rem;
+  margin: calc(-1 * var(--page-padding-y)) calc(-1 * var(--page-padding-x)) 0;
+  padding: 0.65rem var(--page-padding-x) 0.5rem;
   background: var(--bg-app);
   border-bottom: none;
   box-shadow: none;
@@ -1930,31 +2079,44 @@ onUnmounted(clearAlert)
 
 .dashboard-sticky :deep(.page-header) {
   margin-bottom: 0.625rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1rem;
+}
+
+.dashboard-sticky :deep(.page-header__actions) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  margin-inline-start: auto;
 }
 
 .reception-page-tabs {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  margin: 0 0 0.85rem;
-  padding: 0.25rem;
+  gap: 0.3rem;
+  margin: 0 0 0.65rem;
+  padding: 0.2rem;
   background: #f1f5f9;
   border: 1px solid var(--border);
   border-radius: 10px;
   width: fit-content;
+  max-width: 100%;
 }
 
 .reception-page-tabs__btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.45rem 0.85rem;
+  gap: 0.3rem;
+  padding: 0.35rem 0.65rem;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: var(--text-muted);
   font-family: var(--font);
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
@@ -2008,8 +2170,8 @@ onUnmounted(clearAlert)
 .dash-stat {
   display: flex;
   align-items: flex-start;
-  gap: 0.625rem;
-  padding: 0.7rem 0.8rem;
+  gap: 0.5rem;
+  padding: 0.55rem 0.65rem;
   min-width: 0;
   border-radius: var(--radius-sm);
   overflow: hidden;
@@ -2068,7 +2230,7 @@ onUnmounted(clearAlert)
   align-items: baseline;
   gap: 0.2rem;
   margin-top: 0.15rem;
-  font-size: 1.375rem;
+  font-size: var(--density-stat-value);
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.1;
@@ -2092,23 +2254,24 @@ onUnmounted(clearAlert)
 }
 
 .dashboard-body {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 0;
+  min-height: 16rem;
   display: flex;
   flex-direction: column;
   padding-top: 0;
+  overflow: hidden;
 }
 
 .patients-panel-sticky {
-  margin-top: 0.625rem;
-  padding-top: 0.625rem;
-  padding-bottom: 0.25rem;
+  margin-top: 0.4rem;
+  padding-top: 0.4rem;
+  padding-bottom: 0.2rem;
   border-top: 1px solid var(--border);
 }
 
 .patients-table-card {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 0;
+  min-height: 14rem;
   display: flex;
   flex-direction: column;
   margin-top: 0.25rem;
@@ -2120,8 +2283,8 @@ onUnmounted(clearAlert)
 }
 
 .patients-table-card .table-wrap {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 0;
+  min-height: 12rem;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2136,15 +2299,22 @@ onUnmounted(clearAlert)
 }
 
 .table-toolbar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 28rem) auto;
-  align-items: center;
-  gap: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
   margin-bottom: 0;
+}
+
+.table-toolbar__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
 .table-toolbar__title {
   min-width: 0;
+  flex: 1;
 }
 
 .table-toolbar__title h3 {
@@ -2160,23 +2330,41 @@ onUnmounted(clearAlert)
   font-size: 0.6875rem;
   color: var(--text-muted);
   line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .table-toolbar__new {
   flex-shrink: 0;
-  justify-self: end;
   white-space: nowrap;
+  align-self: center;
 }
 
 .table-toolbar__filters {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: flex-end;
-  gap: 0.5rem;
+  gap: 0.55rem 0.65rem;
   min-width: 0;
+}
+
+.receptionist-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+
+.receptionist-filter__select {
+  height: 2.25rem;
+  min-width: 11rem;
+  max-width: 16rem;
+  padding: 0 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
 }
 
 .date-range-filter {
@@ -2237,8 +2425,9 @@ onUnmounted(clearAlert)
   flex-direction: column;
   align-items: stretch;
   gap: 0.2rem;
-  flex: 1;
-  min-width: 8rem;
+  flex: 1 1 14rem;
+  min-width: 12rem;
+  max-width: 22rem;
   padding: 0;
 }
 
@@ -2507,11 +2696,6 @@ onUnmounted(clearAlert)
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .table-toolbar {
-    grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) auto;
-    gap: 0.45rem 0.55rem;
-  }
-
   .table-toolbar__title h3 {
     font-size: 0.8125rem;
   }
@@ -2521,7 +2705,7 @@ onUnmounted(clearAlert)
   }
 
   .table-toolbar__filters {
-    gap: 0.35rem;
+    gap: 0.4rem 0.5rem;
   }
 
   .date-filter__input {
@@ -2534,6 +2718,12 @@ onUnmounted(clearAlert)
   .date-filter__today {
     font-size: 0.625rem;
     margin-bottom: 0.25rem;
+  }
+
+  .receptionist-filter__select {
+    height: 2rem;
+    min-width: 9.5rem;
+    font-size: 0.75rem;
   }
 
   .search-compact {
@@ -2561,9 +2751,14 @@ onUnmounted(clearAlert)
     height: auto;
   }
 
+  .dash-stat__hint {
+    white-space: normal;
+  }
+
   .dashboard-sticky {
-    margin: -1.75rem -1rem 0;
-    padding: 0.75rem 1rem 0.75rem;
+    max-height: none;
+    margin: calc(-1 * var(--page-padding-y)) calc(-1 * var(--page-padding-x)) 0;
+    padding: 0.5rem var(--page-padding-x) 0.55rem;
   }
 
   .stats-grid {
@@ -2593,31 +2788,18 @@ onUnmounted(clearAlert)
     width: auto;
   }
 
-  .table-toolbar {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 0.4rem 0.45rem;
+  .table-toolbar__top {
+    flex-wrap: wrap;
   }
 
-  .table-toolbar__title {
-    grid-column: 1 / -1;
-  }
-
-  .table-toolbar__filters {
-    grid-column: 1;
-  }
-
-  .table-toolbar__new {
-    grid-column: 2;
-    width: auto;
-    justify-self: end;
+  .table-toolbar__search {
+    flex: 1 1 100%;
+    max-width: none;
+    min-width: 0;
   }
 
   .date-filter__input {
     width: 6.75rem;
-  }
-
-  .table-toolbar__search {
-    min-width: 6.5rem;
   }
 
   .row-actions {
@@ -2630,21 +2812,23 @@ onUnmounted(clearAlert)
 }
 
 @media (max-width: 520px) {
-  .table-toolbar {
-    grid-template-columns: 1fr;
+  .table-toolbar__top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .table-toolbar__new {
+    width: 100%;
   }
 
   .table-toolbar__filters {
     flex-wrap: wrap;
   }
 
-  .table-toolbar__new {
+  .receptionist-filter,
+  .receptionist-filter__select {
     width: 100%;
-    justify-self: stretch;
-  }
-
-  .table-toolbar__title p {
-    white-space: normal;
+    max-width: none;
   }
 
   .search-compact {

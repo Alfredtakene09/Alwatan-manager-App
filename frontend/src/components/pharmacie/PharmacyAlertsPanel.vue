@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import {
-  RefreshCw,
   PackageX,
   AlertTriangle,
   PackageMinus,
@@ -358,9 +357,6 @@ defineExpose({ reload: loadAlerts })
           @excel="exportExcel"
           @word="exportWord"
         />
-        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || removing" @click="loadAlerts">
-          {{ uiText('Actualiser') }}
-        </UiButton>
       </div>
     </div>
 

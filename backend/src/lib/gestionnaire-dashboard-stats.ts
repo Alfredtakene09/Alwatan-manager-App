@@ -10,6 +10,7 @@ import { prisma } from "./db.js";
 import {
   currentPayrollPeriod,
   ensurePayrollForMonth,
+  payrollCountedWhere,
   payrollPeriodBounds,
 } from "./admin-payroll.js";
 import { netAfterExpenses } from "./cashier-personal-stats.js";
@@ -17,7 +18,7 @@ import {
   assessComptableDisbursementSchedule,
   COMPTABLE_DISBURSEMENT_WORKFLOW_HINT,
 } from "./gestionnaire-comptable-disbursement.js";
-import { buildFinancialKpis } from "./admin-dashboard-stats.js";
+import { buildFinancialKpis, type DashboardDateRange } from "./admin-dashboard-stats.js";
 import { comptabiliteInvoicePatientWhere } from "./patient-billing.js";
 import {
   aggregateCollectedBetween,
@@ -557,7 +558,7 @@ async function buildCashAlerts() {
   ];
 }
 
-export async function buildGestionnaireDashboardOverview() {
+export async function buildGestionnaireDashboardOverview(range?: DashboardDateRange) {
   const now = new Date();
   const { year, month } = currentPayrollPeriod(now);
   await ensurePayrollForMonth(year, month);
@@ -589,7 +590,7 @@ export async function buildGestionnaireDashboardOverview() {
     sumValidatedExpensesBetween(monthBounds.start, monthBounds.end),
     sumPayrollPaidBetween(monthBounds.start, monthBounds.end),
     prisma.employeePayroll.findMany({
-      where: { year, month },
+      where: { year, month, ...payrollCountedWhere },
       select: { grossFcfa: true, status: true },
     }),
     prisma.employeePayroll.count({
@@ -597,6 +598,7 @@ export async function buildGestionnaireDashboardOverview() {
         year,
         month,
         status: { in: [PayrollStatus.PENDING, PayrollStatus.LATE] },
+        ...payrollCountedWhere,
       },
     }),
     buildCashAlerts(),
@@ -617,7 +619,7 @@ export async function buildGestionnaireDashboardOverview() {
     }),
     buildDailyFlow(90),
     sumValidatedExpensesBetween(monthBounds.start, monthBounds.end),
-    buildFinancialKpis(now),
+    buildFinancialKpis(now, range),
     countPendingDoctorOvertime(),
   ]);
 
@@ -686,6 +688,7 @@ export async function buildGestionnaireNavBadges() {
         year,
         month,
         status: { in: [PayrollStatus.PENDING, PayrollStatus.LATE] },
+        ...payrollCountedWhere,
       },
     }),
     prisma.receptionDayClosure.count({ where: { validatedAt: null } }),

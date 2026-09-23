@@ -11,7 +11,7 @@
 
 .simple-table-shell--fill {
   flex: 1;
-  min-height: 0;
+  min-height: 10rem;
   max-height: none;
   height: 100%;
 }
@@ -551,4 +551,22 @@
 .st-btn--accent.st-btn--text:hover:not(:disabled) {
   filter: brightness(0.95);
   color: #fff;
+}
+
+@media (max-width: 1023px) {
+  .simple-table {
+    font-size: 0.8rem;
+  }
+
+  .simple-table thead th,
+  .simple-table tbody td {
+    padding: 0.32rem 0.45rem;
+  }
+}
+
+@media (max-width: 639px) {
+  .simple-table thead th {
+    font-size: 0.62rem;
+    letter-spacing: 0.02em;
+  }
 }

@@ -16,9 +16,9 @@ export function translateDashboardLabel(label: string): string {
   return translateUi(label)
 }
 
-export function formatTrendPercentLocalized(value: number): string {
+export function formatTrendPercentLocalized(value: number, vsPreviousPeriod = false): string {
   const sign = value > 0 ? '↑' : value < 0 ? '↓' : '→'
-  const suffix = translateUi('% vs mois précédent')
+  const suffix = translateUi(vsPreviousPeriod ? '% vs période précédente' : '% vs mois précédent')
   return `${sign} ${Math.abs(value)} ${suffix}`
 }
 

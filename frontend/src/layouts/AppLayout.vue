@@ -611,11 +611,19 @@ watch(
 .page-content {
   flex: 1;
   min-height: 0;
-  padding: var(--page-padding-y) var(--page-padding-x) calc(2.5rem + var(--safe-bottom));
+  padding: var(--page-padding-y) var(--page-padding-x) calc(1.25rem + var(--safe-bottom));
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   background: var(--bg-app);
+}
+
+/* ── Petits PC ── */
+@media (max-width: 1280px) {
+  .topbar {
+    padding: 0.7rem 1.15rem;
+    gap: 0.65rem;
+  }
 }
 
 /* ── Tablette ── */
@@ -647,9 +655,9 @@ watch(
   }
 
   .topbar {
-    padding: 0.85rem 1.25rem;
-    padding-top: calc(0.85rem + var(--safe-top));
-    gap: 0.75rem;
+    padding: 0.65rem 1rem;
+    padding-top: calc(0.65rem + var(--safe-top));
+    gap: 0.55rem;
   }
 
 }

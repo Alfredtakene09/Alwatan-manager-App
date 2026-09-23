@@ -1,8 +1,16 @@
-import { buildClinicPrintHeader, openPrintDocument } from '@/lib/print-document'
+import {
+  buildClinicPrintHeader,
+  buildThermalTicketHeadHtml,
+  openPrintDocument,
+  thermalAr,
+  thermalArTemplate,
+  thermalMetaRow,
+  thermalThanksBiHtml,
+} from '@/lib/print-document'
 import { CLINIC, clinicTaxLine } from '@/lib/clinic'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { parsePrescribedHospitalisationDays } from '@/lib/lab-notes'
-import { translateUi } from '@/i18n/translate'
+import { translateUi, translateUiLocale } from '@/i18n/translate'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 
 const t = translateUi
@@ -22,6 +30,7 @@ export type HospitalizationAdmissionForm = {
   dailyRateFcfa: number
   reductionFcfa: number
   doctorInstructions: string
+  paymentPaid?: boolean
 }
 
 export function endDateFromStayDays(startDate: string, stayDays: number): string {
@@ -67,6 +76,10 @@ function addDaysIso(isoDate: string, days: number): string {
 
 function isoFromDate(value?: string | Date | null): string {
   if (!value) return ''
+  if (typeof value === 'string') {
+    const match = value.match(/^(\d{4}-\d{2}-\d{2})/)
+    if (match) return match[1]
+  }
   const date = value instanceof Date ? value : new Date(value)
   if (Number.isNaN(date.getTime())) return ''
   return [
@@ -74,6 +87,40 @@ function isoFromDate(value?: string | Date | null): string {
     String(date.getMonth() + 1).padStart(2, '0'),
     String(date.getDate()).padStart(2, '0'),
   ].join('-')
+}
+
+export function todayLocalIsoDate(): string {
+  return isoFromDate(new Date())
+}
+
+export function hospitalizationStayDays(hosp: {
+  nightsCount?: number | null
+  startDate?: string | Date | null
+  endDate?: string | Date | null
+}): number {
+  if (hosp.nightsCount && hosp.nightsCount >= 1) return hosp.nightsCount
+  const start = isoFromDate(hosp.startDate)
+  const end = isoFromDate(hosp.endDate)
+  if (!start || !end) return 0
+  return computeHospitalizationNights(start, end)
+}
+
+/** Séjour ACTIVE dont la date de sortie prévue est aujourd’hui ou déjà passée. */
+export function hospitalizationStayEnded(hosp: {
+  status: string
+  room?: { name?: string } | null
+  startDate?: string | Date | null
+  endDate?: string | Date | null
+  nightsCount?: number | null
+}): boolean {
+  if (hosp.status !== 'ACTIVE') return false
+  const start = isoFromDate(hosp.startDate)
+  let end = isoFromDate(hosp.endDate)
+  if (!end && start && hosp.nightsCount && hosp.nightsCount >= 1) {
+    end = endDateFromStayDays(start, hosp.nightsCount)
+  }
+  if (!end) return false
+  return end <= todayLocalIsoDate()
 }
 
 export function defaultAdmissionForm(partial: {
@@ -93,6 +140,7 @@ export function defaultAdmissionForm(partial: {
   stayDays?: number
   prescribedStayDays?: number | null
   reductionFcfa?: number
+  paymentPaid?: boolean
 }): HospitalizationAdmissionForm {
   const today = new Date().toISOString().slice(0, 10)
   const startDate = partial.startDate ?? today
@@ -113,6 +161,7 @@ export function defaultAdmissionForm(partial: {
     dailyRateFcfa: partial.dailyRateFcfa ?? 0,
     reductionFcfa: partial.reductionFcfa ?? 0,
     doctorInstructions: partial.doctorInstructions ?? '',
+    paymentPaid: partial.paymentPaid !== false,
   }
 }
 
@@ -127,6 +176,8 @@ export function admissionFormFromHospitalization(hosp: {
   attendingDoctorId?: string | null
   bedId?: string | null
   doctorInstructions?: string | null
+  nightsCount?: number
+  paidAt?: string | Date | null
   visit: {
     patient: { code: string; firstName: string; lastName: string }
     consultation?: {
@@ -160,7 +211,9 @@ export function admissionFormFromHospitalization(hosp: {
   const stayDays =
     startIso && endIso
       ? stayDaysFromDates(startIso, endIso)
-      : prescribedStayDays ?? 1
+      : hosp.nightsCount && hosp.nightsCount >= 1
+        ? hosp.nightsCount
+        : prescribedStayDays ?? 1
 
   return defaultAdmissionForm({
     patientFirstName: hosp.visit.patient.firstName,
@@ -179,21 +232,29 @@ export function admissionFormFromHospitalization(hosp: {
     stayDays,
     prescribedStayDays,
     reductionFcfa: hosp.reductionFcfa ?? 0,
+    paymentPaid: Boolean(hosp.paidAt),
   })
 }
 
-function formatDateFr(iso: string) {
+function formatDateFr(iso: string, compact = false) {
   if (!iso) return ''
   const [year, month, day] = iso.split('-').map(Number)
   const date = new Date(year, month - 1, day)
-  return Number.isNaN(date.getTime())
-    ? ''
-    : date.toLocaleDateString('fr-FR', {
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleDateString('fr-FR', compact
+    ? { day: '2-digit', month: '2-digit', year: 'numeric' }
+    : {
         weekday: 'short',
         day: '2-digit',
         month: 'long',
         year: 'numeric',
       })
+}
+
+function roomTypeLabel(roomType: string) {
+  if (roomType === 'VIP') return 'VIP'
+  if (roomType === 'SIMPLE') return translateUiLocale('Simple', 'fr')
+  return roomType || '—'
 }
 
 function fieldRow(labelFr: string, labelAr: string, value: string) {
@@ -207,19 +268,14 @@ function fieldRow(labelFr: string, labelAr: string, value: string) {
     </div>`
 }
 
-function instructionLinesHtml(instructions: string, minLineCount = 36) {
+function instructionLinesHtml(instructions: string) {
   const trimmed = instructions.trim()
-  const blankLine = () => '<div class="hosp-adm-line hosp-adm-line--blank">&nbsp;</div>'
-  if (trimmed) {
-    const lines = trimmed
-      .split('\n')
-      .map((line) => `<div class="hosp-adm-line">${line || '&nbsp;'}</div>`)
-    while (lines.length < minLineCount) {
-      lines.push(blankLine())
-    }
-    return lines.join('')
-  }
-  return Array.from({ length: minLineCount }, blankLine).join('')
+  if (!trimmed) return ''
+  return trimmed
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => `<div class="hosp-adm-line">${line}</div>`)
+    .join('')
 }
 
 const HOSP_ADMISSION_PRINT_STYLES = `
@@ -233,9 +289,8 @@ const HOSP_ADMISSION_PRINT_STYLES = `
       box-sizing: border-box;
     }
     .hosp-adm-doc.print-invoice-page {
-      page-break-after: always;
-      break-after: page;
-      min-height: 200vh;
+      page-break-after: auto;
+      break-after: auto;
     }
     .hosp-adm-profile-head {
       page-break-inside: avoid;
@@ -307,11 +362,9 @@ const HOSP_ADMISSION_PRINT_STYLES = `
     .hosp-adm-instructions {
       display: flex;
       flex-direction: column;
-      flex: 1 1 auto;
-      min-height: 78vh;
       border: 1px solid #e2e8f0;
       border-radius: 10px;
-      padding: 12px 14px 10px;
+      padding: 8px 12px;
       background: #fafcfd;
     }
     .hosp-adm-instructions__title {
@@ -336,21 +389,16 @@ const HOSP_ADMISSION_PRINT_STYLES = `
       font-weight: 700;
     }
     .hosp-adm-lines {
-      flex: 1 1 auto;
-      min-height: 72vh;
+      min-height: 0;
     }
     .hosp-adm-line {
       border-bottom: 1px dotted #cbd5e1;
-      min-height: 24px;
-      margin-bottom: 5px;
+      min-height: 18px;
+      margin-bottom: 3px;
       font-size: 11px;
-      line-height: 1.45;
+      line-height: 1.35;
       color: #1e293b;
       white-space: pre-wrap;
-    }
-    .hosp-adm-line--blank {
-      min-height: 24px;
-      margin-bottom: 4px;
     }
     .hosp-adm-footer {
       margin-top: 10px;
@@ -373,18 +421,12 @@ const HOSP_ADMISSION_PRINT_STYLES = `
     }
     @media print {
       .hosp-adm-doc.print-invoice-page {
-        min-height: 528mm;
+        min-height: 0;
         height: auto;
       }
-      .hosp-adm-instructions {
-        min-height: 400mm;
-      }
-      .hosp-adm-lines {
-        min-height: 370mm;
-      }
       .clinic-header {
-        margin-bottom: 10px;
-        padding-bottom: 10px;
+        margin-bottom: 8px;
+        padding-bottom: 8px;
       }
     }
   </style>`
@@ -404,9 +446,21 @@ export function buildHospitalizationAdmissionPrintHtml(
 function buildHospitalizationProfileBodyHtml(form: HospitalizationAdmissionForm): string {
   const isVip = form.roomType === 'VIP'
   const titleAr = isVip ? 'ملف دخول عنبر VIP' : 'ملف دخول عنبر'
+  const instructionHtml = instructionLinesHtml(form.doctorInstructions)
+  const instructionsBlock = instructionHtml
+    ? `<section class="hosp-adm-instructions">
+      <div class="hosp-adm-instructions__title">
+        <h3>Instructions du médecin traitant</h3>
+        <p dir="rtl">تعليمات الطبيب المعالج</p>
+      </div>
+      <div class="hosp-adm-lines">
+        ${instructionHtml}
+      </div>
+    </section>`
+    : ''
 
   return `
-  <div class="hosp-adm-doc print-invoice-page">
+  <div class="hosp-adm-doc">
     ${buildClinicPrintHeader()}
 
     <div class="hosp-adm-profile-head">
@@ -424,22 +478,12 @@ function buildHospitalizationProfileBodyHtml(form: HospitalizationAdmissionForm)
     </div>
     </div>
 
-    <section class="hosp-adm-instructions">
-      <div class="hosp-adm-instructions__title">
-        <h3>Instructions du médecin traitant</h3>
-        <p dir="rtl">تعليمات الطبيب المعالج</p>
-      </div>
-      <div class="hosp-adm-lines">
-        ${instructionLinesHtml(form.doctorInstructions)}
-      </div>
-    </section>
+    ${instructionsBlock}
 
     <p class="hosp-adm-footer">
       ${CLINIC.nameFr} — ${CLINIC.fullAddress}<br />
       ${CLINIC.phoneLabel} · ${CLINIC.email}${clinicTaxLine() ? `<br />${clinicTaxLine()}` : ''}${CLINIC.printFooter ? `<br />${CLINIC.printFooter}` : ''}
     </p>
-
-    <div class="hosp-adm-wave"></div>
   </div>`
 }
 
@@ -466,9 +510,10 @@ export function buildHospitalizationInvoiceHtml(form: HospitalizationAdmissionFo
     form.dailyRateFcfa,
     form.reductionFcfa,
   )
-  const isVip = form.roomType === 'VIP'
-  const roomTypeLabel = isVip ? 'VIP' : form.roomType === 'SIMPLE' ? t('Simple') : form.roomType || '—'
-  const serviceLabel = translateTemplate('Hospitalisation — chambre {room}', { room: roomTypeLabel })
+  const typeLabel = roomTypeLabel(form.roomType)
+  const serviceLabel = form.roomName
+    ? `${t('Hospitalisation')} — ${typeLabel} (${form.roomName})`
+    : translateTemplate('Hospitalisation — chambre {room}', { room: typeLabel })
   const reductionRow =
     billing.reductionFcfa > 0
       ? `<tr class="receipt-invoice__summary receipt-invoice__summary--discount">
@@ -477,28 +522,20 @@ export function buildHospitalizationInvoiceHtml(form: HospitalizationAdmissionFo
         </tr>`
       : ''
 
-  const patientFields = [
-    invoiceField(t('Patient'), form.patientName),
-    invoiceField(t('Matricule'), form.patientCode ?? '—'),
-    invoiceField(t('Médecin'), form.attendingDoctor || '—'),
-  ].join('')
-
-  const stayFields = [
-    invoiceField(t('Date d\'entrée'), formatDateFr(form.startDate) || '—'),
-    invoiceField(t('Nombre de jours'), `${billing.nights}`),
-    invoiceField(t('Chambre'), roomTypeLabel),
-  ].join('')
-
   return `
-  <div class="receipt-invoice print-invoice-page">
-    ${buildClinicPrintHeader(t('Facture — Hospitalisation'))}
+  <div class="receipt-invoice receipt-invoice--exam-a5 receipt-invoice--compact">
+    ${buildClinicPrintHeader(t('Reçu hospitalisation'))}
 
     <div class="receipt-invoice__cols">
-      <div class="receipt-invoice__box">${patientFields}</div>
-      <div class="receipt-invoice__box">${stayFields}</div>
+      <div class="receipt-invoice__box">
+        ${invoiceField(t('Patient'), form.patientName)}
+        ${invoiceField(t('Matricule'), form.patientCode ?? '—')}
+      </div>
+      <div class="receipt-invoice__box">
+        ${invoiceField(t('Date d\'entrée'), formatDateFr(form.startDate, true) || '—')}
+        ${invoiceField(t('Nombre de jours'), `${billing.nights}`)}
+      </div>
     </div>
-
-    <h2 class="receipt-invoice__doc-title">${t('Facture d\'hospitalisation')}</h2>
 
     <table class="receipt-invoice__table">
       <thead>
@@ -529,6 +566,60 @@ export function buildHospitalizationInvoiceHtml(form: HospitalizationAdmissionFo
   </div>`
 }
 
+export function buildHospitalizationThermalReceiptHtml(form: HospitalizationAdmissionForm): string {
+  const billing = computeHospitalizationBilling(
+    form.startDate,
+    form.stayDays,
+    form.dailyRateFcfa,
+    form.reductionFcfa,
+  )
+  const typeLabel = roomTypeLabel(form.roomType)
+  const roomValue = form.roomName ? `${typeLabel} — ${form.roomName}` : typeLabel
+  const lineFr = `Hospitalisation — chambre ${typeLabel}`
+  const lineAr = thermalArTemplate('Hospitalisation — chambre {room}', { room: typeLabel })
+  const titleFr = translateUiLocale('Reçu hospitalisation', 'fr')
+  const titleAr = thermalAr('Reçu hospitalisation')
+
+  const metaRows = [
+    thermalMetaRow('Patient', form.patientName),
+    ...(form.patientCode ? [thermalMetaRow('Matricule', form.patientCode)] : []),
+    ...(form.attendingDoctor ? [thermalMetaRow('Médecin', form.attendingDoctor)] : []),
+    thermalMetaRow("Date d'entrée", formatDateFr(form.startDate, true) || '—'),
+    thermalMetaRow('Chambre', roomValue),
+    thermalMetaRow('Nombre de jours', String(billing.nights)),
+    thermalMetaRow(
+      'Paiement',
+      form.paymentPaid === false ? 'En attente de paiement' : 'Payé',
+    ),
+  ].join('')
+
+  const amountRows = [
+    thermalMetaRow(lineFr, formatFcfa(billing.grossFcfa), lineAr || undefined),
+    ...(billing.reductionFcfa > 0
+      ? [thermalMetaRow('Réduction', `- ${formatFcfa(billing.reductionFcfa)}`)]
+      : []),
+    thermalMetaRow('Total à payer', formatFcfa(billing.netFcfa)).replace(
+      'class="thermal-receipt__row"',
+      'class="thermal-receipt__row thermal-receipt__row--total"',
+    ),
+  ].join('')
+
+  return `
+<div class="thermal-receipt thermal-receipt--ticket thermal-receipt--hospitalization">
+  ${buildThermalTicketHeadHtml({ title: titleFr, titleAr, number: form.patientCode || undefined })}
+  <hr class="thermal-receipt__rule" />
+  <div class="thermal-receipt__fields">
+    ${metaRows}
+  </div>
+  <hr class="thermal-receipt__rule" />
+  <div class="thermal-receipt__fields">
+    ${amountRows}
+  </div>
+  <hr class="thermal-receipt__rule" />
+  ${thermalThanksBiHtml()}
+</div>`
+}
+
 /** @deprecated Utiliser buildHospitalizationAdmissionPrintHtml */
 export function buildHospitalizationAdmissionHtml(form: HospitalizationAdmissionForm): string {
   return buildHospitalizationAdmissionPrintHtml(form)
@@ -536,29 +627,34 @@ export function buildHospitalizationAdmissionHtml(form: HospitalizationAdmission
 
 export function printHospitalizationAdmission(
   form: HospitalizationAdmissionForm,
-  options?: { autoPrint?: boolean; pages?: 'both' | 'profile' | 'invoice' },
+  options?: { autoPrint?: boolean; pages?: 'receipt' | 'both' | 'profile' | 'invoice' },
 ) {
-  const pages = options?.pages ?? 'both'
+  const pages = options?.pages ?? 'receipt'
   let bodyHtml: string
+  let pageSize: '80mm' | 'A4' = '80mm'
+  let title = `${t('Reçu hospitalisation')} — ${form.patientName}`
+
   if (pages === 'profile') {
     bodyHtml = buildHospitalizationProfileHtml(form)
+    pageSize = 'A4'
+    title = `${t('Admission')} — ${form.patientName}`
   } else if (pages === 'invoice') {
     bodyHtml = `${HOSP_ADMISSION_PRINT_STYLES}${buildHospitalizationInvoiceHtml(form)}`
-  } else {
+    pageSize = 'A4'
+    title = `${t('Facture hospitalisation')} — ${form.patientName}`
+  } else if (pages === 'both') {
     bodyHtml = buildHospitalizationAdmissionPrintHtml(form)
+    pageSize = 'A4'
+    title = `${t('Admission')} — ${form.patientName}`
+  } else {
+    bodyHtml = buildHospitalizationThermalReceiptHtml(form)
   }
 
-  openPrintDocument(
-    pages === 'invoice'
-      ? `${t('Facture hospitalisation')} — ${form.patientName}`
-      : `${t('Admission')} — ${form.patientName}`,
-    bodyHtml,
-    { pageSize: 'A4', autoPrint: options?.autoPrint !== false },
-  )
+  openPrintDocument(title, bodyHtml, { pageSize, autoPrint: options?.autoPrint !== false })
 }
 
 export const HOSPITALIZATION_STATUS_LABELS: Record<string, string> = {
-  REQUESTED: 'Prescrit par le médecin',
+  REQUESTED: 'En attente d\'admission',
   RESERVED: 'Payé — en attente de salle',
   ACTIVE: 'Hospitalisé',
   DISCHARGED: 'Sorti',

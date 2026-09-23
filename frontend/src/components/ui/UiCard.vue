@@ -62,8 +62,8 @@ const descriptionText = computed(() => {
 .ui-card__header {
   display: flex;
   align-items: flex-start;
-  gap: 0.875rem;
-  padding: 1.25rem 1.5rem 0;
+  gap: var(--density-space-md);
+  padding: var(--density-card-pad-y) var(--density-card-pad-x) 0;
 }
 
 .ui-card__actions {
@@ -79,8 +79,8 @@ const descriptionText = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 2.75rem;
-  height: 2.75rem;
+  width: var(--density-icon);
+  height: var(--density-icon);
   border-radius: 12px;
   flex-shrink: 0;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65);
@@ -114,7 +114,7 @@ const descriptionText = computed(() => {
 }
 
 .ui-card__body {
-  padding: 1.25rem 1.5rem 1.5rem;
+  padding: var(--density-card-pad-y) var(--density-card-pad-x) calc(var(--density-card-pad-y) + 0.15rem);
 }
 
 .ui-card--flat .ui-card__body {
@@ -153,5 +153,26 @@ const descriptionText = computed(() => {
 
 .ui-card--direct.ui-card--flat .ui-card__body {
   padding-top: 0.25rem;
+}
+
+@media (max-width: 1023px) {
+  .ui-card__header {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .ui-card__titles h3 {
+    font-size: 0.95rem;
+  }
+
+  .ui-card__titles p {
+    font-size: 0.75rem;
+    line-height: 1.35;
+  }
+
+  .ui-card__actions {
+    width: 100%;
+    margin-left: 0;
+  }
 }
 </style>

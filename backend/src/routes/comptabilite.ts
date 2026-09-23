@@ -754,6 +754,7 @@ router.delete("/paid-exams/:consultationId", cashierAccess, requireAdmin, async 
                   type: true,
                   amountFcfa: true,
                   paidAmountFcfa: true,
+                  billingExamKind: true,
                   surgeryCaseId: true,
                   hospitalizationId: true,
                   createdAt: true,
@@ -1504,7 +1505,7 @@ function mapExamReclamation(row: {
   updatedAt: Date;
   resolvedAt: Date | null;
   patient: { code: string; firstName: string; lastName: string };
-  createdBy: { firstName: string; lastName: string };
+  createdBy: { firstName: string; lastName: string; username: string };
   handledBy: { firstName: string; lastName: string } | null;
 }) {
   const parsedLines = parseExamReclamationLines(row.examLines);
@@ -1561,7 +1562,7 @@ function parseExamReclamationLines(value: unknown): ExamReclamationLinePayload[]
 
 const reclamationInclude = {
   patient: { select: { code: true, firstName: true, lastName: true } },
-  createdBy: { select: { firstName: true, lastName: true } },
+  createdBy: { select: { firstName: true, lastName: true, username: true } },
   handledBy: { select: { firstName: true, lastName: true } },
 } as const;
 
@@ -1602,6 +1603,7 @@ router.post("/exam-reclamations", cashierAccess, async (req, res) => {
                 type: true,
                 amountFcfa: true,
                 paidAmountFcfa: true,
+                billingExamKind: true,
                 surgeryCaseId: true,
                 hospitalizationId: true,
                 createdAt: true,

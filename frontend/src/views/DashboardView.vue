@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, type Component } from 'vue'
+import { computed, onMounted, ref, watch, type Component } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   LayoutDashboard,
@@ -26,8 +26,17 @@ import { useAppI18n } from '@/i18n/useAppI18n'
 import type { GestionnaireDashboardOverview } from '@/lib/gestionnaire-dashboard'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
+import {
+  exportBasename,
+  exportTablePdf,
+  exportWorkbook,
+  type ExportColumn,
+  type ExportSection,
+  type WorkbookSheetDef,
+} from '@/lib/table-export'
 import RoleDashboardShell from '@/components/dashboard/RoleDashboardShell.vue'
 import DashboardLineChart from '@/components/dashboard/DashboardLineChart.vue'
 import DashboardDonutChart from '@/components/dashboard/DashboardDonutChart.vue'
@@ -36,7 +45,25 @@ import type { SummaryStat } from '@/lib/dashboard-summary'
 
 const router = useRouter()
 const auth = useAuthStore()
-const { localeCode, isArabic } = useAppI18n()
+const { localeCode, isArabic, uiText } = useAppI18n()
+
+function localIsoDate(date = new Date()) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function currentMonthBounds() {
+  const now = new Date()
+  const from = new Date(now.getFullYear(), now.getMonth(), 1)
+  const to = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+  return { from: localIsoDate(from), to: localIsoDate(to) }
+}
+
+const monthBounds = currentMonthBounds()
+const dateFrom = ref(monthBounds.from)
+const dateTo = ref(monthBounds.to)
 
 const overview = ref<AdminDashboardOverview | null>(null)
 const gestionnaireOverview = ref<GestionnaireDashboardOverview | null>(null)
@@ -50,6 +77,39 @@ const showAdminSection = computed(() =>
 const showGestionnaireSection = computed(() =>
   auth.user ? canAccessModule(auth.user.role, 'gestionnaire') : false,
 )
+
+const isFullMonthRange = computed(() => {
+  const [yearRaw, monthRaw] = dateFrom.value.split('-')
+  const year = Number(yearRaw)
+  const month = Number(monthRaw)
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return false
+  const monthStart = localIsoDate(new Date(year, month - 1, 1))
+  const monthEnd = localIsoDate(new Date(year, month, 0))
+  return dateFrom.value === monthStart && dateTo.value === monthEnd
+})
+
+const periodQuery = computed(() => ({
+  from: dateFrom.value,
+  to: dateTo.value,
+}))
+
+const periodCaption = computed(() => {
+  void localeCode.value
+  const from = dateFrom.value
+  const to = dateTo.value
+  if (!from || !to) return uiText('Période')
+  const locale = isArabic.value ? 'ar-TD' : 'fr-FR'
+  const format = (iso: string) => {
+    const [y, m, d] = iso.split('-').map(Number)
+    return new Date(y, m - 1, d).toLocaleDateString(locale, {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    })
+  }
+  if (from === to) return format(from)
+  return `${format(from)} – ${format(to)}`
+})
 
 
 const REVENUE_COLORS: Record<string, string> = {
@@ -79,19 +139,19 @@ const summaryStats = computed((): SummaryStat[] => {
   return [
     {
       id: 'revenue',
-      label: translateDashboardLabel('Recettes du mois'),
+      label: translateDashboardLabel(isFullMonthRange.value ? 'Recettes du mois' : 'Recettes de la période'),
       value: formatFcfa(k.revenueMonthFcfa),
       icon: Banknote,
       variant: 'green',
-      trend: formatTrendPercentLocalized(k.revenueChangePercent),
+      trend: formatTrendPercentLocalized(k.revenueChangePercent, !isFullMonthRange.value),
     },
     {
       id: 'expenses',
-      label: translateDashboardLabel('Dépenses du mois'),
+      label: translateDashboardLabel(isFullMonthRange.value ? 'Dépenses du mois' : 'Dépenses de la période'),
       value: formatFcfa(k.expensesMonthFcfa),
       icon: TrendingDown,
       variant: 'rose',
-      trend: formatTrendPercentLocalized(k.expensesChangePercent),
+      trend: formatTrendPercentLocalized(k.expensesChangePercent, !isFullMonthRange.value),
     },
     {
       id: 'net',
@@ -99,7 +159,7 @@ const summaryStats = computed((): SummaryStat[] => {
       value: formatFcfa(k.netMonthFcfa),
       icon: TrendingUp,
       variant: 'blue',
-      trend: formatTrendPercentLocalized(k.netChangePercent),
+      trend: formatTrendPercentLocalized(k.netChangePercent, !isFullMonthRange.value),
     },
     {
       id: 'payroll',
@@ -107,7 +167,7 @@ const summaryStats = computed((): SummaryStat[] => {
       value: formatFcfa(k.payrollMonthFcfa),
       icon: Users,
       variant: 'violet',
-      trend: formatTrendPercentLocalized(k.payrollChangePercent),
+      trend: formatTrendPercentLocalized(k.payrollChangePercent, !isFullMonthRange.value),
     },
     {
       id: 'balance',
@@ -232,6 +292,150 @@ const operationsCountLabel = computed(() => {
     : translateTemplate('{n} opérations', { n })
 })
 
+type DashboardExportRow = { label: string; value: string; extra?: string; extra2?: string }
+
+const kpiColumns: ExportColumn<DashboardExportRow>[] = [
+  { header: uiText('Indicateur'), value: (row) => row.label },
+  { header: uiText('Valeur'), value: (row) => row.value },
+  { header: uiText('Évolution'), value: (row) => row.extra ?? '' },
+]
+
+const amountColumns: ExportColumn<DashboardExportRow>[] = [
+  { header: uiText('Libellé'), value: (row) => row.label },
+  { header: uiText('Montant'), value: (row) => row.value },
+  { header: uiText('Part'), value: (row) => row.extra ?? '' },
+]
+
+const serviceColumns: ExportColumn<DashboardExportRow>[] = [
+  { header: uiText('Service'), value: (row) => row.label },
+  { header: uiText('Nombre'), value: (row) => row.extra ?? '' },
+  { header: uiText('Montant'), value: (row) => row.value },
+]
+
+const simpleColumns: ExportColumn<DashboardExportRow>[] = [
+  { header: uiText('Libellé'), value: (row) => row.label },
+  { header: uiText('Valeur'), value: (row) => row.value },
+]
+
+function percentLabel(percent?: number) {
+  if (percent == null || !Number.isFinite(percent)) return ''
+  return `${percent.toLocaleString(isArabic.value ? 'ar-TD' : 'fr-FR', { maximumFractionDigits: 1 })} %`
+}
+
+function dashboardExportPayload() {
+  void localeCode.value
+  const title = uiText('Tableau de board')
+  const captionRows = [{ label: uiText('Période'), value: periodCaption.value }]
+  const sections: ExportSection<DashboardExportRow>[] = []
+
+  const kpiRows: DashboardExportRow[] = summaryStats.value.map((card) => ({
+    label: String(card.label),
+    value: String(card.value),
+    extra: card.trend ? String(card.trend) : '',
+  }))
+  if (kpiRows.length) {
+    sections.push({ title: uiText('Indicateurs'), columns: kpiColumns, rows: kpiRows })
+  }
+
+  const revenueRows: DashboardExportRow[] = (overview.value?.revenueBreakdown ?? []).map((row) => ({
+    label: `${translateDashboardLabel('Entrées')} ${translateDashboardLabel(row.label)}`,
+    value: formatFcfa(row.amountFcfa),
+    extra: percentLabel(row.percent),
+  }))
+  if (revenueRows.length) {
+    sections.push({
+      title: uiText('Entrées financières par module'),
+      columns: amountColumns,
+      rows: revenueRows,
+    })
+  }
+
+  const expenseRows: DashboardExportRow[] = (overview.value?.expenseBreakdown ?? []).map((row) => ({
+    label: translateDashboardLabel(row.label),
+    value: formatFcfa(row.amountFcfa),
+    extra: percentLabel(row.percent),
+  }))
+  if (expenseRows.length) {
+    sections.push({ title: uiText('Dépenses par catégorie'), columns: amountColumns, rows: expenseRows })
+  }
+
+  const operationRows: DashboardExportRow[] = (overview.value?.operationsByService ?? []).map((row) => ({
+    label: row.serviceName,
+    extra: String(row.count),
+    value: formatFcfa(row.amountFcfa),
+  }))
+  if (operationRows.length) {
+    sections.push({
+      title: uiText('Opérations par service'),
+      columns: serviceColumns,
+      rows: operationRows,
+      totalsRows: [
+        { label: uiText('Total'), value: `${operationsCountLabel.value} — ${formatFcfa(operationsTotalFcfa.value)}` },
+      ],
+    })
+  }
+
+  if (overview.value?.clinical) {
+    const clinical = overview.value.clinical
+    sections.push({
+      title: uiText('Activité clinique'),
+      columns: simpleColumns,
+      rows: [
+        { label: uiText('Opération'), value: `${formatFcfa(operationsTotalFcfa.value)} (${operationsCountLabel.value})` },
+        {
+          label: uiText('Patients de la période'),
+          value: String(clinical.patientsInPeriod ?? clinical.patientsToday ?? 0),
+        },
+        { label: uiText('Examens en attente'), value: String(clinical.examsPending ?? 0) },
+        { label: uiText('Hospitalisations actives'), value: String(clinical.activeHospitalizations ?? 0) },
+      ],
+    })
+  }
+
+  const trendRows: DashboardExportRow[] = filteredTrend.value.map((row, index) => ({
+    label: lineChartLabels.value[index] ?? row.label,
+    value: formatFcfa(row.revenueFcfa),
+    extra: formatFcfa(row.expensesFcfa),
+    extra2: formatFcfa(row.netFcfa),
+  }))
+  if (trendRows.length) {
+    sections.push({
+      title: uiText('Évolution mensuelle'),
+      columns: [
+        { header: uiText('Mois'), value: (row) => row.label },
+        { header: uiText('Recettes'), value: (row) => row.value },
+        { header: uiText('Dépenses'), value: (row) => row.extra ?? '' },
+        { header: uiText('Bénéfice net'), value: (row) => row.extra2 ?? '' },
+      ],
+      rows: trendRows,
+    })
+  }
+
+  const excelSheets: WorkbookSheetDef[] = sections.map((section) => ({
+    name: section.title,
+    columns: section.columns,
+    rows: section.rows,
+    totalsRows: section.totalsRows,
+  }))
+
+  return { title, captionRows, sections, excelSheets, hasRows: sections.some((section) => section.rows.length) }
+}
+
+function exportDashboardPdf() {
+  const payload = dashboardExportPayload()
+  exportTablePdf(payload.title, simpleColumns, [], {
+    captionRows: payload.captionRows,
+    sections: payload.sections,
+  })
+}
+
+function exportDashboardExcel() {
+  const payload = dashboardExportPayload()
+  exportWorkbook(exportBasename(payload.title), payload.excelSheets)
+}
+
+const canExportDashboard = computed(() => !loading.value && dashboardExportPayload().hasRows)
+
 async function loadOverview() {
   loading.value = true
   loadError.value = ''
@@ -240,7 +444,7 @@ async function loadOverview() {
 
     if (showAdminSection.value) {
       tasks.push(
-        api.get<AdminDashboardOverview>('/dashboard/admin').then(({ data }) => {
+        api.get<AdminDashboardOverview>('/dashboard/admin', { params: periodQuery.value }).then(({ data }) => {
           overview.value = data
         }),
       )
@@ -250,7 +454,7 @@ async function loadOverview() {
 
     if (showGestionnaireSection.value) {
       tasks.push(
-        api.get<GestionnaireDashboardOverview>('/dashboard/gestionnaire').then(({ data }) => {
+        api.get<GestionnaireDashboardOverview>('/dashboard/gestionnaire', { params: periodQuery.value }).then(({ data }) => {
           gestionnaireOverview.value = data
         }),
       )
@@ -274,6 +478,14 @@ async function loadOverview() {
 }
 
 onMounted(loadOverview)
+
+watch([dateFrom, dateTo], () => {
+  if (dateFrom.value > dateTo.value) {
+    dateTo.value = dateFrom.value
+    return
+  }
+  void loadOverview()
+})
 </script>
 
 <template>
@@ -287,6 +499,28 @@ onMounted(loadOverview)
     @refresh="loadOverview"
   >
     <template #actions>
+      <div class="dashboard-period" role="group" :aria-label="uiText('Période')">
+        <label class="dashboard-period__field">
+          <span class="dashboard-period__label">{{ uiText('Du') }}</span>
+          <input
+            v-model="dateFrom"
+            type="date"
+            class="dashboard-period__input"
+            :max="dateTo || undefined"
+            :aria-label="uiText('Du')"
+          />
+        </label>
+        <label class="dashboard-period__field">
+          <span class="dashboard-period__label">{{ uiText('Au') }}</span>
+          <input
+            v-model="dateTo"
+            type="date"
+            class="dashboard-period__input"
+            :min="dateFrom || undefined"
+            :aria-label="uiText('Au')"
+          />
+        </label>
+      </div>
       <UiButton
         v-if="showAdminSection"
         variant="ghost"
@@ -296,6 +530,12 @@ onMounted(loadOverview)
       >
         Gestion des dépenses
       </UiButton>
+      <ExportButtons
+        :disabled="!canExportDashboard"
+        :show-word="false"
+        @pdf="exportDashboardPdf"
+        @excel="exportDashboardExcel"
+      />
       <UiButton variant="ghost" size="sm" :disabled="loading" @click="loadOverview">
         Actualiser
       </UiButton>
@@ -305,7 +545,7 @@ onMounted(loadOverview)
       <section v-if="showAdminSection && revenueModuleStats.length" class="finance-entry-section">
         <div class="finance-entry-section__header">
           <h3>Entrées financières par module</h3>
-          <span>{{ selectedTrendMonth ? 'Période personnalisée' : 'Vue agrégée' }}</span>
+          <span>{{ periodCaption }}</span>
         </div>
         <div class="finance-entry-cards">
           <UiStatCard
@@ -330,8 +570,8 @@ onMounted(loadOverview)
           compact
         />
         <UiStatCard
-          label="Patients aujourd'hui"
-          :value="overview?.clinical.patientsToday ?? 0"
+          label="Patients de la période"
+          :value="overview?.clinical.patientsInPeriod ?? overview?.clinical.patientsToday ?? 0"
           :icon="Users"
           variant="teal"
           compact
@@ -372,7 +612,7 @@ onMounted(loadOverview)
 
         <UiCard
           title="Répartition des recettes"
-          description="Mois en cours"
+          :description="isFullMonthRange ? 'Mois en cours' : periodCaption"
           :icon="Banknote"
           icon-variant="green"
         >
@@ -381,7 +621,7 @@ onMounted(loadOverview)
 
         <UiCard
           title="Répartition des dépenses"
-          description="Mois en cours"
+          :description="isFullMonthRange ? 'Mois en cours' : periodCaption"
           :icon="Wallet"
           icon-variant="rose"
         >
@@ -457,6 +697,41 @@ onMounted(loadOverview)
 .clinical-cards > * {
   flex: 1 1 0;
   min-width: 0;
+}
+
+.page-header__actions :deep(.dashboard-period),
+.dashboard-period {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.45rem;
+}
+
+.dashboard-period__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.dashboard-period__label {
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.dashboard-period__input {
+  height: 2.15rem;
+  width: 9.25rem;
+  max-width: 100%;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
 }
 
 .trend-filters {

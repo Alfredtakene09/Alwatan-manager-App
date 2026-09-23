@@ -74,6 +74,7 @@ export function employeeFicheAffectsCompensation(
 
 const employeeRecalcSelect = {
   id: true,
+  active: true,
   isMedecin: true,
   jobTitle: true,
   doctorCompensationType: true,
@@ -91,6 +92,7 @@ const employeeRecalcSelect = {
     select: {
       id: true,
       role: true,
+      active: true,
     },
   },
 } as const;
@@ -344,6 +346,8 @@ export async function recalculateAfterEmployeeFicheChange(
       }
 
       const grossFcfa = employeeGrossSalary(employee) ?? 0;
+      const payrollEligible =
+        employee.active && (!employee.user || employee.user.active);
       const payrolls = await tx.employeePayroll.findMany({
         where: {
           employeeId,
@@ -353,6 +357,7 @@ export async function recalculateAfterEmployeeFicheChange(
       });
       const seenPayrollIds = new Set<string>();
       for (const row of payrolls) {
+        if (!payrollEligible) continue;
         if (row.grossFcfa === grossFcfa) continue;
         await tx.employeePayroll.update({
           where: { id: row.id },
@@ -362,7 +367,7 @@ export async function recalculateAfterEmployeeFicheChange(
         summary.pendingPayrolls += 1;
       }
 
-      if (grossFcfa > 0) {
+      if (payrollEligible && grossFcfa > 0) {
         const { year, month } = currentPayrollPeriod();
         const existing = await tx.employeePayroll.findUnique({
           where: { employeeId_year_month: { employeeId, year, month } },

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { Package, Plus, RefreshCw, Save } from '@lucide/vue'
+import { Package, Plus, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
@@ -286,9 +286,6 @@ defineExpose({ reload: loadItems })
   <PageTableSection embedded>
     <template #toolbar>
       <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-      <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
-        Actualiser
-      </UiButton>
       <UiButton variant="primary" size="sm" :icon="Plus" ui-action="table.create" @click="openCreateModal">
         Nouvel article
       </UiButton>

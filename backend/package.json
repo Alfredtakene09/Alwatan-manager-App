@@ -8,6 +8,8 @@
     "dev:generate": "prisma generate && tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "db:push": "tsx scripts/db-push-safe.ts",
+    "db:push:unsafe": "prisma db push",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate:doctor-fields": "tsx scripts/_migrate-doctor-fields.ts",
@@ -19,6 +21,7 @@
     "db:reset": "tsx scripts/reset-database.ts",
     "db:purge-patients-expenses": "tsx scripts/purge-patients-and-expenses.ts",
     "db:reset-operational": "tsx scripts/reset-operational-data.ts",
+    "db:reset-pharmacy-sales": "tsx scripts/reset-pharmacy-sales.ts",
     "db:setup": "npx prisma db push && npm run db:seed",
     "db:docker:up": "docker compose -f ../docker-compose.yml up -d postgres",
     "db:docker:down": "docker compose -f ../docker-compose.yml down",
@@ -27,7 +30,7 @@
     "db:import-pharmacy": "tsx scripts/import-syntalsoft-pharmacy.ts",
     "db:rename-pharmacy-categories": "tsx scripts/rename-pharmacy-categories.ts",
     "db:migrate-pharmacy-categories-to-forms": "tsx scripts/migrate-pharmacy-categories-to-forms.ts",
-    "test": "tsx --test src/lib/pharmacy-returns.test.ts src/lib/patient-code.test.ts src/lib/password-policy.test.ts src/lib/consultation-invoice.test.ts src/lib/auth.test.ts src/lib/lab-notes-pending.test.ts src/lib/reception-scope.test.ts src/lib/petite-chirurgie-catalog.test.ts src/lib/year-month.test.ts src/lib/employee-compensation.test.ts src/lib/recorded-diagnoses.test.ts src/lib/printed-tariff-catalog.test.ts src/lib/clinic-service-exam.test.ts src/lib/lab-notes-section.test.ts"
+    "test": "tsx --test src/lib/pharmacy-returns.test.ts src/lib/patient-code.test.ts src/lib/password-policy.test.ts src/lib/consultation-invoice.test.ts src/lib/auth.test.ts src/lib/lab-notes-pending.test.ts src/lib/reception-scope.test.ts src/lib/petite-chirurgie-catalog.test.ts src/lib/year-month.test.ts src/lib/employee-compensation.test.ts src/lib/recorded-diagnoses.test.ts src/lib/printed-tariff-catalog.test.ts src/lib/clinic-service-exam.test.ts src/lib/lab-notes-section.test.ts src/lib/data-backup.test.ts src/lib/db-delete-guard.test.ts src/lib/merge-patients.test.ts src/lib/patient-medical-record.test.ts src/lib/revenue-stats.test.ts src/lib/exam-reclamation-refund.test.ts src/lib/day-closure-sales.test.ts src/lib/admin-payroll.test.ts src/lib/payroll-expenses.test.ts src/lib/hospitalization-rooms.test.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

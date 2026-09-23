@@ -96,17 +96,17 @@ const plainLabel = computed(() => {
 }
 
 .ui-btn--sm {
-  padding: 0.4rem 0.85rem;
+  padding: var(--density-btn-sm-y) var(--density-btn-sm-x);
   font-size: 0.8125rem;
 }
 
 .ui-btn--md {
-  padding: 0.625rem 1.15rem;
-  font-size: 0.875rem;
+  padding: var(--density-btn-md-y) var(--density-btn-md-x);
+  font-size: var(--density-btn-md-fs);
 }
 
 .ui-btn--lg {
-  padding: 0.8rem 1.5rem;
+  padding: var(--density-btn-lg-y) var(--density-btn-lg-x);
   font-size: 0.9375rem;
 }
 

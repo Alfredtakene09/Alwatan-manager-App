@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { ArrowDownUp, Plus, RefreshCw, Save } from '@lucide/vue'
+import { ArrowDownUp, Plus, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
@@ -239,15 +239,6 @@ defineExpose({ reload: loadMovements })
         <option v-for="item in items" :key="item.id" :value="item.id">{{ item.name }}</option>
       </select>
       <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-      <UiButton
-        variant="ghost"
-        size="sm"
-        :icon="RefreshCw"
-        :disabled="loading || saving"
-        @click="loadMovements"
-      >
-        Actualiser
-      </UiButton>
       <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
         Nouveau mouvement
       </UiButton>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { Briefcase, Plus, RefreshCw, Save } from '@lucide/vue'
+import { Briefcase, Plus, Save } from '@lucide/vue'
 import api from '@/api/client'
 import {
   EMPLOYEE_JOB_TITLES,
@@ -17,6 +17,8 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import StCatalogActions from '@/components/ui/StCatalogActions.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import '@/assets/simple-table.css'
@@ -246,6 +248,26 @@ function onTableAction({ action, id }: { action: string; id: string }) {
 }
 
 onMounted(loadItems)
+
+const exportColumns = computed<ExportColumn<(typeof tableRows.value)[number]>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Poste / fonction'), value: (row) => row.label },
+    { header: uiText('Ordre'), value: (row) => row.sortOrder },
+    { header: uiText('Employés liés'), value: (row) => row.employeesLabel },
+    { header: uiText('Statut'), value: (row) => row.statusLabel },
+  ]
+})
+
+function exportPdf() {
+  exportTablePdf(uiText('Postes'), exportColumns.value, tableRows.value)
+}
+function exportExcel() {
+  exportTableExcel(uiText('Postes'), exportColumns.value, tableRows.value)
+}
+function exportWord() {
+  void exportTableWord(uiText('Postes'), exportColumns.value, tableRows.value)
+}
 </script>
 
 <template>
@@ -255,9 +277,7 @@ onMounted(loadItems)
     icon-variant="teal"
   >
     <template #actions>
-      <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
-        Actualiser
-      </UiButton>
+      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
       <UiButton variant="primary" size="sm" :icon="Plus" ui-action="table.create" @click="openCreateModal">
         Ajouter
       </UiButton>

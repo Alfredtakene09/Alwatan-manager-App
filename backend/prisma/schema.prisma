@@ -305,6 +305,7 @@ model User {
   treatingDoctorPatients                 Patient[]                 @relation("TreatingDoctorPatients")
   registeredPatients                     Patient[]                 @relation("PatientRegisteredBy")
   attendingHospitalizations              Hospitalization[]         @relation("HospitalizationAttendingDoctor")
+  pharmacyDayClosures                    PharmacyDayClosure[]
 }
 
 enum AgeUnit {
@@ -854,6 +855,25 @@ model Prescription {
   @@index([patientId])
   @@index([externalClientId])
   @@index([pharmacistId, createdAt])
+}
+
+/** Clôture des ventes pharmacie du jour (caisse). */
+model PharmacyDayClosure {
+  id              String   @id @default(cuid())
+  pharmacistId    String
+  businessDate    DateTime @db.Date
+  salesCount      Int
+  returnsCount    Int
+  grossSalesFcfa  Int
+  returnsFcfa     Int
+  netFcfa         Int
+  closedAt        DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  pharmacist User @relation(fields: [pharmacistId], references: [id])
+
+  @@unique([pharmacistId, businessDate])
+  @@index([businessDate])
 }
 
 model PharmacyExternalClient {

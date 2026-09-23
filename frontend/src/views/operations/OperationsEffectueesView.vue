@@ -545,16 +545,32 @@ const completedExportColumns: ExportColumn<SurgeryCaseRow>[] = [
   },
 ]
 
+function completedExportShared() {
+  const parts: string[] = [periodLabel.value]
+  if (filterSurgeonId.value) {
+    const surgeon = surgeonOptions.value.find((s) => s.id === filterSurgeonId.value)
+    if (surgeon) parts.push(`Médecin : ${surgeon.name}`)
+  }
+  const q = searchQuery.value.trim()
+  if (q) parts.push(`Recherche : ${q}`)
+  return {
+    captionRows: [{ label: 'Filtres', value: parts.join(' · ') }],
+    totalsRows: [
+      { label: 'Nombre d’opérations', value: String(displayedSurgeries.value.length) },
+    ],
+  }
+}
+
 function exportPdf() {
-  exportTablePdf('Opérations effectuées', completedExportColumns, displayedSurgeries.value)
+  exportTablePdf('Opérations effectuées', completedExportColumns, displayedSurgeries.value, completedExportShared())
 }
 
 function exportExcel() {
-  exportTableExcel('Opérations effectuées', completedExportColumns, displayedSurgeries.value)
+  exportTableExcel('Opérations effectuées', completedExportColumns, displayedSurgeries.value, completedExportShared())
 }
 
 function exportWord() {
-  void exportTableWord('Opérations effectuées', completedExportColumns, displayedSurgeries.value)
+  void exportTableWord('Opérations effectuées', completedExportColumns, displayedSurgeries.value, completedExportShared())
 }
 
 onMounted(load)

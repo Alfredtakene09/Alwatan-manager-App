@@ -143,6 +143,27 @@
   --page-padding-y: 1.75rem;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
+
+  /* Densité UI — compactée progressivement sur petits écrans */
+  --density-space-xs: 0.3rem;
+  --density-space-sm: 0.5rem;
+  --density-space-md: 0.75rem;
+  --density-card-pad-x: 1.5rem;
+  --density-card-pad-y: 1.25rem;
+  --density-btn-sm-y: 0.4rem;
+  --density-btn-sm-x: 0.85rem;
+  --density-btn-md-y: 0.625rem;
+  --density-btn-md-x: 1.15rem;
+  --density-btn-lg-y: 0.8rem;
+  --density-btn-lg-x: 1.5rem;
+  --density-btn-md-fs: 0.875rem;
+  --density-control-pad-y: 0.65rem;
+  --density-control-pad-x: 0.9rem;
+  --app-control-height: 2.65rem;
+  --density-field-gap: 1rem;
+  --density-icon: 2.75rem;
+  --density-header-title: 1.15rem;
+  --density-stat-value: 1.35rem;
 }
 
 * {
@@ -187,8 +208,8 @@ select,
   font-size: calc(0.875rem * var(--app-select-scale) / var(--app-text-scale));
   font-weight: 600;
   line-height: 1.4;
-  min-height: 2.85rem;
-  padding-block: 0.7rem;
+  min-height: var(--app-control-height);
+  padding-block: var(--density-control-pad-y);
 }
 
 select option,
@@ -263,18 +284,65 @@ select option,
   overflow-y: auto;
 }
 
-/* ── Responsive global — mobile, tablette, desktop ── */
+/* ── Responsive global — petits PC, tablette, mobile ── */
+@media (max-width: 1280px) {
+  :root {
+    --app-text-scale: 0.9;
+    --page-padding-x: 1.15rem;
+    --page-padding-y: 1rem;
+    --density-card-pad-x: 1rem;
+    --density-card-pad-y: 0.8rem;
+    --density-btn-md-y: 0.42rem;
+    --density-btn-md-x: 0.8rem;
+    --density-btn-lg-y: 0.55rem;
+    --density-btn-lg-x: 1rem;
+    --density-btn-md-fs: 0.8125rem;
+    --density-control-pad-y: 0.48rem;
+    --density-control-pad-x: 0.7rem;
+    --app-control-height: 2.35rem;
+    --density-field-gap: 0.75rem;
+    --density-icon: 2.25rem;
+    --density-header-title: 1.05rem;
+    --density-stat-value: 1.15rem;
+    --density-space-md: 0.55rem;
+  }
+}
+
 @media (max-width: 1023px) {
   :root {
-    --page-padding-x: 1.25rem;
-    --page-padding-y: 1.25rem;
+    --app-text-scale: 0.88;
+    --page-padding-x: 0.85rem;
+    --page-padding-y: 0.75rem;
+    --density-card-pad-x: 0.75rem;
+    --density-card-pad-y: 0.65rem;
+    --density-btn-sm-y: 0.32rem;
+    --density-btn-sm-x: 0.6rem;
+    --density-btn-md-y: 0.38rem;
+    --density-btn-md-x: 0.65rem;
+    --density-btn-md-fs: 0.78rem;
+    --app-control-height: 2.35rem;
+    --density-icon: 2.05rem;
+    --density-header-title: 1rem;
+  }
+}
+
+@media (max-width: 767px) {
+  :root {
+    --app-text-scale: 0.86;
+    --page-padding-x: 0.7rem;
+    --page-padding-y: 0.6rem;
+    --density-card-pad-x: 0.65rem;
+    --density-card-pad-y: 0.5rem;
+    --density-stat-value: 1.05rem;
   }
 }
 
 @media (max-width: 639px) {
   :root {
-    --page-padding-x: 1rem;
-    --page-padding-y: 1rem;
+    --app-text-scale: 0.84;
+    --page-padding-x: 0.55rem;
+    --page-padding-y: 0.5rem;
+    --density-field-gap: 0.65rem;
   }
 }
 
@@ -348,11 +416,68 @@ select option,
 @media (max-width: 1023px) {
   input,
   textarea {
-    font-size: max(16px, 1rem);
+    font-size: max(16px, 0.95rem);
   }
   select,
   .ui-select {
-    font-size: max(16px, calc(0.875rem * var(--app-select-scale) / var(--app-text-scale)));
+    font-size: max(16px, calc(0.8rem * var(--app-select-scale) / var(--app-text-scale)));
+  }
+
+  .ui-btn {
+    white-space: normal;
+    line-height: 1.2;
+    text-align: center;
+  }
+
+  .page-header,
+  .ui-card__header,
+  .ui-card__actions,
+  .page-header__actions,
+  .table-toolbar,
+  .tabs {
+    gap: var(--density-space-sm);
+  }
+
+  .stats-grid,
+  .stats-row,
+  .kpi-grid,
+  .medecin-stats,
+  .ops-stats,
+  .compta-stats,
+  .dashboard-cards {
+    gap: 0.45rem !important;
+  }
+}
+
+@media (max-width: 960px) {
+  .dashboard-cards,
+  .dashboard-cards-skeleton {
+    flex-wrap: wrap;
+  }
+
+  .dashboard-cards > *,
+  .dashboard-cards-skeleton > * {
+    flex: 1 1 calc(50% - 0.45rem);
+    min-width: 8.5rem;
+  }
+
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 767px) {
+  .stats-grid,
+  .stats-row,
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .table-scroll-x,
+  .table-wrap,
+  .simple-table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 }
 
@@ -362,5 +487,11 @@ select option,
     margin: 0 !important;
     border-radius: var(--radius) var(--radius) 0 0 !important;
     max-height: 92dvh !important;
+  }
+
+  .page-header__actions > *,
+  .ui-card__actions > .ui-btn {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 }

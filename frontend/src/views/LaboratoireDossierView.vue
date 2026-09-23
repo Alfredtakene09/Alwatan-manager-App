@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import axios from 'axios'
 import { ArrowLeft, CheckCircle2, FlaskConical, Printer, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
@@ -243,6 +244,60 @@ function resolvePanel(slug: LabPanelSlug) {
   return labPanels.getPanel(slug) ?? getLabFormPanel(slug)
 }
 
+function panelDisplayName(slug: LabPanelSlug) {
+  void localeCode.value
+  const apiItem = apiPrescribedPanels.value.find((item) => item.slug === slug)
+  return examNameText(apiItem?.examLabel || resolvePanel(slug)?.label || slug)
+}
+
+function apiErrorMessage(error: unknown, fallback: string) {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as
+      | { error?: unknown; panelLabel?: unknown; code?: unknown }
+      | undefined
+    if (typeof data?.error === 'string' && data.error.trim()) return data.error
+    if (error.code === 'ECONNABORTED') {
+      return uiText('Délai dépassé — le serveur ne répond pas. Réessayez.')
+    }
+    if (!error.response) {
+      return uiText('Connexion au serveur impossible. Vérifiez le réseau.')
+    }
+    if (error.response.status === 401) {
+      return uiText('Session expirée — reconnectez-vous puis réessayez.')
+    }
+    if (error.response.status === 403) {
+      return uiText('Accès refusé pour enregistrer ce dossier laboratoire.')
+    }
+  }
+  if (error instanceof Error && error.message.trim()) return error.message
+  return fallback
+}
+
+/** Examens prescrits encore vides (saisie locale + déjà enregistrés). */
+function listMissingPrescribedPanels(
+  filledPanels?: Array<{ slug: LabPanelSlug }>,
+): LabFormPanel[] {
+  const filled = new Set((filledPanels ?? collectPanelsToSave()).map((panel) => panel.slug))
+  return listedPanels.value.filter((panel) => !filled.has(panel.slug))
+}
+
+function formatMissingPanelsMessage(missing: LabFormPanel[]) {
+  if (!missing.length) return ''
+  const names = missing.map((panel) => panelDisplayName(panel.slug)).join(', ')
+  if (missing.length === 1) {
+    return uiText('Examen encore vide : {names}.').replace('{names}', names)
+  }
+  return uiText('Examens encore vides ({n}) : {names}.').replace('{n}', numberText(missing.length)).replace('{names}', names)
+}
+
+function normalizePanelValues(values: Record<string, string>): Record<string, string> {
+  const next: Record<string, string> = {}
+  for (const [key, value] of Object.entries(values)) {
+    next[key] = value == null ? '' : String(value)
+  }
+  return next
+}
+
 function panelOptionLabel(slug: LabPanelSlug) {
   void localeCode.value
   const apiItem = apiPrescribedPanels.value.find((item) => item.slug === slug)
@@ -371,14 +426,27 @@ async function persistPanels(
   let latest = panelResults.value
   let completed = dossierCompleted.value
   for (const panel of panels) {
-    const { data } = await api.put<{
-      panelResults: DossierResponse['panelResults']
-      completed?: boolean
-    }>(`/laboratoire/visits/${visitId.value}/panels/${panel.slug}`, {
-      values: panel.values,
-    })
-    latest = data.panelResults
-    completed = !!data.completed
+    try {
+      const { data } = await api.put<{
+        panelResults: DossierResponse['panelResults']
+        completed?: boolean
+      }>(`/laboratoire/visits/${visitId.value}/panels/${panel.slug}`, {
+        values: normalizePanelValues(panel.values),
+      })
+      latest = data.panelResults
+      completed = !!data.completed
+    } catch (error) {
+      const label = panelDisplayName(panel.slug)
+      const detail = apiErrorMessage(
+        error,
+        uiText("Erreur lors de l'enregistrement de « {name} ».").replace('{name}', label),
+      )
+      const enriched = new Error(
+        detail.includes(label) ? detail : `${uiText('Échec')} « ${label} » : ${detail}`,
+      )
+      ;(enriched as Error & { cause?: unknown }).cause = error
+      throw enriched
+    }
   }
   panelResults.value = latest
   dossierCompleted.value = completed
@@ -386,30 +454,34 @@ async function persistPanels(
   return latest
 }
 
-/** Enregistre tous les examens saisis, imprime 1 page / examen, puis clôture. */
+/** Enregistre tous les examens saisis, imprime, puis clôture. */
 async function savePrintAndComplete() {
   if (!visit.value || isConsultMode.value) return
 
   const panels = collectPanelsToSave()
   if (!panels.length) {
-    showMessage(uiText("Remplissez au moins un résultat avant d'enregistrer."), 'error')
+    const missing = listMissingPrescribedPanels([])
+    showMessage(
+      missing.length
+        ? `${uiText("Aucun résultat saisi.")} ${formatMissingPanelsMessage(missing)}`
+        : uiText("Remplissez au moins un résultat avant d'enregistrer."),
+      'error',
+    )
     return
   }
 
-  const missingCount = listedPanels.value.filter(
-    (panel) => !panels.some((item) => item.slug === panel.slug),
-  ).length
+  const missing = listMissingPrescribedPanels(panels)
+  const missingMsg = formatMissingPanelsMessage(missing)
 
   const ok = await confirmAppModal({
     title: uiText('Enregistrer, imprimer et clôturer'),
-    message:
-      missingCount > 0
-        ? uiText(
-            'Certains examens prescrits sont encore vides. Enregistrer, imprimer les résultats saisis dans un seul document et clôturer le dossier ?',
-          )
-        : uiText(
-            'Enregistrer tous les résultats, imprimer un seul document et transmettre au médecin ?',
-          ),
+    message: missing.length
+      ? `${missingMsg} ${uiText(
+          'Enregistrer uniquement les examens saisis, imprimer et clôturer le dossier ?',
+        )}`
+      : uiText(
+          'Enregistrer tous les résultats, imprimer un seul document et transmettre au médecin ?',
+        ),
     confirmLabel: uiText('Enregistrer, imprimer et clôturer'),
     type: 'CONFIRM',
   })
@@ -418,28 +490,41 @@ async function savePrintAndComplete() {
   saving.value = true
   try {
     const latest = await persistPanels(panels)
-    printAllPanels(
+    const printed = printAllPanels(
       latest,
       panels.map((panel) => panel.slug),
     )
+    const printWarning = printed
+      ? ''
+      : ` ${uiText(
+          'Résultats enregistrés, mais impression impossible (fenêtre bloquée ou aucun formulaire imprimable).',
+        )}`
     if (!dossierCompleted.value) {
-      await api.post(`/laboratoire/visits/${visitId.value}/complete`)
-      dossierCompleted.value = true
+      try {
+        await api.post(`/laboratoire/visits/${visitId.value}/complete`)
+        dossierCompleted.value = true
+      } catch (error) {
+        showMessage(
+          apiErrorMessage(
+            error,
+            uiText('Résultats enregistrés, mais la clôture a échoué. Réessayez la clôture.'),
+          ),
+          'error',
+        )
+        return
+      }
     }
     emitLabAlertsRefresh()
-    showMessage(uiText('Dossier enregistré, imprimé et clôturé — résultats transmis au médecin.'))
+    const suffix = missing.length ? ` ${missingMsg}` : ''
+    showMessage(
+      `${uiText('Dossier enregistré, imprimé et clôturé — résultats transmis au médecin.')}${suffix}${printWarning}`,
+    )
     setTimeout(() => router.push({ name: 'laboratoire-termines' }), 1200)
   } catch (error: unknown) {
-    const apiMessage =
-      error &&
-      typeof error === 'object' &&
-      'response' in error &&
-      (error as { response?: { data?: { error?: unknown } } }).response?.data?.error
     showMessage(
-      uiText(
-        typeof apiMessage === 'string'
-          ? apiMessage
-          : "Erreur lors de l'enregistrement, de l'impression ou de la clôture.",
+      apiErrorMessage(
+        error,
+        uiText("Erreur lors de l'enregistrement, de l'impression ou de la clôture."),
       ),
       'error',
     )
@@ -451,7 +536,19 @@ async function savePrintAndComplete() {
 async function savePanel() {
   if (!activePanel.value || isActivePanelReadOnly.value) return
   if (!panelFormHasValues(formValues)) {
-    showMessage(uiText("Remplissez au moins un résultat avant d'enregistrer."), 'error')
+    const missing = listMissingPrescribedPanels(
+      collectPanelsToSave().filter((panel) => panel.slug !== activePanel.value),
+    )
+    const activeName = panelDisplayName(activePanel.value)
+    showMessage(
+      missing.length > 1
+        ? `${uiText('Remplissez « {name} ».').replace('{name}', activeName)} ${formatMissingPanelsMessage(missing)}`
+        : uiText("Remplissez au moins un résultat dans « {name} » avant d'enregistrer.").replace(
+            '{name}',
+            activeName,
+          ),
+      'error',
+    )
     return
   }
 
@@ -468,22 +565,28 @@ async function savePanel() {
         ? collectPanelsToSave()
         : [{ slug: activePanel.value, values: { ...formValues } }]
 
+    if (!panels.length) {
+      showMessage(uiText("Aucun formulaire prêt à enregistrer."), 'error')
+      return
+    }
+
     const latest = await persistPanels(panels)
+    const printed = printAllPanels(
+      latest,
+      panels.map((panel) => panel.slug),
+    )
+    const printHint = printed
+      ? ''
+      : ` ${uiText('Formulaires enregistrés, mais impression impossible (fenêtre bloquée).')}`
     if (isEditMode.value) {
-      printAllPanels(
-        latest,
-        panels.map((panel) => panel.slug),
+      showMessage(
+        `${uiText('Formulaires modifiés et envoyés à l’impression (un seul document pour le dossier).')}${printHint}`,
       )
-      showMessage(uiText('Formulaires modifiés et envoyés à l’impression (un seul document pour le dossier).'))
     } else {
-      printAllPanels(
-        latest,
-        panels.map((panel) => panel.slug),
-      )
       const remaining = listedPanels.value.filter((panel) => !isPanelFilled(panel.slug))
       showMessage(
         remaining.length
-          ? uiText('Formulaire ajouté. Passez au suivant ou retournez à la liste.')
+          ? `${uiText('Formulaire ajouté.')} ${formatMissingPanelsMessage(remaining)}`
           : uiText('Tous les examens prescrits sont enregistrés.'),
       )
       pickDefaultPanel(listedPanels.value)
@@ -491,8 +594,11 @@ async function savePanel() {
         setTimeout(() => router.push({ name: 'laboratoire-termines' }), 1200)
       }
     }
-  } catch {
-    showMessage(uiText("Erreur lors de l'enregistrement."), 'error')
+  } catch (error: unknown) {
+    showMessage(
+      apiErrorMessage(error, uiText("Erreur lors de l'enregistrement.")),
+      'error',
+    )
   } finally {
     saving.value = false
   }

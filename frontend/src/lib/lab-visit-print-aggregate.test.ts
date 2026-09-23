@@ -12,7 +12,7 @@ import {
 const here = dirname(fileURLToPath(import.meta.url))
 
 describe('agrégation impression résultats labo (même visite)', () => {
-  it('regroupe 4 examens remplis dans un seul document', () => {
+  it('planifie 4 examens : condensé hors Routine + feuille Routine séparée', () => {
     const plan = planLabVisitPrint({
       diabetic: { fbg: '95' },
       routine: { bffm: 'Negative', esr: '12' },
@@ -23,20 +23,34 @@ describe('agrégation impression résultats labo (même visite)', () => {
     assert.equal(plan.documentCount, 1)
     assert.equal(plan.articleClass, LAB_VISIT_FLOW_ARTICLE_CLASS)
     assert.equal(plan.skippedEmpty.length, 0)
+    assert.deepEqual(plan.routineSlugs, ['routine'])
+    assert.equal(plan.condensedSlugs.length, 3)
+    assert.equal(plan.expectedSheetCount, 2)
   })
 
-  it('reste un seul document même avec 10 examens', () => {
+  it('reste un seul job et une seule feuille condensée avec 10 examens (sans Routine)', () => {
     const panelResults: Record<string, Record<string, string>> = {}
     for (let i = 1; i <= 10; i++) panelResults[`exam-${i}`] = { result: String(i) }
     const plan = planLabVisitPrint(panelResults)
     assert.equal(plan.slugs.length, 10)
     assert.equal(plan.documentCount, 1)
+    assert.equal(plan.expectedSheetCount, 1)
+    assert.equal(plan.routineSlugs.length, 0)
   })
 
   it('fonctionne avec un seul examen', () => {
     const plan = planLabVisitPrint({ diabetic: { fbg: '95' } })
     assert.deepEqual(plan.slugs, ['diabetic'])
     assert.equal(plan.documentCount, 1)
+    assert.equal(plan.expectedSheetCount, 1)
+  })
+
+  it('Routine seule → une seule feuille (pas de condensé)', () => {
+    const plan = planLabVisitPrint({ routine: { esr: '12' } })
+    assert.deepEqual(plan.slugs, ['routine'])
+    assert.deepEqual(plan.routineSlugs, ['routine'])
+    assert.deepEqual(plan.condensedSlugs, [])
+    assert.equal(plan.expectedSheetCount, 1)
   })
 
   it('omet les panneaux vides (en attente) sans bloquer l’impression', () => {
@@ -58,24 +72,23 @@ describe('agrégation impression résultats labo (même visite)', () => {
     assert.ok(!visitA.slugs.includes('liver'))
   })
 
-  it('le HTML combiné n’a qu’un article fluide, sans page forcée par examen', () => {
+  it('le HTML condensé utilise panel-block ; Routine reste un article séparé', () => {
     const html = `
-      <style>section { page-break-inside: avoid; }</style>
-      <article class="lab-result-print lab-result-print--combined ${LAB_VISIT_FLOW_ARTICLE_CLASS}">
+      <style>.lab-result-print:not(:last-of-type) { page-break-after: always; }</style>
+      <article class="lab-result-print lab-result-print--combined lab-result-print--flow">
         <section class="lab-result-print__panel-block">FBG</section>
         <section class="lab-result-print__panel-block">CBC</section>
-        <section class="lab-result-print__panel-block">ESR</section>
       </article>
+      <article class="lab-result-print lab-result-print--flow">ROUTINE</article>
     `
     const inspect = inspectLabVisitPrintHtml(html)
-    assert.equal(inspect.articleCount, 1)
-    assert.equal(inspect.hasFlowClass, true)
-    assert.equal(inspect.forcedSinglePageCount, 0)
-    assert.equal(inspect.panelBlockCount, 3)
-    assert.equal(inspect.hasPageBreakInsideAvoid, true)
+    assert.equal(inspect.articleCount, 2)
+    assert.equal(inspect.panelBlockCount, 2)
+    assert.equal(inspect.hasCombinedClass, true)
+    assert.equal(inspect.hasPageBreakAfterAlways, true)
   })
 
-  it('printLabVisitPanelResults agrège toujours via buildVisitLabResultsPrintHtml', () => {
+  it('printLabVisitPanelResults condense hors Routine via buildVisitLabResultsPrintHtml', () => {
     const src = readFileSync(join(here, 'lab-panel-print.ts'), 'utf8')
     const start = src.indexOf('export function printLabVisitPanelResults')
     const end = src.indexOf('export function printLabPanelResult')
@@ -84,15 +97,32 @@ describe('agrégation impression résultats labo (même visite)', () => {
     assert.match(fn, /buildVisitLabResultsPrintHtml/)
     assert.match(fn, /openPrintDocument/)
     assert.equal((fn.match(/openPrintDocument\(/g) ?? []).length, 1)
-    assert.doesNotMatch(fn, /MAX_COMBINED/)
-    assert.doesNotMatch(fn, /canCombinePanelsOnOnePage/)
-    assert.doesNotMatch(fn, /buildLabPanelPrintHtml/)
+
+    const buildStart = src.indexOf('export function buildVisitLabResultsPrintHtml')
+    const buildEnd = src.indexOf('export function buildCombinedLabPanelsPrintHtml')
+    assert.ok(buildStart >= 0 && buildEnd > buildStart)
+    const buildFn = src.slice(buildStart, buildEnd)
+    assert.match(buildFn, /planVisitPrintSheets/)
+    assert.match(buildFn, /buildCondensedLabPanelsPrintHtml/)
+    assert.match(buildFn, /isRoutinePanelSlug|kind === 'routine'/)
+    assert.match(buildFn, /pageIndex/)
+    assert.match(buildFn, /pageTotal/)
+    assert.match(src, /lab-result-print--combined/)
+    assert.match(src, /lab-result-print__panel-block/)
   })
 
-  it('le document fluide n’impose pas une hauteur A4 par formulaire', () => {
+  it('affiche la numérotation pageIndex/pageTotal dans le pied de page', () => {
     const src = readFileSync(join(here, 'lab-panel-print.ts'), 'utf8')
-    assert.match(src, /lab-result-print--flow/)
-    assert.match(src, /\.lab-result-print--flow \{[\s\S]*height:\s*auto/)
-    assert.match(src, /lab-result-print__panel-block \{[\s\S]*page-break-inside:\s*avoid/)
+    assert.match(src, /lab-result-print__footer-page/)
+    assert.match(src, /pageIndex: index \+ 1/)
+    assert.match(src, /\$\{paging\.pageIndex\}\/\$\{paging\.pageTotal\}/)
+  })
+
+  it('force un saut de page entre feuille condensée et Routine', () => {
+    const src = readFileSync(join(here, 'lab-panel-print.ts'), 'utf8')
+    assert.match(
+      src,
+      /\.lab-result-print:not\(:last-of-type\)\s*\{[\s\S]*page-break-after:\s*always/,
+    )
   })
 })

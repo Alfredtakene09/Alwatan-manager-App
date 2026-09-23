@@ -63,6 +63,11 @@ const transferring = ref(false)
 const selectedExamsByKind = ref<ExamsByKind>(emptyExamsByKind())
 const examCommentsByKind = ref<ExamCommentsByKind>(emptyExamCommentsByKind())
 const operationAmountFcfa = ref<number | null>(null)
+const operationAssistant = ref<{
+  anesthesiologistId?: string | null
+  anesthesiologistName?: string | null
+  anesthesiologistPercent: number
+} | null>(null)
 const hospitalisationDays = ref<number | null>(null)
 const doctorComment = ref('')
 const pharmacyOrdonnance = ref<PharmacyOrdonnanceLine[]>([])
@@ -91,10 +96,6 @@ const isLabLockedVisit = computed(() => {
 
 const hasOperationSelected = computed(
   () => (selectedExamsByKind.value.operation?.length ?? 0) > 0,
-)
-
-const recentResults = computed(() =>
-  recentHistory.value.filter((entry) => entry.labPanels.length > 0 || entry.operations?.length),
 )
 
 const patientMetaLine = computed(() => {
@@ -223,6 +224,7 @@ function resetExamForm() {
   doctorComment.value = ''
   pharmacyOrdonnance.value = []
   operationAmountFcfa.value = null
+  operationAssistant.value = null
   consultModalTab.value = 'exams'
 }
 
@@ -242,7 +244,7 @@ async function loadRecentHistory(patientId: string | undefined) {
     const { data } = await api.get<{ medicalHistory: MedicalHistoryEntry[] }>(
       `/patient-dossiers/${patientId}`,
     )
-    recentHistory.value = Array.isArray(data.medicalHistory) ? data.medicalHistory.slice(0, 4) : []
+    recentHistory.value = Array.isArray(data.medicalHistory) ? data.medicalHistory : []
   } catch {
     recentHistory.value = []
   } finally {
@@ -377,6 +379,12 @@ async function submitExams() {
           operationAmountFcfa.value != null
         ) {
           payload.operationAmountFcfa = operationAmountFcfa.value
+        }
+        if (
+          (selectedExamsByKind.value.operation?.length ?? 0) > 0 &&
+          operationAssistant.value
+        ) {
+          payload.operationAssistant = operationAssistant.value
         }
       }
       if (showConsultationPanel.value && pharmacyOrdonnance.value.length > 0) {
@@ -550,19 +558,19 @@ onUnmounted(() => {
           </header>
 
           <div class="modal__body">
-            <section v-if="loadingHistory || recentResults.length" class="info-section info-section--history">
+            <section v-if="loadingHistory || recentHistory.length" class="info-section info-section--history">
               <h3>
-                <FlaskConical :size="15" />
-                {{ uiText('Résultats antérieurs') }}
+                <ClipboardList :size="15" />
+                {{ uiText('Historique médical') }}
               </h3>
               <p v-if="loadingHistory" class="comment-hint">{{ uiText('Chargement…') }}</p>
               <PatientMedicalHistory
                 v-else
-                :entries="recentResults"
+                :entries="recentHistory"
                 :patient="modalVisit.patient"
                 :expand-first="true"
                 :show-open-lab-link="true"
-                :empty-message="uiText('Aucun résultat labo ou opération enregistré.')"
+                :empty-message="uiText('Aucun historique pour ce patient.')"
               />
             </section>
 
@@ -637,6 +645,7 @@ onUnmounted(() => {
                 v-model:comments="examCommentsByKind"
                 v-model:hospitalisation-days="hospitalisationDays"
                 v-model:operation-amount-fcfa="operationAmountFcfa"
+                v-model:operation-assistant="operationAssistant"
                 :doctor-id="auth.user?.id"
                 :hide-consultation-tab="true"
               />

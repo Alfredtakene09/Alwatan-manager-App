@@ -3,7 +3,8 @@ param(
     [string]$SourceDir = $PSScriptRoot,
     [string]$ServerIp = $null,
     [int]$Port = 4000,
-    [switch]$Quiet
+    [switch]$Quiet,
+    [switch]$SkipOpen
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,6 +54,7 @@ New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 
 $filesToInstall = @(
     '_alwatan-common.ps1',
+    'demarrer-alwatan.ps1',
     'lancer-client.ps1',
     'alwatan-server.txt.example',
     'tester-poste-client.ps1',
@@ -100,14 +102,14 @@ if (-not (Test-Path $icon)) {
     if ($icon) { Copy-Item $icon (Join-Path $installDir 'alwatan.ico') -Force }
 }
 
-$launcherVbs = Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-client' -ScriptsDir $installDir
+$launcherVbs = Update-AlwatanSilentLauncher -ScriptBaseName 'demarrer-alwatan' -ScriptsDir $installDir -ExtraArgs '-Mode Client'
 $iconPath = Join-Path $installDir 'alwatan.ico'
 
 $url = "http://${ServerIp}:${Port}/"
 $tsUrl = if ($TailscaleIp -and $TailscaleIp -ne $ServerIp) { "http://${TailscaleIp}:${Port}/" } else { $null }
 
-$lienLines = @("Wi-Fi / Ethernet : $($url.TrimEnd('/'))")
-if ($tsUrl) { $lienLines += "Tailscale        : $($tsUrl.TrimEnd('/'))" }
+$lienLines = @("Ethernet : $($url.TrimEnd('/'))")
+if ($tsUrl) { $lienLines += "Tailscale (secours) : $($tsUrl.TrimEnd('/'))" }
 $lienPath = Join-Path $installDir 'LIEN-SERVEUR.txt'
 [System.IO.File]::WriteAllText($lienPath, ($lienLines -join "`r`n"), [System.Text.UTF8Encoding]::new($false))
 
@@ -115,36 +117,23 @@ $bat = @"
 @echo off
 title Alwatan Manager
 cd /d "%~dp0"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0lancer-client.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0demarrer-alwatan.ps1" -Mode Client
 if errorlevel 1 pause
 "@
+Set-Content -LiteralPath (Join-Path $installDir 'DEMARRER-ALWATAN.cmd') -Value $bat -Encoding ASCII
 Set-Content -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan.bat') -Value $bat -Encoding ASCII
 
 $batHard = @"
 @echo off
 title Alwatan Manager (rechargement force)
 cd /d "%~dp0"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0lancer-client.ps1" -ForceHardReload
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0demarrer-alwatan.ps1" -Mode Client -ForceHardReload
 if errorlevel 1 pause
 "@
 Set-Content -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan (rechargement force).bat') -Value $batHard -Encoding ASCII
 
-$urlShortcut = @"
-[InternetShortcut]
-URL=$url
-"@
-Set-Content -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan.url') -Value $urlShortcut -Encoding ASCII
-Set-Content -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan (Wi-Fi).url') -Value $urlShortcut -Encoding ASCII
-if ($tsUrl) {
-    $tsShortcut = @"
-[InternetShortcut]
-URL=$tsUrl
-"@
-    Set-Content -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan (Tailscale).url') -Value $tsShortcut -Encoding ASCII
-}
-
 $shortcutName = 'Alwatan Manager'
-$shortcutDescription = "Clinique Alwatan - Wi-Fi + Tailscale ($url)"
+$shortcutDescription = "Clinique Alwatan - Ethernet hors ligne ($url)"
 
 # Bureau de l'utilisateur courant
 $userDesktop = [Environment]::GetFolderPath('Desktop')
@@ -160,16 +149,19 @@ try {
     Write-Host "Raccourci Bureau .lnk ignore : $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
-# Raccourcis URL directs (Wi-Fi + Tailscale)
-$desktopUrl = Join-Path $userDesktop 'Alwatan Manager (Wi-Fi).url'
-Copy-Item -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan (Wi-Fi).url') -Destination $desktopUrl -Force
+# Raccourcis Bureau (Ethernet hors ligne)
 $desktopBat = Join-Path $userDesktop 'Alwatan Manager (direct).bat'
 Copy-Item -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan.bat') -Destination $desktopBat -Force
 $desktopHardBat = Join-Path $userDesktop 'Alwatan Manager (rechargement force).bat'
 Copy-Item -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan (rechargement force).bat') -Destination $desktopHardBat -Force
-if ($tsUrl) {
-    Copy-Item -LiteralPath (Join-Path $installDir 'Ouvrir Alwatan (Tailscale).url') `
-        -Destination (Join-Path $userDesktop 'Alwatan Manager (Tailscale).url') -Force
+# Nettoyage anciens raccourcis inutiles
+foreach ($obsolete in @(
+    'Alwatan Manager (Wi-Fi).url',
+    'Ouvrir Alwatan (reseau).url',
+    'Ouvrir Alwatan (reseau).bat'
+)) {
+    $obs = Join-Path $userDesktop $obsolete
+    if (Test-Path $obs) { Remove-Item -LiteralPath $obs -Force -ErrorAction SilentlyContinue }
 }
 
 # Bureau public (visible pour tous les comptes, utile si install exécutée en administrateur)
@@ -195,7 +187,7 @@ try {
         -ShortcutPath $startLnk `
         -TargetPath $launcherVbs `
         -WorkingDirectory $installDir `
-        -Description "Ouvrir Alwatan Manager (Wi-Fi $ServerIp / Tailscale)" `
+        -Description "Ouvrir Alwatan Manager (Ethernet $ServerIp)" `
         -IconPath $iconPath
 } catch {
     Write-Host "Raccourci menu Demarrer ignore : $($_.Exception.Message)" -ForegroundColor Yellow
@@ -207,25 +199,24 @@ Installe : $installDir
 Ethernet : $url
 Tailscale: $(if ($tsUrl) { $tsUrl } else { '(non configure)' })
 
-Le raccourci principal teste d'abord Ethernet, puis Tailscale.
-Secours Bureau :
-  Alwatan Manager (Wi-Fi)
-  Alwatan Manager (Tailscale) (si disponible)
+Double-clic : Alwatan Manager (ou DEMARRER-ALWATAN.cmd)
+Fonctionne hors ligne si le cable Ethernet est branche.
+Secours :
   Alwatan Manager (direct)
-  Alwatan Manager (rechargement force)  (purge cache + URL anti-cache)
+  Alwatan Manager (rechargement force)
 "@
 Set-Content -Path (Join-Path $installDir 'LISEZMOI.txt') -Value $readme -Encoding UTF8
 
 if (-not $Quiet) {
     Write-Host ''
-    Write-Host '  Installation terminée.' -ForegroundColor Green
+    Write-Host '  Installation terminee.' -ForegroundColor Green
     Write-Host "  Dossier : $installDir"
-    Write-Host "  Wi-Fi   : $url"
-    if ($tsUrl) { Write-Host "  Tailscale : $tsUrl" }
+    Write-Host "  Ethernet : $url"
+    if ($tsUrl) { Write-Host "  Tailscale (secours) : $tsUrl" }
     Write-Host "  Bureau  : $desktopShortcut"
     Write-Host "  Secours : $desktopBat"
     Write-Host "  Reload+ : $desktopHardBat"
-    Write-Host "  Menu Démarrer : $startLnk"
+    Write-Host "  Menu Demarrer : $startLnk"
     Write-Host ''
     $msgTs = if ($tsUrl) { "`nTailscale : $tsUrl" } else { '' }
     try {
@@ -235,10 +226,12 @@ if (-not $Quiet) {
     }
 }
 
-try {
-    Open-AlwatanBrowser -Url $url
-} catch {
-    Write-Host "Navigateur non ouvert automatiquement. Ouvrez : $url" -ForegroundColor Yellow
+if (-not $SkipOpen) {
+    try {
+        Open-AlwatanBrowser -Url $url
+    } catch {
+        Write-Host "Navigateur non ouvert automatiquement. Ouvrez : $url" -ForegroundColor Yellow
+    }
 }
 
 $okMarker = Join-Path $SourceDir 'INSTALL-OK.txt'

@@ -23,7 +23,12 @@ export function receptionistOwnPatientsWhere(
 ): Prisma.PatientWhereInput {
   const id = receptionistScopeUserId(user, createdById);
   if (!id) return {};
-  return { createdById: id };
+  return {
+    OR: [
+      { createdById: id },
+      { invoices: { some: { issuedById: id } } },
+    ],
+  };
 }
 
 /**

@@ -23,6 +23,9 @@ import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
 import { type LabsWaitingVisitRow } from '@/components/ui/LabsWaitingDataTable.vue'
 import '@/assets/lab-visit-table.css'
 import LabQueueBell from '@/components/layout/LabQueueBell.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
+import '@/assets/lab-visit-table.css'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -66,6 +69,79 @@ const rows = computed(() =>
 )
 
 const hasActiveSearch = computed(() => listSearch.value.trim().length > 0)
+
+type LabCompletedExportRow = {
+  code: string
+  patientName: string
+  patientPhone: string
+  doctorName: string
+  exams: string
+  eventDate: string
+  eventTime: string
+}
+
+const labCompletedExportColumns: ExportColumn<LabCompletedExportRow>[] = [
+  { header: 'Matricule', value: (r) => r.code },
+  { header: 'Patient', value: (r) => r.patientName },
+  { header: 'Téléphone', value: (r) => r.patientPhone || '—' },
+  { header: 'Médecin', value: (r) => r.doctorName },
+  { header: 'Examens', value: (r) => r.exams },
+  { header: 'Terminé le', value: (r) => `${r.eventDate} ${r.eventTime}`.trim() },
+]
+
+const labCompletedExportRows = computed<LabCompletedExportRow[]>(() =>
+  rows.value.map((row) => ({
+    code: row.code,
+    patientName: row.patientName,
+    patientPhone: row.patientPhone,
+    doctorName: row.doctorName,
+    exams: row.examsFull || row.exams,
+    eventDate: row.eventDate,
+    eventTime: row.eventTime,
+  })),
+)
+
+function labCompletedExportShared() {
+  const q = listSearch.value.trim()
+  return {
+    captionRows: [
+      {
+        label: uiText('Filtres'),
+        value: q ? `${uiText('Recherche')} : ${q}` : uiText('Aucun filtre'),
+      },
+    ],
+    totalsRows: [
+      { label: uiText('Nombre de dossiers'), value: String(labCompletedExportRows.value.length) },
+    ],
+  }
+}
+
+function exportCompletedPdf() {
+  exportTablePdf(
+    uiText('Examens terminés'),
+    labCompletedExportColumns,
+    labCompletedExportRows.value,
+    labCompletedExportShared(),
+  )
+}
+
+function exportCompletedExcel() {
+  exportTableExcel(
+    uiText('Examens terminés'),
+    labCompletedExportColumns,
+    labCompletedExportRows.value,
+    labCompletedExportShared(),
+  )
+}
+
+function exportCompletedWord() {
+  void exportTableWord(
+    uiText('Examens terminés'),
+    labCompletedExportColumns,
+    labCompletedExportRows.value,
+    labCompletedExportShared(),
+  )
+}
 
 async function loadCompleted(opts?: { silent?: boolean }) {
   if (!opts?.silent) loading.value = true
@@ -167,6 +243,12 @@ onActivated(() => {
             <span class="lab-toolbar__count">{{
               uiText('{n} dossier(s)').replace('{n}', numberText(filteredVisits.length))
             }}</span>
+            <ExportButtons
+              :disabled="loading || !labCompletedExportRows.length"
+              @pdf="exportCompletedPdf"
+              @excel="exportCompletedExcel"
+              @word="exportCompletedWord"
+            />
           </div>
         </template>
 

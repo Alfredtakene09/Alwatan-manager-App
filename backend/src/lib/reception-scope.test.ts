@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { UserRole } from "@prisma/client";
-import { receptionistOwnVisitsWhere } from "./reception-scope.js";
+import { receptionistOwnPatientsWhere, receptionistOwnVisitsWhere } from "./reception-scope.js";
 
 describe("périmètre réceptionniste", () => {
   it("isole les dossiers du réceptionniste (listes patients / CA perso)", () => {
@@ -9,6 +9,16 @@ describe("périmètre réceptionniste", () => {
     assert.deepEqual(where, {
       OR: [
         { patient: { createdById: "rec-1" } },
+        { invoices: { some: { issuedById: "rec-1" } } },
+      ],
+    });
+  });
+
+  it("inclut les dossiers réenregistrés (facture émise par le réceptionniste)", () => {
+    const where = receptionistOwnPatientsWhere({ id: "rec-1", role: UserRole.RECEPTIONNISTE });
+    assert.deepEqual(where, {
+      OR: [
+        { createdById: "rec-1" },
         { invoices: { some: { issuedById: "rec-1" } } },
       ],
     });

@@ -9,10 +9,15 @@ export function computeConsultationAmounts(
   reduction: number | null | undefined,
   invoiceAmount?: number | null,
 ): ConsultationAmounts {
-  const consultationFeeFcfa = fee ?? 0
   const reductionFcfa = Math.max(0, reduction ?? 0)
+  const invoiceNet = invoiceAmount == null ? null : Math.max(0, invoiceAmount)
+  // Tarif visite à 0/null mais facture présente (colonne paiement) : reprendre le brut facturé.
+  let consultationFeeFcfa = fee ?? 0
+  if (consultationFeeFcfa <= 0 && invoiceNet != null && invoiceNet > 0) {
+    consultationFeeFcfa = invoiceNet + reductionFcfa
+  }
   const netFromFee = Math.max(0, consultationFeeFcfa - reductionFcfa)
-  const totalFcfa = invoiceAmount != null ? invoiceAmount : netFromFee
+  const totalFcfa = invoiceNet != null ? invoiceNet : netFromFee
 
   return { consultationFeeFcfa, reductionFcfa, totalFcfa }
 }

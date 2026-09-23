@@ -7,6 +7,7 @@ import { backfillClinicServiceDoctorLinks, findSelectableDoctorInClinicService, 
 import {
   EXAMS_PRESCRIBED_PREFIX,
   hasExamsPrescribed,
+  hasLabResults,
   buildPrescribedExamsNotes,
   buildPrescribedExamsNotesByKind,
   flattenPrescribedExams,
@@ -1015,11 +1016,11 @@ router.get("/external-queue", requireModule("reception"), async (req, res) => {
       },
     },
     include: {
-      doctor: { select: { firstName: true, lastName: true } },
+      doctor: { select: { id: true, firstName: true, lastName: true } },
       visit: {
         include: {
           patient: true,
-          assignedDoctor: { select: { firstName: true, lastName: true } },
+          assignedDoctor: { select: { id: true, firstName: true, lastName: true } },
           invoices: { where: { type: InvoiceType.LAB_EXAM }, take: 1 },
         },
       },
@@ -1049,6 +1050,7 @@ router.get("/external-queue", requireModule("reception"), async (req, res) => {
       netFcfa: hasExams ? Math.max(0, grossFcfa - (row.labExamReductionFcfa ?? 0)) : 0,
       invoiced: !!invoice,
       invoiceNumber: invoice?.invoiceNumber ?? null,
+      doctorId: row.doctor?.id ?? row.visit.assignedDoctor?.id ?? null,
       doctor: row.doctor ?? row.visit.assignedDoctor ?? null,
     };
   });
@@ -1103,6 +1105,7 @@ router.delete(
                     type: true,
                     amountFcfa: true,
                     paidAmountFcfa: true,
+                    billingExamKind: true,
                     surgeryCaseId: true,
                     hospitalizationId: true,
                     createdAt: true,
@@ -1135,6 +1138,326 @@ router.delete(
         return res.status(status).json({ error: error.message, code: error.code });
       }
       return res.status(400).json({ error: "Impossible de supprimer le dossier externe." });
+    }
+  },
+);
+
+const externalQueueUpdateSchema = z
+  .object({
+    firstName: z.string().min(2),
+    lastName: z.string().min(2),
+    phone: z.string().optional(),
+    gender: z.string().optional(),
+    service: z.string().max(120).optional(),
+    doctorId: z.string().optional(),
+    prescriberDoctorId: z.string().optional(),
+    examsByKind: examsByKindSchema.optional(),
+    reductionFcfa: z.coerce.number().int().min(0).default(0),
+    operationAmountFcfa: z.number().int().min(0).optional(),
+    ...patientAgeShape,
+  })
+  .superRefine(refinePatientAge);
+
+function catalogGrossWithOperationAmount(
+  examsByKind: Record<ExamKindSlug, string[]>,
+  operationAmountFcfa?: number | null,
+) {
+  const labels = flattenPrescribedExams(examsByKind);
+  const catalogGross = computeGrossFcfaFromExamLabels(labels);
+  const operationLabels = examsByKind.operation ?? [];
+  if (!operationLabels.length || operationAmountFcfa == null) return catalogGross;
+  const catalogOps = computeGrossFcfaFromExamLabels(operationLabels);
+  return Math.max(0, catalogGross - catalogOps) + operationAmountFcfa * operationLabels.length;
+}
+
+router.patch(
+  "/external-queue/:consultationId",
+  requireModule("reception"),
+  async (req, res) => {
+    const consultationId = String(req.params.consultationId ?? "").trim();
+    if (!consultationId) {
+      return res.status(400).json({ error: "Consultation introuvable" });
+    }
+
+    let body: z.infer<typeof externalQueueUpdateSchema>;
+    try {
+      body = externalQueueUpdateSchema.parse(req.body);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        const first = error.issues[0];
+        return res.status(400).json({
+          error: first?.message
+            ? `Données invalides : ${first.path.join(".") || "formulaire"} — ${first.message}`
+            : "Données invalides",
+        });
+      }
+      return res.status(400).json({ error: "Données invalides" });
+    }
+
+    const user = req.user!;
+    const requestedDoctorId = body.doctorId?.trim() || body.prescriberDoctorId?.trim() || "";
+    const examsByKind = body.examsByKind;
+    const examLabels = examsByKind ? flattenPrescribedExams(examsByKind) : [];
+    const wantsExamUpdate = examLabels.length > 0;
+
+    try {
+      const existing = await prisma.consultation.findFirst({
+        where: {
+          id: consultationId,
+          visit: {
+            notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE },
+            status: { not: VisitStatus.CANCELLED },
+            ...receptionistOwnVisitsWhere(user),
+          },
+        },
+        include: {
+          visit: {
+            include: {
+              patient: true,
+              invoices: {
+                where: { type: InvoiceType.LAB_EXAM },
+                select: {
+                  id: true,
+                  type: true,
+                  amountFcfa: true,
+                  paidAmountFcfa: true,
+                  billingExamKind: true,
+                  surgeryCaseId: true,
+                  hospitalizationId: true,
+                  createdAt: true,
+                },
+              },
+            },
+          },
+        },
+      });
+      if (!existing?.visit) {
+        return res.status(404).json({ error: "Dossier patient externe introuvable" });
+      }
+      if (!receptionistOwnsPatient(user, existing.visit.patient)) {
+        return res.status(404).json({ error: "Dossier patient externe introuvable" });
+      }
+
+      const notesLocked = hasLabResults(existing.clinicalNotes);
+      if (wantsExamUpdate && notesLocked) {
+        return res.status(409).json({
+          error:
+            "Impossible de modifier les examens : des résultats laboratoire sont déjà validés. Seule l’identité peut être mise à jour.",
+          code: "LAB_RESULTS_LOCKED",
+        });
+      }
+
+      let assignedDoctorId: string | null = null;
+      if (requestedDoctorId) {
+        const doctor = await prisma.user.findFirst({
+          where: selectableDoctorByIdWhere(requestedDoctorId),
+        });
+        if (!doctor) return res.status(400).json({ error: "Médecin invalide" });
+        assignedDoctorId = doctor.id;
+      }
+
+      let catalogGrossFcfa = 0;
+      let examReduction = 0;
+      let netFcfa = 0;
+      let grossFcfa = 0;
+      let clinicalNotes = "";
+      if (wantsExamUpdate && examsByKind) {
+        catalogGrossFcfa = catalogGrossWithOperationAmount(
+          examsByKind as Record<ExamKindSlug, string[]>,
+          body.operationAmountFcfa,
+        );
+        if (catalogGrossFcfa <= 0) {
+          return res.status(400).json({ error: "Aucun examen facturable. Vérifiez le montant." });
+        }
+        if (body.reductionFcfa > catalogGrossFcfa) {
+          return res.status(400).json({
+            error: "La réduction ne peut pas dépasser le montant total.",
+          });
+        }
+        examReduction = body.reductionFcfa;
+        netFcfa = Math.max(0, catalogGrossFcfa - examReduction);
+        if (netFcfa <= 0) {
+          return res.status(400).json({ error: "Le montant à facturer doit être supérieur à 0." });
+        }
+        grossFcfa = catalogGrossFcfa;
+        clinicalNotes = buildPrescribedExamsNotesByKind(examsByKind);
+      }
+
+      const service = body.service?.trim() || null;
+
+      const result = await prisma.$transaction(async (tx) => {
+        await tx.patient.update({
+          where: { id: existing.visit.patientId },
+          data: {
+            firstName: body.firstName,
+            lastName: body.lastName,
+            age: body.age,
+            ageUnit: body.ageUnit,
+            phone: body.phone,
+            gender: body.gender,
+          },
+        });
+
+        if (!wantsExamUpdate) {
+          if (assignedDoctorId) {
+            await tx.visit.update({
+              where: { id: existing.visitId },
+              data: { assignedDoctorId },
+            });
+            await tx.consultation.update({
+              where: { id: existing.id },
+              data: { doctorId: assignedDoctorId },
+            });
+          }
+          const visit = await tx.visit.findUnique({
+            where: { id: existing.visitId },
+            include: { patient: true },
+          });
+          return { visit, consultation: existing, invoice: null as { invoiceNumber: string } | null, grossFcfa: 0, netFcfa: 0 };
+        }
+
+        if (hasExamsPrescribed(existing.clinicalNotes) || existing.visit.invoices.length) {
+          await voidAllPaidLabExams({
+            tx,
+            consultation: {
+              id: existing.id,
+              visitId: existing.visitId,
+              clinicalNotes: existing.clinicalNotes,
+              labSentToLabAt: existing.labSentToLabAt,
+              visit: { invoices: existing.visit.invoices },
+            },
+          });
+        }
+
+        await tx.visit.update({
+          where: { id: existing.visitId },
+          data: {
+            ...(service ? { notes: buildExternalPatientVisitNote(service) } : {}),
+            assignedDoctorId: assignedDoctorId,
+          },
+        });
+
+        let consultation = await tx.consultation.update({
+          where: { id: existing.id },
+          data: {
+            clinicalNotes,
+            labExamReductionFcfa: examReduction,
+            doctorId: assignedDoctorId,
+          },
+        });
+
+        const operationLabel = examsByKind?.operation?.find(Boolean);
+        let surgeryCaseId: string | null = null;
+        if (operationLabel && assignedDoctorId) {
+          const doctorServices = await resolveDoctorClinicServices(assignedDoctorId);
+          const serviceIds = doctorServices?.ids ?? [];
+          const intervention = await tx.interventionType.findFirst({
+            where: {
+              label: operationLabel,
+              active: true,
+              ...(serviceIds.length
+                ? interventionVisibleForServicesWhere(serviceIds, {
+                    doctorUserId: assignedDoctorId,
+                  })
+                : {}),
+            },
+          });
+          if (intervention) {
+            const operationLabels = examsByKind?.operation ?? [];
+            const operationOnly =
+              examLabels.length > 0 && operationLabels.length === examLabels.length;
+            const totalCostFcfa =
+              body.operationAmountFcfa != null
+                ? body.operationAmountFcfa
+                : operationOnly
+                  ? netFcfa
+                  : intervention.totalCostFcfa;
+            const shares = computeInterventionCostShares(
+              totalCostFcfa,
+              intervention.surgeonPercent,
+            );
+            const surgery = await tx.surgeryCase.upsert({
+              where: { visitId: existing.visitId },
+              update: {
+                interventionTypeId: intervention.id,
+                surgeonId: assignedDoctorId,
+                totalCostFcfa: shares.totalCostFcfa,
+                surgeonShareFcfa: shares.surgeonShareFcfa,
+                clinicShareFcfa: shares.clinicShareFcfa,
+                status: SurgeryStatus.NOTIFIED,
+              },
+              create: {
+                visitId: existing.visitId,
+                interventionTypeId: intervention.id,
+                surgeonId: assignedDoctorId,
+                totalCostFcfa: shares.totalCostFcfa,
+                surgeonShareFcfa: shares.surgeonShareFcfa,
+                clinicShareFcfa: shares.clinicShareFcfa,
+                status: SurgeryStatus.NOTIFIED,
+              },
+            });
+            surgeryCaseId = surgery.id;
+            await tx.consultation.update({
+              where: { id: consultation.id },
+              data: { needsSurgery: true },
+            });
+          }
+        } else if (operationLabel) {
+          await tx.consultation.update({
+            where: { id: consultation.id },
+            data: { needsSurgery: true },
+          });
+        }
+
+        const payment = await collectExternalLabOrderPayment(tx, {
+          visitId: existing.visitId,
+          patientId: existing.visit.patientId,
+          recordedById: user.id,
+          clinicalNotes,
+          examReduction,
+          surgeryCaseId,
+        });
+        const paidAt = new Date();
+        if (payment.notes !== clinicalNotes || payment.sendToLab) {
+          consultation = await tx.consultation.update({
+            where: { id: consultation.id },
+            data: {
+              clinicalNotes: payment.notes,
+              ...(payment.sendToLab
+                ? { labSentToLabAt: paidAt, labApprovedById: user.id }
+                : {}),
+            },
+          });
+        }
+
+        const visit = await tx.visit.findUnique({
+          where: { id: existing.visitId },
+          include: { patient: true },
+        });
+        return { visit, consultation, invoice: payment.invoice, grossFcfa, netFcfa };
+      });
+
+      return res.json(result);
+    } catch (error) {
+      if (error instanceof ReclamationRefundError) {
+        const status =
+          error.code === "NOT_FOUND"
+            ? 404
+            : error.code === "LAB_RESULTS_LOCKED" || error.code === "SURGERY_LOCKED"
+              ? 409
+              : 400;
+        return res.status(status).json({ error: error.message, code: error.code });
+      }
+      if (error instanceof Error && error.message === "PATIENT_NOT_FOUND") {
+        return res.status(404).json({ error: "Patient introuvable" });
+      }
+      console.error("[visits] patch external-queue:", error);
+      return res.status(500).json({
+        error:
+          error instanceof Error
+            ? `Impossible de modifier le dossier externe : ${error.message}`
+            : "Impossible de modifier le dossier externe.",
+      });
     }
   },
 );

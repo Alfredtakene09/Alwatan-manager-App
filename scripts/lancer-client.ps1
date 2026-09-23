@@ -134,18 +134,13 @@ if ($server) {
     exit 0
 }
 
-if (Test-Path (Join-Path (Get-AlwatanRoot) 'backend\package.json')) {
-    & (Join-Path $PSScriptRoot 'lancer-postes-clients.ps1')
-    exit $LASTEXITCODE
-}
-
 Write-AlwatanClientLaunchLog 'ERROR: no server IP'
 Show-AlwatanMessage -Title 'Alwatan Manager' -Message @"
 Connexion impossible - aucune adresse serveur.
 
-1) Reinstallez avec INSTALLER.bat
-2) Ou creez alwatan-server.txt :
-   SERVER_IP=192.168.88.70
-   TAILSCALE_IP=100.x.x.x
+1) Sur le PC serveur : DEMARRER-ALWATAN.cmd (cable Ethernet branche)
+2) Sur ce PC client : meme reseau Ethernet
+3) Ou creez / mettez a jour alwatan-server.txt :
+   SERVER_IP=192.168.1.175
 "@ -Type Warning
 exit 1

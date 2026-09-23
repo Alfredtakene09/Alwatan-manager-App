@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { Package, Plus, RefreshCw, Save, Search } from '@lucide/vue'
+import { Package, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { canAccessModule, formatFcfa } from '@/lib/roles'
 import { defaultExpiryDateInput, PHARMACEUTICAL_FORMS } from '@/lib/pharmacy-product-forms'
@@ -9,7 +9,6 @@ import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } 
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
 import type { PharmacyFormRecord } from '@/components/pharmacie/PharmacyFormsPanel.vue'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
-import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -86,9 +85,6 @@ const formSellBySachet = ref(false)
 const filterQuery = ref('')
 const filterForm = ref('')
 const filterCategoryId = ref('')
-const appliedQuery = ref('')
-const appliedForm = ref('')
-const appliedCategoryId = ref('')
 
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 const isEditing = computed(() => editingId.value !== null)
@@ -107,10 +103,10 @@ const activeForms = computed(() => {
 })
 
 const filteredItems = computed(() => {
-  const q = appliedQuery.value.toLowerCase()
+  const q = filterQuery.value.trim().toLowerCase()
   return items.value.filter((item) => {
-    if (appliedCategoryId.value && item.categoryId !== appliedCategoryId.value) return false
-    if (appliedForm.value && (item.pharmaceuticalForm || '') !== appliedForm.value) return false
+    if (filterCategoryId.value && item.categoryId !== filterCategoryId.value) return false
+    if (filterForm.value && (item.pharmaceuticalForm || '') !== filterForm.value) return false
     if (q) {
       const hay = [
         item.name,
@@ -165,8 +161,14 @@ function toProductExportRow(item: PharmacyProductRecord) {
 
 const catalogExportRows = computed(() => {
   void localeCode.value
-  return items.value.map(toProductExportRow)
+  return filteredItems.value.map(toProductExportRow)
 })
+
+const hasActiveFilters = computed(
+  () => Boolean(filterQuery.value.trim() || filterForm.value || filterCategoryId.value),
+)
+
+const exportDisabled = computed(() => loading.value || !catalogExportRows.value.length)
 
 function setFormFeedback(text: string, type: 'error' | 'success' | 'info' = 'error') {
   formFeedback.value = text
@@ -182,12 +184,6 @@ function clearFormFeedback() {
 function asTrimmedText(value: unknown): string {
   if (value === null || value === undefined) return ''
   return String(value).trim()
-}
-
-function applyFilters() {
-  appliedQuery.value = filterQuery.value.trim()
-  appliedForm.value = filterForm.value
-  appliedCategoryId.value = filterCategoryId.value
 }
 
 function apiErrorMessage(error: unknown, fallback: string) {
@@ -473,13 +469,14 @@ const productExportColumns = computed<ExportColumn<ProductExportRow>[]>(() => {
 })
 
 function productExportTotals() {
-  const saleValue = items.value.reduce((sum, item) => sum + item.quantity * item.unitPriceFcfa, 0)
-  const purchaseValue = items.value.reduce(
+  const source = filteredItems.value
+  const saleValue = source.reduce((sum, item) => sum + item.quantity * item.unitPriceFcfa, 0)
+  const purchaseValue = source.reduce(
     (sum, item) => sum + item.quantity * (item.purchasePriceFcfa ?? 0),
     0,
   )
   return [
-    { label: uiText('Nombre de médicaments'), value: String(items.value.length) },
+    { label: uiText('Nombre de médicaments'), value: String(source.length) },
     { label: uiText('Valeur stock (prix vente)'), value: formatFcfa(saleValue) },
     { label: uiText('Valeur stock (prix achat)'), value: formatFcfa(purchaseValue) },
   ]
@@ -487,7 +484,12 @@ function productExportTotals() {
 
 function productExportShared() {
   return {
-    captionRows: [{ label: uiText('Périmètre'), value: uiText('Catalogue complet') }],
+    captionRows: [
+      {
+        label: uiText('Périmètre'),
+        value: hasActiveFilters.value ? uiText('Recherche / filtres appliqués') : uiText('Catalogue complet'),
+      },
+    ],
     totalsRows: productExportTotals(),
   }
 }
@@ -504,46 +506,38 @@ function exportWord() {
   void exportTableWord(uiText('Produits pharmacie'), productExportColumns.value, catalogExportRows.value, productExportShared())
 }
 
-defineExpose({ reload: loadItems })
+defineExpose({
+  reload: loadItems,
+  exportPdf,
+  exportExcel,
+  exportWord,
+  openCreateModal,
+  exportDisabled,
+})
 </script>
 
 <template>
   <PageTableSection embedded>
     <template #toolbar>
-      <input
-        v-model="filterQuery"
-        class="filter-input"
-        type="search"
-        :placeholder="uiText('Rechercher un produit…')"
-        :aria-label="uiText('Rechercher un produit')"
-        @keydown.enter.prevent="applyFilters"
-      />
-      <select v-model="filterForm" class="filter-select" :aria-label="uiText('Filtrer par forme')">
-        <option value="">{{ uiText('Toutes les formes') }}</option>
-        <option v-for="form in filterFormOptions" :key="form.id" :value="form.name">{{ form.name }}</option>
-      </select>
-      <select v-model="filterCategoryId" class="filter-select" :aria-label="uiText('Filtrer par catégorie')">
-        <option value="">{{ uiText('Toutes les catégories') }}</option>
-        <option v-for="category in activeCategories" :key="category.id" :value="category.id">
-          {{ category.name }}
-        </option>
-      </select>
-      <UiButton variant="ghost" size="sm" :icon="Search" :disabled="loading" @click="applyFilters">
-        {{ uiText('Rechercher') }}
-      </UiButton>
-      <ExportButtons :disabled="loading || !items.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-      <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
-        {{ uiText('Actualiser') }}
-      </UiButton>
-      <UiButton
-        v-if="canManageCatalog"
-        variant="primary"
-        size="sm"
-        :icon="Plus"
-        @click="openCreateModal"
-      >
-        {{ uiText('Nouveau produit') }}
-      </UiButton>
+      <div class="products-toolbar">
+        <input
+          v-model="filterQuery"
+          class="filter-input"
+          type="search"
+          :placeholder="uiText('Rechercher un produit…')"
+          :aria-label="uiText('Rechercher un produit')"
+        />
+        <select v-model="filterForm" class="filter-select" :aria-label="uiText('Filtrer par forme')">
+          <option value="">{{ uiText('Toutes les formes') }}</option>
+          <option v-for="form in filterFormOptions" :key="form.id" :value="form.name">{{ form.name }}</option>
+        </select>
+        <select v-model="filterCategoryId" class="filter-select" :aria-label="uiText('Filtrer par catégorie')">
+          <option value="">{{ uiText('Toutes les catégories') }}</option>
+          <option v-for="category in activeCategories" :key="category.id" :value="category.id">
+            {{ category.name }}
+          </option>
+        </select>
+      </div>
     </template>
 
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
@@ -742,6 +736,15 @@ defineExpose({ reload: loadItems })
 <style scoped>
 .panel-alert {
   margin-bottom: 1rem;
+}
+
+.products-toolbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .filter-input,

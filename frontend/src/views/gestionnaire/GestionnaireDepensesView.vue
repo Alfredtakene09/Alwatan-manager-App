@@ -35,6 +35,7 @@ type ExpenseRow = {
   comment: string | null
   recordedByName: string | null
   recordedByRoleLabel: string | null
+  source?: 'clinic' | 'payroll'
 }
 
 type ExpenseCategory = ExpenseCategoryOption
@@ -64,7 +65,7 @@ const monthLabel = computed(() =>
 const pageSubtitle = computed(() =>
   activeTab.value === 'categories'
     ? 'Gestion des dépenses et catégories'
-    : 'Enregistrement des sorties de caisse',
+    : 'Sorties de caisse et salaires déjà versés',
 )
 
 const filterLabel = computed(() => (filter.value === 'month' ? `Période : ${monthLabel.value}` : 'Toutes les périodes'))
@@ -149,6 +150,7 @@ function openExpenseModal() {
 }
 
 function openEditExpense(row: ExpenseRow) {
+  if (row.source === 'payroll') return
   editingExpense.value = {
     id: row.id,
     businessDate: row.date,
@@ -350,7 +352,11 @@ onMounted(async () => {
           </div>
           <p class="depenses-empty__title">Aucune dépense</p>
           <p class="depenses-empty__text">
-            {{ filter === 'month' ? 'Aucune sortie enregistrée ce mois-ci.' : 'Commencez par enregistrer une sortie de caisse.' }}
+            {{
+              filter === 'month'
+                ? 'Aucune sortie de caisse ni salaire versé ce mois-ci.'
+                : 'Les salaires apparaissent ici dès qu’une fiche de paie est payée. Vous pouvez aussi enregistrer une sortie de caisse.'
+            }}
           </p>
           <UiButton :icon="Plus" @click="openExpenseModal">Enregistrer une dépense</UiButton>
         </div>
@@ -391,7 +397,7 @@ onMounted(async () => {
                   <span v-else class="text-muted">—</span>
                 </td>
                 <td class="actions">
-                  <GestionnaireRowActionGroup>
+                  <GestionnaireRowActionGroup v-if="row.source !== 'payroll'">
                     <GestionnaireRowAction
                       :icon="Pencil"
                       label="Modifier"

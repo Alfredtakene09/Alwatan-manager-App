@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Plus, RefreshCw, Save, Stethoscope } from '@lucide/vue'
+import { Plus, Save, Stethoscope } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
@@ -15,6 +15,8 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import StCatalogActions from '@/components/ui/StCatalogActions.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import '@/assets/simple-table.css'
 
 type Category = 'MAJEURE_A' | 'MOYENNE_B' | 'PETITE_C'
@@ -154,6 +156,71 @@ const tableRows = computed(() => {
     isActive: item.active,
   }))
 })
+
+type MedecinOpExportRow = {
+  label: string
+  code: string
+  category: string
+  price: string
+  splits: string
+  surgeons: string
+  assistant: string
+  statusLabel: string
+}
+
+const medecinOpExportColumns = computed<ExportColumn<MedecinOpExportRow>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Libellé'), value: (r) => r.label },
+    { header: uiText('Code'), value: (r) => r.code || '—' },
+    { header: uiText('Catégorie'), value: (r) => r.category },
+    { header: uiText('Coût'), value: (r) => r.price },
+    { header: uiText('Répartition'), value: (r) => r.splits },
+    { header: uiText('Chirurgiens'), value: (r) => r.surgeons },
+    { header: uiText('Assistant'), value: (r) => r.assistant },
+    { header: uiText('Statut'), value: (r) => r.statusLabel },
+  ]
+})
+
+const medecinOpExportRows = computed<MedecinOpExportRow[]>(() =>
+  tableRows.value.map((row) => ({
+    label: row.label,
+    code: row.code,
+    category: row.category,
+    price: row.price,
+    splits: row.splits,
+    surgeons: row.surgeons,
+    assistant: row.assistant,
+    statusLabel: row.statusLabel,
+  })),
+)
+
+function medecinOpExportShared() {
+  const q = searchQuery.value.trim()
+  return {
+    captionRows: [
+      {
+        label: uiText('Filtres'),
+        value: q ? `${uiText('Recherche')} : ${q}` : uiText('Aucun filtre'),
+      },
+    ],
+    totalsRows: [
+      { label: uiText('Nombre d’opérations'), value: String(medecinOpExportRows.value.length) },
+    ],
+  }
+}
+
+function exportMedecinOpsPdf() {
+  exportTablePdf(uiText('Types d’opérations'), medecinOpExportColumns.value, medecinOpExportRows.value, medecinOpExportShared())
+}
+
+function exportMedecinOpsExcel() {
+  exportTableExcel(uiText('Types d’opérations'), medecinOpExportColumns.value, medecinOpExportRows.value, medecinOpExportShared())
+}
+
+function exportMedecinOpsWord() {
+  void exportTableWord(uiText('Types d’opérations'), medecinOpExportColumns.value, medecinOpExportRows.value, medecinOpExportShared())
+}
 
 function resetMessages() {
   message.value = ''
@@ -413,6 +480,12 @@ onMounted(() => {
       class="section"
     >
       <template #actions>
+        <ExportButtons
+          :disabled="loading || !medecinOpExportRows.length"
+          @pdf="exportMedecinOpsPdf"
+          @excel="exportMedecinOpsExcel"
+          @word="exportMedecinOpsWord"
+        />
         <UiButton
           variant="primary"
           size="sm"
@@ -421,9 +494,6 @@ onMounted(() => {
           @click="openAddModal"
         >
           {{ uiText('Ajouter une opération') }}
-        </UiButton>
-        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">
-          {{ uiText('Actualiser') }}
         </UiButton>
         <span class="list-count">{{ operationCountLabel }}</span>
       </template>

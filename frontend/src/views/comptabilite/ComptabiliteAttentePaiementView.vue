@@ -24,8 +24,16 @@ import { printLabExamPaymentReceipts, printPendingLabExamInvoices } from '@/lib/
 import ComptabiliteStatsGrid from '@/components/comptabilite/ComptabiliteStatsGrid.vue'
 import { isAxiosError } from 'axios'
 import { cancelPrintWindow, ensurePrintWindow, reservePrintWindow } from '@/lib/print-document'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { exportTableExcel, exportTablePdf, exportTableWord } from '@/lib/table-export'
+import {
+  labExamListExportColumns,
+  toLabExamListExportRows,
+} from '@/lib/lab-exam-pending-export'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 const { data, message, messageType, loading, load } = useComptabiliteQueue()
+const { uiText, isArabic } = useAppI18n()
 const router = useRouter()
 const selectedId = ref<string | null>(null)
 const submitting = ref(false)
@@ -33,6 +41,46 @@ const submittingKind = ref<ExamKindSlug | null>(null)
 const statsRefreshKey = ref(0)
 
 const pendingItems = computed<LabExamPendingRow[]>(() => data.value?.labExamsPending ?? [])
+
+const pendingExportRows = computed(() =>
+  toLabExamListExportRows(pendingItems.value, 'pending', isArabic.value ? 'ar-TD' : 'fr-FR'),
+)
+const pendingExportColumns = computed(() => labExamListExportColumns('pending'))
+
+function pendingExportShared() {
+  return {
+    totalsRows: [
+      { label: uiText('Nombre de dossiers'), value: String(pendingExportRows.value.length) },
+    ],
+  }
+}
+
+function exportPendingPdf() {
+  exportTablePdf(
+    uiText('En attente de paiement'),
+    pendingExportColumns.value,
+    pendingExportRows.value,
+    pendingExportShared(),
+  )
+}
+
+function exportPendingExcel() {
+  exportTableExcel(
+    uiText('En attente de paiement'),
+    pendingExportColumns.value,
+    pendingExportRows.value,
+    pendingExportShared(),
+  )
+}
+
+function exportPendingWord() {
+  void exportTableWord(
+    uiText('En attente de paiement'),
+    pendingExportColumns.value,
+    pendingExportRows.value,
+    pendingExportShared(),
+  )
+}
 
 const selectedItem = computed<LabExamPaymentItem | null>(() => {
   if (!selectedId.value) return null
@@ -70,7 +118,7 @@ async function goToHospitalization(visitId: string) {
   } catch {
     /* le GET hospitalisation resynchronisera si besoin */
   }
-  await router.push({ path: '/hospitalisation', query: { tab: 'queue', visitId } })
+  await router.push({ path: '/hospitalisation', query: { tab: 'hospitalized', visitId } })
 }
 
 async function confirmPayment(payload: LabExamPaymentConfirmPayload) {
@@ -182,6 +230,12 @@ const { refresh: refreshQueue } = useSilentRefresh(
         icon-variant="amber"
       >
         <template #actions>
+          <ExportButtons
+            :disabled="loading || !pendingExportRows.length"
+            @pdf="exportPendingPdf"
+            @excel="exportPendingExcel"
+            @word="exportPendingWord"
+          />
           <UiButton variant="ghost" size="sm" :disabled="loading" @click="refreshQueue()">
             Actualiser
           </UiButton>

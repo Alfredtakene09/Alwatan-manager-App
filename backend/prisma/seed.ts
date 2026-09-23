@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { DoctorCompensationType, UserRole } from "@prisma/client";
 import { prisma } from "../src/lib/db.js";
+import { runWithAppDataDeleteUnlock } from "../src/lib/db-delete-guard.js";
 import { seedDemoData } from "./seed-demo-data.js";
 import { DEFAULT_STAFF_USERNAMES, seedReferenceData } from "./seed-reference.js";
 
@@ -194,37 +195,39 @@ async function removeOtherUsers() {
 }
 
 async function main() {
-  const rootHash = await bcrypt.hash(SUPERADMIN_PASSWORD, 10);
-  const staffHash = await bcrypt.hash(DEFAULT_STAFF_PASSWORD, 10);
+  await runWithAppDataDeleteUnlock("script", async () => {
+    const rootHash = await bcrypt.hash(SUPERADMIN_PASSWORD, 10);
+    const staffHash = await bcrypt.hash(DEFAULT_STAFF_PASSWORD, 10);
 
-  await ensureSuperadmin(rootHash);
-  for (const member of DEFAULT_STAFF) {
-    await upsertStaffMember(member, staffHash);
-  }
-  const shouldPruneUsers = process.env.SEED_PRUNE_USERS === "1";
-  const removed = shouldPruneUsers ? await removeOtherUsers() : null;
+    await ensureSuperadmin(rootHash);
+    for (const member of DEFAULT_STAFF) {
+      await upsertStaffMember(member, staffHash);
+    }
+    const shouldPruneUsers = process.env.SEED_PRUNE_USERS === "1";
+    const removed = shouldPruneUsers ? await removeOtherUsers() : null;
 
-  await seedReferenceData();
+    await seedReferenceData();
 
-  if (process.env.SEED_DEMO_RESET === "1") {
-    await seedDemoData();
-  }
+    if (process.env.SEED_DEMO_RESET === "1") {
+      await seedDemoData();
+    }
 
-  console.log("Seed terminé.");
-  console.log(`  Superadmin : ${SUPERADMIN_USERNAME} (mot de passe d'installation — à changer en production)`);
-  for (const member of DEFAULT_STAFF) {
-    console.log(`  ${member.role} : ${member.username}`);
-  }
-  if (removed) {
-    console.log(
-      `  Autres comptes : ${removed.total} traités (${removed.deleted} supprimés, ${removed.disabled} désactivés)`,
-    );
-  } else {
-    console.log("  Autres comptes : conservés (SEED_PRUNE_USERS=1 pour nettoyer).");
-  }
-  if (process.env.SEED_DEMO_RESET !== "1") {
-    console.log("  Données démo non régénérées (SEED_DEMO_RESET=1 pour forcer).");
-  }
+    console.log("Seed terminé.");
+    console.log(`  Superadmin : ${SUPERADMIN_USERNAME} (mot de passe d'installation — à changer en production)`);
+    for (const member of DEFAULT_STAFF) {
+      console.log(`  ${member.role} : ${member.username}`);
+    }
+    if (removed) {
+      console.log(
+        `  Autres comptes : ${removed.total} traités (${removed.deleted} supprimés, ${removed.disabled} désactivés)`,
+      );
+    } else {
+      console.log("  Autres comptes : conservés (SEED_PRUNE_USERS=1 pour nettoyer).");
+    }
+    if (process.env.SEED_DEMO_RESET !== "1") {
+      console.log("  Données démo non régénérées (SEED_DEMO_RESET=1 pour forcer).");
+    }
+  });
 }
 
 main()

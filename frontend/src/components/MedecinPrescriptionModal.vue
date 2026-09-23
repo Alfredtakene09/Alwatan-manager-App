@@ -95,6 +95,11 @@ const hospitalisationDays = ref<number | null>(null)
 const doctorComment = ref('')
 const pharmacyOrdonnance = ref<PharmacyOrdonnanceLine[]>([])
 const operationAmountFcfa = ref<number | null>(null)
+const operationAssistant = ref<{
+  anesthesiologistId?: string | null
+  anesthesiologistName?: string | null
+  anesthesiologistPercent: number
+} | null>(null)
 const consultModalTab = ref<'resume' | 'exams' | 'pharmacy' | 'external' | 'notes'>('exams')
 /** Mode effectif (peut passer de edit → append depuis le résumé). */
 const workingMode = ref<'edit' | 'append'>(props.mode)
@@ -296,6 +301,7 @@ function resetForm() {
     doctorComment.value = ''
     pharmacyOrdonnance.value = []
     operationAmountFcfa.value = null
+    operationAssistant.value = null
     return
   }
   if (workingMode.value === 'append') {
@@ -305,6 +311,7 @@ function resetForm() {
     doctorComment.value = ''
     pharmacyOrdonnance.value = []
     operationAmountFcfa.value = null
+    operationAssistant.value = null
   } else {
     selectedExamsByKind.value = parsePrescribedExamsByKind(sessionVisit.value.consultation?.clinicalNotes)
     examCommentsByKind.value = parsePrescribedExamCommentsByKind(sessionVisit.value.consultation?.clinicalNotes)
@@ -312,6 +319,7 @@ function resetForm() {
     doctorComment.value = sessionVisit.value.consultation?.doctorComment?.trim() ?? ''
     pharmacyOrdonnance.value = parsePharmacyOrdonnanceLines(sessionVisit.value.consultation?.clinicalNotes)
     operationAmountFcfa.value = null
+    operationAssistant.value = null
   }
   errorMessage.value = ''
 }
@@ -334,6 +342,7 @@ function switchToAppendFromResume() {
   doctorComment.value = ''
   pharmacyOrdonnance.value = []
   operationAmountFcfa.value = null
+    operationAssistant.value = null
   consultModalTab.value = 'exams'
 }
 
@@ -431,6 +440,13 @@ async function submit() {
         (selectedExamsByKind.value.operation?.length ?? 0) > 0 &&
         operationAmountFcfa.value != null
           ? { operationAmountFcfa: operationAmountFcfa.value }
+          : {}
+      ),
+      ...(
+        selectedInPickerCount.value > 0 &&
+        (selectedExamsByKind.value.operation?.length ?? 0) > 0 &&
+        operationAssistant.value
+          ? { operationAssistant: operationAssistant.value }
           : {}
       ),
     })
@@ -687,6 +703,7 @@ async function submit() {
               v-model:comments="examCommentsByKind"
               v-model:hospitalisation-days="hospitalisationDays"
               v-model:operation-amount-fcfa="operationAmountFcfa"
+              v-model:operation-assistant="operationAssistant"
               :exclude-by-kind="excludeByKind"
               :doctor-id="auth.user?.id"
             />

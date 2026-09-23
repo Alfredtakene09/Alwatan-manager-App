@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Eye, Pencil, BedDouble, Calendar } from '@lucide/vue'
+import { Eye, Pencil, BedDouble, Calendar, Printer, Trash2, Banknote } from '@lucide/vue'
 import { formatFcfa, fullName } from '@/lib/roles'
-import { HOSPITALIZATION_STATUS_LABELS } from '@/lib/hospitalization-admission'
+import {
+  HOSPITALIZATION_STATUS_LABELS,
+  hospitalizationStayDays,
+} from '@/lib/hospitalization-admission'
+import { useAppI18n } from '@/i18n/useAppI18n'
 import '@/assets/simple-table.css'
 
 export type HospitalizationQueueItem = {
@@ -15,6 +19,7 @@ export type HospitalizationQueueItem = {
   endDate?: string | null
   dailyRateFcfa?: number
   startDate?: string | null
+  paidAt?: string | Date | null
   visit: {
     id: string
     patient: { code: string; firstName: string; lastName: string; phone?: string | null; service?: string | null }
@@ -38,7 +43,12 @@ const emit = defineEmits<{
   view: [id: string]
   edit: [id: string]
   discharge: [id: string]
+  print: [id: string]
+  delete: [id: string]
+  collect: [id: string]
 }>()
+
+const { uiText, localeCode, dateText } = useAppI18n()
 
 function doctorName(item: HospitalizationQueueItem) {
   const doctor = item.visit.consultation?.doctor ?? item.visit.assignedDoctor
@@ -53,19 +63,34 @@ function statusTone(status: string): 'warning' | 'success' | 'info' | 'danger' |
   return 'danger'
 }
 
-function roomLabel(item: HospitalizationQueueItem) {
-  return item.room?.name ?? '—'
-}
-
 function roomTypeLabel(item: HospitalizationQueueItem) {
   const type = item.room?.type ?? item.roomType
   if (type === 'VIP') return 'VIP'
-  if (type === 'SIMPLE') return 'Simple'
+  if (type === 'SIMPLE') return uiText('Simple')
   return '—'
 }
 
-const rows = computed(() =>
-  [...props.items]
+const headers = computed(() => {
+  void localeCode.value
+  return {
+    code: uiText('Matricule'),
+    patient: uiText('Patient'),
+    doctor: uiText('Médecin'),
+    roomType: uiText('Chambre'),
+    days: uiText('Jours'),
+    status: uiText('Statut'),
+    entry: uiText('Entrée'),
+    exit: uiText('Sortie'),
+    amount: uiText('Montant'),
+    actions: uiText('Actions'),
+    loading: uiText('Chargement des hospitalisations…'),
+    empty: uiText('Aucune hospitalisation à afficher'),
+  }
+})
+
+const rows = computed(() => {
+  void localeCode.value
+  return [...props.items]
     .sort((a, b) => {
       const order = { ACTIVE: 0, RESERVED: 1, DISCHARGED: 2, REQUESTED: 3 }
       const aOrder = order[a.status as keyof typeof order] ?? 9
@@ -77,18 +102,19 @@ const rows = computed(() =>
     })
     .map((item) => {
       const hasRoom = Boolean(item.room)
-      const startLabel = item.startDate
-        ? new Date(item.startDate).toLocaleDateString('fr-FR')
-        : '—'
-      const endLabel = item.endDate
-        ? new Date(item.endDate).toLocaleDateString('fr-FR')
-        : '—'
+      const startLabel = item.startDate ? dateText(item.startDate) : '—'
+      const endLabel = item.endDate ? dateText(item.endDate) : '—'
       const amountLabel =
         item.totalDueFcfa && item.totalDueFcfa > 0
           ? formatFcfa(item.totalDueFcfa)
           : item.dailyRateFcfa
-            ? `${formatFcfa(item.dailyRateFcfa)}/nuit`
+            ? `${formatFcfa(item.dailyRateFcfa)}/${uiText('nuit')}`
             : '—'
+
+      const unpaid = !item.paidAt && (item.totalDueFcfa ?? 0) > 0 && Boolean(item.startDate)
+      const statusFr = unpaid
+        ? 'En attente de paiement'
+        : (HOSPITALIZATION_STATUS_LABELS[item.status] ?? item.status)
 
       return {
         id: item.id,
@@ -99,22 +125,29 @@ const rows = computed(() =>
         patientPhone: item.visit.patient.phone || '',
         patientService: item.visit.patient.service?.trim() || '—',
         doctorName: doctorName(item),
-        roomLabel: roomLabel(item),
         roomTypeLabel: roomTypeLabel(item),
         status: item.status,
-        statusTone: statusTone(item.status),
-        statusLabel: HOSPITALIZATION_STATUS_LABELS[item.status] ?? item.status,
+        statusTone: unpaid ? 'warning' : statusTone(item.status),
+        statusLabel: uiText(statusFr),
         startLabel,
         endLabel,
         amountLabel,
-        nightsLabel: item.nightsCount ? `${item.nightsCount} nuit(s)` : '—',
+        daysLabel: (() => {
+          const days = hospitalizationStayDays(item)
+          return days > 0 ? uiText('{n} jour(s)').replace('{n}', String(days)) : '—'
+        })(),
         needsAdmission: item.status === 'REQUESTED' || (item.status === 'RESERVED' && !hasRoom),
         canView: true,
         canEdit: hasRoom && Boolean(item.startDate) && item.status !== 'DISCHARGED',
         canDischarge: item.status === 'ACTIVE' && hasRoom,
+        canCollect: unpaid,
+        canReprint:
+          Boolean(item.startDate) &&
+          item.status !== 'REQUESTED' &&
+          item.status !== 'CANCELLED',
       }
-    }),
-)
+    })
+})
 </script>
 
 <template>
@@ -128,32 +161,32 @@ const rows = computed(() =>
       aria-live="polite"
     >
       <span class="simple-table-spinner" aria-hidden="true" />
-      Chargement des hospitalisations…
+      {{ headers.loading }}
     </div>
 
     <div class="simple-table-scroll">
       <p v-if="!loading && !rows.length" class="simple-table__empty">
-        Aucune hospitalisation à afficher
+        {{ headers.empty }}
       </p>
       <div v-else class="simple-table-wrap">
         <table class="simple-table">
           <thead>
             <tr>
               <th class="simple-table__num">#</th>
-              <th>Matricule</th>
-              <th>Patient</th>
-              <th>Médecin</th>
-              <th>Chambre</th>
-              <th>Salle</th>
-              <th>Statut</th>
-              <th>Entrée</th>
-              <th>Sortie</th>
-              <th>Montant</th>
-              <th class="simple-table__actions-head">Actions</th>
+              <th>{{ headers.code }}</th>
+              <th>{{ headers.patient }}</th>
+              <th>{{ headers.doctor }}</th>
+              <th>{{ headers.roomType }}</th>
+              <th>{{ headers.days }}</th>
+              <th>{{ headers.status }}</th>
+              <th>{{ headers.entry }}</th>
+              <th>{{ headers.exit }}</th>
+              <th>{{ headers.amount }}</th>
+              <th class="simple-table__actions-head">{{ headers.actions }}</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(row, index) in rows" :key="row.id">
+            <tr v-for="(row, index) in rows" :key="row.id" :data-visit-id="row.visitId">
               <td class="simple-table__num">{{ index + 1 }}</td>
               <td>
                 <span class="st-badge">{{ row.code }}</span>
@@ -170,7 +203,7 @@ const rows = computed(() =>
                 <span class="st-badge st-badge--default">{{ row.roomTypeLabel }}</span>
               </td>
               <td>
-                <span class="st-sub">{{ row.roomLabel }}</span>
+                <span class="st-name">{{ row.daysLabel }}</span>
               </td>
               <td>
                 <span class="st-badge" :class="`st-badge--${row.statusTone}`">{{ row.statusLabel }}</span>
@@ -183,7 +216,6 @@ const rows = computed(() =>
               </td>
               <td>
                 <span class="st-name">{{ row.amountLabel }}</span>
-                <span class="st-sub">{{ row.nightsLabel }}</span>
               </td>
               <td class="simple-table__actions">
                 <div class="st-actions">
@@ -191,18 +223,38 @@ const rows = computed(() =>
                     v-if="row.canView"
                     type="button"
                     class="st-btn"
-                    title="Voir le profil"
-                    aria-label="Voir"
+                    :title="uiText('Voir le profil')"
+                    :aria-label="uiText('Voir')"
                     @click="emit('view', row.id)"
                   >
                     <Eye :size="15" />
                   </button>
                   <button
+                    v-if="row.canCollect"
+                    type="button"
+                    class="st-btn st-btn--pay"
+                    :title="uiText('Encaisser')"
+                    :aria-label="uiText('Encaisser')"
+                    @click="emit('collect', row.id)"
+                  >
+                    <Banknote :size="15" />
+                  </button>
+                  <button
+                    v-if="row.canReprint"
+                    type="button"
+                    class="st-btn st-btn--accent"
+                    :title="uiText('Réimprimer le reçu')"
+                    :aria-label="uiText('Réimprimer le reçu')"
+                    @click="emit('print', row.id)"
+                  >
+                    <Printer :size="15" />
+                  </button>
+                  <button
                     v-if="row.canEdit"
                     type="button"
                     class="st-btn st-btn--edit"
-                    title="Modifier le séjour"
-                    aria-label="Modifier"
+                    :title="uiText('Modifier le séjour')"
+                    :aria-label="uiText('Modifier')"
                     @click="emit('edit', row.id)"
                   >
                     <Pencil :size="15" />
@@ -211,8 +263,8 @@ const rows = computed(() =>
                     v-if="row.needsAdmission"
                     type="button"
                     class="st-btn st-btn--hosp"
-                    title="Programmer l'admission"
-                    aria-label="Programmer"
+                    :title="uiText('Programmer l\'admission')"
+                    :aria-label="uiText('Programmer')"
                     @click="emit('admit', row.id)"
                   >
                     <BedDouble :size="15" />
@@ -221,11 +273,20 @@ const rows = computed(() =>
                     v-if="row.canDischarge"
                     type="button"
                     class="st-btn st-btn--accent"
-                    title="Clôturer la sortie"
-                    aria-label="Clôturer"
+                    :title="uiText('Clôturer la sortie')"
+                    :aria-label="uiText('Clôturer')"
                     @click="emit('discharge', row.id)"
                   >
                     <Calendar :size="15" />
+                  </button>
+                  <button
+                    type="button"
+                    class="st-btn st-btn--delete"
+                    :title="uiText('Supprimer l\'hospitalisation')"
+                    :aria-label="uiText('Supprimer')"
+                    @click="emit('delete', row.id)"
+                  >
+                    <Trash2 :size="15" />
                   </button>
                 </div>
               </td>

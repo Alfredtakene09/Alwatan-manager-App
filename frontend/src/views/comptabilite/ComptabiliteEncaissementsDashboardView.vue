@@ -180,7 +180,7 @@ async function goToHospitalization(visitId: string) {
   } catch {
     /* ignore */
   }
-  await router.push({ path: '/hospitalisation', query: { tab: 'queue', visitId } })
+  await router.push({ path: '/hospitalisation', query: { tab: 'hospitalized', visitId } })
 }
 
 async function confirmPayment(payload: LabExamPaymentConfirmPayload) {

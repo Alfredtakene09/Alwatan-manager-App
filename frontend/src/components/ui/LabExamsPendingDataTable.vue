@@ -58,10 +58,11 @@ const rows = computed<TableRow[]>(() => {
   return sortByCreatedAtNewestFirst(
     props.items.map((item) => ({
       ...item,
+      prescribedAt: item.createdAt ?? item.updatedAt,
       createdAt: isPaidMode.value ? (item.paidAt ?? item.updatedAt) : item.updatedAt,
     })),
   ).map((item) => {
-    const referenceDate = new Date(isPaidMode.value ? (item.paidAt ?? item.updatedAt) : item.updatedAt)
+    const prescribedAt = new Date(item.prescribedAt)
     const netFcfa = item.grossFcfa - (item.labExamReductionFcfa ?? 0)
     const examNames = examLinesSectionOrNameList(item.examLines ?? [])
     const examCount = examNames.length
@@ -132,8 +133,8 @@ const rows = computed<TableRow[]>(() => {
         showPartialBreakdown || (isPaidMode.value && remainingFcfa > 0)
           ? formatFcfa(remainingFcfa)
           : '',
-      date: referenceDate.toLocaleDateString(dateLocale.value),
-      time: referenceDate.toLocaleTimeString(dateLocale.value, {
+      date: prescribedAt.toLocaleDateString(dateLocale.value),
+      time: prescribedAt.toLocaleTimeString(dateLocale.value, {
         hour: '2-digit',
         minute: '2-digit',
       }),
@@ -188,7 +189,7 @@ function onPrint(row: TableRow) {
               <th>{{ uiText('Médecin') }}</th>
               <th class="simple-table__exam">{{ uiText('Examens') }}</th>
               <th>{{ uiText(isPaidMode ? 'Net payé' : 'Montant') }}</th>
-              <th v-if="!isPaidMode">{{ uiText('Prescrit le') }}</th>
+              <th>{{ uiText('Prescrit le') }}</th>
               <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
             </tr>
           </thead>
@@ -236,7 +237,7 @@ function onPrint(row: TableRow) {
                   <strong class="st-amount" dir="ltr">{{ row.gross }}</strong>
                 </div>
               </td>
-              <td v-if="!isPaidMode">
+              <td>
                 <span class="st-date">{{ row.date }}</span>
                 <span class="st-sub">{{ row.time }}</span>
               </td>

@@ -46,7 +46,7 @@ const sections = computed(() => {
     countKey: null,
   },
   {
-    to: '/hospitalisation',
+    to: '/hospitalisation?tab=hospitalized',
     label: uiText('Hospitalisation'),
     description: uiText('Attribution des salles et hospitalisations'),
     icon: BedDouble,

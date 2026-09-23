@@ -1,3 +1,5 @@
+import { stripBidiMarks } from './format-fcfa'
+
 export type ExportCell = string | number | boolean | null | undefined
 
 export type ExportColumn<T> = {
@@ -7,10 +9,20 @@ export type ExportColumn<T> = {
 
 export type ExportCaptionRow = { label: string; value: string }
 
+/** Bloc d’export (ex. employés d’un poste) avec son propre tableau. */
+export type ExportSection<T = any> = {
+  title: string
+  columns: ExportColumn<T>[]
+  rows: T[]
+  totalsRows?: ExportCaptionRow[]
+  /** Page / feuille dédiée (récapitulatif, etc.). */
+  ownPage?: boolean
+}
+
 export function cellText(value: ExportCell): string {
   if (value == null) return ''
   if (typeof value === 'boolean') return value ? 'Oui' : 'Non'
-  return String(value)
+  return stripBidiMarks(String(value))
 }
 
 export function escapeHtml(value: ExportCell): string {
@@ -41,6 +53,25 @@ export function rowsToMatrix<T>(
  * Tableau HTML d’export. Les totaux sont un tableau séparé *après* les données
  * (pas un `<tfoot>`) pour n’apparaître qu’en fin de dernière page à l’impression.
  */
+function captionHtml(captionRows: ExportCaptionRow[] | undefined): string {
+  return (captionRows ?? [])
+    .map((r) => `<div class="row"><span>${escapeHtml(r.label)}</span><strong>${escapeHtml(r.value)}</strong></div>`)
+    .join('')
+}
+
+function totalsHtml(totalsRows: ExportCaptionRow[] | undefined): string {
+  if (!totalsRows?.length) return ''
+  const rows = totalsRows
+    .map(
+      (r) =>
+        `<tr class="report-total"><th>${escapeHtml(r.label)}</th><td>${escapeHtml(r.value)}</td></tr>`,
+    )
+    .join('')
+  return `<table class="report-totals">
+  <tbody>${rows}</tbody>
+</table>`
+}
+
 export function rowsToHtmlTable<T>(
   columns: ExportColumn<T>[],
   rows: T[],
@@ -50,9 +81,6 @@ export function rowsToHtmlTable<T>(
     emptyLabel?: string
   },
 ): string {
-  const caption = (extras?.captionRows ?? [])
-    .map((r) => `<div class="row"><span>${escapeHtml(r.label)}</span><strong>${escapeHtml(r.value)}</strong></div>`)
-    .join('')
   const head = columns.map((c) => `<th>${escapeHtml(c.header)}</th>`).join('')
   const body = rows
     .map((row, index) => {
@@ -62,21 +90,72 @@ export function rowsToHtmlTable<T>(
     .join('')
   const colCount = columns.length + 1
   const emptyLabel = extras?.emptyLabel ?? 'Aucune donnée'
-  const totals = (extras?.totalsRows ?? [])
-    .map(
-      (r) =>
-        `<tr class="report-total"><th>${escapeHtml(r.label)}</th><td>${escapeHtml(r.value)}</td></tr>`,
-    )
-    .join('')
-  const totalsTable = totals
-    ? `<table class="report-totals">
-  <tbody>${totals}</tbody>
-</table>`
-    : ''
-  return `${caption}
+  return `${captionHtml(extras?.captionRows)}
 <table class="report-data">
   <thead><tr><th>#</th>${head}</tr></thead>
   <tbody>${body || `<tr><td colspan="${colCount}">${escapeHtml(emptyLabel)}</td></tr>`}</tbody>
 </table>
-${totalsTable}`
+${totalsHtml(extras?.totalsRows)}`
+}
+
+/** Plusieurs tableaux (groupes) + totaux généraux en fin de document. */
+export function sectionsToHtml(
+  sections: ExportSection[],
+  extras?: {
+    captionRows?: ExportCaptionRow[]
+    totalsRows?: ExportCaptionRow[]
+    emptyLabel?: string
+  },
+): string {
+  const emptyLabel = extras?.emptyLabel ?? 'Aucune donnée'
+  const blocks = sections
+    .map((section) => {
+      const title = section.title
+        ? `<h2 class="report-section-title">${escapeHtml(section.title)}</h2>`
+        : ''
+      const inner = `${title}${rowsToHtmlTable(section.columns, section.rows, {
+        totalsRows: section.totalsRows,
+        emptyLabel,
+      })}`
+      return section.ownPage ? `<div class="report-own-page">${inner}</div>` : inner
+    })
+    .join('')
+  return `${captionHtml(extras?.captionRows)}${blocks}${totalsHtml(extras?.totalsRows)}`
+}
+
+/** Nom d’onglet Excel : 31 caractères, sans : \ / ? * [ ], unique dans le classeur. */
+export function uniqueExcelSheetName(desired: string, used: Set<string>): string {
+  const cleaned =
+    stripBidiMarks(desired)
+      .replace(/[:\\/?*[\]]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim() || 'Feuille'
+  const take = (base: string, extra: string) => `${base.slice(0, Math.max(1, 31 - extra.length))}${extra}`
+  let name = cleaned.slice(0, 31)
+  let n = 2
+  while (used.has(name.toLowerCase())) {
+    name = take(cleaned, ` (${n})`)
+    n += 1
+  }
+  used.add(name.toLowerCase())
+  return name
+}
+
+export function uniqueExcelSheetNames(names: string[]): string[] {
+  const used = new Set<string>()
+  return names.map((name) => uniqueExcelSheetName(name, used))
+}
+
+export function sectionsToMatrix(
+  sections: ExportSection[],
+  extras?: { totalsRows?: ExportCaptionRow[] },
+): string[][] {
+  const matrix: string[][] = []
+  for (const section of sections) {
+    if (matrix.length) matrix.push([])
+    if (section.title) matrix.push([section.title])
+    matrix.push(...rowsToMatrix(section.columns, section.rows, { totalsRows: section.totalsRows }))
+  }
+  matrix.push(...totalsToMatrix(extras?.totalsRows))
+  return matrix
 }

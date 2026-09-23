@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Receipt, Plus, RefreshCw, Eye, Pencil, Save, Ban, Trash2 } from '@lucide/vue'
+import { Receipt, Plus, Eye, Pencil, Save, Ban, Trash2 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
@@ -501,9 +501,6 @@ onMounted(async () => {
     >
       <template #actions>
         <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">
-          {{ t('common.refresh') }}
-        </UiButton>
         <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
           {{ uiText('Nouvelle dépense') }}
         </UiButton>

@@ -1,5 +1,5 @@
 import { CLINIC, clinicTaxLine } from './clinic'
-import { formatFcfa, formatFcfaShort } from './format-fcfa'
+import { formatFcfa, formatFcfaCompact, formatFcfaShort } from './format-fcfa'
 import {
   EXTERNAL_TICKET_THANKS_KEY,
   PENDING_PAYMENT_STATUS_FR,
@@ -129,6 +129,22 @@ export const CLINIC_PRINT_STYLES = `
     width: 100%;
     break-inside: avoid;
     page-break-inside: avoid;
+  }
+  body.print-a4-report .report-section-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #134e4a;
+    margin: 14px 0 6px;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+  body.print-a4-report .report-own-page {
+    break-after: page;
+    page-break-after: always;
+  }
+  body.print-a4-report .report-own-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
   }
   body.print-a4-report .report-totals th,
   body.print-a4-report .report-totals td,
@@ -1174,34 +1190,138 @@ export const CLINIC_PRINT_STYLES = `
     font-size: 18px;
   }
 
-  /* Ticket clôture de journée (réception) — textes un peu plus grands */
-  body.print-thermal .thermal-receipt--day-closure.thermal-receipt--ticket {
-    font-size: 14px;
+  /* Reçu hospitalisation — textes plus grands, FR + AR */
+  body.print-thermal .thermal-receipt--hospitalization.thermal-receipt--ticket {
+    font-family: 'Segoe UI', Tahoma, Arial, sans-serif !important;
+    font-size: 16px;
     line-height: 1.35;
   }
-  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__title,
-  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__title--fr {
-    font-size: 16px;
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__title,
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__title--fr,
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__title--ar {
+    font-size: 17px;
+    font-weight: 800;
   }
-  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__subtitle-no {
-    font-size: 14px;
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__title--ar,
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__label-ar,
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__thanks--bi [lang="ar"] {
+    font-family: Tahoma, 'Segoe UI', 'Traditional Arabic', sans-serif !important;
   }
-  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__contact {
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__subtitle-no {
+    font-size: 15px;
+  }
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__contact {
+    font-size: 13px;
+  }
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__row,
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__line {
+    font-size: 15px;
+    margin: 4px 0;
+  }
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__value {
+    font-size: 15px;
+    font-weight: 800;
+  }
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__line--total,
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__row--total {
+    font-size: 17px;
+    font-weight: 800;
+  }
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__thanks {
+    font-size: 15px;
+    font-weight: 800;
+  }
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__thanks--bi {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    margin: 4px 0 0;
+  }
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__ticket-title-line {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+  }
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__title-bi {
+    width: 100%;
+  }
+
+  /* Ticket clôture de journée (réception) — format Cumul vente */
+  body.print-thermal .thermal-receipt--day-closure.thermal-receipt--ticket {
+    font-size: 13px;
+    line-height: 1.3;
+  }
+  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__name {
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__period {
+    margin: 6px 0 4px;
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 4px 0;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table thead th {
+    font-size: 12px;
+    font-weight: 700;
+    border-bottom: 1px solid #000;
+    padding: 2px 0;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table .col-qty,
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table .col-total,
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table thead th.col-qty,
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table thead th.col-total {
+    text-align: right;
+    white-space: nowrap;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table td {
+    padding: 3px 0;
+    vertical-align: top;
+    border-bottom: 1px dotted #999;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__service-fr {
+    display: block;
+    font-weight: 700;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__service-ar {
+    display: block;
+    font-size: 11px;
+    opacity: 0.9;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__totals {
+    margin-top: 4px;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__totals-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 2px 0;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__totals-line span,
+  body.print-thermal .thermal-receipt--day-closure .day-closure__totals-line strong {
     font-size: 12px;
   }
-  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__row,
-  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__line {
-    font-size: 14px;
+  body.print-thermal .thermal-receipt--day-closure .day-closure__totals-line--sub {
+    font-weight: 700;
   }
-  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__value {
-    font-size: 14px;
+  body.print-thermal .thermal-receipt--day-closure .day-closure__totals-line--total {
+    margin-top: 4px;
+    border-top: 1px solid #000;
+    padding-top: 4px;
+    font-weight: 800;
   }
-  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__line--total,
-  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__row--total {
-    font-size: 16px;
-  }
-  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__thanks {
-    font-size: 14px;
+  body.print-thermal .thermal-receipt--day-closure .day-closure__footer {
+    margin-top: 8px;
+    font-size: 11px;
+    text-align: center;
   }
 
   /* Ligne article : nom à gauche, montant à droite (sans colonne AR vide). */
@@ -1454,6 +1574,31 @@ function escapeHtml(value: string) {
     .replace(/"/g, '&quot;')
 }
 
+/** URL d’asset imprimable (logo) — relative → absolue, pour about:blank / blob. */
+export function printAssetUrl(src: string): string {
+  const value = String(src || '').trim()
+  if (!value || /^(data:|blob:|https?:)/i.test(value)) return value
+  if (typeof window === 'undefined') return value
+  try {
+    return new URL(value, window.location.href).href
+  } catch {
+    return value
+  }
+}
+
+function printImgSrc(src: string): string {
+  return escapeHtml(printAssetUrl(src))
+}
+
+function printDocumentBaseHref(): string {
+  if (typeof window === 'undefined') return '/'
+  try {
+    return new URL('/', window.location.href).href
+  } catch {
+    return `${window.location.origin}/`
+  }
+}
+
 function emptyExamLinesByKind(): Record<ExamKindSlug, LabExamInvoiceLine[]> {
   return Object.fromEntries(EXAM_KIND_ORDER.map((kind) => [kind, [] as LabExamInvoiceLine[]])) as Record<
     ExamKindSlug,
@@ -1544,6 +1689,19 @@ export function thermalThanksHtml(key = 'Merci de votre confiance') {
   return `<p class="thermal-receipt__thanks"${rtl ? ' dir="rtl" lang="ar"' : ''}>${escapeHtml(t(key))}</p>`
 }
 
+/** Remerciement FR à gauche + AR à droite, indépendant de la langue UI. */
+export function thermalThanksBiHtml(key = 'Merci de votre confiance') {
+  const fr = translateUiLocale(key, 'fr')
+  const ar = thermalAr(key)
+  if (!ar) {
+    return `<p class="thermal-receipt__thanks" dir="ltr">${escapeHtml(fr)}</p>`
+  }
+  return `<p class="thermal-receipt__thanks thermal-receipt__thanks--bi">
+  <span dir="ltr">${escapeHtml(fr)}</span>
+  <span dir="rtl" lang="ar">${escapeHtml(ar)}</span>
+</p>`
+}
+
 export type PharmacyTicketLine = {
   name: string
   quantity: number
@@ -1611,26 +1769,33 @@ export function buildPharmacyTicketItemsTableHtml(options: {
 /** En-tête ticket : titre + n° à gauche, logo à droite. */
 export function buildThermalTicketHeadHtml(options: {
   title: string
+  titleAr?: string | null
   number?: string | null
   contact?: string
   logo?: string
   rtl?: boolean
 }) {
   const title = options.title.trim()
+  const titleAr = (options.titleAr ?? '').trim()
   const number = (options.number ?? '').trim()
   const contact = options.contact ?? `${CLINIC.city} · ${CLINIC.phones}`
   const logo = options.logo ?? CLINIC.logo
-  const titleDir = options.rtl ? 'rtl' : 'ltr'
-  const titleLang = options.rtl ? ' lang="ar"' : ''
+  const bilingual = Boolean(titleAr)
+  const titleHtml = bilingual
+    ? `<div class="thermal-receipt__title-bi">
+      <h1 class="thermal-receipt__title thermal-receipt__title--fr" dir="ltr">${escapeHtml(title)}</h1>
+      <h1 class="thermal-receipt__title thermal-receipt__title--ar" dir="rtl" lang="ar">${escapeHtml(titleAr)}</h1>
+    </div>`
+    : `<h1 class="thermal-receipt__title thermal-receipt__title--fr" dir="${options.rtl ? 'rtl' : 'ltr'}"${options.rtl ? ' lang="ar"' : ''}>${escapeHtml(title)}</h1>`
   return `<header class="thermal-receipt__ticket-head">
   <div class="thermal-receipt__ticket-head-text">
     <div class="thermal-receipt__ticket-title-line">
-      <h1 class="thermal-receipt__title thermal-receipt__title--fr" dir="${titleDir}"${titleLang}>${escapeHtml(title)}</h1>
+      ${titleHtml}
       ${number ? `<p class="thermal-receipt__subtitle-no" dir="ltr">${escapeHtml(number)}</p>` : ''}
     </div>
     <p class="thermal-receipt__contact" dir="ltr">${escapeHtml(contact)}</p>
   </div>
-  <img src="${logo}" alt="" class="thermal-receipt__logo" />
+  <img src="${printImgSrc(logo)}" alt="" class="thermal-receipt__logo" />
 </header>`
 }
 
@@ -1651,8 +1816,8 @@ export function buildThermalClinicHeaderHtml(options?: {
     <p class="thermal-receipt__name" dir="ltr">${escapeHtml(name)}</p>
     <p class="thermal-receipt__contact" dir="ltr">${escapeHtml(contact)}</p>
   </div>
-  <img src="${logo}" alt="${escapeHtml(CLINIC.nameFr)}" class="thermal-receipt__logo" />
-</header>`
+    <img src="${printImgSrc(logo)}" alt="${escapeHtml(CLINIC.nameFr)}" class="thermal-receipt__logo" />
+  </header>`
 }
 
 function buildGroupedExamInvoiceRows(examLines: LabExamInvoiceLine[]) {
@@ -1782,6 +1947,7 @@ export function buildConsultationReceiptHtml(data: ConsultationReceiptData): str
   const metaRows = [
     thermalLocaleMetaRow('Date', dateLabel),
     thermalLocaleMetaRow('Patient', data.patientName),
+    ...(data.patientCode ? [thermalLocaleMetaRow('Matricule', data.patientCode)] : []),
     thermalLocaleMetaRow('Médecin', data.doctorName),
     ...(data.processedBy ? [thermalLocaleMetaRow('Par', data.processedBy)] : []),
   ].join('')
@@ -1811,10 +1977,18 @@ export function buildConsultationReceiptHtml(data: ConsultationReceiptData): str
 </div>`
 }
 
+export type DayClosureServiceLine = {
+  label: string
+  qty: number
+  totalFcfa: number
+}
+
 export type DayClosureReceiptData = {
   businessDate: string
+  businessDateTo?: string | null
   closedAt: string
   receptionistName: string
+  receptionistUsername?: string | null
   shiftLabel?: string | null
   collectedFcfa: number
   expensesFcfa: number
@@ -1825,61 +1999,167 @@ export type DayClosureReceiptData = {
   examsFcfa?: number
   surgeryFcfa?: number
   hospitalizationFcfa?: number
+  serviceLines?: DayClosureServiceLine[]
+  reductionFcfa?: number
+  saleFcfa?: number
+}
+
+function formatDayClosureShortDate(isoDate: string): string {
+  const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (match) return `${match[3]}/${match[2]}/${match[1].slice(-2)}`
+  const d = new Date(`${isoDate}T12:00:00`)
+  if (Number.isNaN(d.getTime())) return isoDate
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const yy = String(d.getFullYear()).slice(-2)
+  return `${dd}/${mm}/${yy}`
+}
+
+function formatDayClosureAmount(amount: number): string {
+  return formatFcfaShort(amount)
+}
+
+function buildDayClosureServiceRowsHtml(lines: DayClosureServiceLine[]): string {
+  if (!lines.length) {
+    return `<tr>
+  <td class="col-service" colspan="3" dir="ltr">${escapeHtml(t('Aucune vente enregistrée'))}</td>
+</tr>`
+  }
+  return lines
+    .map((line) => {
+      const fr = line.label.trim()
+      const ar = thermalAr(fr)
+      const labelHtml = ar
+        ? `<span class="day-closure__service-fr" dir="ltr">${escapeHtml(fr)}</span>
+  <span class="day-closure__service-ar" dir="rtl" lang="ar">${escapeHtml(ar)}</span>`
+        : `<span class="day-closure__service-fr" dir="ltr">${escapeHtml(fr)}</span>`
+      return `<tr>
+  <td class="col-service">${labelHtml}</td>
+  <td class="col-qty" dir="ltr">${escapeHtml(String(line.qty))}</td>
+  <td class="col-total" dir="ltr">${escapeHtml(formatFcfaCompact(line.totalFcfa))}</td>
+</tr>`
+    })
+    .join('')
 }
 
 export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string {
-  const rtl = isPrintArabic()
   const closed = parseReceiptDateTime(data.closedAt)
-  const dateShort = formatAppDate(new Date(`${data.businessDate}T12:00:00`))
+  const dateShort = formatDayClosureShortDate(data.businessDate)
+  const dateShortTo = data.businessDateTo
+    ? formatDayClosureShortDate(data.businessDateTo)
+    : dateShort
+  const dateFull = formatAppDate(new Date(`${data.businessDate}T12:00:00`))
+  const username =
+    (data.receptionistUsername || '').trim() ||
+    (data.receptionistName || '').trim() ||
+    '—'
+  const serviceLines = (data.serviceLines ?? []).filter((line) => line.qty > 0 || line.totalFcfa > 0)
+  const collectedFcfa = Math.max(0, Number(data.collectedFcfa) || 0)
+  const reductionFcfa = Math.max(0, Number(data.reductionFcfa) || 0)
+  const saleFcfa = Math.max(
+    collectedFcfa,
+    Number(data.saleFcfa) || collectedFcfa + reductionFcfa,
+  )
+  const fr = (key: string) => translateUiLocale(key, 'fr')
+  const title = fr('Cumul vente du {from} au {to}')
+    .replace('{from}', dateShort)
+    .replace('{to}', dateShortTo)
 
-  const metaRows = [
-    thermalLocaleMetaRow('Date', dateShort),
-    thermalLocaleMetaRow('Clôturé', `${closed.shortDate} ${closed.timeShort}`),
-    thermalLocaleMetaRow('Par', data.receptionistName),
-    ...(data.shiftLabel ? [thermalLocaleMetaRow('Créneau', data.shiftLabel)] : []),
-    thermalLocaleMetaRow('Inscriptions', String(data.registeredToday)),
-    thermalLocaleMetaRow('Passages', String(data.visitsToday)),
-  ].join('')
+  const totalsBlock = `
+  <div class="day-closure__totals" dir="ltr">
+    <p class="day-closure__totals-line day-closure__totals-line--sub">
+      <span>${escapeHtml(username.toUpperCase())} - ${escapeHtml(fr('Sous-total Perçu'))} :</span>
+      <strong>${escapeHtml(formatDayClosureAmount(collectedFcfa))}</strong>
+    </p>
+    <p class="day-closure__totals-line">
+      <span>${escapeHtml(fr('Remise'))} :</span>
+      <strong>${escapeHtml(formatDayClosureAmount(reductionFcfa))}</strong>
+    </p>
+    <p class="day-closure__totals-line">
+      <span>${escapeHtml(fr('Vente'))} :</span>
+      <strong>${escapeHtml(formatDayClosureAmount(saleFcfa))}</strong>
+    </p>
+    <p class="day-closure__totals-line">
+      <span>${escapeHtml(fr('Total vente'))} :</span>
+      <strong>${escapeHtml(formatDayClosureAmount(saleFcfa))}</strong>
+    </p>
+    <p class="day-closure__totals-line day-closure__totals-line--total">
+      <span>${escapeHtml(fr('Total Perçu'))} :</span>
+      <strong>${escapeHtml(formatDayClosureAmount(collectedFcfa))}</strong>
+    </p>
+  </div>`
 
-  const detailRows = [
-    data.consultationsFcfa != null && data.consultationsFcfa > 0
-      ? thermalLocaleMetaRow('Consultations', formatFcfaPrint(data.consultationsFcfa))
-      : '',
-    data.examsFcfa != null && data.examsFcfa > 0
-      ? thermalLocaleMetaRow('Examens', formatFcfaPrint(data.examsFcfa))
-      : '',
-    data.surgeryFcfa != null && data.surgeryFcfa > 0
-      ? thermalLocaleMetaRow('Chirurgie', formatFcfaPrint(data.surgeryFcfa))
-      : '',
-    data.hospitalizationFcfa != null && data.hospitalizationFcfa > 0
-      ? thermalLocaleMetaRow('Hospitalisation', formatFcfaPrint(data.hospitalizationFcfa))
-      : '',
-  ]
-    .filter(Boolean)
-    .join('')
+  const footerLine = fr('Le {date} - {time} par {user}')
+    .replace('{date}', closed.shortDate !== '—' ? closed.shortDate : dateFull)
+    .replace('{time}', closed.time)
+    .replace('{user}', username)
 
   return `
-<div class="${thermalTicketRootClass('thermal-receipt--day-closure')}"${thermalTicketDirAttrs()}>
-  ${buildThermalTicketHeadHtml({ title: t('Clôture de journée'), number: dateShort, rtl })}
+<div class="${thermalTicketRootClass('thermal-receipt--day-closure')}" dir="ltr">
+  ${buildThermalClinicHeaderHtml({ name: 'CLINIQUE AL WATAN' })}
+  <p class="day-closure__period" dir="ltr">${escapeHtml(title)}</p>
   <hr class="thermal-receipt__rule" />
 
-  <div class="thermal-receipt__fields">
-    ${metaRows}
-  </div>
-
-  ${detailRows ? `<hr class="thermal-receipt__rule" /><div class="thermal-receipt__fields">${detailRows}</div>` : ''}
+  <table class="thermal-receipt__items-table day-closure__table" dir="ltr">
+    <thead>
+      <tr>
+        <th class="col-service">${escapeHtml(fr('Produits'))}</th>
+        <th class="col-qty">${escapeHtml(fr('Qté'))}</th>
+        <th class="col-total">${escapeHtml(fr('Total'))}</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${buildDayClosureServiceRowsHtml(serviceLines)}
+    </tbody>
+  </table>
 
   <hr class="thermal-receipt__rule" />
-  <div class="thermal-receipt__fields">
-    ${thermalLocaleMetaRow('Encaissements', formatFcfaPrint(data.collectedFcfa))}
-    ${thermalLocaleMetaRow('Dépenses', formatFcfaPrint(data.expensesFcfa))}
-    ${thermalLocaleMetaRow('Net', formatFcfaPrint(data.netFcfa))}
-  </div>
+  ${totalsBlock}
 
-  <hr class="thermal-receipt__rule" />
-  ${thermalThanksHtml('Remettre à la comptabilité')}
+  <p class="day-closure__footer" dir="ltr">${escapeHtml(footerLine)}</p>
 </div>`
 }
+
+export type PharmacyDayClosureTicketData = {
+  businessDate: string
+  periodTo?: string | null
+  closedAt: string
+  pharmacistName: string
+  pharmacistUsername?: string | null
+  salesCount: number
+  returnsCount: number
+  grossSalesFcfa: number
+  catalogueSalesFcfa?: number
+  discountFcfa?: number
+  returnsFcfa: number
+  netFcfa: number
+  productLines?: DayClosureServiceLine[]
+}
+
+export function buildPharmacyDayClosureHtml(data: PharmacyDayClosureTicketData): string {
+  const catalogueSalesFcfa = Math.max(
+    0,
+    Number(data.catalogueSalesFcfa) || Number(data.grossSalesFcfa) || 0,
+  )
+  const discountFcfa = Math.max(0, Number(data.discountFcfa) || 0)
+  return buildDayClosureReceiptHtml({
+    businessDate: data.businessDate,
+    businessDateTo: data.periodTo || data.businessDate,
+    closedAt: data.closedAt,
+    receptionistName: data.pharmacistName,
+    receptionistUsername: data.pharmacistUsername,
+    collectedFcfa: data.netFcfa,
+    expensesFcfa: 0,
+    netFcfa: data.netFcfa,
+    visitsToday: data.salesCount,
+    registeredToday: data.returnsCount,
+    saleFcfa: catalogueSalesFcfa,
+    reductionFcfa: discountFcfa,
+    serviceLines: data.productLines ?? [],
+  })
+}
+
+
 
 export type LabExamInvoiceLine = {
   label: string
@@ -2208,7 +2488,7 @@ export function buildLabExamInvoiceHtml(data: LabExamInvoiceData): string {
 <div class="receipt-invoice receipt-invoice--exam-a5 ${density}${kindClass}">
   <header class="receipt-invoice__head">
     <div class="receipt-invoice__head-top">
-      <img src="${CLINIC.logo}" alt="${escapeHtml(CLINIC.nameFr)}" class="receipt-invoice__logo" />
+      <img src="${printImgSrc(CLINIC.logo)}" alt="${escapeHtml(CLINIC.nameFr)}" class="receipt-invoice__logo" />
       <div class="receipt-invoice__titles">
         <p class="receipt-invoice__clinic-ar" dir="rtl" lang="ar">${escapeHtml(CLINIC.nameAr)}</p>
         <p class="receipt-invoice__clinic-name">${escapeHtml(CLINIC.nameFr.toUpperCase())}</p>
@@ -2264,11 +2544,11 @@ export function buildClinicPrintHeader(
 ): string {
   const title = docTitle ? `<p class="doc-title">${escapeHtml(t(docTitle))}</p>` : ''
   const rightLogo = options?.dualLogo
-    ? `<img src="${CLINIC.logo}" alt="" class="clinic-logo clinic-logo--right" aria-hidden="true" />`
+    ? `<img src="${printImgSrc(CLINIC.logo)}" alt="" class="clinic-logo clinic-logo--right" aria-hidden="true" />`
     : ''
   return `
   <div class="clinic-header${options?.dualLogo ? ' clinic-header--dual-logo' : ''}">
-    <img src="${CLINIC.logo}" alt="${CLINIC.nameFr}" class="clinic-logo" />
+    <img src="${printImgSrc(CLINIC.logo)}" alt="${escapeHtml(CLINIC.nameFr)}" class="clinic-logo" />
     ${rightLogo}
     <div class="clinic-info">
       <h1>${CLINIC.nameFr}</h1>
@@ -2461,17 +2741,79 @@ function applyThermalPageSize(doc: Document, heightMm: number, tight = false) {
   void doc.body.offsetHeight
 }
 
+function isMsEdgeBrowser() {
+  return typeof navigator !== 'undefined' && /Edg\//.test(navigator.userAgent)
+}
+
+/** Attendre logo / polices : sinon Edge reste sur « Chargement de l’aperçu… ». */
+function whenDocumentReadyForPrint(doc: Document, done: () => void, timeoutMs = 2500) {
+  let finished = false
+  const finish = () => {
+    if (finished) return
+    finished = true
+    done()
+  }
+
+  let imagesStarted = false
+  const waitImages = () => {
+    if (imagesStarted) return
+    imagesStarted = true
+    const imgs = Array.from(doc.images)
+    if (!imgs.length) {
+      finish()
+      return
+    }
+    let pending = imgs.length
+    const one = () => {
+      pending -= 1
+      if (pending <= 0) finish()
+    }
+    for (const img of imgs) {
+      if (img.complete) {
+        one()
+        continue
+      }
+      img.addEventListener('load', one, { once: true })
+      img.addEventListener('error', one, { once: true })
+    }
+    window.setTimeout(finish, timeoutMs)
+  }
+
+  const fonts = doc.fonts
+  if (fonts?.ready) {
+    void fonts.ready.then(waitImages).catch(waitImages)
+    window.setTimeout(waitImages, timeoutMs)
+  } else {
+    waitImages()
+  }
+}
+
+function triggerWindowPrint(printWindow: Window) {
+  const kick = () => {
+    try {
+      printWindow.focus()
+      printWindow.print()
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    // print() depuis l’opener fige Edge (caisse pharmacie). Lancer dans la popup.
+    printWindow.setTimeout(kick, 0)
+  } catch {
+    kick()
+  }
+}
+
 function printHtmlInHiddenFrame(
   html: string,
   onBeforePrint?: (doc: Document) => void,
-  frameOpts?: { widthPx?: number; heightPx?: number; delayMs?: number; waitImages?: boolean },
+  frameOpts?: { widthPx?: number; heightPx?: number; delayMs?: number },
 ): boolean {
   // Dimensions réelles hors écran : iframe 0×0 → print() souvent ignoré sous Edge/Chrome --app
-  // Thermique : largeur 80 mm et hauteur minime — sinon documentElement.scrollHeight = viewport (~A4)
   const widthPx = frameOpts?.widthPx ?? 800
   const heightPx = frameOpts?.heightPx ?? 1200
   const delayMs = frameOpts?.delayMs ?? 250
-  const waitImages = frameOpts?.waitImages === true
 
   const iframe = document.createElement('iframe')
   iframe.setAttribute('aria-hidden', 'true')
@@ -2483,16 +2825,11 @@ function printHtmlInHiddenFrame(
     'border:0;opacity:0.02;z-index:2147483646;pointer-events:none;background:#fff;'
   document.body.appendChild(iframe)
 
-  const frameDoc = iframe.contentDocument
   const frameWin = iframe.contentWindow
-  if (!frameDoc || !frameWin) {
+  if (!frameWin) {
     iframe.remove()
     return false
   }
-
-  frameDoc.open()
-  frameDoc.write(html)
-  frameDoc.close()
 
   let cleaned = false
   const cleanup = () => {
@@ -2507,63 +2844,86 @@ function printHtmlInHiddenFrame(
 
   let printed = false
   const doPrint = () => {
-    if (printed) return
+    const doc = iframe.contentDocument
+    const win = iframe.contentWindow
+    if (printed || !doc || !win) {
+      if (!printed) cleanup()
+      return
+    }
     printed = true
-
-    const run = () => {
-      try {
-        onBeforePrint?.(frameDoc)
-      } catch {
-        /* ignore */
-      }
-      try {
-        frameWin.focus()
-        frameWin.addEventListener('afterprint', cleanup, { once: true })
-        frameWin.print()
-      } catch {
-        cleanup()
-        return
-      }
-      // Repli si afterprint n’arrive pas (certains modes --app)
-      setTimeout(cleanup, 60_000)
+    try {
+      onBeforePrint?.(doc)
+    } catch {
+      /* ignore */
     }
-
-    if (!waitImages) {
-      run()
+    try {
+      win.focus()
+      win.addEventListener('afterprint', cleanup, { once: true })
+      win.print()
+    } catch {
+      cleanup()
       return
     }
-
-    const imgs = Array.from(frameDoc.images)
-    if (!imgs.length) {
-      run()
-      return
-    }
-    let pending = imgs.length
-    let finished = false
-    const finish = () => {
-      if (finished) return
-      finished = true
-      run()
-    }
-    const done = () => {
-      pending -= 1
-      if (pending <= 0) finish()
-    }
-    for (const img of imgs) {
-      if (img.complete) {
-        done()
-        continue
-      }
-      img.addEventListener('load', done, { once: true })
-      img.addEventListener('error', done, { once: true })
-    }
-    // Sécurité si un événement image ne part jamais
-    setTimeout(finish, 1500)
+    window.setTimeout(cleanup, 60_000)
   }
 
-  // Laisser le moteur peindre le contenu avant print()
-  setTimeout(doPrint, delayMs)
+  const startWhenReady = () => {
+    const doc = iframe.contentDocument
+    if (!doc) {
+      cleanup()
+      return
+    }
+    whenDocumentReadyForPrint(doc, () => window.setTimeout(doPrint, delayMs))
+  }
+
+  iframe.addEventListener('load', startWhenReady, { once: true })
+  try {
+    iframe.srcdoc = html
+  } catch {
+    const frameDoc = iframe.contentDocument
+    if (!frameDoc) {
+      cleanup()
+      return false
+    }
+    frameDoc.open()
+    frameDoc.write(html)
+    frameDoc.close()
+    window.setTimeout(startWhenReady, delayMs)
+  }
   return true
+}
+
+/**
+ * Remplit une popup same-origin sans document.write.
+ * Sur Edge, document.write du ticket (gros CSS) après une fenêtre réservée
+ * bloque le renderer : le bouton caisse reste en chargement.
+ */
+function writeHtmlSameOrigin(win: Window, html: string): boolean {
+  try {
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+    const dest = win.document
+    const srcHtml = parsed.documentElement
+    dest.documentElement.setAttribute('lang', srcHtml.getAttribute('lang') || 'fr')
+    dest.documentElement.setAttribute('dir', srcHtml.getAttribute('dir') || 'ltr')
+    dest.head.replaceChildren(
+      ...Array.from(parsed.head.childNodes).map((node) => dest.importNode(node, true)),
+    )
+    dest.body.replaceChildren(
+      ...Array.from(parsed.body.childNodes).map((node) => dest.importNode(node, true)),
+    )
+    dest.body.className = parsed.body.className
+    dest.title = parsed.title || dest.title
+    return true
+  } catch {
+    try {
+      win.document.open()
+      win.document.write(html)
+      win.document.close()
+      return true
+    } catch {
+      return false
+    }
+  }
 }
 
 function printHtmlInNewWindow(
@@ -2576,11 +2936,8 @@ function printHtmlInNewWindow(
     ? existingWindow
     : window.open('', '_blank', windowSize)
   if (!printWindow) return false
-  try {
-    printWindow.document.open()
-    printWindow.document.write(html)
-    printWindow.document.close()
-  } catch {
+  // Pas de blob: — l’aperçu Edge reste souvent sur « Chargement… » avec blob + @page 80 mm.
+  if (!writeHtmlSameOrigin(printWindow, html)) {
     try {
       printWindow.close()
     } catch {
@@ -2590,7 +2947,7 @@ function printHtmlInNewWindow(
   }
 
   let printed = false
-  const kickPrint = () => {
+  const startPrint = () => {
     if (printed) return
     printed = true
     try {
@@ -2598,26 +2955,16 @@ function printHtmlInNewWindow(
     } catch {
       /* ignore */
     }
-    try {
-      printWindow.focus()
-      printWindow.print()
-    } catch {
-      /* ignore */
+    triggerWindowPrint(printWindow)
+  }
+
+  whenDocumentReadyForPrint(printWindow.document, () => {
+    if (isMsEdgeBrowser()) {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(startPrint))
+      return
     }
-  }
-
-  const schedule = () => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(kickPrint)
-    })
-  }
-
-  if (printWindow.document.readyState === 'complete') {
-    schedule()
-  } else {
-    printWindow.addEventListener('load', schedule, { once: true })
-    setTimeout(kickPrint, 400)
-  }
+    startPrint()
+  })
   return true
 }
 
@@ -2699,7 +3046,7 @@ export function openPrintDocument(
     : bodyHtml
 
   const html = `<!DOCTYPE html>
-<html lang="${lang}" dir="${dir}"><head><meta charset="UTF-8"><title>${printTitle}</title>
+<html lang="${lang}" dir="${dir}"><head><meta charset="UTF-8"><base href="${escapeHtml(printDocumentBaseHref())}"><title>${printTitle}</title>
 <style>${CLINIC_PRINT_STYLES}
   body.print-rtl { direction: rtl; }
   body.print-rtl th, body.print-rtl td { text-align: right; }
@@ -2754,7 +3101,8 @@ ${contentHtml}
 
   const autoPrint = options.autoPrint !== false
   const windowSize = printWindowFeatures(options.pageSize)
-  const beforePrint = isThermal ? runThermalFit : undefined
+  // Edge : ne pas muter @page juste avant print() (aperçu bloqué). Le CSS a déjà 80×110 mm.
+  const beforePrint = isThermal && !isMsEdgeBrowser() ? runThermalFit : undefined
   const preparedWindow =
     (options.targetWindow && !options.targetWindow.closed ? options.targetWindow : null)
     ?? takeReservedPrintWindow()
@@ -2765,9 +3113,9 @@ ${contentHtml}
       return printHtmlInNewWindow(html, windowSize, beforePrint, preparedWindow)
     }
 
-    // Thermique : l’iframe quasi invisible clignote et print() est souvent ignoré
-    // en mode cabinet (--app). Ouvrir une vraie fenêtre d’impression.
-    if (isThermal) {
+    // Thermique / Edge : l’iframe quasi invisible clignote et print() est souvent ignoré
+    // (mode cabinet --app). Ouvrir une vraie fenêtre d’impression.
+    if (isThermal || isMsEdgeBrowser()) {
       return printHtmlInNewWindow(html, windowSize, beforePrint)
     }
 

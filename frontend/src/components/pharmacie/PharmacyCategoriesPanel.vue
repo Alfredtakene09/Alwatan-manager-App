@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { Tags, Plus, RefreshCw, Save } from '@lucide/vue'
+import { Tags, Plus, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { canWritePharmacyCatalog } from '@/lib/roles'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
@@ -38,13 +40,17 @@ const modalOpen = ref(false)
 const editingId = ref<string | null>(null)
 const formName = ref('')
 const formSortOrder = ref('0')
+const filterQuery = ref('')
 
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 const isEditing = computed(() => editingId.value !== null)
 
 const tableRows = computed(() => {
   void localeCode.value
-  return items.value.map((item) => ({
+  const q = filterQuery.value.trim().toLowerCase()
+  return items.value
+    .filter((item) => !q || item.name.toLowerCase().includes(q))
+    .map((item) => ({
     id: item.id,
     name: item.name,
     sortOrder: item.sortOrder,
@@ -196,15 +202,40 @@ function onTableAction({ action, id }: { action: string; id: string }) {
 
 onMounted(loadItems)
 
+const exportColumns = computed<ExportColumn<(typeof tableRows.value)[number]>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Catégorie'), value: (row) => row.name },
+    { header: uiText('Ordre'), value: (row) => row.sortOrder },
+    { header: uiText('Produits'), value: (row) => row.productsLabel },
+    { header: uiText('Statut'), value: (row) => row.statusLabel },
+  ]
+})
+
+function exportPdf() {
+  exportTablePdf(uiText('Catégories pharmacie'), exportColumns.value, tableRows.value)
+}
+function exportExcel() {
+  exportTableExcel(uiText('Catégories pharmacie'), exportColumns.value, tableRows.value)
+}
+function exportWord() {
+  void exportTableWord(uiText('Catégories pharmacie'), exportColumns.value, tableRows.value)
+}
+
 defineExpose({ reload: loadItems })
 </script>
 
 <template>
   <PageTableSection embedded>
     <template #toolbar>
-      <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
-        {{ uiText('Actualiser') }}
-      </UiButton>
+      <input
+        v-model="filterQuery"
+        class="filter-input"
+        type="search"
+        :placeholder="uiText('Rechercher une catégorie…')"
+        :aria-label="uiText('Rechercher une catégorie')"
+      />
+      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
       <UiButton
         v-if="canManageCatalog"
         variant="primary"
@@ -226,6 +257,7 @@ defineExpose({ reload: loadItems })
           : uiText('Aucune catégorie enregistrée.')
       }}
     </p>
+    <p v-else-if="!loading && !tableRows.length" class="empty">{{ uiText('Aucun résultat pour cette recherche.') }}</p>
     <div v-else class="simple-table-shell" :class="{ 'simple-table-shell--fill': true }">
       <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
         <span class="simple-table-spinner" aria-hidden="true" />
@@ -304,5 +336,18 @@ defineExpose({ reload: loadItems })
   color: var(--text-light);
   padding: 2rem 1rem;
   font-size: 0.875rem;
+}
+
+.filter-input {
+  min-width: 12rem;
+  flex: 1 1 12rem;
+  max-width: 18rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
 }
 </style>

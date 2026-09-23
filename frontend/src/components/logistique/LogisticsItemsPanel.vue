@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
-import { Eye, Package, Pencil, Plus, RefreshCw, Save, Search } from '@lucide/vue'
+import { Eye, Package, Pencil, Plus, Save, Search } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import {
@@ -527,9 +527,6 @@ defineExpose({ reload: loadItems })
         </select>
       </div>
       <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-      <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
-        Actualiser
-      </UiButton>
       <UiButton variant="primary" size="sm" :icon="Plus" ui-action="table.create" @click="openCreateModal">
         Nouvel article
       </UiButton>

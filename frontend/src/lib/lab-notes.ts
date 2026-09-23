@@ -25,6 +25,20 @@ export const EXAM_KIND_SECTION_LABELS = {
 
 export type ExamKindSlug = keyof typeof EXAM_KIND_SECTION_LABELS
 
+const EXAM_KIND_SECTION_ALIASES: Record<ExamKindSlug, readonly string[]> = {
+  specialty: ['Spécialité'],
+  examen: ['Laboratoire', 'Examen', 'Labo'],
+  radio: ['Radio'],
+  echo: ['Écho', 'Echo'],
+  odonto: ['Odonto'],
+  operation: ['Opération', 'Operation'],
+  hospitalisation: ['Hospitalisation'],
+}
+
+function sectionLabelsForKind(kind: ExamKindSlug): string[] {
+  return [...new Set([EXAM_KIND_SECTION_LABELS[kind], ...EXAM_KIND_SECTION_ALIASES[kind]])]
+}
+
 const EXAM_KIND_ORDER: ExamKindSlug[] = [
   'specialty',
   'examen',
@@ -194,9 +208,11 @@ export function mergeHospitalisationDaysInNotes(notes: string, days: number): st
 function parseExamCommentLine(line: string): { kind: ExamKindSlug; comment: string } | null {
   const trimmed = line.trim()
   for (const kind of EXAM_KIND_ORDER) {
-    const prefix = `${EXAM_COMMENT_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]}) : `
-    if (trimmed.startsWith(prefix)) {
-      return { kind, comment: trimmed.slice(prefix.length).trim() }
+    for (const label of sectionLabelsForKind(kind)) {
+      const prefix = `${EXAM_COMMENT_PREFIX} (${label}) : `
+      if (trimmed.startsWith(prefix)) {
+        return { kind, comment: trimmed.slice(prefix.length).trim() }
+      }
     }
   }
   return null
@@ -205,11 +221,13 @@ function parseExamCommentLine(line: string): { kind: ExamKindSlug; comment: stri
 function parseExamLine(line: string): { kind: ExamKindSlug; exams: string[] } | null {
   const trimmed = line.trim()
   for (const kind of EXAM_KIND_ORDER) {
-    const prefix = `${EXAMS_PRESCRIBED_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]}) : `
-    if (trimmed.startsWith(prefix)) {
-      return {
-        kind,
-        exams: splitPrescribedExamList(trimmed.slice(prefix.length)),
+    for (const label of sectionLabelsForKind(kind)) {
+      const prefix = `${EXAMS_PRESCRIBED_PREFIX} (${label}) : `
+      if (trimmed.startsWith(prefix)) {
+        return {
+          kind,
+          exams: splitPrescribedExamList(trimmed.slice(prefix.length)),
+        }
       }
     }
   }
@@ -421,11 +439,13 @@ export function countNewExamsInAppend(
 function parsePaidKindLine(line: string): { kind: ExamKindSlug; paidAt: Date } | null {
   const trimmed = line.trim()
   for (const kind of EXAM_KIND_ORDER) {
-    const prefix = `${EXAMS_PAID_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]}) : `
-    if (!trimmed.startsWith(prefix)) continue
-    const parsed = new Date(trimmed.slice(prefix.length).trim())
-    if (Number.isNaN(parsed.getTime())) return null
-    return { kind, paidAt: parsed }
+    for (const label of sectionLabelsForKind(kind)) {
+      const prefix = `${EXAMS_PAID_PREFIX} (${label}) : `
+      if (!trimmed.startsWith(prefix)) continue
+      const parsed = new Date(trimmed.slice(prefix.length).trim())
+      if (Number.isNaN(parsed.getTime())) return null
+      return { kind, paidAt: parsed }
+    }
   }
   return null
 }

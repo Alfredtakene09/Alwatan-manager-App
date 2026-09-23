@@ -41,8 +41,8 @@ export type MedicalHistoryEntry = {
 export type MedicalHistoryPrivacyOptions = {
   labValidatedOnly?: boolean;
   /**
-   * Admin / direction / gestionnaire : voient toutes les infos cliniques.
-   * Sinon seules les infos du médecin prescripteur (viewerDoctorId) sont exposées.
+   * Tous les passages cliniques (tous médecins) : direction, ou médecin
+   * déjà lié au patient (réenregistrement / transfert).
    */
   canViewAllClinicalDetails?: boolean;
   /** Id du médecin connecté (pour restreindre comment + ordonnance). */
@@ -154,16 +154,15 @@ export function buildMedicalHistoryEntry(
 export async function getPatientMedicalHistory(
   patientId: string,
   options?: {
+    /** @deprecated L’historique dossier est toujours complet une fois l’accès accordé. */
     doctorScope?: string;
     canViewAllClinicalDetails?: boolean;
     viewerDoctorId?: string | null;
   },
 ) {
-  const doctorId = options?.doctorScope;
   const visits = await prisma.visit.findMany({
     where: {
       patientId,
-      ...(doctorId ? medecinMatchWhere(doctorId) : {}),
     },
     include: {
       consultation: {
@@ -181,7 +180,7 @@ export async function getPatientMedicalHistory(
       buildMedicalHistoryEntry(visit, {
         labValidatedOnly: false,
         canViewAllClinicalDetails: options?.canViewAllClinicalDetails,
-        viewerDoctorId: options?.viewerDoctorId ?? doctorId ?? null,
+        viewerDoctorId: options?.viewerDoctorId ?? null,
       }),
     )
     .filter((entry): entry is MedicalHistoryEntry => entry !== null);

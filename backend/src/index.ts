@@ -49,8 +49,14 @@ import clinicInfoRoutes from "./routes/clinic-info.js";
 import { ensureClinicInfoRow } from "./lib/clinic.js";
 import { ensureRoleUiSettingsRow } from "./lib/role-ui-settings.js";
 import { getLanIpv4, getTailscaleIpv4, isPrivateLanOrigin, parseCorsOrigins } from "./lib/lan-host.js";
-import { prisma } from "./lib/db.js";
+import { prisma, prismaRaw } from "./lib/db.js";
 import { assertJwtSecret } from "./lib/auth.js";
+import { startDataBackupScheduler } from "./lib/data-backup.js";
+import {
+  ensureDbDeleteGuard,
+  ExternalDataDeleteBlockedError,
+  runWithAppDataDeleteUnlock,
+} from "./lib/db-delete-guard.js";
 
 assertJwtSecret(process.env.JWT_SECRET);
 
@@ -110,6 +116,15 @@ app.use((_req, res, next) => {
     'local-network-access=(self), private-state-token-redemption=(), private-state-token-issuance=()',
   );
   next();
+});
+
+/** Autorise delete/deleteMany Prisma uniquement pour les routes API (boutons UI). */
+app.use((req, _res, next) => {
+  if (!req.path.startsWith("/api")) {
+    next();
+    return;
+  }
+  runWithAppDataDeleteUnlock("api", () => next());
 });
 
 app.get("/api/health", async (_req, res) => {
@@ -180,87 +195,105 @@ app.use("/api/client-setup", clientSetupRoutes);
 app.use("/api/doctor-overtime", doctorOvertimeRoutes);
 app.use("/api/doctor-shares", doctorSharesRoutes);
 
-refreshExamPriceCache().catch((error) => {
-  console.error("Impossible de charger le cache des tarifs examens:", error);
-});
+void (async () => {
+  try {
+    await runWithAppDataDeleteUnlock("startup", async () => {
+      try {
+        await ensureDbDeleteGuard(prismaRaw);
+        console.log("Verrou anti-suppression externe actif (DELETE / TRUNCATE / DROP).");
+      } catch (error) {
+        console.error("Impossible d'activer le verrou anti-suppression:", error);
+      }
 
-ensureKinesitherapieCatalogItems()
-  .then(() => ensurePetiteChirurgieCatalogItems())
-  .then(() => ensurePrintedTariffCatalogItems())
-  .then(() => refreshExamPriceCache())
-  .catch((error) => {
-    console.error("Impossible d'initialiser les catalogues kinésithérapie / petite chirurgie / tarifaire:", error);
-  });
+      try {
+        await refreshExamPriceCache();
+      } catch (error) {
+        console.error("Impossible de charger le cache des tarifs examens:", error);
+      }
 
-ensureClinicInfoRow().catch((error) => {
-  console.error("Impossible d'initialiser les infos clinique:", error);
-});
-ensureRoleUiSettingsRow().catch((error) => {
-  console.error("Impossible d'initialiser les permissions de boutons:", error);
-});
+      try {
+        await ensureKinesitherapieCatalogItems();
+        await ensurePetiteChirurgieCatalogItems();
+        await ensurePrintedTariffCatalogItems();
+        await refreshExamPriceCache();
+      } catch (error) {
+        console.error(
+          "Impossible d'initialiser les catalogues kinésithérapie / petite chirurgie / tarifaire:",
+          error,
+        );
+      }
 
-seedLabPanelsIfEmpty()
-  .then((created) => {
-    if (created > 0) {
-      console.log(`${created} formulaire(s) de résultats laboratoire initialisé(s).`);
-    }
-    return dedupeRoutineClassicSheetFields();
-  })
-  .then((removed) => {
-    if (removed > 0) {
-      console.log(`Formulaire Routine : ${removed} champ(s) selles/urine en double supprimé(s).`);
-    }
-    return ensureRoutineClassicSheetFields();
-  })
-  .then((patched) => {
-    if (patched > 0) {
-      console.log(`Formulaire Routine : ${patched} champ(s) selles/urine aligné(s) sur la feuille classique.`);
-    }
-    return refreshLabPanelRegistry();
-  })
-  .then(() => syncAllExamLabPanelLinks())
-  .then((sync) => {
-    if (sync.created > 0 || sync.linked > 0) {
-      console.log(
-        `Examens ↔ formulaires labo : ${sync.scanned} examen(s), ${sync.linked} lié(s), ${sync.created} formulaire(s) créé(s).`,
-      );
-    }
-    return syncAllLabPanelExamLinks();
-  })
-  .then((sync) => {
-    if (sync.created > 0 || sync.linked > 0) {
-      console.log(
-        `Formulaires labo ↔ examens : ${sync.scanned} formulaire(s), ${sync.linked} lié(s), ${sync.created} examen(s) créé(s).`,
-      );
-    }
-  })
-  .catch((error) => {
-    console.error("Impossible d'initialiser les formulaires laboratoire:", error);
-  });
+      try {
+        await ensureClinicInfoRow();
+      } catch (error) {
+        console.error("Impossible d'initialiser les infos clinique:", error);
+      }
+      try {
+        await ensureRoleUiSettingsRow();
+      } catch (error) {
+        console.error("Impossible d'initialiser les permissions de boutons:", error);
+      }
 
-initPatientDossiers().catch((error) => {
-  console.error("Impossible d'initialiser les dossiers patients:", error);
-});
+      try {
+        const created = await seedLabPanelsIfEmpty();
+        if (created > 0) {
+          console.log(`${created} formulaire(s) de résultats laboratoire initialisé(s).`);
+        }
+        const removed = await dedupeRoutineClassicSheetFields();
+        if (removed > 0) {
+          console.log(`Formulaire Routine : ${removed} champ(s) selles/urine en double supprimé(s).`);
+        }
+        const patched = await ensureRoutineClassicSheetFields();
+        if (patched > 0) {
+          console.log(
+            `Formulaire Routine : ${patched} champ(s) selles/urine aligné(s) sur la feuille classique.`,
+          );
+        }
+        await refreshLabPanelRegistry();
+        const syncExam = await syncAllExamLabPanelLinks();
+        if (syncExam.created > 0 || syncExam.linked > 0) {
+          console.log(
+            `Examens ↔ formulaires labo : ${syncExam.scanned} examen(s), ${syncExam.linked} lié(s), ${syncExam.created} formulaire(s) créé(s).`,
+          );
+        }
+        const syncPanel = await syncAllLabPanelExamLinks();
+        if (syncPanel.created > 0 || syncPanel.linked > 0) {
+          console.log(
+            `Formulaires labo ↔ examens : ${syncPanel.scanned} formulaire(s), ${syncPanel.linked} lié(s), ${syncPanel.created} examen(s) créé(s).`,
+          );
+        }
+      } catch (error) {
+        console.error("Impossible d'initialiser les formulaires laboratoire:", error);
+      }
 
-backfillLegacyConsultationInvoices()
-  .then((count) => {
-    if (count > 0) {
-      console.log(`${count} facture(s) consultation historique(s) marquée(s) comme payée(s).`);
-    }
-  })
-  .catch((error) => {
-    console.error("Synchronisation factures consultation:", error);
-  });
+      try {
+        await initPatientDossiers();
+      } catch (error) {
+        console.error("Impossible d'initialiser les dossiers patients:", error);
+      }
 
-backfillLabReceptionistApprovals()
-  .then((count) => {
-    if (count > 0) {
-      console.log(`${count} dossier(s) labo : réceptionniste rétabli pour « Prescrit par ».`);
-    }
-  })
-  .catch((error) => {
-    console.error("Synchronisation réceptionnistes labo:", error);
-  });
+      try {
+        const count = await backfillLegacyConsultationInvoices();
+        if (count > 0) {
+          console.log(`${count} facture(s) consultation historique(s) marquée(s) comme payée(s).`);
+        }
+      } catch (error) {
+        console.error("Synchronisation factures consultation:", error);
+      }
+
+      try {
+        const count = await backfillLabReceptionistApprovals();
+        if (count > 0) {
+          console.log(`${count} dossier(s) labo : réceptionniste rétabli pour « Prescrit par ».`);
+        }
+      } catch (error) {
+        console.error("Synchronisation réceptionnistes labo:", error);
+      }
+    });
+  } catch (error) {
+    console.error("Échec initialisation démarrage:", error);
+  }
+})();
 
 /**
  * frontend/dist est ignoré par Git : après clone/pull/nettoyage il disparaît.
@@ -364,6 +397,10 @@ if (serveFrontend) {
 app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error("[api]", req.method, req.path, err);
   if (res.headersSent) return;
+  if (err instanceof ExternalDataDeleteBlockedError) {
+    res.status(403).json({ error: err.message, code: err.code });
+    return;
+  }
   const status =
     err && typeof err === "object" && "status" in err && typeof err.status === "number"
       ? err.status
@@ -432,3 +469,5 @@ function startServer() {
 }
 
 startServer();
+/** Sauvegarde auto (SQL + uploads) toutes les 2 h — manifests prêts pour cloud. */
+startDataBackupScheduler({ projectRoot });

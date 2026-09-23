@@ -12,6 +12,7 @@ import {
   translateDashboardLabel,
   translateTemplate,
 } from '@/lib/dashboard-i18n'
+import { hospitalizationStayEnded } from '@/lib/hospitalization-admission'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 
@@ -27,6 +28,15 @@ const pendingHospitalizations = ref<
     visitId: string
     patientCode: string
     patientName: string
+  }>
+>([])
+const overdueHospitalizations = ref<
+  Array<{
+    id: string
+    visitId: string
+    patientCode: string
+    patientName: string
+    roomName: string
   }>
 >([])
 const pendingExamPayments = ref<
@@ -96,7 +106,7 @@ const dashboardAlerts = computed(() => {
     message: string
     actionLabel?: string
     actionTo?: string
-    kind?: 'hospitalization' | 'exam-payment' | 'consultation-payment' | 'default'
+    kind?: 'hospitalization' | 'hospitalization-overdue' | 'exam-payment' | 'consultation-payment' | 'default'
   }> = []
 
   if (canSeeExamPaymentAlerts.value) {
@@ -130,6 +140,19 @@ const dashboardAlerts = computed(() => {
   }
 
   if (canSeeHospitalizationAlerts.value) {
+    for (const hosp of overdueHospitalizations.value) {
+      items.push({
+        id: `hosp-overdue-${hosp.id}`,
+        severity: 'danger',
+        kind: 'hospitalization-overdue',
+        title: translateDashboardLabel('Libérer la salle'),
+        message: hosp.roomName
+          ? `${hosp.patientCode} — ${hosp.patientName} · ${hosp.roomName}`
+          : `${hosp.patientCode} — ${hosp.patientName}`,
+        actionLabel: translateDashboardLabel('Libérer la salle'),
+        actionTo: `/hospitalisation?tab=hospitalized&visitId=${encodeURIComponent(hosp.visitId)}`,
+      })
+    }
     for (const hosp of pendingHospitalizations.value) {
       items.push({
         id: `hosp-${hosp.id}`,
@@ -138,7 +161,7 @@ const dashboardAlerts = computed(() => {
         title: translateDashboardLabel('Nouvelle hospitalisation'),
         message: `${hosp.patientCode} — ${hosp.patientName}`,
         actionLabel: translateDashboardLabel('Admettre le patient'),
-        actionTo: `/hospitalisation?tab=queue&visitId=${encodeURIComponent(hosp.visitId)}`,
+        actionTo: `/hospitalisation?tab=hospitalized&visitId=${encodeURIComponent(hosp.visitId)}`,
       })
     }
   }
@@ -273,7 +296,9 @@ const alertsEmptyMessage = computed(() => {
     )
   }
   if (canSeeHospitalizationAlerts.value) {
-    return translateDashboardLabel('Tout est à jour — aucune hospitalisation en attente.')
+    return translateDashboardLabel(
+      'Tout est à jour — aucune hospitalisation en attente ni salle à libérer.',
+    )
   }
   return translateDashboardLabel(
     'Tout est à jour — aucune action urgente sur la caisse comptable, les dépenses ni la paie.',
@@ -322,6 +347,7 @@ async function loadPaymentAlerts() {
 async function loadHospitalizationAlerts() {
   if (!canSeeHospitalizationAlerts.value) {
     pendingHospitalizations.value = []
+    overdueHospitalizations.value = []
     return
   }
 
@@ -329,6 +355,8 @@ async function loadHospitalizationAlerts() {
     id: string
     status: string
     startDate?: string | null
+    endDate?: string | null
+    nightsCount?: number | null
     createdAt?: string
     room?: { name?: string } | null
     visit: {
@@ -356,6 +384,16 @@ async function loadHospitalizationAlerts() {
       patientCode: row.visit.patient.code,
       patientName: fullName(row.visit.patient.firstName, row.visit.patient.lastName),
     }))
+
+  overdueHospitalizations.value = rows
+    .filter((row) => hospitalizationStayEnded(row))
+    .map((row) => ({
+      id: row.id,
+      visitId: row.visit.id,
+      patientCode: row.visit.patient.code,
+      patientName: fullName(row.visit.patient.firstName, row.visit.patient.lastName),
+      roomName: row.room?.name ?? '',
+    }))
 }
 
 async function loadAlerts() {
@@ -363,6 +401,7 @@ async function loadAlerts() {
     overview.value = null
     gestionnaireOverview.value = null
     pendingHospitalizations.value = []
+    overdueHospitalizations.value = []
     pendingExamPayments.value = []
     pendingConsultationPayments.value = []
     return
@@ -392,6 +431,7 @@ async function loadAlerts() {
   tasks.push(
     loadHospitalizationAlerts().catch(() => {
       pendingHospitalizations.value = []
+      overdueHospitalizations.value = []
     }),
   )
   tasks.push(
@@ -462,7 +502,10 @@ watch(showModal, (open) => {
           <div class="alerts-list__content">
             <FlaskConical v-if="alert.kind === 'exam-payment'" :size="18" />
             <Stethoscope v-else-if="alert.kind === 'consultation-payment'" :size="18" />
-            <BedDouble v-else-if="alert.kind === 'hospitalization'" :size="18" />
+            <BedDouble
+              v-else-if="alert.kind === 'hospitalization' || alert.kind === 'hospitalization-overdue'"
+              :size="18"
+            />
             <AlertTriangle v-else-if="alert.severity === 'danger'" :size="18" />
             <Clock v-else :size="18" />
             <div>

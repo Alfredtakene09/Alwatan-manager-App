@@ -167,6 +167,6 @@ export function fullName(firstName: string, lastName: string) {
   return `${firstName} ${lastName}`.trim()
 }
 
-import { formatFcfa, formatFcfaCompact, formatFcfaDigits, formatFcfaShort } from './format-fcfa.js'
+import { formatFcfa, formatFcfaCompact, formatFcfaDigits, formatFcfaPlain, formatFcfaShort } from './format-fcfa.js'
 
-export { formatFcfa, formatFcfaCompact, formatFcfaDigits, formatFcfaShort }
+export { formatFcfa, formatFcfaCompact, formatFcfaDigits, formatFcfaPlain, formatFcfaShort }

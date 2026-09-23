@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { BarChart3, RefreshCw } from '@lucide/vue'
 import api from '@/api/client'
-import { formatFcfa, fullName } from '@/lib/roles'
+import { formatFcfa, fullName, ROLE_LABELS, type AppUserRole } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth'
 import {
   buildClinicPrintHeader,
@@ -58,7 +58,7 @@ type PharmacyRevenueReport = {
   }>
 }
 
-type PharmacistOption = { id: string; firstName: string; lastName: string }
+type PharmacistOption = { id: string; firstName: string; lastName: string; role?: AppUserRole }
 
 const report = ref<PharmacyReport | null>(null)
 const revenueReport = ref<PharmacyRevenueReport | null>(null)
@@ -262,7 +262,11 @@ onMounted(() => {
         <UiSelect v-if="canFilterPharmacist" v-model="pharmacistId" label="Pharmacien" class="period-select" @change="loadReport">
           <option value="">{{ uiText('Tous les pharmaciens') }}</option>
           <option v-for="p in pharmacists" :key="p.id" :value="p.id">
-            {{ fullName(p.firstName, p.lastName) }}
+            {{
+              p.role && p.role !== 'PHARMACIEN'
+                ? `${fullName(p.firstName, p.lastName)} · ${uiText(ROLE_LABELS[p.role] ?? p.role)}`
+                : fullName(p.firstName, p.lastName)
+            }}
           </option>
         </UiSelect>
         <UiSelect v-model="period" label="Période" class="period-select" @change="loadReport">

@@ -12,15 +12,17 @@ import { labsPendingApprovalWhere } from "./lab-notes.js";
 import {
   aggregateCollectedBetween,
   aggregatePharmacyBetween,
-  sumCollectedBreakdown,
   collectedInvoicesWhere,
+  netPaymentAmountsAfterPaidCap,
   startOfDay,
+  sumCollectedBreakdown,
 } from "./revenue-stats.js";
 import { comptabiliteInvoicePatientWhere } from "./patient-billing.js";
 import {
   currentPayrollPeriod,
   ensurePayrollForMonth,
   mapEmployeeService,
+  payrollCountedWhere,
   payrollPeriodBounds,
 } from "./admin-payroll.js";
 
@@ -51,16 +53,19 @@ async function buildOperationsByService(
           ...comptabiliteInvoicePatientWhere(),
           OR: [
             { type: InvoiceType.SURGERY },
-            { billingExamKind: "operation" },
-            { surgeryCaseId: { not: null } },
+            { AND: [{ billingExamKind: "operation" }, { surgeryCaseId: { not: null } }] },
           ],
         },
       },
       select: {
+        id: true,
+        invoiceId: true,
         amountFcfa: true,
+        paidAt: true,
         invoice: {
           select: {
             id: true,
+            paidAmountFcfa: true,
             surgeryCaseId: true,
             surgeryCase: {
               select: {
@@ -82,8 +87,7 @@ async function buildOperationsByService(
         payments: { none: {} },
         OR: [
           { type: InvoiceType.SURGERY },
-          { billingExamKind: "operation" },
-          { surgeryCaseId: { not: null } },
+          { AND: [{ billingExamKind: "operation" }, { surgeryCaseId: { not: null } }] },
         ],
       },
       select: {
@@ -121,6 +125,30 @@ async function buildOperationsByService(
     amountFcfa: 0,
   });
 
+  const invoiceIds = [...new Set(payments.map((payment) => payment.invoiceId))];
+  const allPaymentsForCap =
+    invoiceIds.length === 0
+      ? []
+      : await prisma.invoicePayment.findMany({
+          where: { invoiceId: { in: invoiceIds } },
+          select: {
+            id: true,
+            invoiceId: true,
+            amountFcfa: true,
+            paidAt: true,
+            invoice: { select: { paidAmountFcfa: true } },
+          },
+        });
+  const netByPaymentId = netPaymentAmountsAfterPaidCap(
+    allPaymentsForCap.map((payment) => ({
+      id: payment.id,
+      invoiceId: payment.invoiceId,
+      amountFcfa: payment.amountFcfa,
+      paidAt: payment.paidAt,
+      invoicePaidAmountFcfa: payment.invoice.paidAmountFcfa,
+    })),
+  );
+
   const countedIds = new Set<string>();
 
   function addAmount(
@@ -155,7 +183,7 @@ async function buildOperationsByService(
   }
 
   for (const payment of payments) {
-    addAmount(payment.invoice, payment.amountFcfa);
+    addAmount(payment.invoice, netByPaymentId.get(payment.id) ?? 0);
   }
   for (const invoice of legacyInvoices) {
     addAmount(invoice, invoice.paidAmountFcfa > 0 ? invoice.paidAmountFcfa : invoice.amountFcfa);
@@ -197,6 +225,69 @@ function lastNMonths(count: number, from = new Date()): MonthPeriod[] {
   return periods;
 }
 
+function toIsoDay(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseIsoDay(value: unknown, fallback: Date): Date {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    return startOfDay(fallback);
+  }
+  const [year, month, day] = value.trim().split("-").map(Number);
+  const parsed = new Date(year, month - 1, day);
+  if (Number.isNaN(parsed.getTime())) return startOfDay(fallback);
+  return startOfDay(parsed);
+}
+
+export type DashboardDateRange = {
+  from: Date;
+  toExclusive: Date;
+  fromIso: string;
+  toIso: string;
+};
+
+export function resolveDashboardDateRange(query: {
+  from?: unknown;
+  to?: unknown;
+} = {}): DashboardDateRange {
+  const now = new Date();
+  const { year, month } = currentPayrollPeriod(now);
+  const monthBounds = payrollPeriodBounds(year, month);
+  const defaultTo = startOfDay(new Date(monthBounds.end.getTime() - 1));
+  let from = parseIsoDay(query.from, monthBounds.start);
+  let toStart = parseIsoDay(query.to, defaultTo);
+  if (toStart < from) {
+    const swapped = from;
+    from = toStart;
+    toStart = swapped;
+  }
+  const maxRangeMs = 366 * 24 * 60 * 60 * 1000;
+  if (toStart.getTime() - from.getTime() > maxRangeMs) {
+    from = startOfDay(new Date(toStart));
+    from.setDate(from.getDate() - 366);
+    from = startOfDay(from);
+  }
+  const toExclusive = new Date(toStart);
+  toExclusive.setDate(toExclusive.getDate() + 1);
+  return { from, toExclusive, fromIso: toIsoDay(from), toIso: toIsoDay(toStart) };
+}
+
+function previousEqualRange(from: Date, toExclusive: Date) {
+  const durationMs = toExclusive.getTime() - from.getTime();
+  return {
+    from: new Date(from.getTime() - durationMs),
+    toExclusive: from,
+  };
+}
+
+function isFullCalendarMonth(from: Date, toExclusive: Date) {
+  const expectedEnd = new Date(from.getFullYear(), from.getMonth() + 1, 1);
+  return from.getDate() === 1 && toExclusive.getTime() === expectedEnd.getTime();
+}
+
 async function sumValidatedExpensesBetween(from: Date, to: Date) {
   const rows = await prisma.clinicExpense.findMany({
     where: {
@@ -220,10 +311,10 @@ async function sumPayrollPaidBetween(from: Date, to: Date) {
   return rows.reduce((sum, row) => sum + row.grossFcfa, 0);
 }
 
-/** Somme totale des salaires bruts du mois (tous statuts). */
+/** Somme totale des salaires bruts du mois (tous statuts) — hors comptes désactivés. */
 async function sumPayrollMonthGross(year: number, month: number) {
   const rows = await prisma.employeePayroll.findMany({
-    where: { year, month },
+    where: { year, month, ...payrollCountedWhere },
     select: { grossFcfa: true },
   });
   return rows.reduce((sum, row) => sum + row.grossFcfa, 0);
@@ -335,11 +426,36 @@ export type FinancialKpis = {
   payrollChangePercent: number;
 };
 
-export async function buildFinancialKpis(now = new Date()): Promise<FinancialKpis> {
-  const { year, month } = currentPayrollPeriod(now);
-  const prev = shiftMonth(year, month, -1);
-  const currentBounds = payrollPeriodBounds(year, month);
-  const prevBounds = payrollPeriodBounds(prev.year, prev.month);
+export async function buildFinancialKpis(
+  now = new Date(),
+  range?: { from: Date; toExclusive: Date },
+): Promise<FinancialKpis> {
+  const currentBounds = range
+    ? { start: range.from, end: range.toExclusive }
+    : payrollPeriodBounds(
+        currentPayrollPeriod(now).year,
+        currentPayrollPeriod(now).month,
+      );
+  const prevRange = range
+    ? previousEqualRange(range.from, range.toExclusive)
+    : (() => {
+        const { year, month } = currentPayrollPeriod(now);
+        const prev = shiftMonth(year, month, -1);
+        const bounds = payrollPeriodBounds(prev.year, prev.month);
+        return { from: bounds.start, toExclusive: bounds.end };
+      })();
+  const prevBounds = { start: prevRange.from, end: prevRange.toExclusive };
+  const useMonthGross = range
+    ? isFullCalendarMonth(range.from, range.toExclusive)
+    : true;
+  const currentMonth = {
+    year: currentBounds.start.getFullYear(),
+    month: currentBounds.start.getMonth() + 1,
+  };
+  const prevMonth = {
+    year: prevBounds.start.getFullYear(),
+    month: prevBounds.start.getMonth() + 1,
+  };
 
   const [
     currentRevenue,
@@ -357,9 +473,16 @@ export async function buildFinancialKpis(now = new Date()): Promise<FinancialKpi
     sumValidatedExpensesBetween(prevBounds.start, prevBounds.end),
     sumPayrollPaidBetween(currentBounds.start, currentBounds.end),
     sumPayrollPaidBetween(prevBounds.start, prevBounds.end),
-    sumPayrollMonthGross(year, month),
-    sumPayrollMonthGross(prev.year, prev.month),
+    useMonthGross
+      ? sumPayrollMonthGross(currentMonth.year, currentMonth.month)
+      : Promise.resolve(0),
+    useMonthGross
+      ? sumPayrollMonthGross(prevMonth.year, prevMonth.month)
+      : Promise.resolve(0),
   ]);
+
+  const currentPayrollKpi = useMonthGross ? currentPayrollGross : currentPayrollPaid;
+  const prevPayrollKpi = useMonthGross ? prevPayrollGross : prevPayrollPaid;
 
   const currentExpensesTotal = currentExpenses.totalFcfa + currentPayrollPaid;
   const prevExpensesTotal = prevExpenses.totalFcfa + prevPayrollPaid;
@@ -373,20 +496,29 @@ export async function buildFinancialKpis(now = new Date()): Promise<FinancialKpi
     expensesChangePercent: percentChange(currentExpensesTotal, prevExpensesTotal),
     netMonthFcfa: currentNet,
     netChangePercent: percentChange(currentNet, prevNet),
-    payrollMonthFcfa: currentPayrollGross,
-    payrollChangePercent: percentChange(currentPayrollGross, prevPayrollGross),
+    payrollMonthFcfa: currentPayrollKpi,
+    payrollChangePercent: percentChange(currentPayrollKpi, prevPayrollKpi),
   };
 }
 
-export async function buildAdminDashboardOverview() {
+export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
   const now = new Date();
   const { year, month } = currentPayrollPeriod(now);
-  const prev = shiftMonth(year, month, -1);
+  const resolved = range ?? resolveDashboardDateRange();
+  const currentBounds = { start: resolved.from, end: resolved.toExclusive };
+  const prevRange = previousEqualRange(resolved.from, resolved.toExclusive);
+  const prevBounds = { start: prevRange.from, end: prevRange.toExclusive };
+  const useMonthGross = isFullCalendarMonth(resolved.from, resolved.toExclusive);
+  const kpiMonth = {
+    year: resolved.from.getFullYear(),
+    month: resolved.from.getMonth() + 1,
+  };
+  const prevKpiMonth = {
+    year: prevRange.from.getFullYear(),
+    month: prevRange.from.getMonth() + 1,
+  };
 
   await ensurePayrollForMonth(year, month);
-
-  const currentBounds = payrollPeriodBounds(year, month);
-  const prevBounds = payrollPeriodBounds(prev.year, prev.month);
 
   const [
     currentRevenue,
@@ -415,8 +547,12 @@ export async function buildAdminDashboardOverview() {
     sumValidatedExpensesBetween(prevBounds.start, prevBounds.end),
     sumPayrollPaidBetween(currentBounds.start, currentBounds.end),
     sumPayrollPaidBetween(prevBounds.start, prevBounds.end),
-    sumPayrollMonthGross(year, month),
-    sumPayrollMonthGross(prev.year, prev.month),
+    useMonthGross
+      ? sumPayrollMonthGross(kpiMonth.year, kpiMonth.month)
+      : Promise.resolve(0),
+    useMonthGross
+      ? sumPayrollMonthGross(prevKpiMonth.year, prevKpiMonth.month)
+      : Promise.resolve(0),
     aggregatePharmacyBetween(currentBounds.start, currentBounds.end),
     prisma.clinicExpense.findMany({
       orderBy: { createdAt: "desc" },
@@ -438,7 +574,7 @@ export async function buildAdminDashboardOverview() {
       },
     }),
     prisma.employeePayroll.findMany({
-      where: { year, month },
+      where: { year, month, ...payrollCountedWhere },
       include: {
         employee: {
           select: {
@@ -453,13 +589,14 @@ export async function buildAdminDashboardOverview() {
       },
       orderBy: [{ status: "asc" }, { employee: { lastName: "asc" } }],
     }),
-    buildClinicalSupervision(now),
+    buildClinicalSupervision(now, currentBounds.start, currentBounds.end),
     prisma.clinicExpense.count({ where: { status: ClinicExpenseStatus.PENDING } }),
     prisma.employeePayroll.count({
       where: {
         year,
         month,
         status: { in: [PayrollStatus.PENDING, PayrollStatus.LATE] },
+        ...payrollCountedWhere,
       },
     }),
     prisma.product.count({ where: { quantity: { lte: 5 }, active: true } }),
@@ -485,6 +622,8 @@ export async function buildAdminDashboardOverview() {
     }),
   ]);
 
+  const currentPayrollKpi = useMonthGross ? currentPayrollGross : currentPayrollPaid;
+  const prevPayrollKpi = useMonthGross ? prevPayrollGross : prevPayrollPaid;
   const currentExpensesTotal =
     currentExpenses.totalFcfa + currentPayrollPaid;
   const prevExpensesTotal = prevExpenses.totalFcfa + prevPayrollPaid;
@@ -523,8 +662,8 @@ export async function buildAdminDashboardOverview() {
     const service = mapEmployeeService(employee);
     serviceCounts[service] = (serviceCounts[service] ?? 0) + 1;
     if (
-      employee.createdAt >= currentBounds.start &&
-      employee.createdAt < currentBounds.end
+      employee.createdAt >= payrollPeriodBounds(year, month).start &&
+      employee.createdAt < payrollPeriodBounds(year, month).end
     ) {
       newThisMonth += 1;
     }
@@ -554,8 +693,12 @@ export async function buildAdminDashboardOverview() {
       expensesChangePercent: percentChange(currentExpensesTotal, prevExpensesTotal),
       netMonthFcfa: currentNet,
       netChangePercent: percentChange(currentNet, prevNet),
-      payrollMonthFcfa: currentPayrollGross,
-      payrollChangePercent: percentChange(currentPayrollGross, prevPayrollGross),
+      payrollMonthFcfa: currentPayrollKpi,
+      payrollChangePercent: percentChange(currentPayrollKpi, prevPayrollKpi),
+    },
+    period: {
+      from: resolved.fromIso,
+      to: resolved.toIso,
     },
     monthlyTrend,
     revenueBreakdown: mapRevenueBreakdown(currentRevenue, pharmacyMonth.totalFcfa),
@@ -617,14 +760,17 @@ export async function buildAdminDashboardOverview() {
   };
 }
 
-async function buildClinicalSupervision(now: Date) {
+async function buildClinicalSupervision(now: Date, periodFrom?: Date, periodToExclusive?: Date) {
   const todayStart = startOfDay(now);
   const tomorrowStart = new Date(todayStart);
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+  const patientsFrom = periodFrom ?? todayStart;
+  const patientsTo = periodToExclusive ?? tomorrowStart;
 
-  const [patientsToday, openVisitsToday, examsPending, activeHospitalizations] =
+  const [patientsToday, patientsInPeriod, openVisitsToday, examsPending, activeHospitalizations] =
     await Promise.all([
       prisma.visit.count({ where: { createdAt: { gte: todayStart, lt: tomorrowStart } } }),
+      prisma.visit.count({ where: { createdAt: { gte: patientsFrom, lt: patientsTo } } }),
       prisma.visit.count({
         where: {
           createdAt: { gte: todayStart, lt: tomorrowStart },
@@ -641,6 +787,7 @@ async function buildClinicalSupervision(now: Date) {
 
   return {
     patientsToday,
+    patientsInPeriod,
     /** Visites du jour non terminées / non annulées (pas un module RDV). */
     openVisitsToday,
     examsPending,
@@ -657,6 +804,7 @@ export async function buildAdminNavBadges() {
         year,
         month,
         status: { in: [PayrollStatus.PENDING, PayrollStatus.LATE] },
+        ...payrollCountedWhere,
       },
     }),
     prisma.receptionDayClosure.count({ where: { validatedAt: null } }),

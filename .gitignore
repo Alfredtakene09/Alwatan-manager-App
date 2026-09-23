@@ -23,6 +23,12 @@ dev-data/
 # Config locale serveur (garder .example)
 scripts/alwatan-server.txt
 
+# Fichiers generes au demarrage (ne pas versionner)
+scripts/LIEN-SERVEUR.txt
+scripts/Ouvrir Alwatan.url
+scripts/Ouvrir Alwatan (Wi-Fi).url
+scripts/Ouvrir Alwatan (Tailscale).url
+
 # OS / IDE
 .DS_Store
 Thumbs.db

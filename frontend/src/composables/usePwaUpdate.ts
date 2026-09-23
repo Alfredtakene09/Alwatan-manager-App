@@ -136,6 +136,16 @@ async function checkServerBuild() {
 
   needRefresh.value = true
   void requestServiceWorkerUpdate()
+
+  // Raccourci Edge --app (poste pharmacie) : appliquer sans attendre le bandeau.
+  const autoKey = `alwatan-auto-reload:${buildId}`
+  try {
+    if (sessionStorage.getItem(autoKey) === '1') return
+    sessionStorage.setItem(autoKey, '1')
+  } catch {
+    /* ignore */
+  }
+  void applyUpdateInternal(buildId)
 }
 
 function ensureStarted() {
@@ -154,14 +164,14 @@ function ensureStarted() {
       void registration.update()
       setInterval(() => {
         void registration.update()
-      }, 30_000)
+      }, 8_000)
     },
   })
 
   void checkServerBuild()
   setInterval(() => {
     void checkServerBuild()
-  }, 30_000)
+  }, 8_000)
 
   window.addEventListener('focus', () => {
     void checkServerBuild()

@@ -256,7 +256,7 @@ const router = createRouter({
           path: 'pharmacie/categories',
           name: 'pharmacie-categories',
           component: () => import('@/views/pharmacie/PharmacieCategoriesView.vue'),
-          meta: { module: 'pharmacie', pharmacyCatalog: true },
+          meta: { module: 'pharmacie', pharmacyCatalog: true, roles: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE'] },
         },
         {
           path: 'pharmacie/produits',
@@ -274,7 +274,7 @@ const router = createRouter({
           path: 'pharmacie/rapports',
           name: 'pharmacie-rapports',
           component: () => import('@/views/pharmacie/PharmacieReportsView.vue'),
-          meta: { module: 'pharmacie' },
+          meta: { module: 'pharmacie', roles: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE'] },
         },
         {
           path: 'pharmacie/alertes',
@@ -286,13 +286,13 @@ const router = createRouter({
           path: 'pharmacie/fournisseurs',
           name: 'pharmacie-fournisseurs',
           component: () => import('@/views/pharmacie/PharmacieSuppliersView.vue'),
-          meta: { module: 'pharmacie', pharmacyCatalog: true },
+          meta: { module: 'pharmacie', pharmacyCatalog: true, roles: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE'] },
         },
         {
           path: 'pharmacie/mouvements',
           name: 'pharmacie-mouvements',
           component: () => import('@/views/pharmacie/PharmacieMovementsView.vue'),
-          meta: { module: 'pharmacie' },
+          meta: { module: 'pharmacie', roles: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE'] },
         },
         {
           path: 'pharmacie/tableau-de-bord',

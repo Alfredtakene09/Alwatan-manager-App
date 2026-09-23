@@ -222,7 +222,7 @@ export function buildReceiptBytes(job, options = {}) {
     b.align('left').separator('-')
     if (job.date) b.columns('Date', job.date)
     if (job.patientName) b.columns('Patient', String(job.patientName).slice(0, 28))
-    if (job.patientCode) b.columns('Code', job.patientCode)
+    if (job.patientCode) b.columns('Matricule', job.patientCode)
     if (job.doctorName) b.columns('Medecin', String(job.doctorName).slice(0, 28))
     if (job.processedBy) b.columns('Par', String(job.processedBy).slice(0, 28))
     b.separator('-')

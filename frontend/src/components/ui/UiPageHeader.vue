@@ -56,8 +56,8 @@ const subtitleText = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
+  width: var(--density-icon);
+  height: var(--density-icon);
   border-radius: 10px;
   background: linear-gradient(135deg, var(--action), var(--action-hover));
   color: #fff;
@@ -66,7 +66,7 @@ const subtitleText = computed(() => {
 
 .page-header h1 {
   margin: 0;
-  font-size: 1.15rem;
+  font-size: var(--density-header-title);
   font-weight: 700;
   letter-spacing: -0.02em;
 }
@@ -83,24 +83,37 @@ const subtitleText = computed(() => {
   gap: 0.5rem;
   flex-shrink: 0;
   flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+@media (max-width: 1023px) {
+  .page-header {
+    flex-wrap: wrap;
+    align-items: stretch;
+    margin-bottom: 0.5rem;
+    gap: 0.45rem;
+  }
+
+  .page-header__actions {
+    width: 100%;
+    justify-content: flex-start;
+    align-items: flex-end;
+  }
 }
 
 @media (max-width: 639px) {
   .page-header {
     flex-direction: column;
     align-items: stretch;
-    margin-bottom: 0.65rem;
+    margin-bottom: 0.5rem;
   }
 
   .page-header__main {
-    gap: 0.55rem;
+    gap: 0.45rem;
   }
 
-  .page-header__actions {
-    width: 100%;
-  }
-
-  .page-header__actions :deep(.ui-button) {
+  .page-header__actions :deep(.ui-button),
+  .page-header__actions :deep(.ui-btn) {
     flex: 1;
     min-width: 0;
   }

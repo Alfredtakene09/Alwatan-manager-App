@@ -5,6 +5,7 @@ import {
   VisitStatus,
   PatientCategory,
   InvoiceType,
+  InterventionCategory,
 } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import {
@@ -45,6 +46,7 @@ import {
   doctorUsesQuota,
   serializeDoctorFields,
   computeConsultationShares,
+  selectableDoctorByIdWhere,
 } from "../lib/doctor-compensation.js";
 import {
   medecinDejaConsulteVisitWhere,
@@ -64,6 +66,20 @@ import {
 import { computeInterventionCostShares } from "../lib/surgery-cost-shares.js";
 import { ensureVisitPatientMergedByPhone } from "../lib/merge-patients.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
+
+const DEFAULT_SURGEON_PERCENT = 70;
+
+function generateAdHocInterventionCode(label: string) {
+  const slug = label
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 18);
+  return `OP-${slug || "INTERVENTION"}-${Date.now().toString(36).toUpperCase()}`;
+}
 
 const router = Router();
 router.use(requireAuth, requireModule("consultation"));
@@ -106,6 +122,14 @@ const prescribeExamsSchema = z
     hospitalisationDays: z.number().int().min(1).max(365).optional(),
     /** Montant opération saisi (applique les % chirurgien / clinique du type). */
     operationAmountFcfa: z.number().int().min(0).optional(),
+    /** Assistant chirurgie choisi à l’envoi (appliqué au type / dossier). */
+    operationAssistant: z
+      .object({
+        anesthesiologistId: z.string().min(1).nullable().optional(),
+        anesthesiologistName: z.string().min(2).max(120).nullable().optional(),
+        anesthesiologistPercent: z.number().int().min(0).max(99).optional(),
+      })
+      .optional(),
     notes: z.string().optional(),
     append: z.boolean().optional().default(false),
     pharmacyOrdonnance: z
@@ -145,60 +169,141 @@ async function syncPrescribedProcedures(
   examsByKind: Partial<Record<ExamKindSlug, string[]>>,
   doctorId: string,
   operationAmountFcfa?: number | null,
+  operationAssistant?: {
+    anesthesiologistId?: string | null;
+    anesthesiologistName?: string | null;
+    anesthesiologistPercent?: number;
+  } | null,
 ) {
-  const operationLabel = examsByKind.operation?.find(Boolean);
+  const operationLabel = examsByKind.operation?.find(Boolean)?.trim();
   if (operationLabel) {
     const doctorServices = await resolveDoctorClinicServices(doctorId);
     const serviceIds = doctorServices?.ids ?? [];
-    const intervention = await tx.interventionType.findFirst({
+    let intervention = await tx.interventionType.findFirst({
       where: {
         label: operationLabel,
         active: true,
         ...interventionVisibleForServicesWhere(serviceIds, { doctorUserId: doctorId }),
       },
     });
-    if (intervention) {
-      const totalCostFcfa =
-        operationAmountFcfa != null && Number.isFinite(operationAmountFcfa)
-          ? Math.max(0, Math.round(operationAmountFcfa))
-          : intervention.totalCostFcfa;
-      const shares = computeInterventionCostShares(totalCostFcfa, intervention.surgeonPercent);
-      const existing = await tx.surgeryCase.findUnique({ where: { visitId } });
-      const keepPaidStatuses = new Set<SurgeryStatus>([
-        SurgeryStatus.PAID,
-        SurgeryStatus.AUTHORIZED,
-        SurgeryStatus.IN_PROGRESS,
-        SurgeryStatus.COMPLETED,
-      ]);
-      const nextStatus =
-        existing && keepPaidStatuses.has(existing.status)
-          ? existing.status
-          : SurgeryStatus.NOTIFIED;
-      await tx.surgeryCase.upsert({
-        where: { visitId },
-        update: {
-          interventionTypeId: intervention.id,
+
+    const resolvedAmount =
+      operationAmountFcfa != null && Number.isFinite(operationAmountFcfa)
+        ? Math.max(0, Math.round(operationAmountFcfa))
+        : null;
+
+    if (!intervention) {
+      if (resolvedAmount == null || resolvedAmount <= 0) {
+        throw new Error("CUSTOM_OPERATION_AMOUNT_REQUIRED");
+      }
+      const primaryServiceId = doctorServices?.default?.id ?? serviceIds[0] ?? null;
+      if (!primaryServiceId) {
+        throw new Error("DOCTOR_SERVICE_REQUIRED");
+      }
+      intervention = await tx.interventionType.create({
+        data: {
+          code: generateAdHocInterventionCode(operationLabel),
+          label: operationLabel,
+          category: InterventionCategory.MOYENNE_B,
+          totalCostFcfa: resolvedAmount,
+          surgeonPercent: DEFAULT_SURGEON_PERCENT,
+          anesthesiologistPercent: 0,
+          clinicServiceId: primaryServiceId,
           surgeonId: doctorId,
-          totalCostFcfa: shares.totalCostFcfa,
-          surgeonShareFcfa: shares.surgeonShareFcfa,
-          clinicShareFcfa: shares.clinicShareFcfa,
-          status: nextStatus,
+          surgeonName: null,
+          anesthesiologistId: null,
+          anesthesiologistName: null,
+          active: true,
         },
-        create: {
-          visitId,
-          interventionTypeId: intervention.id,
-          surgeonId: doctorId,
-          totalCostFcfa: shares.totalCostFcfa,
-          surgeonShareFcfa: shares.surgeonShareFcfa,
-          clinicShareFcfa: shares.clinicShareFcfa,
-          status: SurgeryStatus.NOTIFIED,
-        },
-      });
-      await tx.consultation.update({
-        where: { visitId },
-        data: { needsSurgery: true },
       });
     }
+
+    let assistantPercent = intervention.anesthesiologistPercent;
+    let assistantId = intervention.anesthesiologistId;
+    let assistantName = intervention.anesthesiologistName;
+
+    if (operationAssistant) {
+      const pct = operationAssistant.anesthesiologistPercent;
+      if (pct != null && Number.isFinite(pct) && pct > 0) {
+        assistantPercent = Math.min(99, Math.max(1, Math.round(pct)));
+        const id = operationAssistant.anesthesiologistId?.trim() || null;
+        const name = operationAssistant.anesthesiologistName?.trim() || null;
+        if (id) {
+          const doctor = await tx.user.findFirst({
+            where: selectableDoctorByIdWhere(id),
+            select: { id: true },
+          });
+          if (!doctor) throw new Error("ASSISTANT_INVALID");
+          assistantId = doctor.id;
+          assistantName = null;
+        } else if (name && name.length >= 2) {
+          assistantId = null;
+          assistantName = name;
+        } else {
+          throw new Error("ASSISTANT_REQUIRED");
+        }
+      } else if (pct === 0) {
+        assistantPercent = 0;
+        assistantId = null;
+        assistantName = null;
+      }
+    }
+
+    if (
+      assistantPercent !== intervention.anesthesiologistPercent ||
+      assistantId !== intervention.anesthesiologistId ||
+      assistantName !== intervention.anesthesiologistName ||
+      (resolvedAmount != null && resolvedAmount !== intervention.totalCostFcfa)
+    ) {
+      intervention = await tx.interventionType.update({
+        where: { id: intervention.id },
+        data: {
+          ...(resolvedAmount != null ? { totalCostFcfa: resolvedAmount } : {}),
+          anesthesiologistPercent: assistantPercent,
+          anesthesiologistId: assistantId,
+          anesthesiologistName: assistantName,
+        },
+      });
+    }
+
+    const totalCostFcfa =
+      resolvedAmount != null ? resolvedAmount : intervention.totalCostFcfa;
+    const shares = computeInterventionCostShares(totalCostFcfa, intervention.surgeonPercent);
+    const existing = await tx.surgeryCase.findUnique({ where: { visitId } });
+    const keepPaidStatuses = new Set<SurgeryStatus>([
+      SurgeryStatus.PAID,
+      SurgeryStatus.AUTHORIZED,
+      SurgeryStatus.IN_PROGRESS,
+      SurgeryStatus.COMPLETED,
+    ]);
+    const nextStatus =
+      existing && keepPaidStatuses.has(existing.status)
+        ? existing.status
+        : SurgeryStatus.NOTIFIED;
+    await tx.surgeryCase.upsert({
+      where: { visitId },
+      update: {
+        interventionTypeId: intervention.id,
+        surgeonId: doctorId,
+        totalCostFcfa: shares.totalCostFcfa,
+        surgeonShareFcfa: shares.surgeonShareFcfa,
+        clinicShareFcfa: shares.clinicShareFcfa,
+        status: nextStatus,
+      },
+      create: {
+        visitId,
+        interventionTypeId: intervention.id,
+        surgeonId: doctorId,
+        totalCostFcfa: shares.totalCostFcfa,
+        surgeonShareFcfa: shares.surgeonShareFcfa,
+        clinicShareFcfa: shares.clinicShareFcfa,
+        status: SurgeryStatus.NOTIFIED,
+      },
+    });
+    await tx.consultation.update({
+      where: { visitId },
+      data: { needsSurgery: true },
+    });
   }
 
   const hospitalisationLabel = examsByKind.hospitalisation?.find(Boolean);
@@ -679,6 +784,7 @@ router.post("/prescribe-exams", async (req, res) => {
           examsByKind,
           user.id,
           body.operationAmountFcfa,
+          body.operationAssistant,
         );
       }
 
@@ -784,6 +890,24 @@ router.post("/prescribe-exams", async (req, res) => {
     if (error instanceof Error && error.message === "INVALID_HOSPITALISATION_DAYS") {
       return res.status(400).json({
         error: "Indiquez le nombre de jours d'hospitalisation.",
+      });
+    }
+    if (error instanceof Error && error.message === "CUSTOM_OPERATION_AMOUNT_REQUIRED") {
+      return res.status(400).json({
+        error: "Indiquez le prix de l'opération saisie.",
+      });
+    }
+    if (error instanceof Error && error.message === "DOCTOR_SERVICE_REQUIRED") {
+      return res.status(400).json({
+        error: "Aucun service clinique n'est lié à votre compte médecin.",
+      });
+    }
+    if (error instanceof Error && error.message === "ASSISTANT_INVALID") {
+      return res.status(400).json({ error: "Assistant chirurgie introuvable." });
+    }
+    if (error instanceof Error && error.message === "ASSISTANT_REQUIRED") {
+      return res.status(400).json({
+        error: "Choisissez un assistant ou saisissez son nom (2 caractères min.).",
       });
     }
     return res.status(400).json({ error: "Données invalides" });

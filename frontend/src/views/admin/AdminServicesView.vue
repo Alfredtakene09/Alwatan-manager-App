@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
-import { Building2, Plus, Save, RefreshCw, Pencil, Trash2, Stethoscope } from '@lucide/vue'
+import { Building2, Plus, Save, Pencil, Trash2, Stethoscope } from '@lucide/vue'
 import api from '@/api/client'
 import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
@@ -391,9 +391,6 @@ async function deleteService(row: ClinicService) {
     <UiCard title="Référentiel des services" :icon="Building2" icon-variant="violet">
       <template #actions>
         <ExportButtons :disabled="loading || !sortedRows.length" @pdf="exportServicesPdf" @excel="exportServicesExcel" @word="exportServicesWord" />
-        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="reloadAll">
-          Actualiser
-        </UiButton>
         <UiButton variant="primary" size="sm" :icon="Plus" ui-action="catalog.services" @click="openCreateModal">
           Nouveau service
         </UiButton>

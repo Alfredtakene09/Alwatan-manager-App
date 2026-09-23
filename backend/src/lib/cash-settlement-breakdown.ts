@@ -34,6 +34,7 @@ type InvoiceForBreakdown = {
   type: InvoiceType;
   amountFcfa: number;
   paidAmountFcfa?: number | null;
+  billingExamKind?: string | null;
   surgeryCaseId: string | null;
   hospitalizationId: string | null;
   visit?: { consultation: { clinicalNotes: string | null } | null } | null;
@@ -46,6 +47,11 @@ function labelFromExamKind(kind: ExamKindSlug) {
 function classifyLabExamInvoice(invoice: InvoiceForBreakdown): string {
   if (invoice.surgeryCaseId) return "Opérations";
   if (invoice.hospitalizationId) return "Hospitalisation";
+
+  const billingKind = invoice.billingExamKind?.trim() as ExamKindSlug | undefined;
+  if (billingKind && KIND_TO_LABEL[billingKind]) {
+    return KIND_TO_LABEL[billingKind];
+  }
 
   const notes = invoice.visit?.consultation?.clinicalNotes;
   if (!notes) return INVOICE_TYPE_LABELS[InvoiceType.LAB_EXAM];

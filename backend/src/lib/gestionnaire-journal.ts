@@ -13,6 +13,7 @@ import {
   invoiceCollectedAt,
   isCollectedHospitalizationInvoice,
   isCollectedOperationInvoice,
+  netPaymentAmountsAfterPaidCap,
   startOfDay,
 } from "./revenue-stats.js";
 
@@ -319,12 +320,15 @@ export async function buildJournalEntries(filters: JournalFilters = {}) {
       },
       select: {
         id: true,
+        invoiceId: true,
         amountFcfa: true,
         paidAt: true,
         invoice: {
           select: {
+            id: true,
             invoiceNumber: true,
             type: true,
+            paidAmountFcfa: true,
             billingExamKind: true,
             surgeryCaseId: true,
             hospitalizationId: true,
@@ -387,11 +391,23 @@ export async function buildJournalEntries(filters: JournalFilters = {}) {
     }),
   ]);
 
+  const paymentNets = netPaymentAmountsAfterPaidCap(
+    payments.map((payment) => ({
+      id: payment.id,
+      invoiceId: payment.invoiceId,
+      amountFcfa: payment.amountFcfa,
+      paidAt: payment.paidAt,
+      invoicePaidAmountFcfa: payment.invoice.paidAmountFcfa,
+    })),
+  );
+
   const raw: JournalEntry[] = [];
 
   for (const payment of payments) {
     const collectedAt = payment.paidAt;
     if (!inPeriod(collectedAt, from, to)) continue;
+    const inflowFcfa = paymentNets.get(payment.id) ?? 0;
+    if (inflowFcfa <= 0) continue;
     const invoice = payment.invoice;
     const category = invoiceCategory(
       invoice.type,
@@ -409,7 +425,7 @@ export async function buildJournalEntries(filters: JournalFilters = {}) {
       category,
       categoryLabel: CATEGORY_LABELS[category],
       type: "ENTREE",
-      inflowFcfa: payment.amountFcfa,
+      inflowFcfa,
       outflowFcfa: 0,
       reference: invoice.invoiceNumber,
       source: "Invoice",

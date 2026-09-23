@@ -39,7 +39,7 @@ Le script :
 - sert l’interface depuis l’API (un seul port **4000**)
 - installe un service Windows via **NSSM** (ou tâche au démarrage en secours)
 - ouvre le pare-feu (profil Privé)
-- planifie une sauvegarde SQL chaque nuit à **02:00**
+- planifie une sauvegarde SQL toutes les **2 heures** (secours Windows + module backend)
 - écrit l’IP locale dans `scripts\alwatan-server.txt`
 
 ## Accès après installation
@@ -101,10 +101,18 @@ Aucun Node.js ni copie du projet complet n’est nécessaire sur les clients.
 
 ## Sauvegardes
 
-- Dossier : `backups\postgres\`
-- Fichiers : `alwatan-YYYYMMDD-HHMMSS.sql`
-- Conservation : 30 jours (modifiable)
-- Copiez régulièrement ce dossier sur un disque externe
+- Automatique toutes les **2 h** via le backend (`data-backup`) + tâche Windows de secours
+- Dossiers : `backups\postgres\`, `backups\uploads\`, manifests cloud : `backups\manifests\`
+- Fichiers : `alwatan-YYYYMMDD-HHMMSS.sql` (+ zip uploads)
+- Conservation : 7 jours par défaut (`BACKUP_KEEP_DAYS` / `-KeepDays`)
+- Cloud : `BACKUP_CLOUD_ENABLED=1` + `BACKUP_CLOUD_PROVIDER=…` (à brancher plus tard)
+
+## Verrou anti-suppression
+
+- Les boutons / API de l’application peuvent toujours supprimer.
+- `DELETE` / `TRUNCATE` / `DROP` via psql, pgAdmin ou script non autorisé → bloqués (`ALWATAN_LOCK`).
+- Maintenance SQL manuelle : `SELECT set_config('alwatan.allow_delete', '1', false);`
+- Schéma Prisma : `npm run db:push` (wrapper qui déverrouille temporairement le DROP).
 
 ## Notes
 

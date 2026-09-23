@@ -36,6 +36,12 @@ Adaptez `DATABASE_URL` dans `backend/.env` (base `alwatan`, port `5433`).
 ### 2. Lancer l'application
 
 ```powershell
+.\DEMARRER-ALWATAN.cmd
+```
+
+Ou :
+
+```powershell
 .\scripts\lancer-serveur.ps1
 ```
 
@@ -45,14 +51,8 @@ Mode développement (hot reload) :
 .\scripts\lancer-serveur.ps1 -Dev
 ```
 
-Raccourci équivalent (Serveur Auto) :
-
-```powershell
-.\scripts\lancer-serveur-auto.ps1
-```
-
+- Cabinet (prod) : http://localhost:4000 — clients : http://IP-ETHERNET:4000
 - Frontend (dev) : http://localhost:5173
-- API : http://localhost:4000
 
 ## Démarrage manuel
 
@@ -74,11 +74,6 @@ npm run dev
 
 Créés par `npm run db:seed` — conservés lors d’une réinitialisation de la base.
 
-| Utilisateur | Mot de passe | Rôle |
-|---|---|---|
-| `Root` | `root@Alwatan2026` | Superadmin |
-| `gestionnaire` | `Clinique2026!` | Gestionnaire |
-| `pharmacie` | `Clinique2026!` | Pharmacien |
 
 Autres rôles gérés dans l’app : Réceptionniste, Médecin, Direction (comptable), Laborantin, Soignant, Logistique.
 
@@ -108,7 +103,7 @@ Pour un accès permanent sans Internet, avec redémarrage automatique après cou
 
 | Script | Rôle |
 |--------|------|
+| `DEMARRER-ALWATAN.cmd` | Démarrage unique serveur **ou** client (Ethernet, hors ligne) |
 | `scripts\creer-setup-client.ps1` | Génère le package d’installation client |
 | `scripts\installer-poste-client.ps1` | Installe le raccourci sur un poste client |
-| `scripts\ouvrir-reseau-lan.ps1` | Ouvre l’accès LAN / pare-feu |
-| `scripts\activer-hotspot-wifi.ps1` | Hotspot Wi‑Fi serveur (optionnel) |
+| `scripts\forcer-acces-lan.cmd` | Ouvre le pare-feu LAN (Admin) |

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Plus, RefreshCw, Stethoscope, Syringe, Eye, Pencil } from '@lucide/vue'
+import { Plus, Stethoscope, Syringe, Eye, Pencil } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa, fullName } from '@/lib/roles'
@@ -18,6 +18,8 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import StCatalogActions from '@/components/ui/StCatalogActions.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import '@/assets/simple-table.css'
 
 type DoctorOption = {
@@ -190,6 +192,94 @@ const tableRows = computed(() => {
     isActive: item.active,
   }))
 })
+
+type OperationExportRow = {
+  label: string
+  medecins: string
+  service: string
+  cost: string
+  surgeonPercent: string
+  anesthesiologistPercent: string
+  clinicPercent: string
+  statusLabel: string
+}
+
+const operationExportColumns = computed<ExportColumn<OperationExportRow>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Libellé'), value: (r) => r.label },
+    { header: uiText('Médecins'), value: (r) => r.medecins },
+    { header: uiText('Service'), value: (r) => r.service },
+    { header: uiText('Coût'), value: (r) => r.cost },
+    { header: uiText('% Chir.'), value: (r) => r.surgeonPercent },
+    { header: uiText('% Ass.'), value: (r) => r.anesthesiologistPercent },
+    { header: uiText('% Clin.'), value: (r) => r.clinicPercent },
+    { header: uiText('Statut'), value: (r) => r.statusLabel },
+  ]
+})
+
+const operationExportRows = computed<OperationExportRow[]>(() =>
+  tableRows.value.map((row) => ({
+    label: row.label,
+    medecins: row.medecins,
+    service: row.service,
+    cost: row.cost,
+    surgeonPercent: row.surgeonPercent,
+    anesthesiologistPercent: row.anesthesiologistPercent,
+    clinicPercent: row.clinicPercent,
+    statusLabel: row.statusLabel,
+  })),
+)
+
+function operationExportFilterCaption(): string {
+  const parts: string[] = []
+  if (serviceFilterId.value) {
+    const service = filterServices.value.find((item) => item.id === serviceFilterId.value)
+    parts.push(`${uiText('Service')} : ${service?.name ?? serviceFilterId.value}`)
+  }
+  const q = searchQuery.value.trim()
+  if (q) parts.push(`${uiText('Recherche')} : ${q}`)
+  return parts.length ? parts.join(' · ') : uiText('Aucun filtre')
+}
+
+function operationExportShared() {
+  return {
+    captionRows: [{ label: uiText('Filtres'), value: operationExportFilterCaption() }],
+    totalsRows: [
+      {
+        label: uiText('Nombre d’opérations'),
+        value: String(operationExportRows.value.length),
+      },
+    ],
+  }
+}
+
+function exportOperationsPdf() {
+  exportTablePdf(
+    uiText('Types d’opérations'),
+    operationExportColumns.value,
+    operationExportRows.value,
+    operationExportShared(),
+  )
+}
+
+function exportOperationsExcel() {
+  exportTableExcel(
+    uiText('Types d’opérations'),
+    operationExportColumns.value,
+    operationExportRows.value,
+    operationExportShared(),
+  )
+}
+
+function exportOperationsWord() {
+  void exportTableWord(
+    uiText('Types d’opérations'),
+    operationExportColumns.value,
+    operationExportRows.value,
+    operationExportShared(),
+  )
+}
 
 const viewingSurgeonLabel = computed(() => {
   const item = viewingItem.value
@@ -392,12 +482,6 @@ async function loadItems() {
   } finally {
     loading.value = false
   }
-}
-
-async function refreshItems() {
-  searchQuery.value = ''
-  serviceFilterId.value = ''
-  await loadItems()
 }
 
 function buildOperationPayload() {
@@ -623,11 +707,14 @@ onMounted(async () => {
       class="section"
     >
       <template #actions>
+        <ExportButtons
+          :disabled="loading || !operationExportRows.length"
+          @pdf="exportOperationsPdf"
+          @excel="exportOperationsExcel"
+          @word="exportOperationsWord"
+        />
         <UiButton variant="primary" size="sm" :icon="Plus" ui-action="catalog.operation_types" @click="openAddModal">
           {{ uiText(addButtonLabel) }}
-        </UiButton>
-        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshItems">
-          Actualiser
         </UiButton>
         <span class="list-count">{{ operationCountLabel }}</span>
       </template>

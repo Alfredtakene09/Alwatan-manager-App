@@ -18,6 +18,10 @@ import {
   consultationInvoiceUpdateData,
 } from "../lib/consultation-invoice.js";
 import {
+  archiveVisitsForReconsultation,
+  planReconsultation,
+} from "../lib/reconsultation.js";
+import {
   PATIENT_ALREADY_CONSULTED_CODE,
   PATIENT_ALREADY_CONSULTED_MESSAGE,
   PATIENT_HAS_DATA_CODE,
@@ -32,7 +36,11 @@ import {
   findDuplicatePatient,
   serializePatientForDuplicate,
 } from "../lib/duplicate-detection.js";
-import { isUsablePatientPhone } from "../lib/merge-patients.js";
+import {
+  isUsablePatientPhone,
+  mergePatientIntoCanonical,
+  phonesMatchForDossierReuse,
+} from "../lib/merge-patients.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere, resolveDoctorConsultationAmount } from "../lib/doctor-compensation.js";
 import { requireAuth, requireModule, requireUiAction } from "../middleware/auth.js";
@@ -123,6 +131,13 @@ const consultationVisitInclude = {
 };
 
 async function findPrintableConsultationVisit(patientId: string) {
+  const hasBill = (visit: {
+    consultationFeeFcfa: number | null
+    invoices: unknown[]
+  }) =>
+    (visit.consultationFeeFcfa != null && visit.consultationFeeFcfa > 0) ||
+    visit.invoices.length > 0
+
   const activeVisit = await prisma.visit.findFirst({
     where: {
       patientId,
@@ -132,14 +147,14 @@ async function findPrintableConsultationVisit(patientId: string) {
     include: consultationVisitInclude,
   });
 
-  if (activeVisit) return activeVisit;
+  if (activeVisit && hasBill(activeVisit)) return activeVisit;
 
   const billedVisit = await prisma.visit.findFirst({
     where: {
       patientId,
       status: { not: VisitStatus.CANCELLED },
       OR: [
-        { consultationFeeFcfa: { not: null } },
+        { consultationFeeFcfa: { gt: 0 } },
         { invoices: { some: { type: InvoiceType.CONSULTATION } } },
       ],
     },
@@ -148,6 +163,7 @@ async function findPrintableConsultationVisit(patientId: string) {
   });
 
   if (billedVisit) return billedVisit;
+  if (activeVisit) return activeVisit;
 
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
@@ -439,6 +455,15 @@ router.get("/receptionists", requireModule("reception"), async (req, res) => {
   );
 });
 
+function parseDayStart(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  const start = new Date();
+  start.setFullYear(year, month - 1, day);
+  start.setHours(0, 0, 0, 0);
+  return start;
+}
+
 router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   const user = req.user!;
   const createdById = String(req.query.createdById ?? "").trim();
@@ -447,11 +472,20 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   startOfToday.setHours(0, 0, 0, 0);
   const tomorrowStart = new Date(startOfToday);
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+  const fromParam = String(req.query.from ?? "").trim();
+  const toParam = String(req.query.to ?? "").trim();
+  const fromDay = parseDayStart(fromParam) ?? startOfToday;
+  const toDay = parseDayStart(toParam || fromParam) ?? startOfToday;
+  const rangeStart = fromDay <= toDay ? fromDay : toDay;
+  const rangeEndExclusive = new Date(fromDay <= toDay ? toDay : fromDay);
+  rangeEndExclusive.setDate(rangeEndExclusive.getDate() + 1);
+  const createdAtRange = { gte: rangeStart, lt: rangeEndExclusive };
   const ownScope = receptionistOwnPatientsWhere(user, createdById);
   const patientScope = {
     ...ownScope,
     ...(service ? { service } : {}),
   };
+  const patientPeriodScope = { ...patientScope, createdAt: createdAtRange };
   const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
   const scopedReceptionistId = isReceptionist ? user.id : createdById || null;
   const revenueOptions = service ? { patientService: service } : undefined;
@@ -467,15 +501,15 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     myExpensesToday,
   ] = await Promise.all([
     prisma.patient.count({
-      where: { ...patientScope, createdAt: { gte: startOfToday } },
+      where: patientPeriodScope,
     }),
-    prisma.patient.count({ where: { ...patientScope, gender: "F" } }),
-    prisma.patient.count({ where: { ...patientScope, gender: "M" } }),
-    prisma.patient.count({ where: patientsWhoReceivedExamsWhere(patientScope) }),
+    prisma.patient.count({ where: { ...patientPeriodScope, gender: "F" } }),
+    prisma.patient.count({ where: { ...patientPeriodScope, gender: "M" } }),
+    prisma.patient.count({ where: patientsWhoReceivedExamsWhere(patientPeriodScope) }),
     scopedReceptionistId
       ? prisma.visit.count({
           where: {
-            createdAt: { gte: startOfToday },
+            createdAt: createdAtRange,
             OR: [
               { patient: { createdById: scopedReceptionistId, ...(service ? { service } : {}) } },
               {
@@ -492,13 +526,13 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
         })
       : prisma.visit.count({
           where: {
-            createdAt: { gte: startOfToday },
+            createdAt: createdAtRange,
             ...(service ? { patient: { service } } : {}),
           },
         }),
     prisma.visit.count({
       where: {
-        createdAt: { gte: startOfToday },
+        createdAt: createdAtRange,
         notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE },
         patient: { ...patientScope },
       },
@@ -571,16 +605,154 @@ router.post(
       return res.status(400).json({ error: "Médecin traitant invalide" });
     }
 
-    const category = resolvePatientCategory(body.category);
-    const resolvedAmount = resolveDoctorConsultationAmount(doctor, body.consultationAmountFcfa ?? null);
-    if ((body.reductionFcfa ?? 0) > (resolvedAmount ?? 0)) {
+    const requestedCategory = resolvePatientCategory(body.category);
+
+    const duplicate = await findDuplicatePatient({
+      firstName: body.firstName,
+      lastName: body.lastName,
+      phone: body.phone,
+      gender: body.gender,
+      age: body.age,
+      ageUnit: body.ageUnit,
+      dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : null,
+    });
+    const reuseExisting =
+      !!duplicate && phonesMatchForDossierReuse(body.phone, duplicate.phone);
+
+    let existingPatientId: string | null = null;
+    if (reuseExisting && duplicate) {
+      const merged = await mergePatientIntoCanonical(duplicate.id);
+      existingPatientId = merged.patientId;
+    }
+
+    const existingPatient = existingPatientId
+      ? await prisma.patient.findUnique({ where: { id: existingPatientId } })
+      : null;
+    const category = existingPatient
+      ? resolvePatientCategory(existingPatient.category)
+      : requestedCategory;
+
+    let consultationAmountFcfa = resolveDoctorConsultationAmount(
+      doctor,
+      body.consultationAmountFcfa ?? null,
+    );
+    if (existingPatient) {
+      try {
+        const renewal = await resolveConsultationFeeForPatientDoctor({
+          patientId: existingPatient.id,
+          doctorId: body.doctorId,
+          requestedAmount: body.consultationAmountFcfa,
+        });
+        consultationAmountFcfa = renewal.amountFcfa;
+      } catch {
+        return res.status(400).json({ error: "Impossible de calculer le tarif de consultation." });
+      }
+    }
+
+    if ((body.reductionFcfa ?? 0) > (consultationAmountFcfa ?? 0)) {
       return res.status(400).json({ error: "La réduction ne peut pas dépasser le montant." });
     }
-    const billing = resolveConsultationBilling(category, resolvedAmount, body.reductionFcfa ?? 0);
+    const billing = resolveConsultationBilling(
+      category,
+      consultationAmountFcfa,
+      body.reductionFcfa ?? 0,
+    );
 
-    // Option A : toujours créer un nouveau dossier (doublons acceptés).
-    // Fusion ultérieure médecin/facture si même nom + même numéro.
+    const reconsultPlan = existingPatient
+      ? await planReconsultation(existingPatient.id)
+      : null;
+
     const result = await prisma.$transaction(async (tx) => {
+      if (existingPatient && reconsultPlan) {
+        if (reconsultPlan.action === "create" && reconsultPlan.archiveVisitIds.length) {
+          await archiveVisitsForReconsultation(tx, reconsultPlan.archiveVisitIds);
+        }
+
+        const patient = await tx.patient.update({
+          where: { id: existingPatient.id },
+          data: {
+            ...(existingPatient.phone
+              ? {}
+              : body.phone?.trim()
+                ? { phone: body.phone.trim() }
+                : {}),
+            ...(existingPatient.gender ? {} : body.gender ? { gender: body.gender } : {}),
+            ...(existingPatient.age != null
+              ? {}
+              : body.age != null
+                ? { age: body.age, ageUnit: body.ageUnit }
+                : {}),
+            ...(existingPatient.address
+              ? {}
+              : body.address
+                ? { address: body.address }
+                : {}),
+            ...(body.service?.trim() ? { service: body.service.trim() } : {}),
+            ...(treatingDoctorId !== undefined && treatingDoctorId !== null
+              ? { treatingDoctorId }
+              : {}),
+          },
+          include: { treatingDoctor: { select: treatingDoctorSelect } },
+        });
+
+        const visit =
+          reconsultPlan.action === "update"
+            ? await tx.visit.update({
+                where: { id: reconsultPlan.visitId },
+                data: {
+                  status: VisitStatus.WAITING_CONSULTATION,
+                  assignedDoctorId: body.doctorId,
+                  consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
+                  reductionFcfa: billing.reductionFcfa,
+                },
+              })
+            : await tx.visit.create({
+                data: {
+                  patientId: patient.id,
+                  status: VisitStatus.WAITING_CONSULTATION,
+                  assignedDoctorId: body.doctorId,
+                  consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
+                  reductionFcfa: billing.reductionFcfa,
+                },
+              });
+
+        let invoiceNumber: string | null = null;
+        if (billing.billableAmountFcfa > 0) {
+          const existingInvoice = await tx.invoice.findFirst({
+            where: { visitId: visit.id, type: InvoiceType.CONSULTATION },
+          });
+          if (existingInvoice?.status === InvoiceStatus.PAID) {
+            invoiceNumber = existingInvoice.invoiceNumber;
+          } else if (existingInvoice) {
+            const invoice = await tx.invoice.update({
+              where: { id: existingInvoice.id },
+              data: consultationInvoiceUpdateData(category, billing.billableAmountFcfa),
+            });
+            invoiceNumber = invoice.invoiceNumber;
+          } else {
+            const invoice = await tx.invoice.create({
+              data: consultationInvoiceCreateData(category, {
+                invoiceNumber: await generateInvoiceNumber(tx),
+                patientId: patient.id,
+                visitId: visit.id,
+                amountFcfa: billing.billableAmountFcfa,
+                issuedById: req.user!.id,
+              }),
+            });
+            invoiceNumber = invoice.invoiceNumber;
+          }
+        }
+
+        return {
+          patient,
+          visit,
+          invoiceNumber,
+          totalFcfa: billing.billableAmountFcfa,
+          billingDeferred: !shouldCreateImmediateInvoice(category),
+          linkedExistingDossier: true as const,
+        };
+      }
+
       const patient = await tx.patient.create({
         data: {
           code: await generatePatientCode(tx),
@@ -592,7 +764,7 @@ router.post(
           service: body.service?.trim() || null,
           gender: body.gender,
           address: body.address,
-          category: resolvePatientCategory(category),
+          category: resolvePatientCategory(requestedCategory),
           ongName: null,
           recommendedByName: normalizeRecommendedByName(body.recommendedByName),
           treatingDoctorId: treatingDoctorId ?? null,

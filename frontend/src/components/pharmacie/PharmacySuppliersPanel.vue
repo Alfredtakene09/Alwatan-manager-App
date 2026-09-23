@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { Building2, Plus, RefreshCw, Save } from '@lucide/vue'
+import { Building2, Plus, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { canWritePharmacyCatalog } from '@/lib/roles'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiTextarea from '@/components/ui/UiTextarea.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -44,13 +46,24 @@ const formContactName = ref('')
 const formPhone = ref('')
 const formEmail = ref('')
 const formAddress = ref('')
+const filterQuery = ref('')
 
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 const isEditing = computed(() => editingId.value !== null)
 
 const tableRows = computed(() => {
   void localeCode.value
-  return items.value.map((item) => ({
+  const q = filterQuery.value.trim().toLowerCase()
+  return items.value
+    .filter((item) => {
+      if (!q) return true
+      return [item.name, item.contactName, item.phone, item.email]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(q)
+    })
+    .map((item) => ({
     id: item.id,
     name: item.name,
     contact: item.contactName?.trim() || '—',
@@ -213,15 +226,41 @@ function onTableAction({ action, id }: { action: string; id: string }) {
 
 onMounted(loadItems)
 
+const exportColumns = computed<ExportColumn<(typeof tableRows.value)[number]>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Fournisseur'), value: (row) => row.name },
+    { header: uiText('Contact'), value: (row) => row.contact },
+    { header: uiText('Téléphone'), value: (row) => row.phone },
+    { header: uiText('E-mail'), value: (row) => row.email },
+    { header: uiText('Statut'), value: (row) => row.statusLabel },
+  ]
+})
+
+function exportPdf() {
+  exportTablePdf(uiText('Fournisseurs pharmacie'), exportColumns.value, tableRows.value)
+}
+function exportExcel() {
+  exportTableExcel(uiText('Fournisseurs pharmacie'), exportColumns.value, tableRows.value)
+}
+function exportWord() {
+  void exportTableWord(uiText('Fournisseurs pharmacie'), exportColumns.value, tableRows.value)
+}
+
 defineExpose({ reload: loadItems })
 </script>
 
 <template>
   <PageTableSection embedded>
     <template #toolbar>
-      <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
-        {{ uiText('Actualiser') }}
-      </UiButton>
+      <input
+        v-model="filterQuery"
+        class="filter-input"
+        type="search"
+        :placeholder="uiText('Rechercher un fournisseur…')"
+        :aria-label="uiText('Rechercher un fournisseur')"
+      />
+      <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
       <UiButton
         v-if="canManageCatalog"
         variant="primary"
@@ -236,6 +275,7 @@ defineExpose({ reload: loadItems })
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
 
     <p v-if="!loading && !items.length" class="empty">{{ uiText('Aucun fournisseur enregistré') }}</p>
+    <p v-else-if="!loading && !tableRows.length" class="empty">{{ uiText('Aucun résultat pour cette recherche.') }}</p>
     <div v-else class="simple-table-shell" :class="{ 'simple-table-shell--fill': true }">
       <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
         <span class="simple-table-spinner" aria-hidden="true" />
@@ -321,6 +361,19 @@ defineExpose({ reload: loadItems })
   color: var(--text-light);
   padding: 2rem 1rem;
   font-size: 0.875rem;
+}
+
+.filter-input {
+  min-width: 12rem;
+  flex: 1 1 12rem;
+  max-width: 18rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  color: var(--text);
 }
 
 .form-grid {

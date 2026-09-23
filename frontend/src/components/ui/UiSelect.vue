@@ -36,7 +36,7 @@ const labelText = computed(() => {
 <style scoped>
 .ui-field {
   display: block;
-  margin-bottom: 1rem;
+  margin-bottom: var(--density-field-gap);
 }
 
 .ui-field--disabled {
@@ -53,7 +53,7 @@ const labelText = computed(() => {
 
 .ui-select {
   width: 100%;
-  padding: 0.7rem 0.9rem;
+  padding: var(--density-control-pad-y) var(--density-control-pad-x);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-family: inherit;
@@ -62,7 +62,7 @@ const labelText = computed(() => {
   font-weight: 600;
   color: var(--text);
   background: #fff;
-  min-height: 2.85rem;
+  min-height: var(--app-control-height);
 }
 
 .ui-select:disabled {

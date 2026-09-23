@@ -43,6 +43,15 @@ export async function ensureDefaultBedsForRoom(
   });
 }
 
+export async function ensureDefaultBedsForRooms(
+  tx: Tx,
+  rooms: Array<{ id: string; type: RoomType }>,
+) {
+  for (const room of rooms) {
+    await ensureDefaultBedsForRoom(tx, room);
+  }
+}
+
 export async function assertBedAvailableForAdmission(
   tx: Tx,
   bedId: string,
@@ -66,19 +75,6 @@ export async function assertBedAvailableForAdmission(
   });
   if (conflictOnBed) {
     throw new Error("BED_UNAVAILABLE");
-  }
-
-  if (bed.room.type === RoomType.VIP) {
-    const activeVip = await tx.hospitalization.findFirst({
-      where: {
-        id: { not: hospitalizationId },
-        status: HospitalizationStatus.ACTIVE,
-        room: { type: RoomType.VIP, active: true },
-      },
-    });
-    if (activeVip) {
-      throw new Error("VIP_ROOM_OCCUPIED");
-    }
   }
 
   return bed;
@@ -128,19 +124,6 @@ export async function assertRoomAvailableForAdmission(
       throw new Error("ROOM_UNAVAILABLE");
     }
 
-    if (room.type === RoomType.VIP) {
-      const activeVip = await tx.hospitalization.findFirst({
-        where: {
-          id: { not: hospitalizationId },
-          status: HospitalizationStatus.ACTIVE,
-          room: { type: RoomType.VIP, active: true },
-        },
-      });
-      if (activeVip) {
-        throw new Error("VIP_ROOM_OCCUPIED");
-      }
-    }
-
     return { room, bed: freeBed };
   }
 
@@ -154,19 +137,6 @@ export async function assertRoomAvailableForAdmission(
   });
   if (conflictOnRoom) {
     throw new Error("ROOM_UNAVAILABLE");
-  }
-
-  if (room.type === RoomType.VIP) {
-    const activeVip = await tx.hospitalization.findFirst({
-      where: {
-        id: { not: hospitalizationId },
-        status: HospitalizationStatus.ACTIVE,
-        room: { type: RoomType.VIP, active: true },
-      },
-    });
-    if (activeVip) {
-      throw new Error("VIP_ROOM_OCCUPIED");
-    }
   }
 
   return { room, bed: null };
@@ -261,6 +231,23 @@ export function enrichRoomsWithStatus<
   });
 }
 
+export type AvailableAdmissionBed = {
+  id: string;
+  code: string;
+  label: string | null;
+  roomId: string;
+  roomName: string;
+  dailyRateFcfa: number;
+};
+
+export type AvailableAdmissionRoom = {
+  id: string;
+  name: string;
+  dailyRateFcfa: number;
+  autoBedId: string | null;
+  availableBeds: AvailableAdmissionBed[];
+};
+
 export function enrichRoomTypeAvailabilityWithBeds(
   rooms: Array<{
     id: string;
@@ -272,66 +259,54 @@ export function enrichRoomTypeAvailabilityWithBeds(
   }>,
   hospitalizations: OccupancyRow[],
 ) {
-  const hasActiveVipPatient = hospitalizations.some(
-    (h) =>
-      h.status === HospitalizationStatus.ACTIVE &&
-      (h.room?.type === RoomType.VIP || h.roomType === RoomType.VIP) &&
-      h.roomId,
-  );
-
   function buildTypeOption(type: RoomType) {
     const roomsOfType = rooms.filter((room) => room.type === type && room.active);
-    const availableBeds: Array<{
-      id: string;
-      code: string;
-      label: string | null;
-      roomId: string;
-      roomName: string;
-      dailyRateFcfa: number;
-    }> = [];
+    const availableBeds: AvailableAdmissionBed[] = [];
+    const availableRooms: AvailableAdmissionRoom[] = [];
 
     for (const room of roomsOfType) {
-      if (type === RoomType.VIP && hasActiveVipPatient) continue;
+      if (!isRoomAssignableForAdmission(room, hospitalizations)) continue;
 
       const beds = (room.beds ?? []).filter((b) => b.active);
-      if (beds.length > 0) {
-        for (const bed of beds) {
-          if (!isBedOccupied(bed.id, hospitalizations)) {
-            availableBeds.push({
-              id: bed.id,
-              code: bed.code,
-              label: bed.label,
-              roomId: room.id,
-              roomName: room.name,
-              dailyRateFcfa: room.dailyRateFcfa,
-            });
-          }
-        }
-      } else if (isRoomAssignableForAdmission(room, hospitalizations)) {
-        // Legacy room without beds: expose a synthetic slot via autoRoomId only
-      }
+      const freeBeds: AvailableAdmissionBed[] = beds
+        .filter((bed) => !isBedOccupied(bed.id, hospitalizations))
+        .map((bed) => ({
+          id: bed.id,
+          code: bed.code,
+          label: bed.label,
+          roomId: room.id,
+          roomName: room.name,
+          dailyRateFcfa: room.dailyRateFcfa,
+        }));
+
+      if (beds.length > 0 && freeBeds.length === 0) continue;
+
+      availableBeds.push(...freeBeds);
+      availableRooms.push({
+        id: room.id,
+        name: room.name,
+        dailyRateFcfa: room.dailyRateFcfa,
+        autoBedId: freeBeds[0]?.id ?? null,
+        availableBeds: freeBeds,
+      });
     }
 
-    const assignableRooms = roomsOfType.filter((room) => {
-      if (type === RoomType.VIP && hasActiveVipPatient) return false;
-      return isRoomAssignableForAdmission(room, hospitalizations);
-    });
-
-    const firstRoom = assignableRooms[0];
+    const firstRoom = availableRooms[0];
     const firstBed = availableBeds[0] ?? null;
 
     return {
       type,
-      available: assignableRooms.length > 0,
+      available: availableRooms.length > 0,
       availableCount:
-        availableBeds.length > 0 ? availableBeds.length : assignableRooms.length,
+        availableBeds.length > 0 ? availableBeds.length : availableRooms.length,
       autoRoomId: firstBed?.roomId ?? firstRoom?.id ?? null,
-      autoBedId: firstBed?.id ?? null,
-      roomName: firstBed?.roomName ?? firstRoom?.name ?? (type === RoomType.VIP ? "Salle VIP" : "Salle simple"),
-      dailyRateFcfa: firstBed?.dailyRateFcfa ?? firstRoom?.dailyRateFcfa ?? 0,
+      autoBedId: firstBed?.id ?? firstRoom?.autoBedId ?? null,
+      roomName: firstRoom?.name ?? (type === RoomType.VIP ? "Salle VIP" : "Salle simple"),
+      dailyRateFcfa: firstRoom?.dailyRateFcfa ?? 0,
       availableBeds,
+      availableRooms,
       blockedReason:
-        type === RoomType.VIP && hasActiveVipPatient && assignableRooms.length === 0
+        type === RoomType.VIP && roomsOfType.length > 0 && availableRooms.length === 0
           ? ("VIP_OCCUPIED" as const)
           : null,
     };

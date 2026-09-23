@@ -16,6 +16,20 @@ export function payrollPeriodBounds(year: number, month: number) {
   return { start, end };
 }
 
+/**
+ * Employés dont le salaire compte dans la masse / la paie du mois :
+ * fiche active, et compte application actif s’il existe (compte désactivé = hors masse).
+ */
+export const payrollEligibleEmployeeWhere: Prisma.EmployeeWhereInput = {
+  active: true,
+  OR: [{ user: { is: null } }, { user: { is: { active: true } } }],
+};
+
+/** Filtre sur EmployeePayroll pour n’agréger que les salaires éligibles. */
+export const payrollCountedWhere: Prisma.EmployeePayrollWhereInput = {
+  employee: payrollEligibleEmployeeWhere,
+};
+
 export function employeeGrossSalary(employee: {
   isMedecin: boolean;
   doctorCompensationType: DoctorCompensationType;
@@ -42,13 +56,14 @@ const payrollEmployeeSelect = {
   isMedecin: true,
   doctorCompensationType: true,
   fixedSalaryFcfa: true,
-  user: { select: { id: true } },
+  user: { select: { id: true, active: true } },
 } as const;
 
 export function listEligiblePayrollEmployees(
   employees: Prisma.EmployeeGetPayload<{ select: typeof payrollEmployeeSelect }>[],
 ) {
   return dedupeEmployeesForSelection(employees)
+    .filter((employee) => !employee.user || employee.user.active)
     .map((employee) => ({
       employeeId: employee.id,
       grossFcfa: employeeGrossSalary(employee),
@@ -60,7 +75,7 @@ export function listEligiblePayrollEmployees(
 
 export async function ensurePayrollForMonth(year: number, month: number) {
   const employees = await prisma.employee.findMany({
-    where: { active: true },
+    where: payrollEligibleEmployeeWhere,
     select: payrollEmployeeSelect,
   });
 
@@ -98,7 +113,7 @@ export async function ensurePayrollForMonth(year: number, month: number) {
 
 export async function countEligiblePayrollEmployees() {
   const employees = await prisma.employee.findMany({
-    where: { active: true },
+    where: payrollEligibleEmployeeWhere,
     select: payrollEmployeeSelect,
   });
   return listEligiblePayrollEmployees(employees).length;
@@ -107,6 +122,7 @@ export async function countEligiblePayrollEmployees() {
 export async function getPayrollPeriodSummaries() {
   const rows = await prisma.employeePayroll.groupBy({
     by: ["year", "month", "status"],
+    where: payrollCountedWhere,
     _count: { _all: true },
   });
 
@@ -140,7 +156,7 @@ export async function getPayrollPeriodSummaries() {
 
 export async function fetchPayrollRowsForMonth(year: number, month: number) {
   const rows = await prisma.employeePayroll.findMany({
-    where: { year, month },
+    where: { year, month, ...payrollCountedWhere },
     include: employeePayrollInclude,
     orderBy: [{ status: "asc" }, { employee: { lastName: "asc" } }],
   });
@@ -174,7 +190,7 @@ export const employeePayrollInclude = {
       isMedecin: true,
       fixedSalaryFcfa: true,
       bonusFcfa: true,
-      user: { select: { role: true } },
+      user: { select: { role: true, active: true } },
     },
   },
 } satisfies Prisma.EmployeePayrollInclude;

@@ -2,9 +2,9 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
 import axios from 'axios'
-import { UserRound, Plus, RefreshCw, Save, Briefcase, Stethoscope, Banknote, Info, Phone, Users, UserCheck, Building2, Palmtree, UserX, Search, Camera } from '@lucide/vue'
+import { UserRound, Plus, Save, Briefcase, Stethoscope, Banknote, Info, Phone, Users, UserCheck, Building2, Palmtree, UserX, Search, Camera } from '@lucide/vue'
 import api from '@/api/client'
-import { formatFcfa, fullName, canViewEmployeeCompensation } from '@/lib/roles'
+import { formatFcfa, formatFcfaPlain, fullName, canViewEmployeeCompensation } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth'
 import {
   CONSULTATION_QUOTA_MODE_OPTIONS,
@@ -36,7 +36,8 @@ import {
 } from '@/lib/employee-job-titles'
 import { employeeNeedsAppAccount, isHiddenPlatformAdminEmployee, isHiddenPlatformAdminJobTitle } from '@/lib/employee-app-account'
 import { inferIsMedecinFromJobTitle } from '@/lib/doctor-job-title'
-import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
+import { exportBasename, exportTablePdf, exportTableWord, exportWorkbook, sectionsToMatrix, type ExportColumn, type ExportSection, type WorkbookSheetDef } from '@/lib/table-export'
+import { groupEmployeeExportRows } from '@/lib/employee-list-export'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -405,6 +406,12 @@ function employeeCompensationLabel(employee: Employee): string {
   )
 }
 
+function employeeSalaryExportValue(employee: Employee): number | '' {
+  if (!canExportSalaries.value) return ''
+  const salary = employee.fixedSalaryFcfa
+  return salary != null && salary > 0 ? Math.round(salary) : ''
+}
+
 function toEmployeeExportRow(employee: Employee) {
   return {
     id: employee.id,
@@ -420,6 +427,8 @@ function toEmployeeExportRow(employee: Employee) {
       : '—',
     profileLabel: employee.isMedecin ? uiText('Médecin') : uiText('Personnel'),
     compensationLabel: canExportSalaries.value ? employeeCompensationLabel(employee) : '—',
+    /** Export PDF / Excel / Word : montant seul, sans FCFA ni détail quota. */
+    salaryExportValue: employeeSalaryExportValue(employee),
     statusLabel: employee.active ? uiText('Actif') : uiText('Inactif'),
     statusVariant: employee.active ? 'success' : 'danger',
   }
@@ -430,21 +439,9 @@ const tableRows = computed(() => {
   return filteredEmployees.value.map(toEmployeeExportRow)
 })
 
-const catalogExportRows = computed(() => {
-  localeCode.value
-  return employees.value
-    .slice()
-    .sort((a, b) =>
-      fullName(a.firstName, a.lastName).localeCompare(fullName(b.firstName, b.lastName), 'fr', {
-        sensitivity: 'base',
-        numeric: true,
-      }),
-    )
-    .map(toEmployeeExportRow)
-})
-
 type EmployeeExportRow = ReturnType<typeof toEmployeeExportRow>
 
+/** Colonnes d’export : salaire numérique seul (pas le libellé écran « Salaire + quota · … »). */
 const employeeExportColumns = computed<ExportColumn<EmployeeExportRow>[]>(() => {
   const cols: ExportColumn<EmployeeExportRow>[] = [
     { header: uiText('Nom'), value: (r) => r.name },
@@ -454,40 +451,126 @@ const employeeExportColumns = computed<ExportColumn<EmployeeExportRow>[]>(() => 
     { header: uiText('Services'), value: (r) => r.servicesLabel },
   ]
   if (canExportSalaries.value) {
-    cols.push({ header: uiText('Rémunération'), value: (r) => r.compensationLabel })
+    cols.push({ header: uiText('Salaire'), value: (r) => r.salaryExportValue })
   }
   cols.push({ header: uiText('Statut'), value: (r) => r.statusLabel })
   return cols
 })
 
-function employeeExportTotals() {
+type EmployeeJobRecapRow = { jobTitle: string; count: number; payroll: number }
+
+function employeeExportGroupTitle(jobTitle: string, count: number, payroll: number): string {
   if (!canExportSalaries.value) {
-    return [{ label: uiText('Nombre d’employés'), value: String(employees.value.length) }]
+    return translateTemplate('{jobTitle} — {count} employés', { jobTitle, count })
   }
-  const payrollTotal = employees.value.reduce((sum, employee) => sum + (employee.fixedSalaryFcfa ?? 0), 0)
+  return translateTemplate('{jobTitle} — {count} employés — {payroll}', {
+    jobTitle,
+    count,
+    payroll: formatFcfaPlain(payroll),
+  })
+}
+
+function employeeExportGrandTotals(totalCount: number, totalPayroll: number) {
+  if (!canExportSalaries.value) {
+    return [{ label: uiText('Total général — employés'), value: String(totalCount) }]
+  }
   return [
-    { label: uiText('Nombre d’employés'), value: String(employees.value.length) },
-    { label: uiText('Masse salariale (salaires fixes)'), value: formatFcfa(payrollTotal) },
+    { label: uiText('Total général — employés'), value: String(totalCount) },
+    { label: uiText('Total général — masse salariale'), value: formatFcfaPlain(totalPayroll) },
   ]
 }
 
-function employeeExportShared() {
+function employeeExportGroupTotals(count: number, payroll: number) {
+  if (!canExportSalaries.value) {
+    return [{ label: uiText('Nombre d’employés'), value: String(count) }]
+  }
+  return [
+    { label: uiText('Nombre d’employés'), value: String(count) },
+    { label: uiText('Masse salariale (salaires fixes)'), value: formatFcfaPlain(payroll) },
+  ]
+}
+
+function employeeExportPayload() {
+  localeCode.value
+  const grouped = groupEmployeeExportRows(
+    employees.value.map(toEmployeeExportRow),
+    employeesById.value,
+  )
+  const rows = grouped.groups.flatMap((group) => group.rows)
+  const detailColumns = employeeExportColumns.value
+  const recapColumns: ExportColumn<EmployeeJobRecapRow>[] = [
+    { header: uiText('Poste'), value: (r) => r.jobTitle },
+    { header: uiText('Nombre d’employés'), value: (r) => r.count },
+  ]
+  if (canExportSalaries.value) {
+    recapColumns.push({ header: uiText('Masse salariale'), value: (r) => formatFcfaPlain(r.payroll) })
+  }
+  const recapRows: EmployeeJobRecapRow[] = grouped.groups.map((group) => ({
+    jobTitle: group.jobTitle,
+    count: group.count,
+    payroll: group.payroll,
+  }))
+  const recapTotals = employeeExportGrandTotals(grouped.totalCount, grouped.totalPayroll)
+  const recapSection: ExportSection = {
+    title: uiText('Récapitulatif par poste'),
+    columns: recapColumns,
+    rows: recapRows,
+    totalsRows: recapTotals,
+    ownPage: true,
+  }
+  const groupSections: ExportSection[] = grouped.groups.map((group) => ({
+    title: employeeExportGroupTitle(group.jobTitle, group.count, group.payroll),
+    columns: detailColumns,
+    rows: group.rows,
+    totalsRows: employeeExportGroupTotals(group.count, group.payroll),
+  }))
+  const sections: ExportSection[] = [recapSection, ...groupSections]
+  const excelSheets: WorkbookSheetDef[] = [
+    {
+      name: uiText('Récapitulatif par poste'),
+      columns: recapColumns,
+      rows: recapRows,
+      totalsRows: recapTotals,
+    },
+    {
+      name: uiText('Employés par poste'),
+      matrix: sectionsToMatrix(groupSections, { totalsRows: recapTotals }),
+    },
+    ...grouped.groups.map((group) => ({
+      name: group.jobTitle,
+      columns: detailColumns,
+      rows: group.rows,
+      totalsRows: employeeExportGroupTotals(group.count, group.payroll),
+    })),
+  ]
   return {
-    captionRows: [{ label: uiText('Périmètre'), value: uiText('Catalogue complet') }],
-    totalsRows: employeeExportTotals(),
+    rows,
+    columns: detailColumns,
+    sections,
+    excelSheets,
+    captionRows: [{ label: uiText('Périmètre'), value: uiText('Liste complète') }],
   }
 }
 
 function exportPdf() {
-  exportTablePdf(uiText('Employés'), employeeExportColumns.value, catalogExportRows.value, employeeExportShared())
+  const payload = employeeExportPayload()
+  exportTablePdf(uiText('Employés'), payload.columns, payload.rows, {
+    captionRows: payload.captionRows,
+    sections: payload.sections,
+  })
 }
 
 function exportExcel() {
-  exportTableExcel(uiText('Employés'), employeeExportColumns.value, catalogExportRows.value, employeeExportShared())
+  const payload = employeeExportPayload()
+  exportWorkbook(exportBasename(uiText('Employés')), payload.excelSheets)
 }
 
 function exportWord() {
-  void exportTableWord(uiText('Employés'), employeeExportColumns.value, catalogExportRows.value, employeeExportShared())
+  const payload = employeeExportPayload()
+  void exportTableWord(uiText('Employés'), payload.columns, payload.rows, {
+    captionRows: payload.captionRows,
+    sections: payload.sections,
+  })
 }
 
 function clearPhotoSelection() {
@@ -1028,7 +1111,16 @@ onMounted(async () => {
 <template>
   <div class="page-with-table">
     <section class="page-with-table__head">
-      <UiPageHeader title="Personnel" :icon="UserRound" />
+      <UiPageHeader title="Personnel" :icon="UserRound">
+        <template v-if="activeTab === 'employees'" #actions>
+          <div class="personnel-page-actions">
+            <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
+            <UiButton variant="primary" size="sm" :icon="Plus" ui-action="employees.create" @click="openCreateModal">
+              Ajouter
+            </UiButton>
+          </div>
+        </template>
+      </UiPageHeader>
       <UiAlert v-if="message && !modalOpen && activeTab === 'employees'" :type="messageType" :message="message" />
 
       <div class="personnel-toolbar">
@@ -1124,16 +1216,6 @@ onMounted(async () => {
         :icon="UserRound"
         icon-variant="violet"
       >
-        <template #actions>
-          <ExportButtons :disabled="loading || !employees.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadEmployees">
-            Actualiser
-          </UiButton>
-          <UiButton variant="primary" size="sm" :icon="Plus" ui-action="employees.create" @click="openCreateModal">
-            Ajouter
-          </UiButton>
-        </template>
-
         <p v-if="!loading && !employees.length" class="empty">{{ uiText('Aucun employé enregistré') }}</p>
         <p v-else-if="!loading && employees.length && !tableRows.length" class="empty">
           Aucun employé ne correspond aux critères
@@ -1744,6 +1826,13 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.personnel-page-actions {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
 .personnel-toolbar {
   display: flex;
   flex-wrap: wrap;

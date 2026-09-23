@@ -84,6 +84,7 @@ function onToggleGroup(item: NavItem, event: MouseEvent) {
   emit('toggleGroup', item)
   prefetchGroup(item)
   if (!wasExpanded) {
+    if (item.to) void router.push(item.to)
     revealExpandedSubmenu(event.currentTarget as HTMLElement)
   }
 }
@@ -111,7 +112,7 @@ function groupKey(item: NavItem) {
 }
 
 function isGroupExpanded(item: NavItem) {
-  return props.expandedGroups.has(groupKey(item)) || isNavGroupActive(route.path, item)
+  return props.expandedGroups.has(groupKey(item)) || isNavGroupActive(route.fullPath, item)
 }
 
 function childGroupKey(parentLabel: string, child: NavChildItem) {
@@ -121,7 +122,7 @@ function childGroupKey(parentLabel: string, child: NavChildItem) {
 function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
   return (
     props.expandedChildGroups.has(childGroupKey(parentLabel, child)) ||
-    isNavChildGroupActive(route.path, child)
+    isNavChildGroupActive(route.fullPath, child)
   )
 }
 </script>
@@ -138,7 +139,7 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
             class="nav-item nav-item--group ui-card-frame ui-card-frame--menu"
             :class="{
               'nav-item--group-open': isGroupExpanded(item),
-              'nav-item--group-active': isNavGroupActive(route.path, item),
+              'nav-item--group-active': isNavGroupActive(route.fullPath, item),
             }"
             @click="onToggleGroup(item, $event)"
           >
@@ -163,7 +164,7 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
                   class="nav-item nav-item--child nav-item--group ui-card-frame ui-card-frame--menu ui-card-frame--compact"
                   :class="{
                     'nav-item--group-open': isChildGroupExpanded(item.label, child),
-                    'nav-item--group-active': isNavChildGroupActive(route.path, child),
+                    'nav-item--group-active': isNavChildGroupActive(route.fullPath, child),
                   }"
                   @click="onToggleChildGroup(item.label, child, $event)"
                 >
@@ -189,7 +190,7 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
                     :key="nested.to"
                     :to="nested.to!"
                     class="nav-item nav-item--child nav-item--nested ui-card-frame ui-card-frame--menu ui-card-frame--compact"
-                    :class="{ 'nav-item--active': isNavItemActive(route.path, nested.to!) }"
+                    :class="{ 'nav-item--active': isNavItemActive(route.fullPath, nested.to!) }"
                     @mouseenter="prefetch(nested.to)"
                     @focus="prefetch(nested.to)"
                   >
@@ -200,7 +201,7 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
                       <span class="nav-item__label">{{ navLabel(nested.label) }}</span>
                     </span>
                     <ChevronRight
-                      v-if="isNavItemActive(route.path, nested.to!)"
+                      v-if="isNavItemActive(route.fullPath, nested.to!)"
                       :size="14"
                       class="nav-item__chevron"
                     />
@@ -212,7 +213,7 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
                 v-else-if="child.to"
                 :to="child.to"
                 class="nav-item nav-item--child ui-card-frame ui-card-frame--menu ui-card-frame--compact"
-                :class="{ 'nav-item--active': isNavItemActive(route.path, child.to) }"
+                :class="{ 'nav-item--active': isNavItemActive(route.fullPath, child.to) }"
                 @mouseenter="prefetch(child.to)"
                 @focus="prefetch(child.to)"
               >
@@ -225,7 +226,7 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
                 <span v-if="badgeCount(child.badgeKey) > 0" class="nav-item__badge">
                   {{ badgeCount(child.badgeKey) }}
                 </span>
-                <ChevronRight v-else-if="isNavItemActive(route.path, child.to)" :size="14" class="nav-item__chevron" />
+                <ChevronRight v-else-if="isNavItemActive(route.fullPath, child.to)" :size="14" class="nav-item__chevron" />
               </RouterLink>
             </template>
           </div>
@@ -236,8 +237,8 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
           :to="item.to"
           class="nav-item ui-card-frame ui-card-frame--menu"
           :class="{
-            'nav-item--active': isNavItemActive(route.path, item.to),
-            'nav-item--primary': item.primary && !isNavItemActive(route.path, item.to),
+            'nav-item--active': isNavItemActive(route.fullPath, item.to),
+            'nav-item--primary': item.primary && !isNavItemActive(route.fullPath, item.to),
           }"
           @mouseenter="prefetch(item.to)"
           @focus="prefetch(item.to)"
@@ -251,7 +252,7 @@ function isChildGroupExpanded(parentLabel: string, child: NavChildItem) {
           <span v-if="badgeCount(item.badgeKey) > 0" class="nav-item__badge">
             {{ badgeCount(item.badgeKey) }}
           </span>
-          <ChevronRight v-else-if="isNavItemActive(route.path, item.to)" :size="14" class="nav-item__chevron" />
+          <ChevronRight v-else-if="isNavItemActive(route.fullPath, item.to)" :size="14" class="nav-item__chevron" />
         </RouterLink>
       </template>
     </div>

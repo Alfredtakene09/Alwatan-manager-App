@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { confirmAppModal } from '@/lib/api-modal-helper'
-import { Users, Plus, RefreshCw, Save, Eye, Search, Unlock, Shield } from '@lucide/vue'
+import { Users, Plus, Save, Eye, Search, Unlock, Shield } from '@lucide/vue'
 import api from '@/api/client'
 import {
   fullName,
@@ -29,10 +29,12 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import StCatalogActions from '@/components/ui/StCatalogActions.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import RoleUiPermissionsPanel from '@/components/admin/RoleUiPermissionsPanel.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import { useAuthStore } from '@/stores/auth'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import '@/assets/simple-table.css'
 
 type LinkedEmployee = {
@@ -249,6 +251,44 @@ const tableRows = computed(() => {
     }
   })
 })
+
+const userExportColumns = computed<ExportColumn<(typeof tableRows.value)[number]>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Nom'), value: (row) => row.name },
+    { header: uiText('Identifiant'), value: (row) => row.username },
+    { header: uiText('Email'), value: (row) => row.email },
+    { header: uiText('Employé'), value: (row) => row.employeeLabel },
+    { header: uiText('Rôle'), value: (row) => row.roleLabel },
+    { header: uiText('Statut'), value: (row) => row.statusLabel },
+  ]
+})
+
+function userExportShared() {
+  return {
+    captionRows: [
+      {
+        label: uiText('Périmètre'),
+        value:
+          searchQuery.value.trim() || roleFilter.value !== 'ALL'
+            ? uiText('Recherche / filtres appliqués')
+            : uiText('Liste complète'),
+      },
+    ],
+  }
+}
+
+function exportUsersPdf() {
+  exportTablePdf(uiText('Utilisateurs'), userExportColumns.value, tableRows.value, userExportShared())
+}
+
+function exportUsersExcel() {
+  exportTableExcel(uiText('Utilisateurs'), userExportColumns.value, tableRows.value, userExportShared())
+}
+
+function exportUsersWord() {
+  void exportTableWord(uiText('Utilisateurs'), userExportColumns.value, tableRows.value, userExportShared())
+}
 
 function resetForm() {
   form.value = {
@@ -732,7 +772,21 @@ onMounted(loadUsers)
         title="Utilisateurs"
         subtitle="Comptes d'accès — les soignants restent dans le registre sans compte"
         :icon="Users"
-      />
+      >
+        <template v-if="usersTab === 'accounts'" #actions>
+          <div class="users-page-actions">
+            <ExportButtons
+              :disabled="loading || !tableRows.length"
+              @pdf="exportUsersPdf"
+              @excel="exportUsersExcel"
+              @word="exportUsersWord"
+            />
+            <UiButton variant="primary" size="sm" :icon="Plus" ui-action="users.create" @click="openCreateModal">
+              Nouvel utilisateur
+            </UiButton>
+          </div>
+        </template>
+      </UiPageHeader>
 
       <UiAlert v-if="message && !modalOpen && usersTab === 'accounts'" :type="messageType" :message="message" />
 
@@ -778,15 +832,6 @@ onMounted(loadUsers)
         :icon="Users"
         icon-variant="violet"
       >
-        <template #actions>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadUsers">
-            Actualiser
-          </UiButton>
-          <UiButton variant="primary" size="sm" :icon="Plus" ui-action="users.create" @click="openCreateModal">
-            Nouvel utilisateur
-          </UiButton>
-        </template>
-
         <div class="users-filters">
           <label class="users-search">
             <Search :size="16" class="users-search__icon" aria-hidden="true" />
@@ -1174,6 +1219,13 @@ onMounted(loadUsers)
 </template>
 
 <style scoped>
+.users-page-actions {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
 .users-row-actions {
   display: inline-flex;
   align-items: center;

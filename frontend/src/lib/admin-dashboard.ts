@@ -45,6 +45,7 @@ export type AdminExpenseRow = {
   statusLabel: string
   comment?: string | null
   rejectionReason?: string | null
+  source?: 'clinic' | 'payroll'
 }
 
 export type PayrollRow = {
@@ -74,8 +75,13 @@ export type AdminDashboardOverview = {
     totalCount: number
     rows: PayrollRow[]
   }
+  period?: {
+    from: string
+    to: string
+  }
   clinical: {
     patientsToday: number
+    patientsInPeriod?: number
     openVisitsToday: number
     examsPending: number
     activeHospitalizations: number

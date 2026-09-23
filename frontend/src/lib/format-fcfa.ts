@@ -7,6 +7,11 @@ export function ltrIsolate(text: string): string {
   return `${LRI}${text}${PDI}`
 }
 
+/** Retire LRI/RLI/FSI/PDI et marques de direction — Excel/Word les affichent comme « LRI » / « PDI ». */
+export function stripBidiMarks(text: string): string {
+  return text.replace(/[\u2066-\u2069\u202A-\u202E\u200E\u200F]/g, '')
+}
+
 function formatDigitsRaw(amount: number): string {
   const n = Math.round(Number(amount) || 0)
   const sign = n < 0 ? '− ' : ''
@@ -23,6 +28,11 @@ export function formatFcfa(amount: number): string {
   return ltrIsolate(`${formatDigitsRaw(amount)} FCFA`)
 }
 
+/** Montant fichier (PDF / Excel / Word) — sans isolats Unicode. */
+export function formatFcfaPlain(amount: number): string {
+  return `${formatDigitsRaw(amount)} FCFA`
+}
+
 /** Montant compact pour tickets thermiques (ex. pharmacie). */
 export function formatFcfaShort(amount: number): string {
   return ltrIsolate(`${formatDigitsRaw(amount)} F`)
@@ -35,5 +45,5 @@ export function formatFcfaCompact(amount: number): string {
 
 /** Normalise une chaîne déjà formatée (Intl, CSV, etc.). */
 export function normalizeFcfaString(value: string): string {
-  return value.replace(/[\u202f\u00a0]/g, ' ')
+  return stripBidiMarks(value.replace(/[\u202f\u00a0]/g, ' '))
 }

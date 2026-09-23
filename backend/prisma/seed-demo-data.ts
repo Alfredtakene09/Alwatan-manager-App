@@ -20,6 +20,7 @@ import {
   VisitStatus,
 } from "@prisma/client";
 import { prisma } from "../src/lib/db.js";
+import { runWithAppDataDeleteUnlock } from "../src/lib/db-delete-guard.js";
 
 const DEMO_PATIENT_PREFIX = "PAT-";
 const LEGACY_DEMO_PATIENT_PREFIX = "DEMO-PAT-";
@@ -125,53 +126,55 @@ async function loadStaffIds(): Promise<StaffIds> {
 }
 
 export async function cleanupDemoData() {
-  const demoPatients = await prisma.patient.findMany({
-    where: {
-      OR: [
-        { code: { startsWith: LEGACY_DEMO_PATIENT_PREFIX } },
-        { code: { in: demoPatientCodes(50) } },
-      ],
-    },
-    select: { id: true },
-  });
-  const patientIds = demoPatients.map((p) => p.id);
-  if (!patientIds.length) return;
-
-  const demoInvoices = await prisma.invoice.findMany({
-    where: { patientId: { in: patientIds } },
-    select: { id: true },
-  });
-  const invoiceIds = demoInvoices.map((i) => i.id);
-
-  await prisma.receptionCashSettlementLine.deleteMany({
-    where: { invoiceId: { in: invoiceIds } },
-  });
-  await prisma.receptionCashSettlement.deleteMany({
-    where: { comment: { contains: "[DEMO]" } },
-  });
-  await prisma.pharmacySaleLine.deleteMany({
-    where: { OR: [{ invoiceId: { in: invoiceIds } }, { prescription: { patientId: { in: patientIds } } }] },
-  });
-  await prisma.prescription.deleteMany({ where: { patientId: { in: patientIds } } });
-  await prisma.examReclamation.deleteMany({ where: { patientId: { in: patientIds } } });
-  await prisma.invoice.deleteMany({ where: { patientId: { in: patientIds } } });
-  await prisma.visit.deleteMany({ where: { patientId: { in: patientIds } } });
-  await prisma.patientDossier.deleteMany({ where: { patientId: { in: patientIds } } });
-  await prisma.patient.deleteMany({ where: { id: { in: patientIds } } });
-
-  await prisma.clinicExpense.deleteMany({ where: { label: { startsWith: "[DEMO]" } } });
-  await prisma.employeePayroll.deleteMany({ where: { remarks: { startsWith: "[DEMO]" } } });
-  await prisma.salaryAdvance.deleteMany({ where: { comment: { startsWith: "[DEMO]" } } });
-
-  const demoEmployees = await prisma.employee.findMany({
-    where: { firstName: DEMO_EMPLOYEE_FIRST_NAME, lastName: { startsWith: "Salarié " } },
-    select: { id: true },
-  });
-  if (demoEmployees.length) {
-    await prisma.employee.deleteMany({
-      where: { id: { in: demoEmployees.map((e) => e.id) } },
+  await runWithAppDataDeleteUnlock("script", async () => {
+    const demoPatients = await prisma.patient.findMany({
+      where: {
+        OR: [
+          { code: { startsWith: LEGACY_DEMO_PATIENT_PREFIX } },
+          { code: { in: demoPatientCodes(50) } },
+        ],
+      },
+      select: { id: true },
     });
-  }
+    const patientIds = demoPatients.map((p) => p.id);
+    if (!patientIds.length) return;
+
+    const demoInvoices = await prisma.invoice.findMany({
+      where: { patientId: { in: patientIds } },
+      select: { id: true },
+    });
+    const invoiceIds = demoInvoices.map((i) => i.id);
+
+    await prisma.receptionCashSettlementLine.deleteMany({
+      where: { invoiceId: { in: invoiceIds } },
+    });
+    await prisma.receptionCashSettlement.deleteMany({
+      where: { comment: { contains: "[DEMO]" } },
+    });
+    await prisma.pharmacySaleLine.deleteMany({
+      where: { OR: [{ invoiceId: { in: invoiceIds } }, { prescription: { patientId: { in: patientIds } } }] },
+    });
+    await prisma.prescription.deleteMany({ where: { patientId: { in: patientIds } } });
+    await prisma.examReclamation.deleteMany({ where: { patientId: { in: patientIds } } });
+    await prisma.invoice.deleteMany({ where: { patientId: { in: patientIds } } });
+    await prisma.visit.deleteMany({ where: { patientId: { in: patientIds } } });
+    await prisma.patientDossier.deleteMany({ where: { patientId: { in: patientIds } } });
+    await prisma.patient.deleteMany({ where: { id: { in: patientIds } } });
+
+    await prisma.clinicExpense.deleteMany({ where: { label: { startsWith: "[DEMO]" } } });
+    await prisma.employeePayroll.deleteMany({ where: { remarks: { startsWith: "[DEMO]" } } });
+    await prisma.salaryAdvance.deleteMany({ where: { comment: { startsWith: "[DEMO]" } } });
+
+    const demoEmployees = await prisma.employee.findMany({
+      where: { firstName: DEMO_EMPLOYEE_FIRST_NAME, lastName: { startsWith: "Salarié " } },
+      select: { id: true },
+    });
+    if (demoEmployees.length) {
+      await prisma.employee.deleteMany({
+        where: { id: { in: demoEmployees.map((e) => e.id) } },
+      });
+    }
+  });
 }
 
 async function upsertDemoPatient(data: {

@@ -795,11 +795,9 @@ Même réseau Wi-Fi / Ethernet que le serveur :
   → ouvrez $url
   → Tailscale n'est PAS nécessaire.
 
-Puis double-cliquez sur « Ouvrir Alwatan.bat ».
+Puis double-cliquez sur « DEMARRER-ALWATAN.cmd » ou « Ouvrir Alwatan.bat ».
 $altBlock
-Si le Wi-Fi clinique bloque les PC entre eux :
-  sur le serveur : scripts\activer-hotspot-wifi.cmd
-  (ou scripts\activer-acces-mesh.cmd en dernier recours)
+Cable Ethernet branche sur le meme reseau que le serveur (pas besoin d'Internet).
 "@
     Set-Content -LiteralPath (Join-Path $outDir 'LISEZMOI.txt') -Value $readme -Encoding UTF8
     Set-Content -LiteralPath (Join-Path $outDir 'LIEN-SERVEUR.txt') -Value $url.TrimEnd('/') -Encoding ASCII
@@ -895,9 +893,8 @@ function Show-AlwatanCabinetHelp {
         Write-Host "       Tailscale (optionnel / secours) : http://${tailscale}:4000" -ForegroundColor DarkGray
     }
     Write-Host ''
-    Write-Host '  Sur le même Wi-Fi/Ethernet : utilisez l''IP locale ci-dessus — Tailscale n''est pas requis.' -ForegroundColor Cyan
-    Write-Host '  Wi-Fi bloqué entre postes ? Sur le serveur : scripts\activer-hotspot-wifi.cmd' -ForegroundColor Yellow
-    Write-Host '  Dernier recours (mesh) : scripts\activer-acces-mesh.cmd (Tailscale)' -ForegroundColor DarkGray
+    Write-Host '  Sur le meme Ethernet : utilisez l''IP locale ci-dessus (hors ligne OK).' -ForegroundColor Cyan
+    Write-Host '  Pare-feu bloque ? Sur le serveur (Admin) : scripts\forcer-acces-lan.cmd' -ForegroundColor Yellow
 }
 
 function Ensure-AlwatanAppBrowserProfile {
@@ -1232,6 +1229,7 @@ function Open-AlwatanBrowser {
         "--user-data-dir=$profileDir",
         '--no-first-run',
         '--no-default-browser-check',
+        '--disable-popup-blocking',
         '--start-maximized'
     )
     if ($bounds) {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { ClipboardList, Plus, RefreshCw, Save, X, Check, Ban } from '@lucide/vue'
+import { ClipboardList, Plus, Save, X, Check, Ban } from '@lucide/vue'
 import api from '@/api/client'
 import { fullName } from '@/lib/roles'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
@@ -275,9 +275,6 @@ defineExpose({ reload })
         <option value="REJECTED">Refusées</option>
       </select>
       <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-      <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="reload">
-        Actualiser
-      </UiButton>
       <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
         Nouvelle demande
       </UiButton>

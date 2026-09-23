@@ -69,6 +69,18 @@
   }
 }
 
+@media (max-width: 960px) {
+  .dashboard-cards,
+  .dashboard-cards-skeleton {
+    flex-wrap: wrap;
+  }
+
+  .dashboard-cards > *,
+  .dashboard-cards-skeleton > * {
+    flex: 1 1 calc(50% - 0.45rem);
+  }
+}
+
 @media (max-width: 639px) {
   .dashboard-cards,
   .dashboard-cards-skeleton {

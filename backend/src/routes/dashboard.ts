@@ -18,7 +18,7 @@ import {
   buildRevenueLast7Days,
 } from "../lib/revenue-stats.js";
 import { aggregateCollectedForCashier } from "../lib/cashier-personal-stats.js";
-import { buildAdminDashboardOverview, buildAdminNavBadges } from "../lib/admin-dashboard-stats.js";
+import { buildAdminDashboardOverview, buildAdminNavBadges, resolveDashboardDateRange } from "../lib/admin-dashboard-stats.js";
 import {
   buildGestionnaireDashboardOverview,
   buildGestionnaireNavBadges,
@@ -36,8 +36,8 @@ import {
 const router = Router();
 router.use(requireAuth);
 
-router.get("/admin", requireModule("admin"), async (_req, res) => {
-  const overview = await buildAdminDashboardOverview();
+router.get("/admin", requireModule("admin"), async (req, res) => {
+  const overview = await buildAdminDashboardOverview(resolveDashboardDateRange(req.query));
   return res.json(overview);
 });
 
@@ -46,8 +46,8 @@ router.get("/admin/nav-badges", requireModule("admin"), async (_req, res) => {
   return res.json(badges);
 });
 
-router.get("/gestionnaire", requireModule("gestionnaire"), async (_req, res) => {
-  const overview = await buildGestionnaireDashboardOverview();
+router.get("/gestionnaire", requireModule("gestionnaire"), async (req, res) => {
+  const overview = await buildGestionnaireDashboardOverview(resolveDashboardDateRange(req.query));
   return res.json(overview);
 });
 
@@ -254,10 +254,31 @@ router.get("/medecin", requireModule("consultation"), async (req, res) => {
   });
 });
 
+function parseDashboardDay(value: unknown, fallback: Date): Date {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    return fallback;
+  }
+  const [year, month, day] = value.trim().split("-").map(Number);
+  const parsed = new Date(year, month - 1, day);
+  if (Number.isNaN(parsed.getTime())) return fallback;
+  return startOfDay(parsed);
+}
+
+function toIsoDay(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
   const user = req.user!;
   const ownSalesOnly = user.role === "PHARMACIEN";
-  const pharmacistId = ownSalesOnly ? user.id : undefined;
+  const requestedPharmacistId =
+    typeof req.query.pharmacistId === "string" && req.query.pharmacistId.trim()
+      ? req.query.pharmacistId.trim()
+      : undefined;
+  const pharmacistId = ownSalesOnly ? user.id : requestedPharmacistId;
   const pharmacistFilter = pharmacistId ? { pharmacistId } : {};
 
   const todayStart = startOfDay(new Date());
@@ -265,8 +286,40 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
   const tomorrow = new Date(todayStart);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  const [products, lowStock, prescriptionsToday, prescriptionsExternalToday, revenueAgg, sales, stockAlerts, profitToday, profitWeek] =
-    await Promise.all([
+  const weekFrom = dayStarts[0];
+  let summaryFrom = parseDashboardDay(req.query.from, todayStart);
+  let summaryToStart = parseDashboardDay(req.query.to, todayStart);
+  if (summaryToStart < summaryFrom) {
+    const swapped = summaryFrom;
+    summaryFrom = summaryToStart;
+    summaryToStart = swapped;
+  }
+  const maxRangeMs = 366 * 24 * 60 * 60 * 1000;
+  if (summaryToStart.getTime() - summaryFrom.getTime() > maxRangeMs) {
+    summaryFrom = new Date(summaryToStart);
+    summaryFrom.setDate(summaryFrom.getDate() - 366);
+  }
+  const summaryToExclusive = new Date(summaryToStart);
+  summaryToExclusive.setDate(summaryToExclusive.getDate() + 1);
+  const salesPeriodWhere = {
+    createdAt: { gte: summaryFrom, lt: summaryToExclusive },
+    ...pharmacistFilter,
+  };
+
+  const [
+    products,
+    lowStock,
+    prescriptionsToday,
+    prescriptionsExternalToday,
+    revenueAgg,
+    sales,
+    stockAlerts,
+    profitToday,
+    profitWeek,
+    weekPrescriptions,
+    weekLineAgg,
+    weekReturnsAgg,
+  ] = await Promise.all([
       prisma.product.count({ where: { active: true } }),
       countLowStockProducts(),
       prisma.prescription.count({
@@ -296,14 +349,30 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
         where: {
           type: InvoiceType.PHARMACY,
           status: InvoiceStatus.PAID,
-          paidAt: { gte: dayStarts[0] },
+          paidAt: { gte: weekFrom },
           ...(pharmacistId ? { issuedById: pharmacistId } : {}),
         },
         select: { paidAt: true, amountFcfa: true, patientId: true, externalClientId: true },
       }),
       listPharmacyStockAlerts(),
       computePharmacyProfit(todayStart, tomorrow, pharmacistId ? { pharmacistId } : undefined),
-      computePharmacyProfit(dayStarts[0], tomorrow, pharmacistId ? { pharmacistId } : undefined),
+      computePharmacyProfit(weekFrom, tomorrow, pharmacistId ? { pharmacistId } : undefined),
+      prisma.prescription.findMany({
+        where: salesPeriodWhere,
+        select: { grossTotalFcfa: true, netTotalFcfa: true },
+      }),
+      prisma.pharmacySaleLine.aggregate({
+        where: { prescription: salesPeriodWhere },
+        _sum: { quantity: true },
+      }),
+      prisma.pharmacySaleReturn.aggregate({
+        where: {
+          createdAt: { gte: summaryFrom, lt: summaryToExclusive },
+          prescription: pharmacistFilter,
+        },
+        _sum: { netRefundFcfa: true },
+        _count: { _all: true },
+      }),
     ]);
 
   const topLowStock = stockAlerts.slice(0, 5).map((row) => ({
@@ -336,6 +405,30 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
     };
   });
 
+  let grossTotalFcfa = 0;
+  let netTotalFcfa = 0;
+  let freeSalesCount = 0;
+  for (const row of weekPrescriptions) {
+    const gross = row.grossTotalFcfa ?? row.netTotalFcfa ?? 0;
+    const net = row.netTotalFcfa ?? gross;
+    grossTotalFcfa += gross;
+    netTotalFcfa += net;
+    if (net <= 0 && gross > 0) freeSalesCount += 1;
+  }
+  const reductionFcfa = Math.max(0, grossTotalFcfa - netTotalFcfa);
+  const salesSummary = {
+    from: toIsoDay(summaryFrom),
+    to: toIsoDay(summaryToStart),
+    salesCount: weekPrescriptions.length,
+    productsSoldCount: weekLineAgg._sum.quantity ?? 0,
+    grossTotalFcfa,
+    reductionFcfa,
+    netTotalFcfa,
+    freeSalesCount,
+    returnsCount: weekReturnsAgg._count._all,
+    returnsNetFcfa: weekReturnsAgg._sum.netRefundFcfa ?? 0,
+  };
+
   return res.json({
     productsCount: products,
     lowStock,
@@ -343,6 +436,7 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
     prescriptionsExternalToday,
     revenueTodayFcfa: revenueAgg._sum.amountFcfa ?? 0,
     salesLast7Days,
+    salesSummary,
     topLowStock,
     profitToday,
     profitWeek,

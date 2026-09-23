@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Plus, RefreshCw, Save } from '@lucide/vue'
+import { Plus, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
@@ -14,7 +14,7 @@ import {
 } from '@/lib/exam-catalog-kinds'
 import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
 import { suggestExamCatalogKindSlugFromServiceName } from '@/lib/exam-catalog-service-kind'
-import { exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
@@ -199,37 +199,57 @@ const tableRows = computed(() => {
 
 type CatalogExportRow = {
   label: string
+  code: string
   category: string
+  service: string
+  formLabel: string
   price: string
+  statusLabel: string
 }
 
 const catalogExportColumns = computed<ExportColumn<CatalogExportRow>[]>(() => {
   void localeCode.value
-  return [
+  const cols: ExportColumn<CatalogExportRow>[] = [
     { header: uiText('Libellé'), value: (row) => row.label },
+    { header: uiText('Code'), value: (row) => row.code },
     { header: uiText('Catégorie'), value: (row) => row.category },
-    { header: uiText('Tarif'), value: (row) => row.price },
+    { header: uiText('Service'), value: (row) => row.service },
   ]
+  if (props.kind === 'examen') {
+    cols.push({ header: uiText('Formulaire résultats'), value: (row) => row.formLabel })
+  }
+  cols.push(
+    { header: uiText('Tarif'), value: (row) => row.price },
+    { header: uiText('Statut'), value: (row) => row.statusLabel },
+  )
+  return cols
 })
 
 const catalogExportRows = computed<CatalogExportRow[]>(() =>
   tableRows.value.map((row) => ({
     label: row.label,
+    code: row.code || '—',
     category: row.category,
+    service: row.service,
+    formLabel: row.formLabel,
     price: row.price,
+    statusLabel: row.statusLabel,
   })),
 )
 
-function catalogExportShared() {
-  const captionRows = [{ label: uiText('Type'), value: contextLabel.value }]
+function catalogExportFilterCaption(): string {
+  const parts: string[] = [contextLabel.value]
   if (selectedCategory.value.trim()) {
-    captionRows.push({
-      label: uiText('Catégorie'),
-      value: examNameText(selectedCategory.value),
-    })
+    parts.push(`${uiText('Catégorie')} : ${examNameText(selectedCategory.value)}`)
   }
+  const q = searchQuery.value.trim()
+  if (q) parts.push(`${uiText('Recherche')} : ${q}`)
+  return parts.join(' · ')
+}
+
+function catalogExportShared() {
   return {
-    captionRows,
+    captionRows: [{ label: uiText('Filtres'), value: catalogExportFilterCaption() }],
     totalsRows: [
       {
         label: uiText('Nombre d’examens'),
@@ -241,6 +261,14 @@ function catalogExportShared() {
 
 function exportCatalogPdf() {
   exportTablePdf(catalogCardTitle.value, catalogExportColumns.value, catalogExportRows.value, catalogExportShared())
+}
+
+function exportCatalogExcel() {
+  exportTableExcel(catalogCardTitle.value, catalogExportColumns.value, catalogExportRows.value, catalogExportShared())
+}
+
+function exportCatalogWord() {
+  void exportTableWord(catalogCardTitle.value, catalogExportColumns.value, catalogExportRows.value, catalogExportShared())
 }
 
 function resetListFilters() {
@@ -385,18 +413,24 @@ async function saveEdit() {
   saving.value = true
   resetMessages()
   try {
-    const serviceId = isServiceContext.value
-      ? activeServiceTabId.value
-      : editForm.value.clinicServiceId.trim() || null
-    // Sur un onglet type (Labo/…), on ne rattache jamais à un service spécialisé.
-    const resolvedServiceId = isServiceContext.value ? serviceId : null
-    await api.put(`/comptabilite/exam-types/catalog/${kindSlug}/${editingId.value}`, {
+    const payload: {
+      code?: string
+      label: string
+      category?: string
+      priceFcfa: number
+      clinicServiceId?: string | null
+    } = {
       code: editForm.value.code.trim() || undefined,
       label: editForm.value.label.trim(),
       category: editForm.value.category.trim() || undefined,
       priceFcfa: Number(editForm.value.priceFcfa),
-      clinicServiceId: resolvedServiceId,
-    })
+    }
+    if (isServiceContext.value) {
+      payload.clinicServiceId = activeServiceTabId.value
+    } else if (editForm.value.clinicServiceId.trim()) {
+      payload.clinicServiceId = editForm.value.clinicServiceId.trim()
+    }
+    await api.put(`/comptabilite/exam-types/catalog/${kindSlug}/${editingId.value}`, payload)
     message.value = 'Élément mis à jour.'
     messageType.value = 'success'
     invalidateExamCatalogCache()
@@ -665,15 +699,12 @@ onMounted(async () => {
       <template #actions>
         <ExportButtons
           :disabled="loading || !catalogExportRows.length"
-          :show-excel="false"
-          :show-word="false"
           @pdf="exportCatalogPdf"
+          @excel="exportCatalogExcel"
+          @word="exportCatalogWord"
         />
         <UiButton variant="primary" size="sm" :icon="Plus" ui-action="catalog.exam_types" @click="openAddModal">
           {{ uiText(addButtonLabel) }}
-        </UiButton>
-        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">
-          {{ uiText('Actualiser') }}
         </UiButton>
         <span class="list-count">{{ elementCountLabel }}</span>
       </template>

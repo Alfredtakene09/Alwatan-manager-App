@@ -7,6 +7,7 @@
  *   npm run db:reset -- --confirm
  */
 import { prisma } from "../src/lib/db.js";
+import { runWithAppDataDeleteUnlock } from "../src/lib/db-delete-guard.js";
 import { DEFAULT_STAFF_USERNAMES, seedReferenceData } from "../prisma/seed-reference.js";
 
 const confirmed =
@@ -96,10 +97,12 @@ async function main() {
   const keptEmployeeIds = defaultUsers.map((user) => user.employeeId);
 
   console.log("Suppression de toutes les données (sauf utilisateurs par défaut)…");
-  await purgeDatabase(keptEmployeeIds);
+  await runWithAppDataDeleteUnlock("script", async () => {
+    await purgeDatabase(keptEmployeeIds);
 
-  console.log("Restauration des catalogues de référence…");
-  await seedReferenceData();
+    console.log("Restauration des catalogues de référence…");
+    await seedReferenceData();
+  });
 
   console.log("");
   console.log("Réinitialisation terminée.");

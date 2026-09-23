@@ -39,7 +39,7 @@ describe('feuille classique selles/urines — 2 colonnes', () => {
     assert.ok(model.columns[1]?.sections.some((section) => section.title === 'Microscopic'))
   })
 
-  it('place Reaction, Pus cels et RBCs en tête, sans Urine HCG', () => {
+  it('place Reaction, Pus cels et RBCs en tête ; Urine HCG dans les extras', () => {
     const model = buildClassicStoolUrineModel('routine', urineAndStool)
     const urine = model.columns[0]?.sections.find((section) => section.title === 'Urine Analysis')
     const deposit = model.columns[0]?.sections.find((section) => section.title === 'Diposite')
@@ -54,12 +54,36 @@ describe('feuille classique selles/urines — 2 colonnes', () => {
       ['Pus cels', 'RBCs'],
     )
     assert.equal(deposit?.rows.find((row) => /hcg/i.test(row.label)), undefined)
-    assert.equal(model.extras.find((row) => /urine\s*hcg/i.test(row.label)), undefined)
+    assert.ok(model.extras.some((row) => /urine\s*hcg/i.test(row.label)))
+    assert.equal(model.extras.find((row) => /urine\s*hcg/i.test(row.label))?.value, 'Positive')
     assert.ok(deposit?.rows.some((row) => row.label === 'Crystals'))
     assert.equal(
       micro?.rows.find((row) => /food/i.test(row.label))?.label,
       'Undigested Food',
     )
+  })
+
+  it('inclut Pus et Nitrites dans le dépôt urinaire', () => {
+    const model = buildClassicStoolUrineModel('routine', {
+      urineColor: 'Yellow',
+      urinePus: 'Present',
+      urineNitrites: 'Positive',
+      urinePusCells: '2--4',
+    })
+    const deposit = model.columns[0]?.sections.find((section) => section.title === 'Diposite')
+    assert.ok(deposit?.rows.some((row) => row.label === 'Pus' && row.value === 'Present'))
+    assert.ok(deposit?.rows.some((row) => row.label === 'Nitrites' && row.value === 'Positive'))
+  })
+
+  it('place T Vaginals (clé clinic t_vaginals) dans Diposite', () => {
+    const model = buildClassicStoolUrineModel('routine', {
+      urineColor: 'Yellow',
+      t_vaginals: 'Seen',
+      urinePusCells: '1--2',
+    })
+    const deposit = model.columns[0]?.sections.find((section) => section.title === 'Diposite')
+    assert.ok(deposit?.rows.some((row) => row.label === 'T.Vaginalis' && row.value === 'Seen'))
+    assert.equal(model.extras.find((row) => /vaginal/i.test(row.label)), undefined)
   })
 
   it('affiche RBG (RBS) à la place de Glycémie / FBG', () => {
@@ -95,8 +119,8 @@ describe('feuille classique selles/urines — 2 colonnes', () => {
     assert.match(html, /lab-classic-sheet__col--full/)
   })
 
-  it('évite de couper le tableau au milieu d’une page', () => {
-    assert.match(LAB_CLASSIC_SHEET_STYLES, /page-break-inside:\s*avoid/)
+  it('évite de couper une ligne au milieu d’une page', () => {
+    assert.match(LAB_CLASSIC_SHEET_STYLES, /\.lab-classic-sheet__row \{[\s\S]*page-break-inside:\s*avoid/)
     assert.doesNotMatch(LAB_CLASSIC_SHEET_STYLES, /width:\s*33\.33%/)
   })
 })

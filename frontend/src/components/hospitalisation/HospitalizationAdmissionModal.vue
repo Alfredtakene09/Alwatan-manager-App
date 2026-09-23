@@ -18,6 +18,7 @@ import {
   type HospitalizationAdmissionForm,
 } from '@/lib/hospitalization-admission'
 import { parsePrescribedHospitalisationDays } from '@/lib/lab-notes'
+import { useAppI18n } from '@/i18n/useAppI18n'
 
 export type AdmissionAvailableBed = {
   id: string
@@ -26,6 +27,14 @@ export type AdmissionAvailableBed = {
   roomId: string
   roomName: string
   dailyRateFcfa: number
+}
+
+export type AdmissionAvailableRoom = {
+  id: string
+  name: string
+  dailyRateFcfa: number
+  autoBedId: string | null
+  availableBeds: AdmissionAvailableBed[]
 }
 
 export type AdmissionRoomTypeOption = {
@@ -37,6 +46,7 @@ export type AdmissionRoomTypeOption = {
   autoRoomId: string | null
   autoBedId?: string | null
   availableBeds?: AdmissionAvailableBed[]
+  availableRooms?: AdmissionAvailableRoom[]
   blockedReason?: 'VIP_OCCUPIED' | null
 }
 
@@ -89,7 +99,10 @@ const emit = defineEmits<{
   confirm: [payload: HospitalizationAdmissionForm & { hospitalizationId: string; roomId?: string; bedId?: string }]
 }>()
 
+const { uiText, localeCode } = useAppI18n()
+
 const roomTypeChoice = ref<RoomTypeChoice>('')
+const roomChoice = ref('')
 const bedChoice = ref('')
 const doctors = ref<DoctorOption[]>([])
 const form = ref<HospitalizationAdmissionForm>(defaultAdmissionForm({
@@ -107,7 +120,16 @@ const selectedRoomType = computed(() =>
   props.roomTypes.find((room) => room.type === roomTypeChoice.value) ?? null,
 )
 
-const availableBeds = computed(() => selectedRoomType.value?.availableBeds ?? [])
+const availableRooms = computed(() => selectedRoomType.value?.availableRooms ?? [])
+
+const selectedRoom = computed(
+  () => availableRooms.value.find((room) => room.id === roomChoice.value) ?? null,
+)
+
+const availableBeds = computed(() => {
+  if (selectedRoom.value) return selectedRoom.value.availableBeds
+  return selectedRoomType.value?.availableBeds ?? []
+})
 
 const billing = computed(() =>
   computeHospitalizationBilling(
@@ -124,14 +146,28 @@ const canSubmit = computed(() => {
   if (!props.hosp || !datesValid.value || isReadonly.value) return false
   if (props.mode === 'edit') return true
   if (!roomTypeChoice.value || !selectedRoomType.value?.autoRoomId) return false
+  if (availableRooms.value.length > 0 && !roomChoice.value) return false
   if (availableBeds.value.length > 0 && !bedChoice.value) return false
   return true
 })
 
 const modalSubtitle = computed(() => {
-  if (props.mode === 'view') return 'Consultation du profil d\'admission'
+  void localeCode.value
+  if (props.mode === 'view') return "Consultation du profil d'admission"
   if (props.mode === 'edit') return 'Modification du séjour programmé'
-  return 'Formulaire d\'admission hospitalière'
+  return "Formulaire d'admission hospitalière"
+})
+
+const footerLabels = computed(() => {
+  void localeCode.value
+  return {
+    close: uiText(isReadonly.value ? 'Fermer' : 'Annuler'),
+    printPaid: uiText('Réimprimer le reçu'),
+    printFree: uiText('Réimprimer le reçu'),
+    saving: uiText('Enregistrement…'),
+    save: uiText('Enregistrer'),
+    validate: uiText('Valider et imprimer'),
+  }
 })
 
 function prefDoctorId() {
@@ -171,9 +207,11 @@ function syncFormFromContext() {
   if (isProgrammed.value) {
     form.value = admissionFormFromHospitalization(props.hosp)
     roomTypeChoice.value = (props.hosp.roomType as RoomTypeChoice) || ''
+    roomChoice.value = props.hosp.room?.id ?? ''
     bedChoice.value = props.hosp.bedId ?? ''
   } else {
     roomTypeChoice.value = ''
+    roomChoice.value = ''
     bedChoice.value = ''
     const prescribedDays = parsePrescribedHospitalisationDays(props.hosp.visit.consultation?.clinicalNotes)
     const baseForm = admissionFormFromHospitalization(props.hosp)
@@ -205,30 +243,40 @@ watch(
 
 watch(roomTypeChoice, () => {
   if (isProgrammed.value) return
-  const room = selectedRoomType.value
+  const roomType = selectedRoomType.value
   form.value.roomType = roomTypeChoice.value
-  form.value.roomName = room?.roomName ?? ''
-  if (room?.dailyRateFcfa) {
-    form.value.dailyRateFcfa = room.dailyRateFcfa
-  }
-  bedChoice.value = room?.autoBedId ?? availableBeds.value[0]?.id ?? ''
-  form.value.bedId = bedChoice.value
-  const selectedBed = availableBeds.value.find((b) => b.id === bedChoice.value)
-  if (selectedBed) {
-    form.value.roomName = selectedBed.roomName
-    form.value.dailyRateFcfa = selectedBed.dailyRateFcfa
-  }
+  const firstRoom = availableRooms.value[0] ?? null
+  roomChoice.value = firstRoom?.id ?? roomType?.autoRoomId ?? ''
+  applySelectedRoomToForm()
+})
+
+watch(roomChoice, () => {
+  if (isProgrammed.value) return
+  applySelectedRoomToForm()
 })
 
 watch(bedChoice, () => {
   if (isProgrammed.value) return
+  applySelectedBedToForm()
+})
+
+function applySelectedRoomToForm() {
+  const roomType = selectedRoomType.value
+  const room = selectedRoom.value
+  form.value.roomName = room?.name ?? roomType?.roomName ?? ''
+  form.value.dailyRateFcfa = room?.dailyRateFcfa ?? roomType?.dailyRateFcfa ?? 0
+  bedChoice.value = room?.autoBedId ?? availableBeds.value[0]?.id ?? ''
+  applySelectedBedToForm()
+}
+
+function applySelectedBedToForm() {
   form.value.bedId = bedChoice.value
   const selectedBed = availableBeds.value.find((b) => b.id === bedChoice.value)
   if (selectedBed) {
     form.value.roomName = selectedBed.roomName
     form.value.dailyRateFcfa = selectedBed.dailyRateFcfa
   }
-})
+}
 
 watch(
   () => form.value.attendingDoctorId,
@@ -272,7 +320,7 @@ function onSubmit() {
     bedId: form.value.bedId || bedChoice.value || selectedBed?.id || '',
   }
   if (props.mode === 'create') {
-    const roomId = selectedBed?.roomId ?? selectedRoomType.value?.autoRoomId
+    const roomId = selectedBed?.roomId ?? selectedRoom.value?.id ?? selectedRoomType.value?.autoRoomId
     if (!roomId) return
     emit('confirm', { ...payload, roomId, bedId: selectedBed?.id ?? payload.bedId })
     return
@@ -302,74 +350,85 @@ onMounted(loadDoctors)
       </div>
 
       <section class="hosp-adm-form__section hosp-adm-form__section--patient">
-        <h3>Patient</h3>
+        <h3>{{ uiText('Patient') }}</h3>
         <div class="hosp-adm-form__patient-card">
           <div class="hosp-adm-form__patient-name">{{ form.patientName }}</div>
           <div class="hosp-adm-form__patient-meta">
-            <span>Matricule : <strong>{{ form.patientCode }}</strong></span>
+            <span>{{ uiText('Matricule') }} : <strong>{{ form.patientCode }}</strong></span>
           </div>
         </div>
       </section>
 
       <section class="hosp-adm-form__section hosp-adm-form__section--highlight">
-        <h3>Chambre</h3>
+        <h3>{{ uiText('Chambre') }}</h3>
         <template v-if="isProgrammed">
           <div class="hosp-adm-form__room-summary">
             <UiBadge :variant="form.roomType === 'VIP' ? 'primary' : 'info'">
-              {{ form.roomType === 'VIP' ? 'VIP' : 'Simple' }}
+              {{ form.roomType === 'VIP' ? 'VIP' : uiText('Simple') }}
             </UiBadge>
             <span v-if="form.roomName">{{ form.roomName }}</span>
-            <strong>{{ formatFcfa(form.dailyRateFcfa) }}/nuit</strong>
+            <strong>{{ formatFcfa(form.dailyRateFcfa) }}/{{ uiText('nuit') }}</strong>
           </div>
         </template>
         <template v-else>
           <UiSelect v-model="roomTypeChoice" label="Type de chambre" required>
-            <option value="">Sélectionner VIP ou Simple</option>
+            <option value="">{{ uiText('Sélectionner VIP ou Simple') }}</option>
             <option
               v-for="room in roomTypes"
               :key="room.type"
               :value="room.type"
-              :disabled="!room.availableCount"
+            :disabled="!(room.availableRooms?.length || room.availableCount)"
             >
               {{ room.label }}
               {{
                 room.availableCount
-                  ? `— ${formatFcfa(room.dailyRateFcfa)}/nuit`
-                  : '— indisponible'
+                  ? `— ${formatFcfa(room.dailyRateFcfa)}/${uiText('nuit')}`
+                  : `— ${uiText('indisponible')}`
               }}
             </option>
           </UiSelect>
-          <p v-if="roomTypeChoice && selectedRoomType && !selectedRoomType.availableCount" class="hosp-adm-form__hint hosp-adm-form__hint--warn">
+          <p v-if="roomTypeChoice && selectedRoomType && !selectedRoomType.availableCount && !availableRooms.length" class="hosp-adm-form__hint hosp-adm-form__hint--warn">
             <template v-if="selectedRoomType.blockedReason === 'VIP_OCCUPIED'">
-              La chambre VIP est déjà occupée par un patient hospitalisé. Choisissez une chambre simple ou attendez la sortie.
+              {{ uiText('Aucune chambre VIP libre pour le moment.') }}
             </template>
             <template v-else>
               Aucune place libre en chambre {{ selectedRoomType.label }} pour le moment.
             </template>
           </p>
-          <div v-else-if="selectedRoomType" class="hosp-adm-form__room-summary">
-            <UiBadge :variant="selectedRoomType.type === 'VIP' ? 'primary' : 'info'">
-              {{ selectedRoomType.label }}
+          <UiSelect
+            v-if="roomTypeChoice && availableRooms.length && !isReadonly"
+            v-model="roomChoice"
+            label="Salle"
+            required
+          >
+            <option value="" disabled>{{ uiText('Sélectionner une salle') }}</option>
+            <option v-for="room in availableRooms" :key="room.id" :value="room.id">
+              {{ room.name }} — {{ formatFcfa(room.dailyRateFcfa) }}/{{ uiText('nuit') }}
+            </option>
+          </UiSelect>
+          <div v-if="selectedRoom" class="hosp-adm-form__room-summary">
+            <UiBadge :variant="selectedRoomType?.type === 'VIP' ? 'primary' : 'info'">
+              {{ selectedRoomType?.label }}
             </UiBadge>
-            <span>{{ selectedRoomType.roomName }}</span>
-            <strong>{{ formatFcfa(selectedRoomType.dailyRateFcfa) }}/nuit</strong>
+            <span>{{ selectedRoom.name }}</span>
+            <strong>{{ formatFcfa(selectedRoom.dailyRateFcfa) }}/{{ uiText('nuit') }}</strong>
           </div>
           <UiSelect
-            v-if="roomTypeChoice && availableBeds.length && !isReadonly"
+            v-if="roomChoice && availableBeds.length && !isReadonly"
             v-model="bedChoice"
             label="Lit"
             required
           >
-            <option value="" disabled>Sélectionner un lit</option>
+            <option value="" disabled>{{ uiText('Sélectionner un lit') }}</option>
             <option v-for="bed in availableBeds" :key="bed.id" :value="bed.id">
-              {{ bed.roomName }} — {{ bed.label || bed.code }}
+              {{ bed.label || bed.code }}
             </option>
           </UiSelect>
         </template>
       </section>
 
       <section class="hosp-adm-form__section">
-        <h3>Dates du séjour</h3>
+        <h3>{{ uiText('Dates du séjour') }}</h3>
         <div class="hosp-adm-form__grid">
           <UiInput v-model="form.startDate" label="Date d'entrée" type="date" :readonly="isReadonly" required />
           <UiInput
@@ -384,39 +443,39 @@ onMounted(loadDoctors)
           />
         </div>
         <p v-if="form.startDate && form.stayDays >= 1" class="hosp-adm-form__hint">
-          Durée du séjour : {{ form.stayDays }} jour(s)
+          {{ uiText('Durée du séjour : {n} jour(s)').replace('{n}', String(form.stayDays)) }}
         </p>
       </section>
 
       <section class="hosp-adm-form__section">
-        <h3>Service et médecin</h3>
+        <h3>{{ uiText('Service et médecin') }}</h3>
         <div class="hosp-adm-form__grid">
           <div class="hosp-adm-form__readonly-item">
-            <span class="hosp-adm-form__readonly-label">Service</span>
-            <strong class="hosp-adm-form__readonly-value">{{ serviceLabel }}</strong>
+            <span class="hosp-adm-form__readonly-label">{{ uiText('Service') }}</span>
+            <strong class="hosp-adm-form__readonly-value">{{ uiText(serviceLabel) }}</strong>
           </div>
           <UiSelect
             v-if="!isReadonly"
             v-model="form.attendingDoctorId"
             label="Médecin hospitalier"
           >
-            <option value="">Sélectionner un médecin</option>
+            <option value="">{{ uiText('Sélectionner un médecin') }}</option>
             <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
               Dr {{ fullName(doctor.firstName, doctor.lastName) }}
             </option>
           </UiSelect>
           <div v-else class="hosp-adm-form__readonly-item">
-            <span class="hosp-adm-form__readonly-label">Médecin hospitalier</span>
+            <span class="hosp-adm-form__readonly-label">{{ uiText('Médecin hospitalier') }}</span>
             <strong class="hosp-adm-form__readonly-value">{{ form.attendingDoctor || '—' }}</strong>
           </div>
         </div>
         <p v-if="!isReadonly" class="hosp-adm-form__hint">
-          Prérempli depuis le médecin de la visite — modifiable pour cette hospitalisation.
+          {{ uiText('Prérempli depuis le médecin de la visite — modifiable pour cette hospitalisation.') }}
         </p>
       </section>
 
       <section class="hosp-adm-form__section">
-        <h3>Réduction</h3>
+        <h3>{{ uiText('Réduction') }}</h3>
         <UiInput
           v-model="form.reductionFcfa"
           label="Réduction (FCFA)"
@@ -428,9 +487,9 @@ onMounted(loadDoctors)
       </section>
 
       <section class="hosp-adm-form__section hosp-adm-form__section--instructions">
-        <h3>Instructions du médecin traitant</h3>
+        <h3>{{ uiText('Instructions du médecin traitant') }}</h3>
         <label class="hosp-adm-form__textarea-label" for="doctor-instructions">
-          Diagnostic, consignes et observations
+          {{ uiText('Diagnostic, consignes et observations') }}
         </label>
         <textarea
           id="doctor-instructions"
@@ -444,25 +503,25 @@ onMounted(loadDoctors)
 
       <section v-if="datesValid && form.dailyRateFcfa > 0" class="hosp-adm-form__total-bar">
         <div class="hosp-adm-form__total-details">
-          <span>{{ billing.nights }} nuitée(s) × {{ formatFcfa(form.dailyRateFcfa) }}</span>
-          <span v-if="billing.reductionFcfa > 0">Réduction : − {{ formatFcfa(billing.reductionFcfa) }}</span>
+          <span>{{ billing.nights }} {{ uiText('nuitée(s)') }} × {{ formatFcfa(form.dailyRateFcfa) }}</span>
+          <span v-if="billing.reductionFcfa > 0">{{ uiText('Réduction') }} : − {{ formatFcfa(billing.reductionFcfa) }}</span>
         </div>
         <div class="hosp-adm-form__total-amount">
-          <span>Montant total</span>
+          <span>{{ uiText('Montant total') }}</span>
           <strong>{{ formatFcfa(billing.netFcfa) }}</strong>
         </div>
       </section>
     </div>
 
     <template #footer>
-      <UiButton variant="ghost" @click="emit('close')">{{ isReadonly ? 'Fermer' : 'Annuler' }}</UiButton>
+      <UiButton variant="ghost" @click="emit('close')">{{ footerLabels.close }}</UiButton>
       <UiButton
         variant="secondary"
         :icon="Printer"
         :disabled="!datesValid"
         @click="onPrint"
       >
-        {{ billing.netFcfa > 0 ? 'Imprimer (3 pages)' : 'Imprimer (2 pages)' }}
+        {{ billing.netFcfa > 0 ? footerLabels.printPaid : footerLabels.printFree }}
       </UiButton>
       <UiButton
         v-if="!isReadonly"
@@ -471,7 +530,7 @@ onMounted(loadDoctors)
         :disabled="!canSubmit || submitting"
         @click="onSubmit"
       >
-        {{ submitting ? 'Enregistrement…' : mode === 'edit' ? 'Enregistrer' : 'Valider et imprimer' }}
+        {{ submitting ? footerLabels.saving : mode === 'edit' ? footerLabels.save : footerLabels.validate }}
       </UiButton>
     </template>
   </UiFormModal>

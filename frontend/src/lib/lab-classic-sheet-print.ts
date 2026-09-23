@@ -41,6 +41,7 @@ const URINE_GENERAL: ClassicRow[] = [
 
 const URINE_DEPOSIT: ClassicRow[] = [
   { key: 'urinePusCells', label: 'Pus cels' },
+  { key: 'urinePus', label: 'Pus' },
   { key: 'urineRbcs', label: 'RBCs' },
   { key: 'urineEpithelial', label: 'Epith.cell' },
   { key: 'urineCrystals', label: 'Crystals' },
@@ -48,6 +49,7 @@ const URINE_DEPOSIT: ClassicRow[] = [
   { key: 'urineOva', label: 'Ova' },
   { key: 'urineTvaginalis', label: 'T.Vaginalis' },
   { key: 'urineYeast', label: 'Yeast' },
+  { key: 'urineNitrites', label: 'Nitrites' },
   { key: 'urineOthers', label: 'Other' },
 ]
 
@@ -58,7 +60,15 @@ const BUCKET_ROWS: Record<Bucket, ClassicRow[]> = {
   urineDeposit: URINE_DEPOSIT,
 }
 
+/** Clés urine/selles à ne pas mettre dans les colonnes (passent en extras). */
 const EXTRA_EXCLUDED_PREFIX_KEYS = new Set([
+  'urineHcg',
+  'urine_hcg',
+  'urinehcg',
+  'stoolTrypanosoma',
+])
+
+const EXTRA_ALWAYS_INCLUDE_KEYS = new Set([
   'urineHcg',
   'urine_hcg',
   'urinehcg',
@@ -124,13 +134,22 @@ const KEY_ALIASES: Record<string, string[]> = {
   urineUrobilinogen: ['urine_urobilinogen'],
   urineGravity: ['urine_gravity'],
   urinePusCells: ['urine_pus_cells', 'urine_pus_cels'],
+  urinePus: ['urine_pus'],
   urineRbcs: ['urine_rbcs'],
   urineEpithelial: ['urine_epithelial', 'epith_cell'],
   urineCrystals: ['urine_crystals', 'crystals'],
   urineCasts: ['urine_casts', 'casts'],
   urineOva: ['urine_ova'],
-  urineTvaginalis: ['urine_tvaginalis', 't_vaginalis', 'tvaginalis'],
+  urineTvaginalis: [
+    'urine_tvaginalis',
+    't_vaginalis',
+    'tvaginalis',
+    't_vaginals',
+    'tvaginals',
+    'tVaginals',
+  ],
   urineYeast: ['urine_yeast', 'yeast'],
+  urineNitrites: ['urine_nitrites', 'nitrites'],
   urineOthers: ['urine_others', 'urine_other'],
 }
 
@@ -190,6 +209,7 @@ function classicPrintLabel(label: string) {
   if (/udigested food/i.test(t) || /undisgested food/i.test(t) || /undigested food/i.test(t)) {
     return 'Undigested Food'
   }
+  if (/t\.?\s*vaginals?/i.test(t)) return 'T.Vaginalis'
   if (/glyc[eé]mie/i.test(t) || /^blood glucose$/i.test(t) || /^fbg$/i.test(t) || /^rbg$/i.test(t)) {
     return 'RBG (RBS)'
   }
@@ -218,7 +238,10 @@ function bucketFromSectionTitle(title?: string): Bucket | null {
   const t = (title ?? '').toLowerCase()
   if (!t) return null
   if (t.includes('micro')) return 'stoolMicro'
-  if (t.includes('deposit') || t.includes('diposit')) return 'urineDeposit'
+  // Deposit / Diposite / Disposite (variantes clinic)
+  if (t.includes('deposit') || t.includes('diposit') || t.includes('disposit')) {
+    return 'urineDeposit'
+  }
   if (t.includes('stool')) return 'stoolGeneral'
   if (t.includes('urine')) return 'urineGeneral'
   return null
@@ -364,21 +387,36 @@ function extraFilledRows(
   const rows: Array<{ label: string; value: string }> = []
   const seen = new Set<string>()
 
+  const pushExtra = (field: { key: string; label: string; unit?: string }) => {
+    if (seen.has(field.key) || used.has(field.key)) return
+    const value = fieldValue(values, field.key)
+    if (!value) return
+    seen.add(field.key)
+    used.add(field.key)
+    used.add(labFieldCommentKey(field.key))
+    rows.push({ label: extraPrintLabel(field), value: withUnit(value, field.unit) })
+  }
+
   for (const section of panel?.sections ?? []) {
     if (bucketFromSectionTitle(section.title)) continue
     for (const field of section.fields) {
-      if (seen.has(field.key) || used.has(field.key)) continue
-      if (isUrineHcgField(field.key, field.label)) continue
-      const value = fieldValue(values, field.key)
-      if (!value) continue
-      const fallback = field.defaultValue?.trim() ?? ''
-      if (fallback && value === fallback) continue
-      seen.add(field.key)
-      used.add(field.key)
-      used.add(labFieldCommentKey(field.key))
-      rows.push({ label: extraPrintLabel(field), value: withUnit(value, field.unit) })
+      pushExtra(field)
     }
   }
+
+  // Champs urine/selles volontairement hors colonnes (ex. Urine HCG) → extras.
+  for (const section of panel?.sections ?? []) {
+    for (const field of section.fields) {
+      if (
+        !EXTRA_ALWAYS_INCLUDE_KEYS.has(field.key) &&
+        !isUrineHcgField(field.key, field.label)
+      ) {
+        continue
+      }
+      pushExtra(field)
+    }
+  }
+
   return rows
 }
 
@@ -435,8 +473,6 @@ export const LAB_CLASSIC_SHEET_STYLES = `
     padding: 0;
     border: none;
     background: transparent;
-    page-break-inside: avoid;
-    break-inside: avoid;
   }
   .lab-classic-sheet__eq-row {
     display: grid;
@@ -464,8 +500,6 @@ export const LAB_CLASSIC_SHEET_STYLES = `
     table-layout: fixed;
     border: 1.5px solid #0f172a;
     background: #fff;
-    page-break-inside: avoid;
-    break-inside: avoid;
   }
   .lab-classic-sheet__table td,
   .lab-classic-sheet__col {

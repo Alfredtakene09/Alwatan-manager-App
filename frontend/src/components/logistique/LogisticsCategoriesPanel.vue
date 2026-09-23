@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { Tags, Plus, RefreshCw, Save } from '@lucide/vue'
+import { Tags, Plus, Save } from '@lucide/vue'
 import api from '@/api/client'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -186,9 +186,6 @@ defineExpose({ reload: loadItems })
 <template>
   <PageTableSection embedded>
     <template #toolbar>
-      <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
-        Actualiser
-      </UiButton>
       <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
         Nouvelle catégorie
       </UiButton>

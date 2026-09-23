@@ -49,8 +49,11 @@ if (-not $icon) {
 
 $filesFromScripts = @(
     '_alwatan-common.ps1',
+    'demarrer-alwatan.ps1',
+    'demarrer-alwatan.cmd',
     'lancer-client.ps1',
     'installer-poste-client.ps1',
+    'mise-a-jour-poste-pharmacie.ps1',
     'tester-poste-client.ps1',
     'diagnostic-poste-client.ps1',
     'alwatan-server.txt.example'
@@ -67,13 +70,14 @@ Get-ChildItem -LiteralPath $packageDir -Filter '*.ps1' | ForEach-Object {
 Copy-Item $icon (Join-Path $packageDir 'alwatan.ico') -Force
 
 Write-AlwatanServerConfig -ServerIp $ServerIp -TailscaleIp $TailscaleIp -Path (Join-Path $packageDir 'alwatan-server.txt')
+Update-AlwatanSilentLauncher -ScriptBaseName 'demarrer-alwatan' -ScriptsDir $packageDir | Out-Null
 Update-AlwatanSilentLauncher -ScriptBaseName 'lancer-client' -ScriptsDir $packageDir | Out-Null
 
 $url = "http://${ServerIp}:${Port}/"
 $tsUrl = if ($TailscaleIp -and $TailscaleIp -ne $ServerIp) { "http://${TailscaleIp}:${Port}/" } else { $null }
 
-$lienLines = @("Wi-Fi / Ethernet : $($url.TrimEnd('/'))")
-if ($tsUrl) { $lienLines += "Tailscale        : $($tsUrl.TrimEnd('/'))" }
+$lienLines = @("Ethernet : $($url.TrimEnd('/'))")
+if ($tsUrl) { $lienLines += "Tailscale (secours) : $($tsUrl.TrimEnd('/'))" }
 [System.IO.File]::WriteAllText(
     (Join-Path $packageDir 'LIEN-SERVEUR.txt'),
     ($lienLines -join "`r`n"),
@@ -84,34 +88,41 @@ $ouvrirBat = @"
 @echo off
 title Alwatan Manager
 cd /d "%~dp0"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0lancer-client.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0demarrer-alwatan.ps1" -Mode Client
 if errorlevel 1 pause
 "@
+Set-Content -LiteralPath (Join-Path $packageDir 'DEMARRER-ALWATAN.cmd') -Value $ouvrirBat -Encoding ASCII
 Set-Content -LiteralPath (Join-Path $packageDir 'Ouvrir Alwatan.bat') -Value $ouvrirBat -Encoding ASCII
 
 $ouvrirHardBat = @"
 @echo off
 title Alwatan Manager (rechargement force)
 cd /d "%~dp0"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0lancer-client.ps1" -ForceHardReload
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0demarrer-alwatan.ps1" -Mode Client -ForceHardReload
 if errorlevel 1 pause
 "@
 Set-Content -LiteralPath (Join-Path $packageDir 'Ouvrir Alwatan (rechargement force).bat') -Value $ouvrirHardBat -Encoding ASCII
 
-$ouvrirUrl = @"
-[InternetShortcut]
-URL=$url
+$majPharmacieBat = @"
+@echo off
+title Alwatan - Mise a jour poste Pharmacie
+cd /d "%~dp0"
+echo.
+echo   Mise a jour Pharmacie : raccourci + impression Edge (sans agent)
+echo.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -LiteralPath '%~dp0' -Include *.ps1,*.cmd,*.bat -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0mise-a-jour-poste-pharmacie.ps1"
+if errorlevel 1 (
+  echo.
+  echo Echec. Verifiez le cable reseau et que le serveur Alwatan est allume.
+  pause
+  exit /b 1
+)
+echo.
+pause
 "@
-Set-Content -LiteralPath (Join-Path $packageDir 'Ouvrir Alwatan.url') -Value $ouvrirUrl -Encoding ASCII
-Set-Content -LiteralPath (Join-Path $packageDir 'Ouvrir Alwatan (Wi-Fi).url') -Value $ouvrirUrl -Encoding ASCII
+Set-Content -LiteralPath (Join-Path $packageDir 'METTRE-A-JOUR-PHARMACIE.cmd') -Value $majPharmacieBat -Encoding ASCII
 
-if ($tsUrl) {
-    $ouvrirTs = @"
-[InternetShortcut]
-URL=$tsUrl
-"@
-    Set-Content -LiteralPath (Join-Path $packageDir 'Ouvrir Alwatan (Tailscale).url') -Value $ouvrirTs -Encoding ASCII
-}
 $installerBat = @"
 @echo off
 title Installation Alwatan Manager (client)
@@ -155,29 +166,29 @@ if errorlevel 1 (
 Set-Content -Path (Join-Path $packageDir 'DIAGNOSTIC.bat') -Value $diagnosticBat -Encoding ASCII
 
 $lisezMoi = @"
-Clinique Alwatan - Setup client (acces reseau)
-==============================================
+Clinique Alwatan - Setup client (Ethernet, hors ligne)
+======================================================
 
 Sur ce PC (reception, medecin, etc.) - pas le serveur :
 
 1. Copiez tout le dossier $packageName (cle USB ou reseau).
-2. Double-cliquez sur INSTALLER.bat
-3. Validez l'IP Ethernet du serveur si demandee (defaut : $ServerIp)
-4. Utilisez le raccourci Bureau Alwatan Manager
-   (teste Ethernet puis Tailscale automatiquement)
+2. POSTE PHARMACIE (impression Edge, sans agent) :
+   Double-cliquez sur METTRE-A-JOUR-PHARMACIE.cmd
+3. Autres postes : double-cliquez sur INSTALLER.bat
+4. Validez l'IP Ethernet du serveur si demandee (defaut : $ServerIp)
+5. Utilisez le raccourci Bureau « Alwatan Manager »
+   ou DEMARRER-ALWATAN.cmd
 
 SECOURS immediat (sans installation) :
-  Ouvrir Alwatan.bat  -> Ethernet puis Tailscale
-  Ouvrir Alwatan (rechargement force).bat  -> purge cache + URL anti-cache
-  Ouvrir Alwatan (Wi-Fi).url  -> reseau local (Ethernet)
-  Ouvrir Alwatan (Tailscale).url (si disponible)
+  DEMARRER-ALWATAN.cmd / Ouvrir Alwatan.bat
+  Ouvrir Alwatan (rechargement force).bat
 
-Ethernet   : $url
-Tailscale  : $(if ($tsUrl) { $tsUrl } else { '(non detecte)' })
+Ethernet : $url
+Tailscale (secours) : $(if ($tsUrl) { $tsUrl } else { '(non detecte)' })
 
 Prerequis : Windows 10/11, Edge ou Chrome.
 Le serveur doit etre allume (port $Port).
-Les postes cabinet se connectent en Ethernet (meme reseau / DHCP).
+Cable Ethernet branche = meme reseau, pas besoin d'Internet.
 "@
 Set-Content -Path (Join-Path $packageDir 'LISEZMOI.txt') -Value $lisezMoi -Encoding UTF8
 
@@ -195,14 +206,14 @@ Write-Host '  Package client prêt' -ForegroundColor Green
 Write-Host "  Dossier : $packageDir"
 Write-Host "  ZIP     : $zipPath"
 Write-Host "  Copie   : $accesDir"
-Write-Host "  Wi-Fi   : $url"
-if ($tsUrl) { Write-Host "  Tailscale : $tsUrl" }
+Write-Host "  Ethernet : $url"
+if ($tsUrl) { Write-Host "  Tailscale (secours) : $tsUrl" }
 Write-Host ''
 Write-Host 'Distribuez le ZIP ou le dossier sur les postes clients, puis INSTALLER.bat' -ForegroundColor Cyan
-Write-Host 'Secours : Ouvrir Alwatan.bat (Wi-Fi puis Tailscale)' -ForegroundColor Cyan
+Write-Host 'Ou lancez DEMARRER-ALWATAN.cmd directement (hors ligne OK).' -ForegroundColor Cyan
 Write-Host ''
 
 if (-not $Quiet) {
     $msgTs = if ($tsUrl) { "`nTailscale : $tsUrl" } else { '' }
-    Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Setup client cree.`n`nZIP :`n$zipPath`n`nWi-Fi : $url$msgTs`n`nCopiez-le sur les autres PC et lancez INSTALLER.bat"
+    Show-AlwatanMessage -Title 'Alwatan Manager' -Message "Setup client cree.`n`nZIP :`n$zipPath`n`nEthernet : $url$msgTs`n`nCopiez-le sur les autres PC et lancez INSTALLER.bat"
 }

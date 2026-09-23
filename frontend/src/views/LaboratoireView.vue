@@ -28,6 +28,8 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import LabQueueBell from '@/components/layout/LabQueueBell.vue'
 import { type LabsWaitingVisitRow } from '@/components/ui/LabsWaitingDataTable.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import '@/assets/lab-visit-table.css'
 
 const router = useRouter()
@@ -89,6 +91,62 @@ const rows = computed(() =>
 )
 
 const hasActiveSearch = computed(() => listSearch.value.trim().length > 0)
+
+type LabExportRow = {
+  code: string
+  patientName: string
+  patientPhone: string
+  doctorName: string
+  exams: string
+  eventDate: string
+  eventTime: string
+}
+
+const labExportColumns: ExportColumn<LabExportRow>[] = [
+  { header: 'Matricule', value: (r) => r.code },
+  { header: 'Patient', value: (r) => r.patientName },
+  { header: 'Téléphone', value: (r) => r.patientPhone || '—' },
+  { header: 'Médecin', value: (r) => r.doctorName },
+  { header: 'Examens', value: (r) => r.exams },
+  { header: 'Transféré le', value: (r) => `${r.eventDate} ${r.eventTime}`.trim() },
+]
+
+const labExportRows = computed<LabExportRow[]>(() =>
+  rows.value.map((row) => ({
+    code: row.code,
+    patientName: row.patientName,
+    patientPhone: row.patientPhone,
+    doctorName: row.doctorName,
+    exams: row.examsFull || row.exams,
+    eventDate: row.eventDate,
+    eventTime: row.eventTime,
+  })),
+)
+
+function labExportShared() {
+  const q = listSearch.value.trim()
+  return {
+    captionRows: [
+      {
+        label: uiText('Filtres'),
+        value: q ? `${uiText('Recherche')} : ${q}` : uiText('Aucun filtre'),
+      },
+    ],
+    totalsRows: [{ label: uiText('Nombre de dossiers'), value: String(labExportRows.value.length) }],
+  }
+}
+
+function exportLabPdf() {
+  exportTablePdf(uiText('Laboratoire — en attente'), labExportColumns, labExportRows.value, labExportShared())
+}
+
+function exportLabExcel() {
+  exportTableExcel(uiText('Laboratoire — en attente'), labExportColumns, labExportRows.value, labExportShared())
+}
+
+function exportLabWord() {
+  void exportTableWord(uiText('Laboratoire — en attente'), labExportColumns, labExportRows.value, labExportShared())
+}
 
 async function loadQueue(opts?: { silent?: boolean }) {
   if (!opts?.silent) loading.value = true
@@ -185,6 +243,12 @@ onActivated(() => {
             <span class="lab-toolbar__count">{{
               uiText('{n} dossier(s)').replace('{n}', numberText(filteredVisits.length))
             }}</span>
+            <ExportButtons
+              :disabled="loading || !labExportRows.length"
+              @pdf="exportLabPdf"
+              @excel="exportLabExcel"
+              @word="exportLabWord"
+            />
           </div>
         </template>
         <p v-if="loading && !visits.length" class="empty">{{ uiText('Chargement des analyses en cours…') }}</p>

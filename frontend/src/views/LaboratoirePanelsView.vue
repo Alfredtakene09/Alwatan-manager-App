@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Eye, FlaskConical, Plus, RefreshCw, Save, Search, Trash2 } from '@lucide/vue'
+import { Eye, FlaskConical, Plus, Save, Search, Trash2 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
@@ -574,9 +574,6 @@ onMounted(loadPanels)
             Nouveau formulaire
           </UiButton>
           <LabQueueBell />
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadPanels">
-            Actualiser
-          </UiButton>
           <span class="list-count">{{ listCountLabel }}</span>
         </div>
       </template>

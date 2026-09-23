@@ -18,6 +18,7 @@
  *   npm run db:reset-operational -- --confirm
  */
 import { prisma } from "../src/lib/db.js";
+import { runWithAppDataDeleteUnlock } from "../src/lib/db-delete-guard.js";
 
 const confirmed =
   process.env.RESET_OPERATIONAL_CONFIRM === "1" || process.argv.includes("--confirm");
@@ -145,7 +146,7 @@ async function main() {
   console.log("");
   console.log("Suppression en cours…");
 
-  await purgeOperationalData();
+  await runWithAppDataDeleteUnlock("script", () => purgeOperationalData());
 
   const [
     users,

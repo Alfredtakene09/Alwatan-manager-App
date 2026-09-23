@@ -275,6 +275,21 @@ export const EXAM_KIND_SECTION_LABELS = {
 
 export type ExamKindSlug = keyof typeof EXAM_KIND_SECTION_LABELS;
 
+/** Anciens libellés encore présents dans les notes cliniques. */
+export const EXAM_KIND_SECTION_ALIASES: Record<ExamKindSlug, readonly string[]> = {
+  specialty: ["Spécialité"],
+  examen: ["Laboratoire", "Examen", "Labo"],
+  radio: ["Radio"],
+  echo: ["Écho", "Echo"],
+  odonto: ["Odonto"],
+  operation: ["Opération", "Operation"],
+  hospitalisation: ["Hospitalisation"],
+};
+
+export function sectionLabelsForKind(kind: ExamKindSlug): string[] {
+  return [...new Set([EXAM_KIND_SECTION_LABELS[kind], ...EXAM_KIND_SECTION_ALIASES[kind]])];
+}
+
 export const EXAM_KIND_ORDER: ExamKindSlug[] = [
   "specialty",
   "examen",
@@ -503,9 +518,11 @@ export function labsPaidExamsWhere() {
       {
         OR: [
           { labSentToLabAt: { not: null } },
-          ...EXAM_KIND_ORDER.map((kind) => ({
-            clinicalNotes: { contains: `${EXAMS_PAID_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]})` },
-          })),
+          ...EXAM_KIND_ORDER.flatMap((kind) =>
+            sectionLabelsForKind(kind).map((label) => ({
+              clinicalNotes: { contains: `${EXAMS_PAID_PREFIX} (${label})` },
+            })),
+          ),
           // Tranches déjà encaissées (pas encore soldées → pas de marqueur « payé »).
           {
             visit: {
@@ -530,9 +547,23 @@ export function labsWaitingWhere(doctorId?: string) {
     visit: { status: { not: VisitStatus.CANCELLED } },
     OR: [
       { labSentToLabAt: { not: null } },
-      ...LAB_QUEUE_EXAM_KINDS.map((kind) => ({
-        clinicalNotes: { contains: `${EXAMS_PAID_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]})` },
-      })),
+      ...LAB_QUEUE_EXAM_KINDS.flatMap((kind) =>
+        sectionLabelsForKind(kind).map((label) => ({
+          clinicalNotes: { contains: `${EXAMS_PAID_PREFIX} (${label})` },
+        })),
+      ),
+      {
+        visit: {
+          invoices: {
+            some: {
+              type: InvoiceType.LAB_EXAM,
+              status: InvoiceStatus.PAID,
+              paidAmountFcfa: { gt: 0 },
+              billingExamKind: { in: [...LAB_QUEUE_EXAM_KINDS] },
+            },
+          },
+        },
+      },
     ],
     NOT: { clinicalNotes: { contains: LAB_RESULTS_COMPLETION_MARKER } },
   };
@@ -549,9 +580,11 @@ export function labsCompletedWhere(doctorId?: string) {
 function parseExamCommentLine(line: string): { kind: ExamKindSlug; comment: string } | null {
   const trimmed = line.trim();
   for (const kind of EXAM_KIND_ORDER) {
-    const prefix = `${EXAM_COMMENT_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]}) : `;
-    if (trimmed.startsWith(prefix)) {
-      return { kind, comment: trimmed.slice(prefix.length).trim() };
+    for (const label of sectionLabelsForKind(kind)) {
+      const prefix = `${EXAM_COMMENT_PREFIX} (${label}) : `;
+      if (trimmed.startsWith(prefix)) {
+        return { kind, comment: trimmed.slice(prefix.length).trim() };
+      }
     }
   }
   return null;
@@ -599,12 +632,14 @@ function isStructuredExamNoteLine(line: string) {
 function parsePaidKindLine(line: string): { kind: ExamKindSlug; paidAt: Date } | null {
   const trimmed = line.trim();
   for (const kind of EXAM_KIND_ORDER) {
-    const prefix = `${EXAMS_PAID_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]}) : `;
-    if (!trimmed.startsWith(prefix)) continue;
-    const dateStr = trimmed.slice(prefix.length).trim();
-    const parsed = new Date(dateStr);
-    if (Number.isNaN(parsed.getTime())) return null;
-    return { kind, paidAt: parsed };
+    for (const label of sectionLabelsForKind(kind)) {
+      const prefix = `${EXAMS_PAID_PREFIX} (${label}) : `;
+      if (!trimmed.startsWith(prefix)) continue;
+      const dateStr = trimmed.slice(prefix.length).trim();
+      const parsed = new Date(dateStr);
+      if (Number.isNaN(parsed.getTime())) return null;
+      return { kind, paidAt: parsed };
+    }
   }
   return null;
 }
@@ -712,12 +747,32 @@ export function removePrescribedExamLabelsFromNotes(
   return buildPrescribedExamsNotesByKind(byKind, notes, undefined, comments);
 }
 
+export function restorePrescribedExamLabelsToNotes(
+  notes: string | null | undefined,
+  additions: Array<{ examKind: ExamKindSlug; examLabel: string }>,
+): string {
+  const byKind = parsePrescribedExamsByKind(notes);
+  const comments = parsePrescribedExamCommentsByKind(notes);
+  for (const { examKind, examLabel } of additions) {
+    const target = examLabel.trim();
+    if (!target) continue;
+    const labels = byKind[examKind] ?? [];
+    if (!labels.some((label) => label.trim() === target)) {
+      labels.push(target);
+    }
+    byKind[examKind] = labels;
+  }
+  return buildPrescribedExamsNotesByKind(byKind, notes, undefined, comments);
+}
+
 function parseExamLine(line: string): { kind: ExamKindSlug; exams: string[] } | null {
   const trimmed = line.trim();
   for (const kind of EXAM_KIND_ORDER) {
-    const prefix = `${EXAMS_PRESCRIBED_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]}) : `;
-    if (trimmed.startsWith(prefix)) {
-      return { kind, exams: splitPrescribedExamList(trimmed.slice(prefix.length)) };
+    for (const label of sectionLabelsForKind(kind)) {
+      const prefix = `${EXAMS_PRESCRIBED_PREFIX} (${label}) : `;
+      if (trimmed.startsWith(prefix)) {
+        return { kind, exams: splitPrescribedExamList(trimmed.slice(prefix.length)) };
+      }
     }
   }
 

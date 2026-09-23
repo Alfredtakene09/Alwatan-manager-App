@@ -22,9 +22,15 @@ import { printAllPendingLabExamInvoices } from '@/lib/lab-exam-invoice'
 import { emptyExamReductionsByKind } from '@/lib/exam-billing'
 import type { ExamKindSlug } from '@/lib/exam-catalog/types'
 import { cancelPrintWindow, ensurePrintWindow } from '@/lib/print-document'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { exportTableExcel, exportTablePdf, exportTableWord } from '@/lib/table-export'
+import {
+  labExamListExportColumns,
+  toLabExamListExportRows,
+} from '@/lib/lab-exam-pending-export'
 
 const auth = useAuthStore()
-const { t, uiText } = useAppI18n()
+const { t, uiText, isArabic } = useAppI18n()
 const canDeletePaid = computed(() => auth.user?.role === 'ADMIN')
 const deletingPaid = ref(false)
 
@@ -36,6 +42,31 @@ const reclamationItem = ref<LabExamPendingItem | null>(null)
 const reclamationOpen = ref(false)
 const detailItem = ref<LabExamPendingItem | null>(null)
 const detailOpen = ref(false)
+
+const paidExportRows = computed(() =>
+  toLabExamListExportRows(paidItems.value, 'paid', isArabic.value ? 'ar-TD' : 'fr-FR'),
+)
+const paidExportColumns = computed(() => labExamListExportColumns('paid'))
+
+function paidExportShared() {
+  return {
+    totalsRows: [
+      { label: uiText('Nombre de dossiers'), value: String(paidExportRows.value.length) },
+    ],
+  }
+}
+
+function exportPaidPdf() {
+  exportTablePdf(uiText('Examens payés'), paidExportColumns.value, paidExportRows.value, paidExportShared())
+}
+
+function exportPaidExcel() {
+  exportTableExcel(uiText('Examens payés'), paidExportColumns.value, paidExportRows.value, paidExportShared())
+}
+
+function exportPaidWord() {
+  void exportTableWord(uiText('Examens payés'), paidExportColumns.value, paidExportRows.value, paidExportShared())
+}
 
 const printableIds = computed(() => {
   const ids = new Set<string>()
@@ -210,6 +241,12 @@ onMounted(load)
         icon-variant="green"
       >
         <template #actions>
+          <ExportButtons
+            :disabled="loading || !paidExportRows.length"
+            @pdf="exportPaidPdf"
+            @excel="exportPaidExcel"
+            @word="exportPaidWord"
+          />
           <UiButton variant="ghost" size="sm" :disabled="loading" @click="load">
             {{ t('common.refresh') }}
           </UiButton>

@@ -10,6 +10,10 @@ import { applyStockMovement, recordDispensationMovement } from "../lib/pharmacy-
 import { listPharmacyStockAlerts, listPharmacyExpiryAlerts } from "../lib/pharmacy-alerts.js";
 import { buildPharmacyReport } from "../lib/pharmacy-reports.js";
 import { buildPharmacyRevenueReport } from "../lib/pharmacy-revenue.js";
+import {
+  buildPharmacyDayClosureSnapshot,
+  pharmacyDayBounds,
+} from "../lib/pharmacy-day-closure.js";
 import { parseLimitParam, yearMonthRange } from "../lib/year-month.js";
 import {
   applyPharmacySaleReturns,
@@ -44,7 +48,7 @@ const prescriptionSchema = z
     notes: z.string().optional(),
     reductionFcfa: z.number().int().min(0).optional(),
     isFree: z.boolean().optional(),
-    coveredByName: z.string().min(2).optional(),
+    coveredByName: z.string().optional(),
     items: z.array(z.object({ productId: z.string(), quantity: z.number().int().positive() })).min(1),
   })
   .superRefine((body, ctx) => {
@@ -56,12 +60,6 @@ const prescriptionSchema = z
     }
     if (hasExternalId && hasExternalName) {
       ctx.addIssue({ code: "custom", message: "Indiquer un client existant ou un nouveau nom, pas les deux" });
-    }
-    const reductionFcfa = body.reductionFcfa ?? 0;
-    const isFree = body.isFree === true;
-    const coveredByName = body.coveredByName?.trim();
-    if ((isFree || reductionFcfa > 0) && !coveredByName) {
-      ctx.addIssue({ code: "custom", message: "Nom du responsable requis pour réduction/gratuité" });
     }
   });
 
@@ -855,12 +853,23 @@ router.get("/revenue-report", async (req, res) => {
 });
 
 router.get("/pharmacists", async (_req, res) => {
-  const pharmacists = await prisma.user.findMany({
-    where: { role: "PHARMACIEN", active: true },
+  const operators = await prisma.user.findMany({
+    where: {
+      active: true,
+      role: { in: ["PHARMACIEN", "ADMIN"] },
+    },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
-    select: { id: true, firstName: true, lastName: true },
+    select: { id: true, firstName: true, lastName: true, role: true },
   });
-  return res.json(pharmacists);
+  const ranked = [...operators].sort((a, b) => {
+    const rank = (role: string) => (role === "PHARMACIEN" ? 0 : 1);
+    const byRole = rank(a.role) - rank(b.role);
+    if (byRole !== 0) return byRole;
+    const byLast = a.lastName.localeCompare(b.lastName, "fr");
+    if (byLast !== 0) return byLast;
+    return a.firstName.localeCompare(b.firstName, "fr");
+  });
+  return res.json(ranked);
 });
 
 router.get("/reports", async (req, res) => {
@@ -1450,12 +1459,15 @@ router.post("/", async (req, res) => {
       const reductionFcfa = body.isFree ? grossTotal : Math.min(requestedReduction, grossTotal);
       const total = Math.max(0, grossTotal - reductionFcfa);
       const coveredByName = body.coveredByName?.trim() || null;
-      const paymentNote =
-        body.isFree && coveredByName
+      const paymentNote = body.isFree
+        ? coveredByName
           ? `Prise en charge gratuite par: ${coveredByName}`
-          : reductionFcfa > 0 && coveredByName
+          : "Prise en charge gratuite"
+        : reductionFcfa > 0
+          ? coveredByName
             ? `Réduction: ${reductionFcfa} FCFA — Responsable: ${coveredByName}`
-            : null;
+            : `Réduction: ${reductionFcfa} FCFA`
+          : null;
       const baseNotes = externalClient ? null : body.notes?.trim() || null;
       const mergedNotes = [baseNotes, paymentNote].filter(Boolean).join("\n");
 
@@ -1526,6 +1538,59 @@ router.post("/", async (req, res) => {
   } catch (error) {
     return mapStockError(error, res);
   }
+});
+
+router.get("/day-closure", async (req, res) => {
+  const user = req.user!;
+  const from = typeof req.query.from === "string" ? req.query.from.trim() : undefined;
+  const to = typeof req.query.to === "string" ? req.query.to.trim() : undefined;
+  const requestedPharmacistId =
+    typeof req.query.pharmacistId === "string" ? req.query.pharmacistId.trim() : "";
+  const pharmacistId = user.role === "PHARMACIEN" ? user.id : requestedPharmacistId || undefined;
+  const snapshot = await buildPharmacyDayClosureSnapshot(pharmacistId, new Date(), { from, to });
+  return res.json(snapshot);
+});
+
+router.post("/day-closure", async (req, res) => {
+  const user = req.user!;
+  const snapshot = await buildPharmacyDayClosureSnapshot(user.id);
+  if (snapshot.closed) {
+    return res.json(snapshot);
+  }
+
+  const { businessDate } = pharmacyDayBounds();
+
+  const closure = await prisma.pharmacyDayClosure.create({
+    data: {
+      pharmacistId: user.id,
+      businessDate,
+      salesCount: snapshot.salesCount,
+      returnsCount: snapshot.returnsCount,
+      grossSalesFcfa: snapshot.grossSalesFcfa,
+      returnsFcfa: snapshot.returnsFcfa,
+      netFcfa: snapshot.netFcfa,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      userId: user.id,
+      action: "CLOSE",
+      entity: "PharmacyDayClosure",
+      entityId: closure.id,
+      metadata: {
+        salesCount: snapshot.salesCount,
+        netFcfa: snapshot.netFcfa,
+        businessDate: snapshot.businessDate,
+      },
+    },
+  });
+
+  return res.status(201).json({
+    ...snapshot,
+    closed: true,
+    closedAt: closure.closedAt.toISOString(),
+  });
 });
 
 export default router;

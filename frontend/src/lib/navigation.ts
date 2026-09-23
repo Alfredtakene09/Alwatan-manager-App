@@ -71,6 +71,8 @@ export type NavItem = {
   labStock?: boolean
   /** Action UI granulaire (onglet Boutons) — masque l’entrée si décochée. */
   uiAction?: string
+  /** Si défini, n’afficher que pour ces rôles (en plus du module). */
+  roles?: AppUserRole[]
   /** MEDECIN : visible seulement si lié au bloc / chirurgie / types d’opération. */
   doctorOperations?: boolean
   children?: NavChildItem[]
@@ -98,7 +100,16 @@ export type NavConfig = {
   sections: NavSection[]
 }
 
+const pharmacyManagementRoles: AppUserRole[] = ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE']
+
 const pharmacyNavChildren: NavChildItem[] = [
+  {
+    to: '/pharmacie/tableau-de-bord',
+    label: 'Tableau de bord',
+    icon: LayoutDashboard,
+    module: 'pharmacie',
+    description: 'Stats ventes, stock et ordonnances — distinct du tableau de bord clinique',
+  },
   {
     to: '/pharmacie/caisse',
     label: 'Caisse',
@@ -112,6 +123,7 @@ const pharmacyNavChildren: NavChildItem[] = [
     icon: Tags,
     module: 'pharmacie',
     pharmacyCatalog: true,
+    roles: pharmacyManagementRoles,
     description: 'Organisation du catalogue',
   },
   {
@@ -126,6 +138,7 @@ const pharmacyNavChildren: NavChildItem[] = [
     label: 'Mouvements',
     icon: ArrowDownUp,
     module: 'pharmacie',
+    roles: pharmacyManagementRoles,
     description: 'Entrées, sorties et ajustements de stock',
   },
   {
@@ -140,6 +153,7 @@ const pharmacyNavChildren: NavChildItem[] = [
     label: 'Rapports',
     icon: BarChart3,
     module: 'pharmacie',
+    roles: pharmacyManagementRoles,
     description: 'Synthèse et statistiques',
   },
   {
@@ -155,6 +169,7 @@ const pharmacyNavChildren: NavChildItem[] = [
     icon: Building2,
     module: 'pharmacie',
     pharmacyCatalog: true,
+    roles: pharmacyManagementRoles,
     description: 'Contacts fournisseurs',
   },
 ]
@@ -245,6 +260,16 @@ const logistiqueNav: NavSection[] = [
   },
 ]
 
+const hospitalisationNavChildren: NavChildItem[] = [
+  {
+    to: '/hospitalisation?tab=plan',
+    label: 'Plan des salles',
+    icon: LayoutDashboard,
+    module: 'hospitalisation',
+    description: 'Occupation des salles en temps réel',
+  },
+]
+
 const receptionNav: NavSection[] = [
   {
     items: [
@@ -301,6 +326,18 @@ const receptionNav: NavSection[] = [
             module: 'reception',
           },
         ],
+      },
+      {
+        label: 'Hospitalisation',
+        icon: BedDouble,
+        module: 'hospitalisation',
+        description: 'Attribution des salles et hospitalisations',
+        to: '/reception?tab=hospitalized',
+        children: hospitalisationNavChildren.flatMap((item) =>
+          item.to
+            ? [{ ...item, to: item.to.replace('/hospitalisation', '/reception') }]
+            : [],
+        ),
       },
     ],
   },
@@ -369,7 +406,7 @@ const directionOperationalNav: NavSection[] = [
         label: 'Tableau de board',
         icon: LayoutDashboard,
         module: 'dashboard',
-        description: 'Vue d’ensemble, finances, caisses et supervision',
+        description: 'Vue d’ensemble de la clinique — finances, caisses et supervision',
       },
       {
         to: '/reception',
@@ -498,7 +535,7 @@ const directionOperationalNav: NavSection[] = [
             module: 'reception',
           },
           {
-            to: '/hospitalisation',
+            to: '/hospitalisation?tab=hospitalized',
             label: 'Hospitalisation',
             icon: BedDouble,
             module: 'hospitalisation',
@@ -565,7 +602,7 @@ const directionAdminNav: NavSection[] = [
             module: 'dossier-patient',
           },
           {
-            to: '/hospitalisation',
+            to: '/hospitalisation?tab=hospitalized',
             label: 'Hospitalisation',
             icon: BedDouble,
             module: 'hospitalisation',
@@ -661,7 +698,7 @@ const pharmacienNav: NavSection[] = [
         module: 'pharmacie',
       },
       ...pharmacyNavChildren
-        .filter((item) => item.to !== '/pharmacie/caisse')
+        .filter((item) => item.to !== '/pharmacie/caisse' && item.to !== '/pharmacie/tableau-de-bord')
         .map((item) => ({ ...item })),
     ],
   },
@@ -751,6 +788,7 @@ function filterNavItem(
 ): NavItem | null {
   const navUser = { role, hiddenUiActions: options?.hiddenUiActions }
   if (item.doctorOperations && !options?.showDoctorOperations) return null
+  if (item.roles && !item.roles.includes(role)) return null
   if (item.uiAction && !isUiActionAllowed(navUser, item.uiAction)) return null
   if (hasNavChildren(item)) {
     const children = item.children
@@ -883,19 +921,56 @@ export function isNavGroupActive(path: string, item: NavItem): boolean {
   return item.children.some((child) => navChildMatchesPath(path, child))
 }
 
-export function isNavItemActive(path: string, itemTo: string): boolean {
-  if (path === itemTo) return true
-  if (itemTo === examCatalogKindRoute('examen') && isExamCatalogKindPath(path)) return true
-  if (itemTo === '/dashboard' || itemTo === '/reception') return false
+function splitNavHref(href: string): { path: string; search: string } {
+  const q = href.indexOf('?')
+  if (q === -1) return { path: href, search: '' }
+  return { path: href.slice(0, q), search: href.slice(q + 1) }
+}
+
+function hospitalisationTabFromSearch(search: string): 'plan' | 'hospitalized' | null {
+  const tab = new URLSearchParams(search).get('tab')
+  if (tab === 'plan' || tab === 'hospitalized') return tab
+  if (tab === 'hospitaliser' || tab === 'queue') return 'hospitalized'
+  return null
+}
+
+function isHospitalisationHostPath(path: string): boolean {
+  return path === '/hospitalisation' || path === '/reception'
+}
+
+export function isNavItemActive(current: string, itemTo: string): boolean {
+  const currentHref = splitNavHref(current)
+  const itemHref = splitNavHref(itemTo)
+  const path = currentHref.path
+  const itemPath = itemHref.path
+  const itemHospTab = isHospitalisationHostPath(itemPath)
+    ? hospitalisationTabFromSearch(itemHref.search)
+    : null
+  const currentHospTab = hospitalisationTabFromSearch(currentHref.search)
+  if (itemHospTab) {
+    if (path !== itemPath) return false
+    if (path === '/hospitalisation') {
+      return (currentHospTab ?? 'hospitalized') === itemHospTab
+    }
+    return currentHospTab === itemHospTab
+  }
+
+  if (itemPath === '/reception') {
+    return path === '/reception' && !currentHospTab
+  }
+
+  if (path === itemPath) return true
+  if (itemPath === examCatalogKindRoute('examen') && isExamCatalogKindPath(path)) return true
+  if (itemPath === '/dashboard' || itemPath === '/reception') return false
   // Sous-routes dédiées (ex. réclamations) sans activer le parent « Examens payés ».
   if (
-    (itemTo === '/reception/examens-payes' || itemTo === '/comptabilite/examens-payes') &&
-    path.startsWith(`${itemTo}/`)
+    (itemPath === '/reception/examens-payes' || itemPath === '/comptabilite/examens-payes') &&
+    path.startsWith(`${itemPath}/`)
   ) {
     return false
   }
-  if (itemTo === '/admin/employes' && path.startsWith('/admin/employes/')) {
+  if (itemPath === '/admin/employes' && path.startsWith('/admin/employes/')) {
     return false
   }
-  return path.startsWith(`${itemTo}/`)
+  return path.startsWith(`${itemPath}/`)
 }

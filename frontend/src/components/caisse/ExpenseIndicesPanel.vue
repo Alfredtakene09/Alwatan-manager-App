@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { ListOrdered, Plus, RefreshCw, Save } from '@lucide/vue'
+import { ListOrdered, Plus, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -200,9 +200,6 @@ onMounted(loadItems)
     icon-variant="teal"
   >
     <template #actions>
-      <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading || saving" @click="loadItems">
-        Actualiser
-      </UiButton>
       <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
         Nouvel indice
       </UiButton>

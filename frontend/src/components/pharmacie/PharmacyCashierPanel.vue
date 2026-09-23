@@ -15,6 +15,7 @@ import {
   PillBottle,
   ClipboardList,
   RotateCcw,
+  Lock,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { CLINIC } from '@/lib/clinic'
@@ -22,6 +23,7 @@ import { formatFcfa, fullName } from '@/lib/roles'
 import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, cancelPrintWindow, openPrintDocument, reservePrintWindow, thermalIsRtl, thermalLocaleMetaRow, thermalThanksHtml, thermalTicketDirAttrs, thermalTicketRootClass } from '@/lib/print-document'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
+import { usePharmacyDayClosure } from '@/composables/usePharmacyDayClosure'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiTextarea from '@/components/ui/UiTextarea.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -113,7 +115,7 @@ const { uiText } = useAppI18n()
 
 const rootRef = ref<HTMLElement | null>(null)
 const searchRef = ref<HTMLInputElement | null>(null)
-const isFullscreen = ref(false)
+const isFullscreen = ref(true)
 const catalogSearch = ref('')
 const buyerType = ref<BuyerType>('external')
 const patientId = ref('')
@@ -147,6 +149,7 @@ const ordonnances = ref<PendingOrdonnance[]>([])
 const ordonnancesError = ref('')
 const confirmOrdonnance = ref<PendingOrdonnance | null>(null)
 const confirmNameInput = ref('')
+const { closingSales, closePharmacySales } = usePharmacyDayClosure()
 const pendingOrdonnancesCount = ref(0)
 
 const patientsForSelect = computed(() => {
@@ -623,11 +626,6 @@ function resolveCheckoutAdjustment(): CheckoutAdjustment | null {
   const allowedPercent = (REDUCTION_PERCENT_OPTIONS as readonly number[]).includes(percent)
   const reductionFcfa = hasReduction && allowedPercent ? selectedReductionFcfa.value : 0
 
-  if ((isFree || hasReduction) && responsible.length < 2) {
-    message.value = 'Indiquez le nom de la personne responsable.'
-    messageType.value = 'error'
-    return null
-  }
   if (hasReduction && !allowedPercent) {
     message.value = 'Choisissez un pourcentage de réduction valide (5 % à 50 %).'
     messageType.value = 'error'
@@ -714,6 +712,7 @@ async function submitSale() {
   if (printItems.length) reservePrintWindow('80mm')
   submitting.value = true
   message.value = ''
+  let ticketToPrint: Parameters<typeof printReceipt>[0] | null = null
 
   try {
     const { data } = await api.post('/pharmacie', {
@@ -749,7 +748,7 @@ async function submitSale() {
             : data.prescription?.id
               ? `RX-${String(data.prescription.id).slice(-6).toUpperCase()}`
               : 'TICKET')
-      await printReceipt({
+      ticketToPrint = {
         items: printItems,
         notes: isExternal ? undefined : notes.value.trim(),
         invoiceNumber,
@@ -761,7 +760,7 @@ async function submitSale() {
         isFree: data.isFree,
         date: new Date().toLocaleString('fr-FR'),
         isExternal,
-      })
+      }
     } else {
       cancelPrintWindow()
     }
@@ -775,6 +774,7 @@ async function submitSale() {
     void nextTick(() => searchRef.value?.focus())
   } catch (error: unknown) {
     cancelPrintWindow()
+    ticketToPrint = null
     const apiMessage =
       error && typeof error === 'object' && 'response' in error
         ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
@@ -783,6 +783,13 @@ async function submitSale() {
     messageType.value = 'error'
   } finally {
     submitting.value = false
+  }
+
+  if (ticketToPrint) {
+    const ticket = ticketToPrint
+    window.setTimeout(() => {
+      void printReceipt(ticket)
+    }, 50)
   }
 }
 
@@ -796,21 +803,52 @@ function openCheckoutModal() {
   checkoutModalOpen.value = true
 }
 
-async function toggleFullscreen() {
-  if (document.fullscreenElement) {
-    await document.exitFullscreen()
-  } else {
-    await rootRef.value?.requestFullscreen()
+async function enterNativeFullscreen() {
+  const el = rootRef.value
+  if (!el || document.fullscreenElement || !isFullscreen.value) return
+  try {
+    await el.requestFullscreen()
+    if (!isFullscreen.value) {
+      await exitNativeFullscreen()
+    }
+  } catch {
+    /* Le navigateur exige souvent un geste : le mode CSS couvre déjà l’écran. */
   }
 }
 
+async function exitNativeFullscreen() {
+  if (!document.fullscreenElement) return
+  try {
+    await document.exitFullscreen()
+  } catch {
+    /* ignore */
+  }
+}
+
+async function toggleFullscreen() {
+  if (isFullscreen.value) {
+    isFullscreen.value = false
+    await exitNativeFullscreen()
+    return
+  }
+  isFullscreen.value = true
+  await enterNativeFullscreen()
+}
+
 function onFullscreenChange() {
-  isFullscreen.value = Boolean(document.fullscreenElement)
+  if (document.fullscreenElement) {
+    isFullscreen.value = true
+    return
+  }
+  isFullscreen.value = false
 }
 
 onMounted(() => {
   document.addEventListener('fullscreenchange', onFullscreenChange)
   searchRef.value?.focus()
+  void nextTick().then(() => {
+    void enterNativeFullscreen()
+  })
   void loadPendingOrdonnances('').then(() => {
     /* compteur badge uniquement */
   })
@@ -819,6 +857,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('fullscreenchange', onFullscreenChange)
+  void exitNativeFullscreen()
 })
 
 watch(
@@ -852,14 +891,20 @@ watch(
           {{ uiText('Retour produit') }}
         </UiButton>
         <UiButton variant="secondary" size="sm" :icon="ClipboardList" @click="openOrdonnancesModal">
-          {{ uiText('Ordonnances médecin') }}
+          {{ uiText('Ordonnance') }}
           <span v-if="pendingOrdonnancesCount > 0" class="cashier__badge">{{ pendingOrdonnancesCount }}</span>
+        </UiButton>
+        <UiButton
+          variant="secondary"
+          size="sm"
+          :icon="Lock"
+          :disabled="closingSales"
+          @click="closePharmacySales"
+        >
+          {{ uiText('Clôturer les ventes') }}
         </UiButton>
         <UiButton variant="ghost" size="sm" :icon="isFullscreen ? Minimize2 : Maximize2" @click="toggleFullscreen">
           {{ isFullscreen ? uiText('Quitter plein écran') : uiText('Plein écran') }}
-        </UiButton>
-        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="emit('refresh')">
-          {{ uiText('Actualiser') }}
         </UiButton>
       </div>
     </header>
@@ -918,8 +963,8 @@ watch(
                 @keydown.enter.prevent="product.quantity > 0 && addToCart(product.id)"
               >
                 <td>{{ index + 1 }}</td>
-                <td>{{ product.sku }}</td>
-                <td>{{ productDisplayName(product) }}</td>
+                <td class="catalog-row__sku">{{ product.sku }}</td>
+                <td class="catalog-row__name">{{ productDisplayName(product) }}</td>
                 <td>{{ remainingStock(product) }}</td>
                 <td>{{ formatFcfa(product.unitPriceFcfa) }}</td>
               </tr>
@@ -1097,7 +1142,7 @@ watch(
           </option>
         </UiSelect>
         <UiInput
-          v-if="adjustmentMode !== 'none'"
+          v-if="adjustmentMode === 'free'"
           v-model="coveredByName"
           label="Nom de la personne responsable"
           placeholder="Ex. Dr Mahamat / ONG Al Watan"
@@ -1284,9 +1329,16 @@ watch(
 }
 
 .cashier--fullscreen {
-  position: relative;
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
   background: #f8faf6;
   padding: 1rem;
+  padding-top: max(1rem, env(safe-area-inset-top, 0px));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
   overflow: auto;
 }
 
@@ -1633,6 +1685,13 @@ watch(
 .cart-table {
   width: 100%;
   border-collapse: collapse;
+}
+
+.catalog-table {
+  font-size: 1.05rem;
+}
+
+.cart-table {
   font-size: 0.8125rem;
 }
 
@@ -1652,11 +1711,33 @@ watch(
   border-bottom: 1px solid var(--border);
 }
 
+.catalog-table th {
+  font-size: 0.8rem;
+  padding: 0.7rem 0.75rem;
+}
+
 .catalog-table td,
 .cart-table td {
   padding: 0.55rem 0.65rem;
   border-bottom: 1px solid #eef2f7;
   vertical-align: middle;
+}
+
+.catalog-table td {
+  padding: 0.85rem 0.75rem;
+  line-height: 1.35;
+}
+
+.catalog-row__name {
+  font-size: 1.18rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.catalog-row__sku {
+  font-size: 0.98rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .catalog-row {

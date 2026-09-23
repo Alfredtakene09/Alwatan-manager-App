@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Building2, Plus, RefreshCw, Save } from '@lucide/vue'
+import { Building2, Plus, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
@@ -302,9 +302,6 @@ onMounted(load)
       <template #actions>
         <UiButton variant="primary" size="sm" :icon="Plus" @click="openAddModal">
           Nouvelle salle
-        </UiButton>
-        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="load">
-          Actualiser
         </UiButton>
         <span class="list-count">{{ roomCountLabel }}</span>
       </template>

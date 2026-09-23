@@ -94,7 +94,7 @@ defineExpose({
 <style scoped>
 .ui-field {
   display: block;
-  margin-bottom: 1rem;
+  margin-bottom: var(--density-field-gap);
 }
 
 .ui-field__label {
@@ -120,7 +120,8 @@ defineExpose({
 
 .ui-field__input {
   width: 100%;
-  padding: 0.65rem 0.9rem;
+  min-height: var(--app-control-height);
+  padding: var(--density-control-pad-y) var(--density-control-pad-x);
   border: 1.5px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--ui-input-bg);

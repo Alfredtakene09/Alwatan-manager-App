@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ListChecks, Plus, RefreshCw, Save, Stethoscope } from '@lucide/vue'
+import { ListChecks, Plus, Save, Stethoscope } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
@@ -17,6 +17,8 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import MedecinOperationTypesPanel from '@/components/medecin/MedecinOperationTypesPanel.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import '@/assets/simple-table.css'
 
 type CatalogItem = {
@@ -120,6 +122,66 @@ const tableRows = computed(() => {
     isActive: item.active,
   }))
 })
+
+type MedecinExamExportRow = {
+  label: string
+  code: string
+  category: string
+  price: string
+  statusLabel: string
+}
+
+const medecinExamExportColumns = computed<ExportColumn<MedecinExamExportRow>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Libellé'), value: (r) => r.label },
+    { header: uiText('Code'), value: (r) => r.code || '—' },
+    { header: uiText('Catégorie'), value: (r) => r.category },
+    { header: uiText('Tarif'), value: (r) => r.price },
+    { header: uiText('Statut'), value: (r) => r.statusLabel },
+  ]
+})
+
+const medecinExamExportRows = computed<MedecinExamExportRow[]>(() =>
+  tableRows.value.map((row) => ({
+    label: row.label,
+    code: row.code,
+    category: row.category,
+    price: row.price,
+    statusLabel: row.statusLabel,
+  })),
+)
+
+function medecinExamExportFilterCaption(): string {
+  const parts: string[] = []
+  if (selectedCategory.value.trim()) {
+    parts.push(`${uiText('Catégorie')} : ${examNameText(selectedCategory.value)}`)
+  }
+  const q = searchQuery.value.trim()
+  if (q) parts.push(`${uiText('Recherche')} : ${q}`)
+  return parts.length ? parts.join(' · ') : uiText('Aucun filtre')
+}
+
+function medecinExamExportShared() {
+  return {
+    captionRows: [{ label: uiText('Filtres'), value: medecinExamExportFilterCaption() }],
+    totalsRows: [
+      { label: uiText('Nombre d’examens'), value: String(medecinExamExportRows.value.length) },
+    ],
+  }
+}
+
+function exportMedecinExamsPdf() {
+  exportTablePdf(pageTitle.value, medecinExamExportColumns.value, medecinExamExportRows.value, medecinExamExportShared())
+}
+
+function exportMedecinExamsExcel() {
+  exportTableExcel(pageTitle.value, medecinExamExportColumns.value, medecinExamExportRows.value, medecinExamExportShared())
+}
+
+function exportMedecinExamsWord() {
+  void exportTableWord(pageTitle.value, medecinExamExportColumns.value, medecinExamExportRows.value, medecinExamExportShared())
+}
 
 function selectTab(tab: TabId) {
   activeTab.value = tab
@@ -366,6 +428,12 @@ watch(categoryOptions, (options) => {
         class="section"
       >
         <template #actions>
+          <ExportButtons
+            :disabled="loading || !medecinExamExportRows.length"
+            @pdf="exportMedecinExamsPdf"
+            @excel="exportMedecinExamsExcel"
+            @word="exportMedecinExamsWord"
+          />
           <UiButton
             variant="primary"
             size="sm"
@@ -374,9 +442,6 @@ watch(categoryOptions, (options) => {
             @click="openAddModal"
           >
             {{ uiText(addButtonLabel) }}
-          </UiButton>
-          <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">
-            {{ uiText('Actualiser') }}
           </UiButton>
           <span class="list-count">{{ elementCountLabel }}</span>
         </template>

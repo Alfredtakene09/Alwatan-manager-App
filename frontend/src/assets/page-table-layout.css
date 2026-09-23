@@ -4,17 +4,29 @@
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  height: calc(100dvh - 5.25rem);
+  height: calc(100dvh - 4.5rem);
   min-height: 0;
   overflow: hidden;
 }
 
 .page-with-table__head {
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(42dvh, 22rem);
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .page-with-table__head .page-header {
   margin-bottom: 0.35rem;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.page-with-table__head .page-header__actions {
+  width: auto;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
 }
 
 .page-with-table__head .page-header__icon {
@@ -44,17 +56,28 @@
 
 .page-with-table__body {
   flex: 1 1 0;
-  min-height: 0;
+  min-height: 16rem;
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
   overflow: hidden;
 }
 
+.page-with-table__body > .stats-grid,
+.page-with-table__body > .kpi-grid,
+.page-with-table__body > .medecin-stats,
+.page-with-table__body > .ops-stats,
+.page-with-table__body > .compta-stats,
+.page-with-table__body > .supervision-grid,
+.page-with-table__body > .clinical-cards,
+.page-with-table__body > .cash-settlement-stats {
+  flex: 0 0 auto;
+}
+
 .page-with-table__body > .ui-card,
 .page-with-table .ui-card--table-panel {
   flex: 1 1 0;
-  min-height: 0;
+  min-height: 14rem;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -100,14 +123,14 @@
 .page-with-table .ui-card--table-panel .simple-table-shell,
 .page-with-table .ui-card--table-panel .simple-table-shell--fill {
   flex: 1 1 0;
-  min-height: 0;
+  min-height: 12rem;
   height: auto;
   max-height: none;
 }
 
 .page-with-table .ui-card--table-panel .simple-table-scroll {
   flex: 1 1 0;
-  min-height: 0;
+  min-height: 10rem;
   overflow: auto;
   padding-bottom: 0.65rem;
 }
@@ -409,6 +432,11 @@
   .page-with-table__body,
   .page-with-table .ui-card--table-panel,
   .page-with-table .ui-card--table-panel .ui-card__body {
+    overflow: visible;
+  }
+
+  .page-with-table__head {
+    max-height: none;
     overflow: visible;
   }
 

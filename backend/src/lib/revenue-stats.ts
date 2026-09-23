@@ -67,11 +67,10 @@ export function isCollectedOperationInvoice(invoice: {
   billingExamKind?: string | null;
   surgeryCaseId?: string | null;
 }) {
-  return (
-    invoice.type === InvoiceType.SURGERY ||
-    invoice.billingExamKind === "operation" ||
-    Boolean(invoice.surgeryCaseId)
-  );
+  if (invoice.type === InvoiceType.SURGERY) return true;
+  // Un encaissement « opération » sans dossier chirurgie n’apparaît pas dans
+  // Opérations effectuées — ne pas l’ajouter aux entrées opérations.
+  return invoice.billingExamKind === "operation" && Boolean(invoice.surgeryCaseId);
 }
 
 export function isCollectedHospitalizationInvoice(invoice: {
@@ -201,6 +200,7 @@ export function sumCollectedBreakdown(invoices: CollectedInvoiceFields[]): Colle
 }
 
 const collectedInvoiceSelect = {
+  id: true,
   type: true,
   status: true,
   amountFcfa: true,
@@ -211,6 +211,46 @@ const collectedInvoiceSelect = {
   surgeryCaseId: true,
   hospitalizationId: true,
 } as const;
+
+export type InvoicePaymentPaidCapRow = {
+  id: string;
+  invoiceId: string;
+  amountFcfa: number;
+  paidAt: Date;
+  invoicePaidAmountFcfa: number;
+};
+
+/**
+ * Après un remboursement d'examen, Invoice.paidAmountFcfa est réduit mais les
+ * lignes InvoicePayment restent souvent au montant brut. On plafonne donc la
+ * somme des versements d'une facture à paidAmountFcfa (plus ancien d'abord).
+ */
+export function netPaymentAmountsAfterPaidCap(
+  payments: InvoicePaymentPaidCapRow[],
+): Map<string, number> {
+  const byInvoice = new Map<string, InvoicePaymentPaidCapRow[]>();
+  for (const payment of payments) {
+    const list = byInvoice.get(payment.invoiceId) ?? [];
+    list.push(payment);
+    byInvoice.set(payment.invoiceId, list);
+  }
+
+  const netByPaymentId = new Map<string, number>();
+  for (const list of byInvoice.values()) {
+    list.sort((a, b) => {
+      const byDate = a.paidAt.getTime() - b.paidAt.getTime();
+      return byDate !== 0 ? byDate : a.id.localeCompare(b.id);
+    });
+    const cap = Math.max(0, list[0]?.invoicePaidAmountFcfa ?? 0);
+    let remaining = cap;
+    for (const payment of list) {
+      const take = Math.min(Math.max(0, payment.amountFcfa), remaining);
+      remaining -= take;
+      netByPaymentId.set(payment.id, take);
+    }
+  }
+  return netByPaymentId;
+}
 
 function collectedInvoiceParentWhere(): Prisma.InvoiceWhereInput {
   return {
@@ -253,6 +293,8 @@ export async function loadCollectedSlicesBetween(
         invoice: invoiceWhere,
       },
       select: {
+        id: true,
+        invoiceId: true,
         amountFcfa: true,
         paidAt: true,
         recordedById: true,
@@ -274,17 +316,46 @@ export async function loadCollectedSlicesBetween(
     }),
   ]);
 
-  const fromPayments: CollectedSlice[] = payments.map((payment) => ({
-    ...payment.invoice,
-    status: InvoiceStatus.PAID,
-    amountFcfa: payment.amountFcfa,
-    paidAmountFcfa: payment.amountFcfa,
-    paidAt: payment.paidAt,
-    createdAt: payment.paidAt,
-    lastPaidAt: payment.paidAt,
-    issuedByRole: payment.recordedBy.role,
-    recordedById: payment.recordedById,
-  }));
+  const invoiceIds = [...new Set(payments.map((payment) => payment.invoiceId))];
+  const allPaymentsForCap =
+    invoiceIds.length === 0
+      ? []
+      : await prisma.invoicePayment.findMany({
+          where: { invoiceId: { in: invoiceIds } },
+          select: {
+            id: true,
+            invoiceId: true,
+            amountFcfa: true,
+            paidAt: true,
+            invoice: { select: { paidAmountFcfa: true } },
+          },
+        });
+  const netByPaymentId = netPaymentAmountsAfterPaidCap(
+    allPaymentsForCap.map((payment) => ({
+      id: payment.id,
+      invoiceId: payment.invoiceId,
+      amountFcfa: payment.amountFcfa,
+      paidAt: payment.paidAt,
+      invoicePaidAmountFcfa: payment.invoice.paidAmountFcfa,
+    })),
+  );
+
+  const fromPayments: CollectedSlice[] = [];
+  for (const payment of payments) {
+    const netFcfa = netByPaymentId.get(payment.id) ?? 0;
+    if (netFcfa <= 0) continue;
+    fromPayments.push({
+      ...payment.invoice,
+      status: InvoiceStatus.PAID,
+      amountFcfa: netFcfa,
+      paidAmountFcfa: netFcfa,
+      paidAt: payment.paidAt,
+      createdAt: payment.paidAt,
+      lastPaidAt: payment.paidAt,
+      issuedByRole: payment.recordedBy.role,
+      recordedById: payment.recordedById,
+    });
+  }
 
   const fromLegacy: CollectedSlice[] = legacyInvoices.map((invoice) => ({
     ...invoice,

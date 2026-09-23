@@ -133,6 +133,7 @@ function openCreateExpense() {
 }
 
 function openEditExpense(row: AdminExpenseRow) {
+  if (row.source === 'payroll') return
   editingExpense.value = {
     id: row.id,
     businessDate: row.date,
@@ -295,12 +296,15 @@ onMounted(() => {
                 </span>
               </td>
               <td class="actions">
+                <template v-if="row.source !== 'payroll'">
                 <UiButton size="sm" variant="ghost" :icon="Pencil" @click="openEditExpense(row)">
                   {{ t('common.Modifier') }}
                 </UiButton>
                 <UiButton size="sm" variant="danger" :icon="Trash2" @click="deleteExpense(row)">
                   {{ t('common.Supprimer') }}
                 </UiButton>
+                </template>
+                <span v-else class="text-muted">{{ uiText('Paie versée') }}</span>
               </td>
             </tr>
           </tbody>
