@@ -14,10 +14,13 @@ const props = withDefaults(
     titleId?: string
     /** Si false, le modal n'est pas affiché. Défaut true (compatible avec v-if sur le composant). */
     open?: boolean
+    /** Si false, le corps ne scrolle pas (formulaires courts). Défaut true. */
+    bodyScroll?: boolean
   }>(),
   {
     size: 'default',
     open: true,
+    bodyScroll: true,
   },
 )
 
@@ -45,6 +48,7 @@ const subtitleText = computed(() => {
         :class="{
           'ui-form-modal--wide': size === 'wide',
           'ui-form-modal--large': size === 'large',
+          'ui-form-modal--no-scroll': !bodyScroll,
         }"
         role="dialog"
         aria-modal="true"

@@ -49,7 +49,15 @@ const prescriptionSchema = z
     reductionFcfa: z.number().int().min(0).optional(),
     isFree: z.boolean().optional(),
     coveredByName: z.string().optional(),
-    items: z.array(z.object({ productId: z.string(), quantity: z.number().int().positive() })).min(1),
+    items: z
+      .array(
+        z.object({
+          productId: z.string(),
+          quantity: z.number().int().positive().max(999),
+          sellByDetail: z.boolean().optional(),
+        }),
+      )
+      .min(1),
   })
   .superRefine((body, ctx) => {
     const hasPatient = Boolean(body.patientId);
@@ -410,6 +418,9 @@ function mapStockError(error: unknown, res: import("express").Response) {
   if (error instanceof Error) {
     if (error.message === "INVALID_EXTERNAL_NAME") return res.status(400).json({ error: "Nom du client externe invalide" });
     if (error.message === "INSUFFICIENT_STOCK") return res.status(409).json({ error: "Stock insuffisant" });
+    if (error.message === "DETAIL_SALE_NOT_ALLOWED") {
+      return res.status(400).json({ error: "Vente au détail non disponible pour ce produit." });
+    }
     if (error.message === "PRODUCT_NOT_FOUND") return res.status(404).json({ error: "Produit introuvable" });
     if (error.message === "SUPPLIER_NOT_FOUND") return res.status(404).json({ error: "Fournisseur introuvable" });
     if (error.message === "NO_STOCK_CHANGE") return res.status(400).json({ error: "Aucun changement de stock" });
@@ -1552,11 +1563,31 @@ router.post("/", async (req, res) => {
       const lines = body.items.map((item) => {
         const product = productMap.get(item.productId);
         if (!product) throw new Error("PRODUCT_NOT_FOUND");
-        if (product.quantity < item.quantity) throw new Error("INSUFFICIENT_STOCK");
-        const lineTotal = product.unitPriceFcfa * item.quantity;
+        const sellByDetail =
+          item.sellByDetail === true &&
+          product.sellBySachet &&
+          (product.sachetPriceFcfa ?? 0) > 0;
+        if (item.sellByDetail === true && !sellByDetail) {
+          throw new Error("DETAIL_SALE_NOT_ALLOWED");
+        }
+        const unitPriceFcfa = sellByDetail ? product.sachetPriceFcfa! : product.unitPriceFcfa;
+        const stockQty =
+          !sellByDetail && product.sellBySachet && product.sachetsPerBox > 1
+            ? item.quantity * product.sachetsPerBox
+            : item.quantity;
+        const lineTotal = unitPriceFcfa * item.quantity;
         grossTotal += lineTotal;
-        return { product, quantity: item.quantity, lineTotal };
+        return { product, quantity: item.quantity, stockQty, unitPriceFcfa, lineTotal, sellByDetail };
       });
+
+      const stockNeed = new Map<string, number>();
+      for (const line of lines) {
+        stockNeed.set(line.product.id, (stockNeed.get(line.product.id) ?? 0) + line.stockQty);
+      }
+      for (const [productId, need] of stockNeed) {
+        const product = productMap.get(productId)!;
+        if (product.quantity < need) throw new Error("INSUFFICIENT_STOCK");
+      }
 
       const requestedReduction = body.reductionFcfa ?? 0;
       const reductionFcfa = body.isFree ? grossTotal : Math.min(requestedReduction, grossTotal);
@@ -1612,13 +1643,13 @@ router.post("/", async (req, res) => {
             productId: line.product.id,
             invoiceId: invoice?.id,
             quantity: line.quantity,
-            unitPriceFcfa: line.product.unitPriceFcfa,
+            unitPriceFcfa: line.unitPriceFcfa,
             lineTotalFcfa: line.lineTotal,
           },
         });
         await recordDispensationMovement(tx, {
           productId: line.product.id,
-          quantity: line.quantity,
+          quantity: line.stockQty,
           prescriptionId: prescription.id,
           userId: user.id,
         });

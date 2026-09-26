@@ -4,7 +4,7 @@ import axios from 'axios'
 import { Package, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { canAccessModule, formatFcfa } from '@/lib/roles'
-import { defaultExpiryDateInput, PHARMACEUTICAL_FORMS } from '@/lib/pharmacy-product-forms'
+import { defaultExpiryDateInput, frDisplayToIsoDate, isoDateToFrDisplay, maskFrDateInput, PHARMACEUTICAL_FORMS } from '@/lib/pharmacy-product-forms'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
 import type { PharmacyFormRecord } from '@/components/pharmacie/PharmacyFormsPanel.vue'
@@ -229,7 +229,11 @@ function apiErrorMessage(error: unknown, fallback: string) {
 
 function formatExpiryForInput(value: string | null) {
   if (!value) return defaultExpiryDateInput()
-  return value.slice(0, 10)
+  return isoDateToFrDisplay(value) || defaultExpiryDateInput()
+}
+
+function onExpiryDateInput(value: string) {
+  formExpiryDate.value = maskFrDateInput(value)
 }
 
 async function loadSuppliers() {
@@ -403,6 +407,7 @@ function buildPayload() {
   const unitPriceFcfa = Math.round(Number(formUnitPrice.value))
   const purchasePriceFcfa = Math.round(Number(formPurchasePrice.value))
   const sachetPrice = Math.round(Number(formSachetPrice.value))
+  const expiryIso = formNoExpiry.value ? null : frDisplayToIsoDate(formExpiryDate.value)
   return {
     name: asTrimmedText(formName.value),
     barcode: asTrimmedText(formBarcode.value) || undefined,
@@ -410,7 +415,7 @@ function buildPayload() {
     pharmaceuticalForm: formPharmaceuticalForm.value || undefined,
     categoryId: formCategoryId.value || null,
     supplierId: formSupplierId.value || undefined,
-    expiryDate: formNoExpiry.value ? null : formExpiryDate.value,
+    expiryDate: expiryIso,
     noExpiry: formNoExpiry.value,
     unitPriceFcfa,
     purchasePriceFcfa: Number.isFinite(purchasePriceFcfa) && purchasePriceFcfa > 0 ? purchasePriceFcfa : null,
@@ -437,6 +442,9 @@ async function saveItem() {
     (!Number.isFinite(purchasePriceFcfa) || purchasePriceFcfa <= 0)
   ) {
     issues.push("Le prix d'achat doit être un nombre entier positif.")
+  }
+  if (!formNoExpiry.value && !frDisplayToIsoDate(formExpiryDate.value)) {
+    issues.push("Indiquez une date d'expiration au format JJ/MM/AAAA, ou cochez « Aucune ».")
   }
 
   if (issues.length) {
@@ -745,6 +753,7 @@ defineExpose({
     :title="modalTitle"
     size="large"
     :icon="Package"
+    :body-scroll="false"
     @close="closeModal"
   >
     <UiAlert v-if="(message || formFeedback) && modalOpen" :type="formFeedback ? formFeedbackType === 'success' ? 'success' : 'error' : messageType" :message="formFeedback || message" />
@@ -809,10 +818,12 @@ defineExpose({
         </div>
         <div class="expiry-field">
           <UiInput
-            v-model="formExpiryDate"
+            :model-value="formExpiryDate"
             label="Date d'expiration"
-            type="date"
+            type="text"
+            placeholder="JJ/MM/AAAA"
             :disabled="formNoExpiry"
+            @update:model-value="onExpiryDateInput"
           />
           <label class="checkbox-field">
             <input v-model="formNoExpiry" type="checkbox" />
@@ -845,12 +856,15 @@ defineExpose({
         <UiInput v-model="formMinStock" label="Seuil d'alerte" type="number" min="0" />
       </div>
 
-      <div class="product-form__section">{{ uiText('Configuration des sachets') }}</div>
+      <div class="product-form__section">{{ uiText('Configuration au détail') }}</div>
+      <p class="product-form__hint">
+        {{ uiText('Si la vente au détail est activée, « Disponible » compte les unités détail. Une vente boîte retire le nombre d’unités par boîte.') }}
+      </p>
 
       <div class="product-form__row product-form__row--sachets">
-        <UiInput v-model="formSachetsPerBox" label="Sachets par boîte" type="number" min="1" />
+        <UiInput v-model="formSachetsPerBox" label="Unités par boîte" type="number" min="1" />
         <div class="amount-field">
-          <span class="amount-field__label">{{ uiText('Prix par sachet') }}</span>
+          <span class="amount-field__label">{{ uiText('Prix au détail') }}</span>
           <div class="amount-field__wrap">
             <input
               v-model="formSachetPrice"
@@ -869,7 +883,7 @@ defineExpose({
           :aria-pressed="formSellBySachet"
           @click="formSellBySachet = !formSellBySachet"
         >
-          {{ uiText('Vente par sachet') }}
+          {{ uiText('Vente au détail') }}
         </button>
       </div>
     </form>
@@ -1011,11 +1025,22 @@ defineExpose({
 .product-form {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: 0;
 }
 
 .product-form :deep(.ui-field) {
-  margin-bottom: 0.55rem;
+  margin-bottom: 0.35rem;
+}
+
+.product-form :deep(.ui-field__label) {
+  margin-bottom: 0.2rem;
+  font-size: 0.75rem;
+}
+
+.product-form :deep(.ui-field__input),
+.product-form :deep(.ui-select) {
+  padding: 0.38rem 0.55rem;
+  font-size: 0.8125rem;
 }
 
 .product-form-feedback {
@@ -1041,7 +1066,7 @@ defineExpose({
 
 .product-form__row {
   display: grid;
-  gap: 0.65rem;
+  gap: 0.45rem;
 }
 
 .product-form__row--name {
@@ -1071,13 +1096,20 @@ defineExpose({
 }
 
 .product-form__section {
-  margin: 0.35rem 0 0.2rem;
-  padding: 0.4rem 0.75rem;
+  margin: 0.15rem 0 0.15rem;
+  padding: 0.28rem 0.65rem;
   border-radius: 8px;
   background: #e8f5e9;
   color: #1b5e20;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 700;
+}
+
+.product-form__hint {
+  margin: 0 0 0.25rem;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  line-height: 1.35;
 }
 
 .expiry-field {
@@ -1093,13 +1125,13 @@ defineExpose({
 
 .amount-field {
   display: block;
-  margin-bottom: 0.55rem;
+  margin-bottom: 0.35rem;
 }
 
 .amount-field__label {
   display: block;
-  margin-bottom: 0.4rem;
-  font-size: 0.8125rem;
+  margin-bottom: 0.2rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text);
 }
@@ -1121,9 +1153,9 @@ defineExpose({
   flex: 1;
   min-width: 0;
   border: none;
-  padding: 0.65rem 0.9rem;
+  padding: 0.38rem 0.55rem;
   font-family: inherit;
-  font-size: inherit;
+  font-size: 0.8125rem;
   color: var(--text);
   background: transparent;
 }
@@ -1154,9 +1186,9 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  margin-bottom: 0.55rem;
-  min-height: 2.5rem;
-  font-size: 0.8125rem;
+  margin-bottom: 0.35rem;
+  min-height: 2.1rem;
+  font-size: 0.75rem;
   font-weight: 600;
   color: var(--text);
   cursor: pointer;
@@ -1174,15 +1206,15 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 2.5rem;
-  margin-bottom: 0.55rem;
-  padding: 0 0.9rem;
+  min-height: 2.1rem;
+  margin-bottom: 0.35rem;
+  padding: 0.35rem 0.75rem;
   border: 1.5px solid var(--border);
   border-radius: var(--radius-sm);
   background: #fff;
   color: var(--text);
   font: inherit;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 700;
   white-space: nowrap;
   cursor: pointer;

@@ -43,6 +43,9 @@ export type CashierProduct = {
   dosage?: string | null
   quantity: number
   unitPriceFcfa: number
+  sachetsPerBox?: number
+  sachetPriceFcfa?: number | null
+  sellBySachet?: boolean
 }
 
 export type CashierPatient = {
@@ -57,6 +60,7 @@ type BuyerType = 'patient' | 'external'
 type CartLine = {
   productId: string
   quantity: number
+  sellByDetail: boolean
 }
 
 type PrescriptionPrintLine = {
@@ -150,6 +154,7 @@ const ordonnances = ref<PendingOrdonnance[]>([])
 const ordonnancesError = ref('')
 const confirmOrdonnance = ref<PendingOrdonnance | null>(null)
 const confirmNameInput = ref('')
+const detailChoiceProduct = ref<CashierProduct | null>(null)
 const { closingSales, closePharmacySales } = usePharmacyDayClosure()
 const pendingOrdonnancesCount = ref(0)
 
@@ -179,16 +184,20 @@ const filteredCatalog = computed(() => {
 const cartRows = computed(() =>
   cart.value.map((line, index) => {
     const product = productsById.value.get(line.productId)!
-    const lineTotal = product.unitPriceFcfa * line.quantity
+    const unitPrice = lineUnitPrice(product, line.sellByDetail)
+    const lineTotal = unitPrice * line.quantity
+    const baseName = product.dosage ? `${product.name} — ${product.dosage}` : product.name
     return {
       index,
       productId: line.productId,
-      name: product.dosage ? `${product.name} — ${product.dosage}` : product.name,
+      sellByDetail: line.sellByDetail,
+      name: line.sellByDetail ? `${baseName} (${uiText('détail')})` : baseName,
       quantity: line.quantity,
-      unitPrice: product.unitPriceFcfa,
+      unitPrice,
       lineTotal,
-      unitPriceLabel: formatFcfa(product.unitPriceFcfa),
+      unitPriceLabel: formatFcfa(unitPrice),
       lineTotalLabel: formatFcfa(lineTotal),
+      stockUnits: stockUnitsForLine(product, line),
     }
   }),
 )
@@ -216,35 +225,101 @@ const selectedCartRow = computed(() =>
   selectedCartIndex.value == null ? null : cartRows.value[selectedCartIndex.value] ?? null,
 )
 
+function sachetsPerBox(product: CashierProduct) {
+  return Math.max(1, Math.round(Number(product.sachetsPerBox) || 1))
+}
+
+function canSellByDetail(product: CashierProduct) {
+  return Boolean(product.sellBySachet && (product.sachetPriceFcfa ?? 0) > 0)
+}
+
+function lineUnitPrice(product: CashierProduct, sellByDetail: boolean) {
+  if (sellByDetail && canSellByDetail(product)) return product.sachetPriceFcfa!
+  return product.unitPriceFcfa
+}
+
+function stockUnitsForLine(product: CashierProduct, line: Pick<CartLine, 'quantity' | 'sellByDetail'>) {
+  if (line.sellByDetail) return line.quantity
+  if (canSellByDetail(product) && sachetsPerBox(product) > 1) {
+    return line.quantity * sachetsPerBox(product)
+  }
+  return line.quantity
+}
+
+function cartStockUnitsFor(productId: string) {
+  const product = productsById.value.get(productId)
+  if (!product) return 0
+  return cart.value
+    .filter((line) => line.productId === productId)
+    .reduce((sum, line) => sum + stockUnitsForLine(product, line), 0)
+}
+
 function cartQuantityFor(productId: string) {
-  return cart.value.find((line) => line.productId === productId)?.quantity ?? 0
+  return cartStockUnitsFor(productId)
 }
 
 function remainingStock(product: CashierProduct) {
-  return Math.max(0, product.quantity - cartQuantityFor(product.id))
+  return Math.max(0, product.quantity - cartStockUnitsFor(product.id))
 }
 
 function selectCartLine(index: number) {
   selectedCartIndex.value = index
 }
 
-function addToCart(productId: string) {
+function findCartLine(productId: string, sellByDetail: boolean) {
+  return cart.value.find((line) => line.productId === productId && line.sellByDetail === sellByDetail)
+}
+
+function closeDetailChoice() {
+  detailChoiceProduct.value = null
+}
+
+function requestAddToCart(productId: string) {
+  const product = productsById.value.get(productId)
+  if (!product || product.quantity <= 0) return
+  if (remainingStock(product) <= 0) {
+    message.value = translateTemplate('Stock insuffisant pour {name}.', { name: product.name })
+    messageType.value = 'error'
+    return
+  }
+  if (canSellByDetail(product)) {
+    detailChoiceProduct.value = product
+    return
+  }
+  addToCart(productId, false)
+}
+
+function confirmDetailChoice(sellByDetail: boolean) {
+  const product = detailChoiceProduct.value
+  if (!product) return
+  detailChoiceProduct.value = null
+  addToCart(product.id, sellByDetail)
+}
+
+function addToCart(productId: string, sellByDetail = false) {
   const product = productsById.value.get(productId)
   if (!product || product.quantity <= 0) return
 
-  const current = cartQuantityFor(productId)
-  if (current >= product.quantity) {
+  const useDetail = sellByDetail && canSellByDetail(product)
+  const unitsNeeded = useDetail
+    ? 1
+    : canSellByDetail(product) && sachetsPerBox(product) > 1
+      ? sachetsPerBox(product)
+      : 1
+
+  if (remainingStock(product) < unitsNeeded) {
     message.value = translateTemplate('Stock insuffisant pour {name}.', { name: product.name })
     messageType.value = 'error'
     return
   }
 
   highlightedProductId.value = productId
-  const existing = cart.value.find((line) => line.productId === productId)
+  const existing = findCartLine(productId, useDetail)
   if (existing) {
     existing.quantity += 1
+    selectedCartIndex.value = cart.value.indexOf(existing)
   } else {
-    cart.value.push({ productId, quantity: 1 })
+    cart.value.push({ productId, quantity: 1, sellByDetail: useDetail })
     selectedCartIndex.value = cart.value.length - 1
   }
   message.value = ''
@@ -261,7 +336,11 @@ function changeCartQuantity(index: number, delta: number) {
     removeFromCart(index)
     return
   }
-  if (next > product.quantity) {
+  const nextUnits = stockUnitsForLine(product, { quantity: next, sellByDetail: line.sellByDetail })
+  const otherUnits = cart.value
+    .filter((row, i) => i !== index && row.productId === line.productId)
+    .reduce((sum, row) => sum + stockUnitsForLine(product, row), 0)
+  if (otherUnits + nextUnits > product.quantity) {
     message.value = translateTemplate('Stock maximum : {qty} pour {name}.', {
       qty: product.quantity,
       name: product.name,
@@ -299,14 +378,14 @@ function tryAddFromSearch() {
       p.sku.toLowerCase() === raw.toLowerCase(),
   )
   if (exact) {
-    addToCart(exact.id)
+    requestAddToCart(exact.id)
     catalogSearch.value = ''
     void nextTick(() => searchRef.value?.focus())
     return
   }
 
   if (filteredCatalog.value.length === 1) {
-    addToCart(filteredCatalog.value[0].id)
+    requestAddToCart(filteredCatalog.value[0].id)
     catalogSearch.value = ''
     void nextTick(() => searchRef.value?.focus())
   }
@@ -563,7 +642,7 @@ function applyOrdonnanceToCart() {
       messageType.value = 'error'
       return
     }
-    cart.value.push({ productId: line.productId!, quantity: line.quantity })
+    cart.value.push({ productId: line.productId!, quantity: line.quantity, sellByDetail: false })
   }
 
   buyerType.value = 'patient'
@@ -728,7 +807,11 @@ async function submitSale() {
       reductionFcfa: adjustment.reductionFcfa,
       isFree: adjustment.isFree,
       coveredByName: adjustment.responsible,
-      items: cart.value.map((line) => ({ productId: line.productId, quantity: line.quantity })),
+      items: cart.value.map((line) => ({
+        productId: line.productId,
+        quantity: line.quantity,
+        sellByDetail: line.sellByDetail,
+      })),
     })
 
     message.value = saleSuccessMessage(data)
@@ -944,10 +1027,10 @@ watch(
               :class="{
                 'catalog-card--active': highlightedProductId === product.id,
                 'catalog-card--in-cart': cartQuantityFor(product.id) > 0,
-                'catalog-card--out': product.quantity <= 0,
+                'catalog-card--out': remainingStock(product) <= 0,
               }"
-              :disabled="product.quantity <= 0"
-              @click="addToCart(product.id)"
+              :disabled="remainingStock(product) <= 0"
+              @click="requestAddToCart(product.id)"
             >
               <span v-if="cartQuantityFor(product.id) > 0" class="catalog-card__qty">
                 {{ cartQuantityFor(product.id) }}
@@ -957,6 +1040,7 @@ watch(
               </span>
               <strong class="catalog-card__name">{{ product.name }}</strong>
               <span v-if="product.dosage" class="catalog-card__dosage">{{ product.dosage }}</span>
+              <span v-if="canSellByDetail(product)" class="catalog-card__detail-badge">{{ uiText('Détail') }}</span>
               <span class="catalog-card__meta">
                 <span
                   class="catalog-card__stock"
@@ -964,7 +1048,17 @@ watch(
                 >
                   {{ product.quantity <= 0 ? uiText('Rupture') : remainingStock(product) }}
                 </span>
-                <span class="catalog-card__price">{{ formatFcfa(product.unitPriceFcfa) }}</span>
+                <span v-if="canSellByDetail(product)" class="catalog-card__prices">
+                  <span class="catalog-card__price catalog-card__price--box">
+                    <small>{{ uiText('Boîte') }}</small>
+                    {{ formatFcfa(product.unitPriceFcfa) }}
+                  </span>
+                  <span class="catalog-card__price catalog-card__price--detail">
+                    <small>{{ uiText('Détail') }}</small>
+                    {{ formatFcfa(product.sachetPriceFcfa ?? 0) }}
+                  </span>
+                </span>
+                <span v-else class="catalog-card__price">{{ formatFcfa(product.unitPriceFcfa) }}</span>
               </span>
             </button>
           </div>
@@ -997,7 +1091,7 @@ watch(
               </tr>
               <tr
                 v-for="row in cartRows"
-                :key="row.productId"
+                :key="`${row.productId}-${row.sellByDetail ? 'd' : 'b'}`"
                 class="cart-row"
                 :class="{ 'cart-row--active': selectedCartIndex === row.index }"
                 @click="selectCartLine(row.index)"
@@ -1303,6 +1397,46 @@ watch(
       </ul>
       <template #footer>
         <UiButton variant="ghost" @click="returnPickerOpen = false">{{ uiText('Fermer') }}</UiButton>
+      </template>
+    </UiFormModal>
+
+    <UiFormModal
+      :open="Boolean(detailChoiceProduct)"
+      :title="uiText('Mode de vente')"
+      :subtitle="
+        detailChoiceProduct
+          ? detailChoiceProduct.dosage
+            ? `${detailChoiceProduct.name} — ${detailChoiceProduct.dosage}`
+            : detailChoiceProduct.name
+          : ''
+      "
+      size="wide"
+      :body-scroll="false"
+      @close="closeDetailChoice"
+    >
+      <p class="detail-choice__intro">
+        {{ uiText('Ce produit autorise la vente au détail. Choisissez le mode pour cette ligne.') }}
+      </p>
+      <div v-if="detailChoiceProduct" class="detail-choice">
+        <button type="button" class="detail-choice__btn detail-choice__btn--detail" @click="confirmDetailChoice(true)">
+          <strong>{{ uiText('Vente au détail') }}</strong>
+          <span>{{ formatFcfa(detailChoiceProduct.sachetPriceFcfa ?? 0) }}</span>
+          <small>{{ uiText('1 unité détail') }}</small>
+        </button>
+        <button type="button" class="detail-choice__btn detail-choice__btn--box" @click="confirmDetailChoice(false)">
+          <strong>{{ uiText('Vente boîte') }}</strong>
+          <span>{{ formatFcfa(detailChoiceProduct.unitPriceFcfa) }}</span>
+          <small>
+            {{
+              sachetsPerBox(detailChoiceProduct) > 1
+                ? translateTemplate('{n} unités / boîte', { n: sachetsPerBox(detailChoiceProduct) })
+                : uiText('Prix boîte / unité complète')
+            }}
+          </small>
+        </button>
+      </div>
+      <template #footer>
+        <UiButton variant="ghost" @click="closeDetailChoice">{{ uiText('Annuler') }}</UiButton>
       </template>
     </UiFormModal>
 
@@ -1761,6 +1895,20 @@ watch(
   color: var(--text-muted);
 }
 
+.catalog-card__detail-badge {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 .catalog-card__meta {
   display: flex;
   align-items: baseline;
@@ -1784,6 +1932,38 @@ watch(
   font-size: 1.2rem;
   font-weight: 800;
   color: #1d4ed8;
+}
+
+.catalog-card__prices {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.catalog-card__prices .catalog-card__price {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.15;
+  font-size: 0.95rem;
+}
+
+.catalog-card__prices .catalog-card__price small {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.catalog-card__price--box {
+  color: #1d4ed8;
+}
+
+.catalog-card__price--detail {
+  color: #047857;
 }
 
 .cart-table-wrap {
@@ -1963,6 +2143,72 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+.detail-choice__intro {
+  margin: 0 0 0.75rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.detail-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.detail-choice__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 1rem 1.1rem;
+  border-radius: 12px;
+  border: 1.5px solid var(--border);
+  background: #fff;
+  text-align: start;
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.detail-choice__btn:hover {
+  border-color: var(--accent-500);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.detail-choice__btn strong {
+  font-size: 0.95rem;
+}
+
+.detail-choice__btn span {
+  font-size: 1.15rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-choice__btn small {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.detail-choice__btn--detail {
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+  color: #065f46;
+}
+
+.detail-choice__btn--box {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1e3a8a;
+}
+
+@media (max-width: 640px) {
+  .detail-choice {
+    grid-template-columns: 1fr;
+  }
 }
 
 .return-picker__btn {
