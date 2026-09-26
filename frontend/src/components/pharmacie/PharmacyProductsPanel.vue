@@ -876,15 +876,10 @@ defineExpose({
             <span class="amount-field__suffix">FCFA</span>
           </div>
         </div>
-        <button
-          type="button"
-          class="sachet-toggle"
-          :class="{ 'sachet-toggle--on': formSellBySachet }"
-          :aria-pressed="formSellBySachet"
-          @click="formSellBySachet = !formSellBySachet"
-        >
-          {{ uiText('Vente au détail') }}
-        </button>
+        <label class="checkbox-field checkbox-field--detail">
+          <input v-model="formSellBySachet" type="checkbox" />
+          <span>{{ uiText('Vente au détail') }}</span>
+        </label>
       </div>
     </form>
 
@@ -1202,32 +1197,10 @@ defineExpose({
   accent-color: var(--accent-500);
 }
 
-.sachet-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 2.1rem;
-  margin-bottom: 0.35rem;
-  padding: 0.35rem 0.75rem;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: #fff;
-  color: var(--text);
-  font: inherit;
-  font-size: 0.75rem;
-  font-weight: 700;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.sachet-toggle:hover {
-  border-color: var(--accent-500);
-}
-
-.sachet-toggle--on {
-  background: #e8f5e9;
-  border-color: #22c55e;
-  color: #166534;
+.checkbox-field--detail {
+  align-self: end;
+  margin-bottom: 0.55rem;
+  padding: 0.35rem 0;
 }
 
 @media (max-width: 768px) {

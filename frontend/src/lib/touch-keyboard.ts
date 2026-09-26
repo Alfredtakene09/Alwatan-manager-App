@@ -1,4 +1,4 @@
-export type TouchKeyAction = 'backspace' | 'enter' | 'shift' | 'space' | 'letters'
+export type TouchKeyAction = 'backspace' | 'enter' | 'shift' | 'space' | 'letters' | 'toggleLang'
 
 export type TouchKey = {
   label: string
@@ -99,7 +99,7 @@ export function layoutKeys(id: TouchLayoutId, shifted: boolean): TouchKey[][] {
       ['ض', 'ص', 'ث', 'ق', 'ف', 'غ', 'ع', 'ه', 'خ', 'ح', 'ج'].map((label) => key(label)),
       ['ش', 'س', 'ي', 'ب', 'ل', 'ا', 'ت', 'ن', 'م', 'ك', 'ط'].map((label) => key(label)),
       [fn('⇧', 'shift', 1.3), ...['ئ', 'ء', 'ؤ', 'ر', 'ى', 'ة', 'و', 'ز', 'ظ', 'د'].map((label) => key(label)), fn('⌫', 'backspace', 1.3)],
-      [fn('Espace', 'space', 4), fn('Entrée', 'enter', 1.6)],
+      [fn('FR', 'toggleLang', 1.4), fn('Espace', 'space', 3.6), fn('Entrée', 'enter', 1.6)],
     ]
   }
 
@@ -117,7 +117,7 @@ export function layoutKeys(id: TouchLayoutId, shifted: boolean): TouchKey[][] {
       key(shifted ? ':' : '.'),
       fn('⌫', 'backspace', 1.35),
     ],
-    [fn('Espace', 'space', 5), fn('Entrée', 'enter', 1.8)],
+    [fn('ع', 'toggleLang', 1.4), fn('Espace', 'space', 3.6), fn('Entrée', 'enter', 1.8)],
   ]
 }
 

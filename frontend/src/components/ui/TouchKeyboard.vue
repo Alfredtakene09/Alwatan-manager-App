@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Keyboard, X } from '@lucide/vue'
+import { X } from '@lucide/vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import {
   backspaceField,
@@ -10,8 +10,6 @@ import {
   layoutKeys,
   prefersNumpad,
   pressFieldEnter,
-  setTouchKeyboardPref,
-  touchKeyboardPref,
   type TouchKey,
   type TouchLayoutId,
 } from '@/lib/touch-keyboard'
@@ -26,37 +24,50 @@ function sessionLetterLayout(): TouchLayoutId {
   return 'letters'
 }
 
+function latinLetterLayout(): TouchLayoutId {
+  return localeCode.value === 'en' ? 'qwerty' : 'letters'
+}
+
 const open = ref(false)
 const shifted = ref(false)
 const shiftLocked = ref(false)
+/** Choix manuel FR/ع : conserve le bascule même hors layout lettres. */
+const letterLayoutOverride = ref<TouchLayoutId | null>(null)
 const layout = ref<TouchLayoutId>(sessionLetterLayout())
 const target = ref<HTMLInputElement | HTMLTextAreaElement | null>(null)
 const rootRef = ref<HTMLElement | null>(null)
-
-let lastPointerType = 'mouse'
-let lastPointerAt = 0
 const touchCapable = deviceHasTouch()
-const showLauncher = computed(() => touchCapable && !open.value)
 
 const rows = computed(() => layoutKeys(layout.value, shifted.value || shiftLocked.value))
 const numpad = computed(() => layout.value === 'numpad')
 
+function activeLetterLayout(): TouchLayoutId {
+  const override = letterLayoutOverride.value
+  if (override && LETTER_LAYOUTS.has(override)) return override
+  return sessionLetterLayout()
+}
+
 const modes = computed(() => {
-  const letter = sessionLetterLayout()
-  const items: { id: TouchLayoutId; label: string }[] = [
-    { id: letter, label: letter === 'arabic' ? 'ع' : 'ABC' },
-  ]
-  if (letter !== 'arabic') items.push({ id: 'accents', label: 'éà' })
+  const primary = activeLetterLayout()
+  const latin = latinLetterLayout()
+  const items: { id: TouchLayoutId; label: string }[] = []
+  if (primary === 'arabic') {
+    items.push({ id: 'arabic', label: 'ع' }, { id: latin, label: 'FR' })
+  } else {
+    items.push({ id: latin, label: latin === 'qwerty' ? 'EN' : 'FR' }, { id: 'arabic', label: 'ع' })
+    items.push({ id: 'accents', label: 'éà' })
+  }
   items.push({ id: 'digits', label: '123' }, { id: 'symbols', label: '#@' })
   return items
 })
 
 function defaultLayout(el: HTMLInputElement | HTMLTextAreaElement): TouchLayoutId {
   if (prefersNumpad(el)) return 'numpad'
-  return sessionLetterLayout()
+  return activeLetterLayout()
 }
 
 watch(localeCode, () => {
+  letterLayoutOverride.value = null
   if (!LETTER_LAYOUTS.has(layout.value)) return
   layout.value = sessionLetterLayout()
   shifted.value = false
@@ -78,11 +89,17 @@ function rememberTarget(el: HTMLInputElement | HTMLTextAreaElement) {
   else if (prev && prefersNumpad(prev) && layout.value === 'numpad') layout.value = defaultLayout(el)
 }
 
-function shouldAutoOpen() {
-  if (!touchCapable || touchKeyboardPref() === 'off') return false
-  if (window.matchMedia('(pointer: coarse)').matches) return true
-  if (lastPointerType === 'touch' || lastPointerType === 'pen') return true
-  return Date.now() - lastPointerAt < 800
+function setLetterLayout(id: TouchLayoutId) {
+  if (!LETTER_LAYOUTS.has(id)) return
+  letterLayoutOverride.value = id
+  layout.value = id
+  shifted.value = false
+  shiftLocked.value = false
+}
+
+function toggleLangLayout() {
+  const next = activeLetterLayout() === 'arabic' ? latinLetterLayout() : 'arabic'
+  setLetterLayout(next)
 }
 
 function scrollParent(el: HTMLElement): HTMLElement | null {
@@ -105,6 +122,13 @@ function revealField(el: HTMLElement) {
     const gap = 110
     const overflow = rect.bottom - (kbTop - gap)
     if (overflow <= 0 && rect.top >= 8) return
+
+    // Sur la page login : scroll vertical uniquement, sans décalage gauche/droite.
+    if (el.closest('.login')) {
+      el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' })
+      return
+    }
+
     const scroller = scrollParent(el) ?? (document.scrollingElement as HTMLElement | null)
     if (!scroller) return
     scroller.scrollTop += Math.max(overflow, 0)
@@ -127,29 +151,7 @@ function hideKeyboard() {
   document.documentElement.classList.remove('touch-kb-open')
 }
 
-function dismissForSession() {
-  setTouchKeyboardPref('off')
-  hideKeyboard()
-}
-
-function firstTextField() {
-  for (const node of document.querySelectorAll('input, textarea')) {
-    if (isTouchTextField(node) && (node as HTMLElement).offsetParent !== null) return node
-  }
-  return null
-}
-
-function openFromLauncher() {
-  setTouchKeyboardPref('on')
-  const el = fieldFrom(document.activeElement) ?? target.value ?? firstTextField()
-  if (!el) return
-  showFor(el)
-  el.focus()
-}
-
 function onPointerDown(event: PointerEvent) {
-  lastPointerType = event.pointerType || 'mouse'
-  lastPointerAt = Date.now()
   const el = fieldFrom(event.target)
   if (!el || !touchCapable) return
   if (rootRef.value?.contains(event.target as Node)) return
@@ -157,10 +159,6 @@ function onPointerDown(event: PointerEvent) {
     if (!el.dataset.prevInputMode) el.dataset.prevInputMode = el.getAttribute('inputmode') ?? ''
     el.dataset.osKbSuppressed = '1'
     el.setAttribute('inputmode', 'none')
-  }
-  if (touchKeyboardPref() === 'off') {
-    rememberTarget(el)
-    return
   }
   showFor(el)
 }
@@ -176,9 +174,9 @@ function restoreOsKeyboard(el: HTMLInputElement | HTMLTextAreaElement) {
 
 function onFocusIn(event: FocusEvent) {
   const el = fieldFrom(event.target)
-  if (!el) return
+  if (!el || !touchCapable) return
   rememberTarget(el)
-  if (shouldAutoOpen()) showFor(el)
+  showFor(el)
 }
 
 function onFocusOut(event: FocusEvent) {
@@ -220,7 +218,11 @@ function applyKey(item: TouchKey) {
     return
   }
   if (item.action === 'letters') {
-    layout.value = sessionLetterLayout()
+    layout.value = activeLetterLayout()
+    return
+  }
+  if (item.action === 'toggleLang') {
+    toggleLangLayout()
     return
   }
   if (item.action === 'shift') {
@@ -240,7 +242,13 @@ function applyKey(item: TouchKey) {
 }
 
 function selectLayout(id: TouchLayoutId) {
-  layout.value = id
+  if (LETTER_LAYOUTS.has(id)) {
+    setLetterLayout(id)
+  } else {
+    layout.value = id
+    shifted.value = false
+    shiftLocked.value = false
+  }
   target.value?.focus()
 }
 
@@ -258,7 +266,8 @@ function keyStyle(item: TouchKey) {
 function keyLabel(item: TouchKey) {
   if (item.action === 'space') return uiText('Espace')
   if (item.action === 'enter') return uiText('Touche Entrée')
-  if (item.action === 'letters') return sessionLetterLayout() === 'arabic' ? 'ع' : 'ABC'
+  if (item.action === 'letters') return activeLetterLayout() === 'arabic' ? 'ع' : 'ABC'
+  if (item.action === 'toggleLang') return layout.value === 'arabic' ? 'FR' : 'ع'
   return item.label
 }
 
@@ -276,16 +285,6 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <button
-    v-if="showLauncher"
-    type="button"
-    class="touch-kb-launcher"
-    @pointerdown.prevent="openFromLauncher"
-  >
-    <Keyboard :size="26" />
-    {{ uiText('Clavier') }}
-  </button>
-
   <section
     v-if="open"
     ref="rootRef"
@@ -309,7 +308,7 @@ onUnmounted(() => {
           {{ mode.label }}
         </button>
       </div>
-      <button type="button" class="touch-kb__hide" @pointerdown.prevent="dismissForSession">
+      <button type="button" class="touch-kb__hide" @pointerdown.prevent="hideKeyboard">
         <X :size="22" />
         {{ uiText('Masquer') }}
       </button>
@@ -332,27 +331,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.touch-kb-launcher {
-  position: fixed;
-  top: max(4.25rem, calc(env(safe-area-inset-top, 0px) + 3.5rem));
-  inset-inline-start: max(1rem, env(safe-area-inset-inline-start, 0px));
-  z-index: 12050;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.65rem;
-  min-height: 3.6rem;
-  padding: 0.7rem 1.4rem;
-  border: none;
-  border-radius: 999px;
-  background: #14532d;
-  color: #fff;
-  font-size: 1.15rem;
-  font-weight: 800;
-  letter-spacing: 0.01em;
-  box-shadow: 0 10px 28px rgba(20, 83, 45, 0.35);
-  touch-action: manipulation;
-}
-
 .touch-kb {
   position: fixed;
   left: 0;
@@ -385,9 +363,19 @@ onUnmounted(() => {
   overflow: auto;
 }
 
+/* Login : rester centré horizontalement ; remonter un peu pour laisser le champ visible. */
 :global(html.touch-kb-open .login) {
   align-items: flex-start;
-  justify-content: flex-start;
+  justify-content: center;
+  min-height: calc(100dvh - var(--touch-kb-height, 18rem));
+  padding-top: max(1rem, env(safe-area-inset-top, 0px));
+  padding-inline: 1.5rem;
+}
+
+:global(html.touch-kb-open .login .login__stack),
+:global(html.touch-kb-open .login .login__card) {
+  margin-inline: auto;
+  width: 100%;
 }
 
 :global(html.touch-kb-open .ui-form-modal) {
