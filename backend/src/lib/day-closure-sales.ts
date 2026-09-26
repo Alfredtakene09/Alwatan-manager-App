@@ -46,6 +46,7 @@ const DAY_CLOSURE_LABEL_ALIASES: Record<string, string> = {
 
 type DayClosureInvoice = {
   id: string;
+  patientId: string | null;
   type: InvoiceType;
   amountFcfa: number;
   paidAmountFcfa: number | null;
@@ -129,6 +130,7 @@ function reductionForInvoice(invoice: DayClosureInvoice): number {
 
 const dayClosureInvoiceSelect = {
   id: true,
+  patientId: true,
   type: true,
   amountFcfa: true,
   paidAmountFcfa: true,
@@ -149,7 +151,8 @@ const dayClosureInvoiceSelect = {
 
 /**
  * Cumul ventes caissier pour le ticket de fin de journée (Produits × Qté × Total).
- * Qté = nombre de factures distinctes ; Total = sommes des versements du caissier sur la période.
+ * Qté = patients distincts du service (pas le nombre de factures) ;
+ * Total = sommes des versements du caissier sur la période.
  */
 export async function buildDayClosureSalesSummary(
   cashierId: string,
@@ -210,7 +213,7 @@ export async function buildDayClosureSalesSummary(
     });
   }
 
-  const grouped = new Map<string, DayClosureServiceLine>();
+  const grouped = new Map<string, DayClosureServiceLine & { patientIds: Set<string> }>();
   let collectedFcfa = 0;
   let reductionFcfa = 0;
   const reductionVisitIds = new Set<string>();
@@ -225,8 +228,12 @@ export async function buildDayClosureSalesSummary(
     collectedFcfa += paid;
 
     const label = classifyInvoiceForDayClosure(invoice);
-    const row = grouped.get(label) ?? { label, qty: 0, totalFcfa: 0 };
-    row.qty += 1;
+    const row = grouped.get(label) ?? { label, qty: 0, totalFcfa: 0, patientIds: new Set<string>() };
+    const patientKey = invoice.patientId ?? invoice.id;
+    if (!row.patientIds.has(patientKey)) {
+      row.patientIds.add(patientKey);
+      row.qty += 1;
+    }
     row.totalFcfa += paid;
     grouped.set(label, row);
 
@@ -238,9 +245,9 @@ export async function buildDayClosureSalesSummary(
     }
   }
 
-  const serviceLines = [...grouped.values()].sort((a, b) =>
-    a.label.localeCompare(b.label, "fr", { sensitivity: "base" }),
-  );
+  const serviceLines = [...grouped.values()]
+    .map(({ patientIds: _patientIds, ...line }) => line)
+    .sort((a, b) => a.label.localeCompare(b.label, "fr", { sensitivity: "base" }));
 
   return {
     serviceLines,

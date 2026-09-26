@@ -25,6 +25,7 @@ import {
   upsertLabPanelResult,
 } from "../lib/lab-panel-results.js";
 import { backfillLabSentToLabAtForPaidQueue } from "../lib/lab-receptionist-backfill.js";
+import { refreshLabPanelRegistry } from "../lib/lab-panels-registry.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 import type { AppUserRole } from "../lib/roles.js";
 

@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { RefreshCw, Printer, Eye, Pencil, Save, Trash2, RotateCcw } from '@lucide/vue'
 import api from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { CLINIC } from '@/lib/clinic'
 import { formatPatientTableDate } from '@/lib/patient-datatable-columns'
@@ -10,6 +11,7 @@ import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, openPrin
 import { formatAppDateTime } from '@/i18n/locale-format'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
+import { confirmAppModal } from '@/lib/api-modal-helper'
 import PageTableSection from '@/components/ui/PageTableSection.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -84,9 +86,12 @@ const editId = ref<string | null>(null)
 const editingLines = ref<EditableSaleLine[]>([])
 const pendingDeleteLineIds = ref<string[]>([])
 const savingEdit = ref(false)
+const deletingLineId = ref<string | null>(null)
 const returnModalOpen = ref(false)
 const returnSale = ref<PharmacySaleForReturn | null>(null)
 
+const auth = useAuthStore()
+const canDeleteSaleLine = computed(() => auth.user?.role === 'ADMIN')
 const { uiText, localeCode } = useAppI18n()
 
 const tableRows = computed(() => {
@@ -244,6 +249,53 @@ function closeEditModal() {
   editId.value = null
   editingLines.value = []
   pendingDeleteLineIds.value = []
+}
+
+async function deleteSaleLine(saleId: string, line: SaleLine) {
+  const confirmed = await confirmAppModal({
+    type: 'DELETE',
+    title: uiText('Supprimer cette ligne'),
+    message: translateTemplate(
+      'Retirer {product} ({qty}) ? La quantité revient en stock et {amount} est retiré du total.',
+      {
+        product: line.productName,
+        qty: line.quantity,
+        amount: formatFcfa(line.lineTotalFcfa),
+      },
+    ),
+    confirmLabel: uiText('Supprimer'),
+    cancelLabel: uiText('Annuler'),
+  })
+  if (!confirmed) return
+
+  deletingLineId.value = line.id
+  message.value = ''
+  try {
+    const { data } = await api.patch<SaleRecord | { deleted: true; id: string }>(
+      `/pharmacie/sales/${saleId}`,
+      { lines: [], deleteLineIds: [line.id] },
+    )
+    if ('deleted' in data && data.deleted) {
+      items.value = items.value.filter((item) => item.id !== data.id)
+      expandedId.value = null
+      message.value = uiText('Vente supprimée — toutes les lignes ont été retirées.')
+    } else {
+      const sale = data as SaleRecord
+      const index = items.value.findIndex((item) => item.id === sale.id)
+      if (index >= 0) items.value[index] = sale
+      message.value = uiText('Ligne supprimée — stock et total mis à jour.')
+    }
+    messageType.value = 'success'
+  } catch (error: unknown) {
+    const apiMessage =
+      error && typeof error === 'object' && 'response' in error
+        ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined
+    message.value = apiMessage ?? uiText('Impossible de supprimer cette ligne.')
+    messageType.value = 'error'
+  } finally {
+    deletingLineId.value = null
+  }
 }
 
 function removeEditLine(lineId: string) {
@@ -482,6 +534,7 @@ defineExpose({ reload: loadItems })
             <th>{{ uiText('Qté') }}</th>
             <th>{{ uiText('Prix unit.') }}</th>
             <th>{{ uiText('Total') }}</th>
+            <th v-if="canDeleteSaleLine" class="detail-table__actions-head">{{ uiText('Actions') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -491,6 +544,18 @@ defineExpose({ reload: loadItems })
             <td>{{ line.quantity }}</td>
             <td>{{ formatFcfa(line.unitPriceFcfa) }}</td>
             <td>{{ formatFcfa(line.lineTotalFcfa) }}</td>
+            <td v-if="canDeleteSaleLine" class="detail-table__actions">
+              <button
+                type="button"
+                class="st-btn st-btn--delete"
+                :disabled="deletingLineId === line.id"
+                :title="uiText('Supprimer cette ligne')"
+                :aria-label="uiText('Supprimer cette ligne')"
+                @click="deleteSaleLine(expandedSale.id, line)"
+              >
+                <Trash2 :size="15" />
+              </button>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -527,7 +592,11 @@ defineExpose({ reload: loadItems })
       {{ fullName(editSale.pharmacist.firstName, editSale.pharmacist.lastName) }}
     </p>
     <p class="edit-hint">
-      {{ uiText('Corrigez les quantités ou supprimez des lignes — le stock est ajusté automatiquement.') }}
+      {{
+        canDeleteSaleLine
+          ? uiText('Corrigez les quantités ou supprimez des lignes — le stock est ajusté automatiquement.')
+          : uiText('Corrigez les quantités — le stock est ajusté automatiquement.')
+      }}
     </p>
     <table class="detail-table detail-table--edit">
       <thead>
@@ -536,7 +605,7 @@ defineExpose({ reload: loadItems })
           <th>{{ uiText('Qté') }}</th>
           <th>{{ uiText('Prix unit.') }}</th>
           <th>{{ uiText('Total') }}</th>
-          <th class="detail-table__actions-head">{{ uiText('Actions') }}</th>
+          <th v-if="canDeleteSaleLine" class="detail-table__actions-head">{{ uiText('Actions') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -554,7 +623,7 @@ defineExpose({ reload: loadItems })
           </td>
           <td>{{ formatFcfa(line.unitPriceFcfa) }}</td>
           <td>{{ formatFcfa(lineDraftTotal(line)) }}</td>
-          <td class="detail-table__actions">
+          <td v-if="canDeleteSaleLine" class="detail-table__actions">
             <button
               type="button"
               class="st-btn st-btn--delete"

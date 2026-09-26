@@ -15,6 +15,7 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import StCatalogActions from '@/components/ui/StCatalogActions.vue'
+import PharmacyProductSuggest, { type SuggestProduct } from '@/components/pharmacie/PharmacyProductSuggest.vue'
 import { confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
@@ -88,6 +89,11 @@ const filterCategoryId = ref('')
 
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 const isEditing = computed(() => editingId.value !== null)
+const modalTitle = computed(() => {
+  if (isEditing.value) return 'Modifier le produit'
+  if (restockTarget.value) return 'Réapprovisionnement'
+  return "Ajout d'un produit"
+})
 const activeSuppliers = computed(() => suppliers.value.filter((s) => s.active))
 const activeCategories = computed(() => categories.value.filter((c) => c.active !== false))
 const filterFormOptions = computed(() => forms.value.filter((f) => f.active))
@@ -167,6 +173,22 @@ const catalogExportRows = computed(() => {
 const hasActiveFilters = computed(
   () => Boolean(filterQuery.value.trim() || filterForm.value || filterCategoryId.value),
 )
+
+const priceTotals = computed(() => {
+  let purchase = 0
+  let sale = 0
+  let profit = 0
+  for (const item of filteredItems.value) {
+    const qty = item.quantity
+    sale += qty * item.unitPriceFcfa
+    const purchaseUnit = item.purchasePriceFcfa
+    if (purchaseUnit != null && purchaseUnit > 0) {
+      purchase += qty * purchaseUnit
+      profit += qty * (item.unitPriceFcfa - purchaseUnit)
+    }
+  }
+  return { purchase, sale, profit }
+})
 
 const exportDisabled = computed(() => loading.value || !catalogExportRows.value.length)
 
@@ -268,6 +290,53 @@ async function loadItems(options?: { clearMessage?: boolean }) {
   }
 }
 
+function foldCatalogText(value: string | null | undefined) {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function findExistingProduct() {
+  if (editingId.value) return null
+  const barcode = foldCatalogText(formBarcode.value)
+  if (barcode) {
+    const byBarcode = items.value.find((item) => foldCatalogText(item.barcode) === barcode)
+    if (byBarcode) return byBarcode
+  }
+  const nameKey = foldCatalogText(formName.value)
+  const dosageKey = foldCatalogText(formDosage.value)
+  if (nameKey.length < 2) return null
+  return (
+    items.value.find(
+      (item) => foldCatalogText(item.name) === nameKey && foldCatalogText(item.dosage) === dosageKey,
+    ) ?? null
+  )
+}
+
+const restockTarget = computed(() => findExistingProduct())
+
+function fillFormFromProduct(item: PharmacyProductRecord) {
+  const quantityToAdd = formQuantity.value
+  formName.value = item.name
+  formDosage.value = item.dosage ?? ''
+  formBarcode.value = item.barcode ?? ''
+  formPharmaceuticalForm.value = item.pharmaceuticalForm ?? ''
+  formCategoryId.value = item.categoryId ?? item.category?.id ?? ''
+  formSupplierId.value = item.supplierId ?? ''
+  formExpiryDate.value = formatExpiryForInput(item.expiryDate)
+  formNoExpiry.value = item.noExpiry
+  formUnitPrice.value = String(item.unitPriceFcfa)
+  formPurchasePrice.value = item.purchasePriceFcfa ? String(item.purchasePriceFcfa) : ''
+  formMinStock.value = String(item.minStock)
+  formSachetsPerBox.value = String(item.sachetsPerBox)
+  formSachetPrice.value = item.sachetPriceFcfa ? String(item.sachetPriceFcfa) : ''
+  formSellBySachet.value = item.sellBySachet
+  formQuantity.value = quantityToAdd && quantityToAdd !== '0' ? quantityToAdd : '0'
+}
+
 function resetForm() {
   formName.value = ''
   formDosage.value = ''
@@ -349,7 +418,7 @@ function buildPayload() {
     sachetsPerBox: Math.round(Number(formSachetsPerBox.value)) || 1,
     sachetPriceFcfa: Number.isFinite(sachetPrice) && sachetPrice > 0 ? sachetPrice : null,
     sellBySachet: formSellBySachet.value,
-    ...(!isEditing.value ? { quantity: Math.round(Number(formQuantity.value)) || 0 } : {}),
+    quantity: Math.max(0, Math.round(Number(formQuantity.value)) || 0),
   }
 }
 
@@ -378,13 +447,48 @@ async function saveItem() {
   saving.value = true
   clearFormFeedback()
   const payload = buildPayload()
-  const successText = isEditing.value ? 'Produit modifié.' : 'Produit ajouté.'
+  const existing = findExistingProduct()
+  const addedQuantity = Math.max(0, Math.round(Number(formQuantity.value)) || 0)
+  const successText = isEditing.value
+    ? 'Produit modifié.'
+    : existing
+      ? addedQuantity > 0
+        ? translateTemplate('Stock ajusté — {name} : +{added} (total {total}).', {
+            name: existing.dosage ? `${existing.name} — ${existing.dosage}` : existing.name,
+            added: addedQuantity,
+            total: existing.quantity + addedQuantity,
+          })
+        : translateTemplate('« {name} » existe déjà — fiche mise à jour, aucun doublon créé.', {
+            name: existing.name,
+          })
+      : 'Produit ajouté.'
 
   try {
     if (isEditing.value && editingId.value) {
       await api.put(`/pharmacie/products/${editingId.value}`, payload)
     } else {
-      await api.post('/pharmacie/products', payload)
+      const { data } = await api.post<PharmacyProductRecord & { restocked?: boolean; addedQuantity?: number }>(
+        '/pharmacie/products',
+        payload,
+      )
+      if (data.restocked) {
+        const added = data.addedQuantity ?? addedQuantity
+        message.value = added > 0
+          ? translateTemplate('Stock ajusté — {name} : +{added} (total {total}).', {
+              name: data.dosage ? `${data.name} — ${data.dosage}` : data.name,
+              added,
+              total: data.quantity,
+            })
+          : translateTemplate('« {name} » existe déjà — fiche mise à jour, aucun doublon créé.', {
+              name: data.name,
+            })
+        messageType.value = 'success'
+        emit('changed')
+        closeModal()
+        await loadItems({ clearMessage: false })
+        void showSuccessModal('Catalogue pharmacie', message.value)
+        return
+      }
     }
     emit('changed')
     message.value = successText
@@ -506,6 +610,17 @@ function exportWord() {
   void exportTableWord(uiText('Produits pharmacie'), productExportColumns.value, catalogExportRows.value, productExportShared())
 }
 
+function onPickCatalogProduct(item: SuggestProduct) {
+  filterQuery.value = [item.name, item.dosage].filter(Boolean).join(' ')
+}
+
+function onPickFormProduct(item: SuggestProduct) {
+  const full = itemsById.value.get(item.id)
+  if (!full || full.id === editingId.value) return
+  editingId.value = null
+  fillFormFromProduct(full)
+}
+
 defineExpose({
   reload: loadItems,
   exportPdf,
@@ -520,12 +635,12 @@ defineExpose({
   <PageTableSection embedded>
     <template #toolbar>
       <div class="products-toolbar">
-        <input
+        <PharmacyProductSuggest
           v-model="filterQuery"
-          class="filter-input"
-          type="search"
-          :placeholder="uiText('Rechercher un produit…')"
-          :aria-label="uiText('Rechercher un produit')"
+          :items="items"
+          placeholder="Rechercher un produit…"
+          aria-label="Rechercher un produit"
+          @pick="onPickCatalogProduct"
         />
         <select v-model="filterForm" class="filter-select" :aria-label="uiText('Filtrer par forme')">
           <option value="">{{ uiText('Toutes les formes') }}</option>
@@ -537,6 +652,28 @@ defineExpose({
             {{ category.name }}
           </option>
         </select>
+        <div class="products-totals" role="group" :aria-label="uiText('Totaux du stock filtré')">
+          <div class="products-total products-total--count" :title="uiText('Nombre de médicaments')">
+            <span class="products-total__label">{{ uiText('Produits') }}</span>
+            <strong class="products-total__value">{{ filteredItems.length }}</strong>
+          </div>
+          <div class="products-total products-total--achat" :title="uiText('Valeur stock (prix achat)')">
+            <span class="products-total__label">{{ uiText('Total achat') }}</span>
+            <strong class="products-total__value">{{ formatFcfa(priceTotals.purchase) }}</strong>
+          </div>
+          <div class="products-total products-total--vente" :title="uiText('Valeur stock (prix vente)')">
+            <span class="products-total__label">{{ uiText('Total vente') }}</span>
+            <strong class="products-total__value">{{ formatFcfa(priceTotals.sale) }}</strong>
+          </div>
+          <div
+            class="products-total"
+            :class="priceTotals.profit < 0 ? 'products-total--loss' : 'products-total--profit'"
+            :title="uiText('Bénéfice stock (vente − achat)')"
+          >
+            <span class="products-total__label">{{ uiText('Total bénéfice') }}</span>
+            <strong class="products-total__value">{{ formatFcfa(priceTotals.profit) }}</strong>
+          </div>
+        </div>
       </div>
     </template>
 
@@ -605,16 +742,33 @@ defineExpose({
   <UiFormModal
     v-if="modalOpen"
     title-id="pharmacy-product-modal-title"
-    :title="isEditing ? 'Modifier le produit' : 'Ajout d\'un produit'"
+    :title="modalTitle"
     size="large"
     :icon="Package"
     @close="closeModal"
   >
     <UiAlert v-if="(message || formFeedback) && modalOpen" :type="formFeedback ? formFeedbackType === 'success' ? 'success' : 'error' : messageType" :message="formFeedback || message" />
 
+    <UiAlert
+      v-if="restockTarget"
+      type="info"
+      :message="translateTemplate('« {name} » est déjà enregistré ({stock} en stock). La quantité saisie sera ajoutée au stock, sans créer de doublon.', {
+        name: restockTarget.dosage ? `${restockTarget.name} — ${restockTarget.dosage}` : restockTarget.name,
+        stock: restockTarget.quantity,
+      })"
+    />
+
     <form id="pharmacy-product-form" class="product-form" novalidate @submit.prevent="saveItem">
       <div class="product-form__row product-form__row--name">
-        <UiInput v-model="formName" label="Nom du médicament" placeholder="Ex. Paracétamol" />
+        <PharmacyProductSuggest
+          v-model="formName"
+          variant="field"
+          label="Nom du médicament"
+          placeholder="Ex. Paracétamol"
+          :items="items"
+          :exclude-id="editingId"
+          @pick="onPickFormProduct"
+        />
         <UiInput v-model="formDosage" label="Dosage" placeholder="Ex. 500 mg" />
       </div>
 
@@ -667,11 +821,10 @@ defineExpose({
         </div>
       </div>
 
-      <div :class="['product-form__row', isEditing ? 'product-form__row--2' : 'product-form__row--3']">
+      <div class="product-form__row product-form__row--3">
         <UiInput
-          v-if="!isEditing"
           v-model="formQuantity"
-          label="Quantité initiale"
+          :label="restockTarget ? 'Quantité à ajouter' : 'Disponible'"
           type="number"
           min="0"
         />
@@ -747,6 +900,79 @@ defineExpose({
   min-width: 0;
 }
 
+.products-toolbar :deep(.product-suggest--search) {
+  flex: 1 1 8rem;
+  min-width: 8rem;
+  max-width: 16rem;
+}
+
+.products-totals {
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.products-total {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 6.75rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  line-height: 1.15;
+}
+
+.products-total__label {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.products-total__value {
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.products-total--count {
+  min-width: 4.25rem;
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.products-total--achat {
+  border-color: #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.products-total--vente {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.products-total--profit {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.products-total--loss {
+  border-color: #fda4af;
+  background: #fff1f2;
+  color: #be123c;
+}
+
 .filter-input,
 .filter-select {
   min-width: 9rem;
@@ -766,7 +992,9 @@ defineExpose({
 }
 
 .filter-select {
-  min-width: 10rem;
+  min-width: 7.5rem;
+  width: 9.5rem;
+  flex: 0 1 9.5rem;
 }
 
 .empty {

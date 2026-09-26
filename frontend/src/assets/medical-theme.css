@@ -179,6 +179,7 @@ body,
 
 html {
   font-size: calc(100% * var(--app-text-scale));
+  touch-action: manipulation;
 }
 
 body {
@@ -478,6 +479,23 @@ select option,
   .simple-table-scroll {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+  }
+}
+
+@media (any-pointer: coarse) {
+  .ui-btn {
+    min-height: 2.85rem;
+  }
+
+  .ui-btn--sm {
+    min-height: 2.65rem;
+  }
+
+  .ui-field__input,
+  .ui-textarea,
+  select,
+  .ui-select {
+    min-height: 3rem;
   }
 }
 

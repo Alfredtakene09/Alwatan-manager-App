@@ -7,6 +7,7 @@ describe("classifyInvoiceForDayClosure", () => {
   it("classe les consultations par service clinique", () => {
     const label = classifyInvoiceForDayClosure({
       id: "1",
+      patientId: "p1",
       type: InvoiceType.CONSULTATION,
       amountFcfa: 5000,
       paidAmountFcfa: 5000,
@@ -28,6 +29,7 @@ describe("classifyInvoiceForDayClosure", () => {
   it("classe les examens via billingExamKind", () => {
     const label = classifyInvoiceForDayClosure({
       id: "2",
+      patientId: "p2",
       type: InvoiceType.LAB_EXAM,
       amountFcfa: 10000,
       paidAmountFcfa: 10000,
@@ -43,6 +45,7 @@ describe("classifyInvoiceForDayClosure", () => {
   it("classe la chirurgie sous le libellé photo", () => {
     const label = classifyInvoiceForDayClosure({
       id: "3",
+      patientId: "p3",
       type: InvoiceType.SURGERY,
       amountFcfa: 20000,
       paidAmountFcfa: 20000,

@@ -16,6 +16,7 @@ import UiTextarea from '@/components/ui/UiTextarea.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
+import PharmacyProductSuggest, { type SuggestProduct } from '@/components/pharmacie/PharmacyProductSuggest.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -51,10 +52,12 @@ const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const modalOpen = ref(false)
 const filterProductId = ref('')
+const filterProductQuery = ref('')
 const filterMonth = ref('')
 
 const formType = ref<'ENTRY' | 'EXIT' | 'ADJUSTMENT'>('ENTRY')
 const formProductId = ref('')
+const formProductQuery = ref('')
 const formQuantity = ref('1')
 const formTargetQuantity = ref('0')
 const formUnitCost = ref('')
@@ -153,9 +156,51 @@ async function reload() {
   await Promise.all([loadReferenceData(), loadMovements()])
 }
 
+function productSuggestLabel(item: { name: string; dosage?: string | null }) {
+  return item.dosage ? `${item.name} — ${item.dosage}` : item.name
+}
+
+function onPickFilterProduct(item: SuggestProduct) {
+  filterProductId.value = item.id
+  filterProductQuery.value = productSuggestLabel(item)
+  void loadMovements()
+}
+
+function onFilterProductQuery(value: string) {
+  filterProductQuery.value = value
+  const selected = products.value.find((product) => product.id === filterProductId.value)
+  const typed = value.trim().toLowerCase()
+  if (!typed) {
+    if (!filterProductId.value) return
+    filterProductId.value = ''
+    void loadMovements()
+    return
+  }
+  if (selected && !selected.name.toLowerCase().startsWith(typed) && !typed.startsWith(selected.name.toLowerCase())) {
+    filterProductId.value = ''
+    void loadMovements()
+  }
+}
+
+function onPickFormProduct(item: SuggestProduct) {
+  formProductId.value = item.id
+  formProductQuery.value = productSuggestLabel(item)
+}
+
+function onFormProductQuery(value: string) {
+  formProductQuery.value = value
+  const selected = products.value.find((product) => product.id === formProductId.value)
+  if (!selected) return
+  const typed = value.trim().toLowerCase()
+  if (!typed || (!selected.name.toLowerCase().startsWith(typed) && !typed.startsWith(selected.name.toLowerCase()))) {
+    formProductId.value = ''
+  }
+}
+
 function resetForm() {
   formType.value = 'ENTRY'
   formProductId.value = ''
+  formProductQuery.value = ''
   formQuantity.value = '1'
   formTargetQuantity.value = '0'
   formUnitCost.value = ''
@@ -167,7 +212,11 @@ function resetForm() {
 function openCreateModal() {
   if (!canManageCatalog.value) return
   resetForm()
-  if (filterProductId.value) formProductId.value = filterProductId.value
+  if (filterProductId.value) {
+    formProductId.value = filterProductId.value
+    const selected = products.value.find((product) => product.id === filterProductId.value)
+    formProductQuery.value = selected ? productSuggestLabel(selected) : filterProductQuery.value
+  }
   modalOpen.value = true
   message.value = ''
 }
@@ -355,10 +404,14 @@ defineExpose({ reload })
 <template>
   <PageTableSection embedded>
     <template #toolbar>
-      <select v-model="filterProductId" class="filter-select" @change="loadMovements">
-        <option value="">{{ uiText('Tous les produits') }}</option>
-        <option v-for="p in products" :key="p.id" :value="p.id">{{ p.name }}</option>
-      </select>
+      <PharmacyProductSuggest
+        :model-value="filterProductQuery"
+        :items="products"
+        placeholder="Rechercher un produit…"
+        aria-label="Filtrer par produit"
+        @update:model-value="onFilterProductQuery"
+        @pick="onPickFilterProduct"
+      />
       <input
         v-model="filterMonth"
         type="month"
@@ -442,12 +495,15 @@ defineExpose({ reload })
         <option value="ADJUSTMENT">{{ uiText('Ajustement inventaire') }}</option>
       </UiSelect>
 
-      <UiSelect v-model="formProductId" label="Produit" required>
-        <option value="">{{ uiText('Sélectionner un produit') }}</option>
-        <option v-for="p in activeProducts" :key="p.id" :value="p.id">
-          {{ p.name }} (stock: {{ p.quantity }})
-        </option>
-      </UiSelect>
+      <PharmacyProductSuggest
+        variant="field"
+        label="Produit"
+        :model-value="formProductQuery"
+        :items="activeProducts"
+        placeholder="Ex. Paracétamol"
+        @update:model-value="onFormProductQuery"
+        @pick="onPickFormProduct"
+      />
 
       <template v-if="formType === 'ENTRY'">
         <UiSelect v-model="formSupplierId" label="Fournisseur" required>

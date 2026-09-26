@@ -21,6 +21,7 @@ import api from '@/api/client'
 import { CLINIC } from '@/lib/clinic'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, cancelPrintWindow, openPrintDocument, reservePrintWindow, thermalIsRtl, thermalLocaleMetaRow, thermalThanksHtml, thermalTicketDirAttrs, thermalTicketRootClass } from '@/lib/print-document'
+import PharmacyProductSuggest from '@/components/pharmacie/PharmacyProductSuggest.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import { usePharmacyDayClosure } from '@/composables/usePharmacyDayClosure'
@@ -114,7 +115,7 @@ const emit = defineEmits<{
 const { uiText } = useAppI18n()
 
 const rootRef = ref<HTMLElement | null>(null)
-const searchRef = ref<HTMLInputElement | null>(null)
+const searchRef = ref<{ focus: () => void } | null>(null)
 const isFullscreen = ref(true)
 const catalogSearch = ref('')
 const buyerType = ref<BuyerType>('external')
@@ -922,15 +923,16 @@ watch(
         </header>
 
         <div class="catalog-search">
-          <Search :size="16" class="catalog-search__icon" aria-hidden="true" />
-          <input
+          <PharmacyProductSuggest
             ref="searchRef"
             v-model="catalogSearch"
-            type="search"
-            class="catalog-search__input"
-            :placeholder="uiText('Rechercher ou scanner un code-barres…')"
-            :aria-label="uiText('Rechercher dans le catalogue')"
+            variant="catalog"
+            :items="products"
+            :pick-on-enter="false"
+            placeholder="Rechercher ou scanner un code-barres…"
+            aria-label="Rechercher dans le catalogue"
             @keydown="onSearchKeydown"
+            @pick="catalogSearch = $event.dosage ? `${$event.name} ${$event.dosage}` : $event.name"
           />
         </div>
         <p class="catalog-hint">{{ uiText('Saisie : filtre la liste · Lecteur USB : scan + Entrée ajoute au panier') }}</p>
@@ -1842,6 +1844,21 @@ watch(
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
+}
+
+@media (any-pointer: coarse) {
+  .catalog-table td,
+  .cart-table td {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+  }
+
+  .catalog-row,
+  .cart-row,
+  .return-picker__btn,
+  .buyer-type__option {
+    touch-action: manipulation;
+  }
 }
 
 @media (max-width: 768px) {

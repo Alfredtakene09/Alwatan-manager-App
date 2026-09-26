@@ -262,6 +262,66 @@ function parseExpiryDate(value: string | null | undefined) {
   return parsed;
 }
 
+function foldCatalogText(value: string | null | undefined) {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Même médicament : code-barres, sinon nom + dosage (sans tenir compte des accents). */
+async function findCatalogDuplicateId(body: { name: string; dosage?: string | null; barcode?: string | null }) {
+  const products = await prisma.product.findMany({
+    select: { id: true, name: true, dosage: true, barcode: true },
+  });
+  const barcode = foldCatalogText(body.barcode);
+  if (barcode) {
+    const byBarcode = products.find((item) => foldCatalogText(item.barcode) === barcode);
+    if (byBarcode) return byBarcode.id;
+  }
+  const nameKey = foldCatalogText(body.name);
+  const dosageKey = foldCatalogText(body.dosage);
+  const byName = products.find(
+    (item) => foldCatalogText(item.name) === nameKey && foldCatalogText(item.dosage) === dosageKey,
+  );
+  return byName?.id ?? null;
+}
+
+async function restockExistingProduct(
+  productId: string,
+  body: z.infer<typeof productSchema>,
+  userId: string,
+) {
+  const existing = await prisma.product.findUnique({ where: { id: productId } });
+  if (!existing) return null;
+  const addedQuantity = Math.max(0, body.quantity ?? 0);
+  const { quantity: _quantity, sku: _sku, ...data } = productDataFromBody(body, { includeSku: false });
+  data.active = true;
+
+  return prisma.$transaction(async (tx) => {
+    await tx.product.update({
+      where: { id: productId },
+      data,
+    });
+    if (addedQuantity > 0) {
+      await applyStockMovement(tx, {
+        productId,
+        type: "ADJUSTMENT",
+        targetQuantity: existing.quantity + addedQuantity,
+        notes: "Ajout catalogue — produit déjà existant",
+        reference: "CATALOG-RESTOCK",
+        userId,
+      });
+    }
+    return tx.product.findUniqueOrThrow({
+      where: { id: productId },
+      include: productInclude,
+    });
+  });
+}
+
 function productDataFromBody(body: z.infer<typeof productSchema>, options?: { includeSku?: boolean }) {
   const sku = options?.includeSku === false ? undefined : resolveProductSku(body);
   return {
@@ -605,6 +665,7 @@ router.patch("/sales/:prescriptionId", async (req, res) => {
       });
       if (!prescription) throw new Error("SALE_NOT_FOUND");
       if (!canEditPharmacySale(user, prescription)) throw new Error("NOT_AUTHORIZED");
+      if (body.deleteLineIds.length > 0 && user.role !== "ADMIN") throw new Error("NOT_AUTHORIZED");
 
       const lineMap = new Map(prescription.saleLines.map((line) => [line.id, line]));
       let invoiceDeltaFcfa = 0;
@@ -672,21 +733,63 @@ router.patch("/sales/:prescriptionId", async (req, res) => {
         where: { prescriptionId: prescription.id },
       });
 
-      if (remainingCount === 0) {
-        if (invoiceDeltaFcfa !== 0) {
-          const invoiceIds = [
-            ...new Set(prescription.saleLines.map((line) => line.invoiceId).filter(Boolean)),
-          ] as string[];
-          for (const invoiceId of invoiceIds) {
-            const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
-            if (!invoice) continue;
-            const nextAmount = Math.max(0, invoice.amountFcfa + invoiceDeltaFcfa);
-            await tx.invoice.update({
-              where: { id: invoiceId },
-              data: { amountFcfa: nextAmount },
+      if (invoiceDeltaFcfa !== 0) {
+        const invoiceIds = [
+          ...new Set(prescription.saleLines.map((line) => line.invoiceId).filter(Boolean)),
+        ] as string[];
+        for (const invoiceId of invoiceIds) {
+          const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
+          if (!invoice) continue;
+          const nextAmount = Math.max(0, invoice.amountFcfa + invoiceDeltaFcfa);
+          const nextPaid =
+            invoice.status === InvoiceStatus.PAID || invoice.status === InvoiceStatus.PARTIALLY_PAID
+              ? Math.min(Math.max(0, invoice.paidAmountFcfa + invoiceDeltaFcfa), nextAmount)
+              : Math.min(invoice.paidAmountFcfa, nextAmount);
+          await tx.invoice.update({
+            where: { id: invoiceId },
+            data: {
+              amountFcfa: nextAmount,
+              paidAmountFcfa: nextPaid,
+              ...(nextAmount === 0 ? { status: InvoiceStatus.CANCELLED, paidAt: null } : {}),
+            },
+          });
+          const paidGap = invoice.paidAmountFcfa - nextPaid;
+          if (paidGap > 0) {
+            let toRemove = paidGap;
+            const payments = await tx.invoicePayment.findMany({
+              where: { invoiceId },
+              orderBy: { paidAt: "desc" },
             });
+            for (const payment of payments) {
+              if (toRemove <= 0) break;
+              const cut = Math.min(payment.amountFcfa, toRemove);
+              const nextPayment = payment.amountFcfa - cut;
+              if (nextPayment <= 0) {
+                await tx.invoicePayment.delete({ where: { id: payment.id } });
+              } else {
+                await tx.invoicePayment.update({
+                  where: { id: payment.id },
+                  data: { amountFcfa: nextPayment },
+                });
+              }
+              toRemove -= cut;
+            }
+          } else if (paidGap < 0) {
+            const latest = await tx.invoicePayment.findFirst({
+              where: { invoiceId },
+              orderBy: { paidAt: "desc" },
+            });
+            if (latest) {
+              await tx.invoicePayment.update({
+                where: { id: latest.id },
+                data: { amountFcfa: latest.amountFcfa + Math.abs(paidGap) },
+              });
+            }
           }
         }
+      }
+
+      if (remainingCount === 0) {
         await tx.prescription.delete({ where: { id: prescription.id } });
         return { deleted: true as const, id: prescription.id };
       }
@@ -707,29 +810,6 @@ router.patch("/sales/:prescriptionId", async (req, res) => {
       });
 
       const totalFcfa = updatedLines.reduce((sum, line) => sum + line.lineTotalFcfa, 0);
-
-      if (invoiceDeltaFcfa !== 0) {
-        const invoiceIds = [
-          ...new Set(prescription.saleLines.map((line) => line.invoiceId).filter(Boolean)),
-        ] as string[];
-        for (const invoiceId of invoiceIds) {
-          const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
-          if (!invoice) continue;
-          const nextAmount = Math.max(0, invoice.amountFcfa + invoiceDeltaFcfa);
-          const nextPaid =
-            invoice.status === InvoiceStatus.PAID
-              ? nextAmount
-              : Math.min(invoice.paidAmountFcfa, nextAmount);
-          await tx.invoice.update({
-            where: { id: invoiceId },
-            data: {
-              amountFcfa: nextAmount,
-              paidAmountFcfa: nextPaid,
-              ...(nextAmount === 0 ? { status: InvoiceStatus.CANCELLED } : {}),
-            },
-          });
-        }
-      }
 
       const invoiceNumber =
         updatedLines.find((line) => line.invoice?.invoiceNumber)?.invoice?.invoiceNumber ?? null;
@@ -1006,6 +1086,16 @@ router.post("/products/:id/retire-expired", async (req, res) => {
 router.post("/products", ...catalogAccess, async (req, res) => {
   try {
     const body = productSchema.parse(req.body);
+    const duplicateId = await findCatalogDuplicateId(body);
+    if (duplicateId) {
+      const item = await restockExistingProduct(duplicateId, body, req.user!.id);
+      if (!item) return res.status(404).json({ error: "Produit introuvable" });
+      return res.status(200).json({
+        ...item,
+        restocked: true,
+        addedQuantity: Math.max(0, body.quantity ?? 0),
+      });
+    }
     const item = await prisma.product.create({
       data: {
         ...productDataFromBody(body),
@@ -1045,6 +1135,19 @@ router.put("/products/:id", ...catalogAccess, async (req, res) => {
     const productId = routeParam(req.params.id);
     const existing = await prisma.product.findUnique({ where: { id: productId } });
     if (!existing) return res.status(404).json({ error: "Produit introuvable" });
+    if (body.name !== undefined || body.dosage !== undefined || body.barcode !== undefined) {
+      const duplicateId = await findCatalogDuplicateId({
+        name: body.name ?? existing.name,
+        dosage: body.dosage !== undefined ? body.dosage : existing.dosage,
+        barcode: body.barcode !== undefined ? body.barcode : existing.barcode,
+      });
+      if (duplicateId && duplicateId !== productId) {
+        return res.status(409).json({
+          error:
+            "Ce médicament existe déjà. Utilisez « Ajout d'un produit » pour ajuster son stock, sans créer de doublon.",
+        });
+      }
+    }
     const requestedQuantity = body.quantity;
     delete data.quantity;
 
