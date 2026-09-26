@@ -709,6 +709,7 @@ export default {
     Chambre: 'Chambre',
     'Voir le profil': 'Voir le profil',
     'Modifier le séjour': 'Modifier le séjour',
+    'Modifier la date de sortie': 'Modifier la date de sortie',
     "Programmer l'admission": "Programmer l'admission",
     Programmer: 'Programmer',
     'Clôturer la sortie': 'Clôturer la sortie',

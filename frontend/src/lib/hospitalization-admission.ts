@@ -650,7 +650,11 @@ export function printHospitalizationAdmission(
     bodyHtml = buildHospitalizationThermalReceiptHtml(form)
   }
 
-  openPrintDocument(title, bodyHtml, { pageSize, autoPrint: options?.autoPrint !== false })
+  openPrintDocument(title, bodyHtml, {
+    pageSize,
+    autoPrint: options?.autoPrint !== false,
+    thermalTight: pageSize === '80mm',
+  })
 }
 
 export const HOSPITALIZATION_STATUS_LABELS: Record<string, string> = {

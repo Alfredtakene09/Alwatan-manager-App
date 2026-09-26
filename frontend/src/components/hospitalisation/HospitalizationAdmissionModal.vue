@@ -15,6 +15,7 @@ import {
   defaultAdmissionForm,
   endDateFromStayDays,
   printHospitalizationAdmission,
+  stayDaysFromDates,
   type HospitalizationAdmissionForm,
 } from '@/lib/hospitalization-admission'
 import { parsePrescribedHospitalisationDays } from '@/lib/lab-notes'
@@ -111,6 +112,7 @@ const form = ref<HospitalizationAdmissionForm>(defaultAdmissionForm({
 }))
 
 const isReadonly = computed(() => props.mode === 'view')
+const isEditStay = computed(() => props.mode === 'edit')
 const isProgrammed = computed(() => props.mode === 'edit' || props.mode === 'view')
 const isVipForm = computed(() => form.value.roomType === 'VIP')
 
@@ -140,7 +142,12 @@ const billing = computed(() =>
   ),
 )
 
-const datesValid = computed(() => form.value.stayDays >= 1 && Boolean(form.value.startDate))
+const datesValid = computed(() => {
+  if (isEditStay.value) {
+    return Boolean(form.value.startDate && form.value.endDate && form.value.stayDays >= 1)
+  }
+  return form.value.stayDays >= 1 && Boolean(form.value.startDate)
+})
 
 const canSubmit = computed(() => {
   if (!props.hosp || !datesValid.value || isReadonly.value) return false
@@ -151,10 +158,18 @@ const canSubmit = computed(() => {
   return true
 })
 
+const modalTitle = computed(() => {
+  void localeCode.value
+  if (props.mode === 'edit') return uiText('Modifier la date de sortie')
+  return uiText("Profil d'admission hospitalière")
+})
+
 const modalSubtitle = computed(() => {
   void localeCode.value
   if (props.mode === 'view') return "Consultation du profil d'admission"
-  if (props.mode === 'edit') return 'Modification du séjour programmé'
+  if (props.mode === 'edit') {
+    return [form.value.patientName, form.value.patientCode].filter(Boolean).join(' — ')
+  }
   return "Formulaire d'admission hospitalière"
 })
 
@@ -286,7 +301,7 @@ watch(
 watch(
   () => [form.value.startDate, form.value.stayDays] as const,
   () => {
-    if (isReadonly.value) return
+    if (isReadonly.value || isEditStay.value) return
     syncStayEndDate()
   },
 )
@@ -295,6 +310,14 @@ function onStayDaysInput(value: string | number) {
   const parsed = Number.parseInt(String(value), 10)
   form.value.stayDays = Number.isFinite(parsed) && parsed >= 1 ? parsed : 1
   syncStayEndDate()
+}
+
+function onEndDateInput(value: string | number) {
+  const next = String(value)
+  form.value.endDate = next
+  if (form.value.startDate && next) {
+    form.value.stayDays = stayDaysFromDates(form.value.startDate, next)
+  }
 }
 
 function onPrint() {
@@ -334,13 +357,35 @@ onMounted(loadDoctors)
 <template>
   <UiFormModal
     v-if="hosp"
-    size="large"
-    title="Profil d'admission hospitalière"
+    :size="isEditStay ? 'default' : 'large'"
+    :title="modalTitle"
     :subtitle="modalSubtitle"
     :icon="BedDouble"
     @close="emit('close')"
   >
-    <div class="hosp-adm-form" :class="{ 'hosp-adm-form--vip': isVipForm }">
+    <div v-if="isEditStay" class="hosp-edit-stay">
+      <p class="hosp-edit-stay__meta">
+        <strong>{{ form.patientName }}</strong>
+        <span v-if="form.patientCode">{{ form.patientCode }}</span>
+        <span v-if="form.roomName">{{ form.roomName }}</span>
+      </p>
+      <UiInput v-model="form.startDate" label="Date d'entrée" type="date" readonly />
+      <UiInput
+        :model-value="form.endDate"
+        label="Date de sortie"
+        type="date"
+        required
+        @update:model-value="onEndDateInput"
+      />
+      <p v-if="datesValid" class="hosp-edit-stay__hint">
+        {{ uiText('Durée du séjour : {n} jour(s)').replace('{n}', String(form.stayDays)) }}
+        <template v-if="form.dailyRateFcfa > 0">
+          — {{ formatFcfa(billing.netFcfa) }}
+        </template>
+      </p>
+    </div>
+
+    <div v-else class="hosp-adm-form" :class="{ 'hosp-adm-form--vip': isVipForm }">
       <ClinicLetterhead doc-title="Profil d'admission hospitalière" />
 
       <div class="hosp-adm-form__doc-title">
@@ -516,6 +561,7 @@ onMounted(loadDoctors)
     <template #footer>
       <UiButton variant="ghost" @click="emit('close')">{{ footerLabels.close }}</UiButton>
       <UiButton
+        v-if="!isEditStay"
         variant="secondary"
         :icon="Printer"
         :disabled="!datesValid"
@@ -537,6 +583,32 @@ onMounted(loadDoctors)
 </template>
 
 <style scoped>
+.hosp-edit-stay {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.hosp-edit-stay__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  margin: 0 0 0.85rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.hosp-edit-stay__meta strong {
+  color: var(--text);
+}
+
+.hosp-edit-stay__hint {
+  margin: 0.15rem 0 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
 .hosp-adm-form {
   position: relative;
 }

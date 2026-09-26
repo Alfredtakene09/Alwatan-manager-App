@@ -701,6 +701,7 @@ export default {
     Chambre: 'نوع الغرفة',
     'Voir le profil': 'عرض الملف',
     'Modifier le séjour': 'تعديل الإقامة',
+    'Modifier la date de sortie': 'تعديل تاريخ الخروج',
     "Programmer l'admission": 'برمجة القبول',
     Programmer: 'برمجة',
     'Clôturer la sortie': 'إغلاق الخروج',

@@ -701,6 +701,7 @@ export default {
     Chambre: 'Room type',
     'Voir le profil': 'View profile',
     'Modifier le séjour': 'Edit stay',
+    'Modifier la date de sortie': 'Change discharge date',
     "Programmer l'admission": 'Schedule admission',
     Programmer: 'Schedule',
     'Clôturer la sortie': 'Close discharge',

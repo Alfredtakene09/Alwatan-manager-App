@@ -750,7 +750,7 @@ function printDayClosure(data: DayClosureStatus) {
       reductionFcfa: data.reductionFcfa,
       saleFcfa: data.saleFcfa,
     }),
-    { pageSize: '80mm' },
+    { pageSize: '80mm', thermalTight: true },
   )
 }
 

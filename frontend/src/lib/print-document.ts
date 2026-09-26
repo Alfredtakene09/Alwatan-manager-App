@@ -813,14 +813,16 @@ export const CLINIC_PRINT_STYLES = `
     padding: 0.5mm 1.5mm 2mm !important;
     min-height: 0 !important;
     height: auto !important;
-    font-family: Arial, 'Segoe UI', Helvetica, sans-serif;
-    font-size: 10px;
-    font-weight: 400;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11px;
+    font-weight: 700;
     line-height: 1.3;
-    color: #000;
+    color: #000 !important;
     overflow: visible !important;
     -webkit-font-smoothing: none;
     text-rendering: geometricPrecision;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
   body.print-thermal .thermal-receipt {
     width: 100%;
@@ -1157,31 +1159,49 @@ export const CLINIC_PRINT_STYLES = `
     font-size: 9px;
   }
 
-  /* Reçu réception — même densité que pharmacie (gros texte = gris invisible sur thermique). */
-  body.print-thermal .thermal-receipt--reception.thermal-receipt--ticket {
+  /* Réception : consultation + examens + externe — Arial noir gras (comme pharmacie). */
+  body.print-thermal .thermal-receipt--reception,
+  body.print-thermal .thermal-receipt--reception *,
+  body.print-thermal .thermal-receipt--external,
+  body.print-thermal .thermal-receipt--external *,
+  body.print-thermal .thermal-receipt--exam,
+  body.print-thermal .thermal-receipt--exam * {
+    font-family: Arial, Helvetica, sans-serif !important;
     color: #000 !important;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 1.35;
     -webkit-font-smoothing: none;
     print-color-adjust: exact;
     -webkit-print-color-adjust: exact;
   }
+  body.print-thermal .thermal-receipt--reception.thermal-receipt--ticket,
+  body.print-thermal .thermal-receipt--external.thermal-receipt--ticket,
+  body.print-thermal .thermal-receipt--exam.thermal-receipt--ticket {
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.35;
+  }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__title,
   body.print-thermal .thermal-receipt--reception .thermal-receipt__title--fr,
-  body.print-thermal .thermal-receipt--reception .thermal-receipt__title--ar {
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__title--ar,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__title,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__title--fr,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__title,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__title--fr {
     color: #000 !important;
     font-size: 15px;
     font-weight: 800;
   }
-  body.print-thermal .thermal-receipt--reception .thermal-receipt__subtitle-no {
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__subtitle-no,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__subtitle-no,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__subtitle-no {
     color: #000 !important;
     font-size: 12px;
     font-weight: 800;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__contact,
   body.print-thermal .thermal-receipt--reception .thermal-receipt__name,
-  body.print-thermal .thermal-receipt--reception .thermal-receipt__name-ar {
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__name-ar,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__contact,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__contact {
     color: #000 !important;
     font-size: 10px;
     font-weight: 700;
@@ -1190,43 +1210,79 @@ export const CLINIC_PRINT_STYLES = `
   body.print-thermal .thermal-receipt--reception .thermal-receipt__line,
   body.print-thermal .thermal-receipt--reception .thermal-receipt__label-locale,
   body.print-thermal .thermal-receipt--reception .thermal-receipt__label-fr,
-  body.print-thermal .thermal-receipt--reception .thermal-receipt__label-ar {
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__label-ar,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__row,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__line,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__row,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__line {
     color: #000 !important;
     font-size: 12px;
     font-weight: 700;
   }
-  body.print-thermal .thermal-receipt--reception .thermal-receipt__value {
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__value,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__value,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__item-amount,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__item-name,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__value,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__item-amount,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__item-name {
     color: #000 !important;
     font-size: 13px;
     font-weight: 800;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__line--total,
-  body.print-thermal .thermal-receipt--reception .thermal-receipt__row--total {
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__row--total,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__line--total,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__row--total,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__line--total,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__row--total {
     color: #000 !important;
     font-size: 14px;
     font-weight: 800;
   }
-  body.print-thermal .thermal-receipt--reception .thermal-receipt__thanks {
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__thanks,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__thanks,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__thanks {
     color: #000 !important;
     font-size: 13px;
     font-weight: 800;
   }
-  body.print-thermal .thermal-receipt--reception .thermal-receipt__note {
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__note,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__note,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__note {
     color: #000 !important;
     font-size: 11px;
     font-weight: 700;
   }
+  body.print-thermal .thermal-receipt--external .thermal-receipt__line--section,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__line--section {
+    color: #000 !important;
+    font-size: 12px;
+    font-weight: 800;
+    border-bottom: 1px solid #000;
+    margin-top: 4px;
+  }
 
-  /* Reçu hospitalisation — textes plus grands, FR + AR */
+  /* Reçu hospitalisation — même densité Arial noir que pharmacie / réception. */
+  body.print-thermal .thermal-receipt--hospitalization,
+  body.print-thermal .thermal-receipt--hospitalization * {
+    color: #000 !important;
+    -webkit-font-smoothing: none;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
   body.print-thermal .thermal-receipt--hospitalization.thermal-receipt--ticket {
-    font-family: 'Segoe UI', Tahoma, Arial, sans-serif !important;
-    font-size: 16px;
+    font-family: Arial, Helvetica, sans-serif !important;
+    color: #000 !important;
+    font-size: 12px;
+    font-weight: 700;
     line-height: 1.35;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__title,
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__title--fr,
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__title--ar {
-    font-size: 17px;
+    color: #000 !important;
+    font-size: 15px;
     font-weight: 800;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__title--ar,
@@ -1235,27 +1291,36 @@ export const CLINIC_PRINT_STYLES = `
     font-family: Tahoma, 'Segoe UI', 'Traditional Arabic', sans-serif !important;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__subtitle-no {
-    font-size: 15px;
+    color: #000 !important;
+    font-size: 12px;
+    font-weight: 800;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__contact {
-    font-size: 13px;
+    color: #000 !important;
+    font-size: 10px;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__row,
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__line {
-    font-size: 15px;
-    margin: 4px 0;
+    color: #000 !important;
+    font-size: 12px;
+    font-weight: 700;
+    margin: 3px 0;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__value {
-    font-size: 15px;
+    color: #000 !important;
+    font-size: 13px;
     font-weight: 800;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__line--total,
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__row--total {
-    font-size: 17px;
+    color: #000 !important;
+    font-size: 14px;
     font-weight: 800;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__thanks {
-    font-size: 15px;
+    color: #000 !important;
+    font-size: 13px;
     font-weight: 800;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__thanks--bi {
@@ -1375,80 +1440,6 @@ export const CLINIC_PRINT_STYLES = `
     font-weight: 700;
     direction: ltr !important;
     unicode-bidi: isolate;
-  }
-
-  /* Reçu patient externe / examens — gros caractères, police lisible (80 mm). */
-  body.print-thermal .thermal-receipt--external.thermal-receipt--ticket,
-  body.print-thermal .thermal-receipt--exam.thermal-receipt--ticket {
-    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
-    font-size: 20px;
-    line-height: 1.35;
-    font-weight: 600;
-  }
-  body.print-thermal .thermal-receipt--external .thermal-receipt__title,
-  body.print-thermal .thermal-receipt--external .thermal-receipt__title--fr,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__title,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__title--fr {
-    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
-    font-size: 24px;
-    font-weight: 800;
-  }
-  body.print-thermal .thermal-receipt--external .thermal-receipt__subtitle-no,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__subtitle-no {
-    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
-    font-size: 20px;
-    font-weight: 700;
-  }
-  body.print-thermal .thermal-receipt--external .thermal-receipt__contact,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__contact {
-    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
-    font-size: 16px;
-    font-weight: 600;
-  }
-  body.print-thermal .thermal-receipt--external .thermal-receipt__row,
-  body.print-thermal .thermal-receipt--external .thermal-receipt__line,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__row,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__line {
-    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
-    font-size: 18px;
-    font-weight: 600;
-  }
-  body.print-thermal .thermal-receipt--external .thermal-receipt__value,
-  body.print-thermal .thermal-receipt--external .thermal-receipt__item-amount,
-  body.print-thermal .thermal-receipt--external .thermal-receipt__item-name,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__value,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__item-amount,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__item-name {
-    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
-    font-size: 18px;
-    font-weight: 700;
-  }
-  body.print-thermal .thermal-receipt--external .thermal-receipt__line--total,
-  body.print-thermal .thermal-receipt--external .thermal-receipt__row--total,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__line--total,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__row--total {
-    font-size: 22px;
-    font-weight: 800;
-  }
-  body.print-thermal .thermal-receipt--external .thermal-receipt__thanks,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__thanks {
-    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
-    font-size: 20px;
-    font-weight: 700;
-  }
-  body.print-thermal .thermal-receipt--external .thermal-receipt__note,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__note {
-    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
-    font-size: 16px;
-    font-weight: 600;
-  }
-  body.print-thermal .thermal-receipt--external .thermal-receipt__line--section,
-  body.print-thermal .thermal-receipt--exam .thermal-receipt__line--section {
-    font-family: 'Segoe UI', Verdana, Tahoma, Geneva, sans-serif !important;
-    font-size: 18px;
-    font-weight: 800;
-    border-bottom: 1px solid #000;
-    margin-top: 6px;
   }
 
   /* Tickets thermiques en arabe : RTL local (chiffres / tél. restent LTR isolés). */
@@ -2756,7 +2747,11 @@ function applyThermalPageSize(doc: Document, heightMm: number, tight = false) {
   body.print-thermal {
     padding: 0.5mm 1.5mm 0 !important;
   }
-  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__thanks {
+  body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__thanks,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__thanks,
+  body.print-thermal .thermal-receipt--exam .thermal-receipt__thanks,
+  body.print-thermal .thermal-receipt--external .thermal-receipt__thanks,
+  body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__thanks {
     margin: 3px 0 0 !important;
     padding: 0 !important;
   }`

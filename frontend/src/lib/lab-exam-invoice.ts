@@ -225,7 +225,7 @@ function openThermalReceipt(title: string, html: string): boolean {
     return false
   }
   if (!ensurePrintWindow('80mm')) return false
-  const printed = openPrintDocument(title, html, { pageSize: '80mm' })
+  const printed = openPrintDocument(title, html, { pageSize: '80mm', thermalTight: true })
   if (!printed) {
     cancelPrintWindow()
     return false

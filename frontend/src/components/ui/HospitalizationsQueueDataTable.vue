@@ -253,8 +253,8 @@ const rows = computed(() => {
                     v-if="row.canEdit"
                     type="button"
                     class="st-btn st-btn--edit"
-                    :title="uiText('Modifier le séjour')"
-                    :aria-label="uiText('Modifier')"
+                    :title="uiText('Modifier la date de sortie')"
+                    :aria-label="uiText('Modifier la date de sortie')"
                     @click="emit('edit', row.id)"
                   >
                     <Pencil :size="15" />
