@@ -224,10 +224,6 @@ function remainingStock(product: CashierProduct) {
   return Math.max(0, product.quantity - cartQuantityFor(product.id))
 }
 
-function productDisplayName(product: CashierProduct) {
-  return product.dosage ? `${product.name} — ${product.dosage}` : product.name
-}
-
 function selectCartLine(index: number) {
   selectedCartIndex.value = index
 }
@@ -935,49 +931,49 @@ watch(
             @pick="catalogSearch = $event.dosage ? `${$event.name} ${$event.dosage}` : $event.name"
           />
         </div>
-        <p class="catalog-hint">{{ uiText('Saisie : filtre la liste · Lecteur USB : scan + Entrée ajoute au panier') }}</p>
+        <p class="catalog-hint">{{ uiText('Saisie : filtre la grille · Lecteur USB : scan + Entrée ajoute au panier') }}</p>
 
-        <div class="catalog-table-wrap">
-          <table class="catalog-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>{{ uiText('Code') }}</th>
-                <th>{{ uiText('Nom') }}</th>
-                <th>{{ uiText('Stock') }}</th>
-                <th>{{ uiText('Prix') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="!filteredCatalog.length">
-                <td colspan="5" class="catalog-empty">{{ uiText('Aucun produit trouvé') }}</td>
-              </tr>
-              <tr
-                v-for="(product, index) in filteredCatalog"
-                :key="product.id"
-                class="catalog-row"
-                :class="{
-                  'catalog-row--active': highlightedProductId === product.id,
-                  'catalog-row--out': product.quantity <= 0,
-                }"
-                tabindex="0"
-                @click="product.quantity > 0 && addToCart(product.id)"
-                @keydown.enter.prevent="product.quantity > 0 && addToCart(product.id)"
-              >
-                <td>{{ index + 1 }}</td>
-                <td class="catalog-row__sku">{{ product.sku }}</td>
-                <td class="catalog-row__name">{{ productDisplayName(product) }}</td>
-                <td>{{ remainingStock(product) }}</td>
-                <td>{{ formatFcfa(product.unitPriceFcfa) }}</td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="catalog-grid-wrap">
+          <p v-if="!filteredCatalog.length" class="catalog-empty">{{ uiText('Aucun produit trouvé') }}</p>
+          <div v-else class="catalog-grid">
+            <button
+              v-for="product in filteredCatalog"
+              :key="product.id"
+              type="button"
+              class="catalog-card"
+              :class="{
+                'catalog-card--active': highlightedProductId === product.id,
+                'catalog-card--in-cart': cartQuantityFor(product.id) > 0,
+                'catalog-card--out': product.quantity <= 0,
+              }"
+              :disabled="product.quantity <= 0"
+              @click="addToCart(product.id)"
+            >
+              <span v-if="cartQuantityFor(product.id) > 0" class="catalog-card__qty">
+                {{ cartQuantityFor(product.id) }}
+              </span>
+              <span class="catalog-card__icon" aria-hidden="true">
+                <PillBottle :size="24" />
+              </span>
+              <strong class="catalog-card__name">{{ product.name }}</strong>
+              <span v-if="product.dosage" class="catalog-card__dosage">{{ product.dosage }}</span>
+              <span class="catalog-card__meta">
+                <span
+                  class="catalog-card__stock"
+                  :class="{ 'catalog-card__stock--low': remainingStock(product) <= 5 }"
+                >
+                  {{ product.quantity <= 0 ? uiText('Rupture') : remainingStock(product) }}
+                </span>
+                <span class="catalog-card__price">{{ formatFcfa(product.unitPriceFcfa) }}</span>
+              </span>
+            </button>
+          </div>
         </div>
       </section>
 
       <section class="cashier-panel cashier-panel--cart">
         <header class="cashier-panel__head cashier-panel__head--blue">
-          <ShoppingCart :size="18" />
+          <ShoppingCart :size="22" />
           <div>
             <h3>{{ uiText('Panier') }}</h3>
             <p>{{ translateTemplate('{n} article(s)', { n: cartArticlesCount }) }}</p>
@@ -1021,21 +1017,18 @@ watch(
             <UiButton
               type="button"
               variant="secondary"
-              size="sm"
               :icon="Minus"
               @click="changeCartQuantity(selectedCartRow.index, -1)"
             />
             <UiButton
               type="button"
               variant="secondary"
-              size="sm"
               :icon="Plus"
               @click="changeCartQuantity(selectedCartRow.index, 1)"
             />
             <UiButton
               type="button"
               variant="danger"
-              size="sm"
               :icon="Trash2"
               @click="removeFromCart(selectedCartRow.index)"
             >
@@ -1050,12 +1043,13 @@ watch(
           </div>
 
           <div class="cart-actions">
-            <UiButton type="button" variant="secondary" :disabled="!cart.length || submitting" @click="clearCart">
+            <UiButton type="button" variant="secondary" size="lg" :disabled="!cart.length || submitting" @click="clearCart">
               {{ uiText('Vider le panier') }}
             </UiButton>
             <UiButton
               type="button"
               variant="primary"
+              size="lg"
               :icon="PillBottle"
               :disabled="!cart.length || submitting"
               @click="openCheckoutModal"
@@ -1622,6 +1616,14 @@ watch(
   background: linear-gradient(90deg, #2563eb, #3b82f6);
 }
 
+.cashier-panel--cart .cashier-panel__head h3 {
+  font-size: 1.25rem;
+}
+
+.cashier-panel--cart .cashier-panel__head p {
+  font-size: 1rem;
+}
+
 .catalog-search {
   position: relative;
   margin: 0.85rem 1rem 0.35rem;
@@ -1660,11 +1662,128 @@ watch(
   flex-shrink: 0;
 }
 
-.catalog-table-wrap {
+.catalog-grid-wrap {
   flex: 1;
   min-height: 0;
   overflow: auto;
   border-top: 1px solid var(--border);
+}
+
+.catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: 0.65rem;
+  padding: 0.75rem;
+  align-content: start;
+}
+
+.catalog-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.28rem;
+  min-height: 9.25rem;
+  padding: 0.75rem 0.7rem 0.65rem;
+  border: 1px solid #86efac;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #dcfce7 0%, #bbf7d0 100%);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.catalog-card:hover:not(:disabled) {
+  background: linear-gradient(180deg, #bbf7d0 0%, #86efac 100%);
+  border-color: #22c55e;
+  box-shadow: 0 4px 12px rgba(22, 163, 74, 0.16);
+}
+
+.catalog-card:focus-visible {
+  outline: 2px solid var(--accent-500);
+  outline-offset: 2px;
+}
+
+.catalog-card--active,
+.catalog-card--in-cart {
+  background: linear-gradient(180deg, #86efac 0%, #4ade80 100%);
+  border-color: #16a34a;
+}
+
+.catalog-card--out {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.catalog-card__qty {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: #16a34a;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1.35rem;
+  text-align: center;
+}
+
+.catalog-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.15rem;
+  height: 2.15rem;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: #166534;
+  color: #fff;
+}
+
+.catalog-card__name {
+  font-size: 1.4rem;
+  font-weight: 800;
+  line-height: 1.2;
+  color: #14532d;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.catalog-card__dosage {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.catalog-card__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-top: auto;
+  padding-top: 0.4rem;
+}
+
+.catalog-card__stock {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #166534;
+}
+
+.catalog-card__stock--low {
+  color: #b45309;
+}
+
+.catalog-card__price {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: #1d4ed8;
 }
 
 .cart-table-wrap {
@@ -1683,85 +1802,31 @@ watch(
   background: #fff;
 }
 
-.catalog-table,
 .cart-table {
   width: 100%;
   border-collapse: collapse;
+  font-size: 1.1rem;
 }
 
-.catalog-table {
-  font-size: 1.05rem;
-}
-
-.cart-table {
-  font-size: 0.8125rem;
-}
-
-.catalog-table th,
 .cart-table th {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 0.55rem 0.65rem;
+  padding: 0.7rem 0.75rem;
   text-align: left;
   background: #f8fafc;
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: 0.95rem;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   border-bottom: 1px solid var(--border);
 }
 
-.catalog-table th {
-  font-size: 0.8rem;
-  padding: 0.7rem 0.75rem;
-}
-
-.catalog-table td,
 .cart-table td {
-  padding: 0.55rem 0.65rem;
+  padding: 0.75rem;
   border-bottom: 1px solid #eef2f7;
   vertical-align: middle;
-}
-
-.catalog-table td {
-  padding: 0.85rem 0.75rem;
-  line-height: 1.35;
-}
-
-.catalog-row__name {
-  font-size: 1.18rem;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.catalog-row__sku {
-  font-size: 0.98rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-}
-
-.catalog-row {
-  cursor: pointer;
-  transition: background 0.12s ease;
-}
-
-.catalog-row:hover {
-  background: #f0fdf4;
-}
-
-.catalog-row--active {
-  background: #dcfce7;
-}
-
-.catalog-row--out {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.catalog-row--out:hover {
-  background: transparent;
 }
 
 .catalog-empty,
@@ -1803,7 +1868,7 @@ watch(
 
 .cart-total__label {
   display: block;
-  font-size: 0.78rem;
+  font-size: 1rem;
   font-weight: 700;
   color: #166534;
   text-transform: uppercase;
@@ -1813,7 +1878,7 @@ watch(
 .cart-total__value {
   display: block;
   margin-top: 0.35rem;
-  font-size: 1.45rem;
+  font-size: 2rem;
   line-height: 1.1;
   color: #14532d;
 }
@@ -1821,7 +1886,7 @@ watch(
 .cart-total__meta {
   display: block;
   margin-top: 0.35rem;
-  font-size: 0.75rem;
+  font-size: 1rem;
   color: #166534;
 }
 
@@ -1831,6 +1896,11 @@ watch(
   gap: 0.65rem;
   padding: 0.65rem 1rem 0.85rem;
   flex-shrink: 0;
+}
+
+.cart-controls :deep(.ui-btn),
+.cart-actions :deep(.ui-btn) {
+  font-size: 1.05rem;
 }
 
 .checkout-adjustment {

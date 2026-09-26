@@ -108,7 +108,7 @@ function printConsultationReceipt(row: ConsultationRow, overrides?: { reductionF
       date: new Date().toLocaleString('fr-FR'),
       processedBy: collectorName(),
     }),
-    { pageSize: '80mm', autoPrint: true },
+    { pageSize: '80mm', autoPrint: true, thermalTight: true },
   )
 }
 

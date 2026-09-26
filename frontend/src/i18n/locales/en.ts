@@ -2288,6 +2288,7 @@ export default {
     'Rechercher ou scanner un code-barres…': 'Search or scan a barcode…',
     'Rechercher dans le catalogue': 'Search the catalog',
     'Saisie : filtre la liste · Lecteur USB : scan + Entrée ajoute au panier': 'Typing: filters the list · USB scanner: scan + Enter adds to cart',
+    'Saisie : filtre la grille · Lecteur USB : scan + Entrée ajoute au panier': 'Typing: filters the grid · USB scanner: scan + Enter adds to cart',
     'Aucun produit trouvé': 'No product found',
     Panier: 'Cart',
     'Prix unit.': 'Unit price',

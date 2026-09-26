@@ -1157,37 +1157,64 @@ export const CLINIC_PRINT_STYLES = `
     font-size: 9px;
   }
 
-  /* Reçu patient réception — textes ×2 (logo inchangé) */
+  /* Reçu réception — même densité que pharmacie (gros texte = gris invisible sur thermique). */
   body.print-thermal .thermal-receipt--reception.thermal-receipt--ticket {
-    font-size: 22px;
-    line-height: 1.3;
+    color: #000 !important;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.35;
+    -webkit-font-smoothing: none;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__title,
-  body.print-thermal .thermal-receipt--reception .thermal-receipt__title--fr {
-    font-size: 24px;
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__title--fr,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__title--ar {
+    color: #000 !important;
+    font-size: 15px;
+    font-weight: 800;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__subtitle-no {
-    font-size: 22px;
+    color: #000 !important;
+    font-size: 12px;
+    font-weight: 800;
   }
-  body.print-thermal .thermal-receipt--reception .thermal-receipt__contact {
-    font-size: 18px;
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__contact,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__name,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__name-ar {
+    color: #000 !important;
+    font-size: 10px;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__row,
-  body.print-thermal .thermal-receipt--reception .thermal-receipt__line {
-    font-size: 20px;
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__line,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__label-locale,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__label-fr,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__label-ar {
+    color: #000 !important;
+    font-size: 12px;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__value {
-    font-size: 20px;
+    color: #000 !important;
+    font-size: 13px;
+    font-weight: 800;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__line--total,
   body.print-thermal .thermal-receipt--reception .thermal-receipt__row--total {
-    font-size: 24px;
+    color: #000 !important;
+    font-size: 14px;
+    font-weight: 800;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__thanks {
-    font-size: 22px;
+    color: #000 !important;
+    font-size: 13px;
+    font-weight: 800;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__note {
-    font-size: 18px;
+    color: #000 !important;
+    font-size: 11px;
+    font-weight: 700;
   }
 
   /* Reçu hospitalisation — textes plus grands, FR + AR */

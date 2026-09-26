@@ -1027,6 +1027,7 @@ async function printReceipt(r: ReceiptData) {
   openPrintDocument(translateTemplate('Reçu {code}', { code: r.patientCode }), buildConsultationReceiptHtml(r), {
     pageSize: '80mm',
     autoPrint: true,
+    thermalTight: true,
   })
 }
 

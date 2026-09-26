@@ -2290,6 +2290,7 @@ export default {
     'Rechercher ou scanner un code-barres…': 'ابحث أو امسح رمزًا شريطيًا…',
     'Rechercher dans le catalogue': 'البحث في الكتالوج',
     'Saisie : filtre la liste · Lecteur USB : scan + Entrée ajoute au panier': 'الإدخال: يصفّي القائمة · قارئ USB: المسح + Enter يضيف إلى السلة',
+    'Saisie : filtre la grille · Lecteur USB : scan + Entrée ajoute au panier': 'الإدخال: يصفّي الشبكة · قارئ USB: المسح + Enter يضيف إلى السلة',
     'Aucun produit trouvé': 'لم يُعثر على منتج',
     Panier: 'السلة',
     'Prix unit.': 'سعر الوحدة',

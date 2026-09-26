@@ -2209,6 +2209,7 @@ export default {
     'Rechercher ou scanner un code-barres…': 'Rechercher ou scanner un code-barres…',
     'Rechercher dans le catalogue': 'Rechercher dans le catalogue',
     'Saisie : filtre la liste · Lecteur USB : scan + Entrée ajoute au panier': 'Saisie : filtre la liste · Lecteur USB : scan + Entrée ajoute au panier',
+    'Saisie : filtre la grille · Lecteur USB : scan + Entrée ajoute au panier': 'Saisie : filtre la grille · Lecteur USB : scan + Entrée ajoute au panier',
     'Aucun produit trouvé': 'Aucun produit trouvé',
     Panier: 'Panier',
     'Prix unit.': 'Prix unit.',

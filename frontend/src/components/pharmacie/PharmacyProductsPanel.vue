@@ -793,19 +793,7 @@ defineExpose({
         </UiSelect>
       </div>
 
-      <div class="product-form__row product-form__row--supplier">
-        <div class="expiry-field expiry-field--full">
-          <UiInput
-            v-model="formExpiryDate"
-            label="Date d'expiration"
-            type="date"
-            :disabled="formNoExpiry"
-          />
-          <label class="checkbox-field">
-            <input v-model="formNoExpiry" type="checkbox" />
-            <span>{{ uiText('Aucune') }}</span>
-          </label>
-        </div>
+      <div class="product-form__row product-form__row--purchase-expiry">
         <div class="amount-field">
           <span class="amount-field__label">{{ uiText("Prix d'achat") }}</span>
           <div class="amount-field__wrap">
@@ -818,6 +806,18 @@ defineExpose({
             />
             <span class="amount-field__suffix">FCFA</span>
           </div>
+        </div>
+        <div class="expiry-field">
+          <UiInput
+            v-model="formExpiryDate"
+            label="Date d'expiration"
+            type="date"
+            :disabled="formNoExpiry"
+          />
+          <label class="checkbox-field">
+            <input v-model="formNoExpiry" type="checkbox" />
+            <span>{{ uiText('Aucune') }}</span>
+          </label>
         </div>
       </div>
 
@@ -847,7 +847,7 @@ defineExpose({
 
       <div class="product-form__section">{{ uiText('Configuration des sachets') }}</div>
 
-      <div class="product-form__row product-form__row--2">
+      <div class="product-form__row product-form__row--sachets">
         <UiInput v-model="formSachetsPerBox" label="Sachets par boîte" type="number" min="1" />
         <div class="amount-field">
           <span class="amount-field__label">{{ uiText('Prix par sachet') }}</span>
@@ -862,27 +862,31 @@ defineExpose({
             <span class="amount-field__suffix">FCFA</span>
           </div>
         </div>
-      </div>
-
-      <label class="checkbox-field checkbox-field--block">
-        <input v-model="formSellBySachet" type="checkbox" />
-        <span>{{ uiText('Vente par sachet') }}</span>
-      </label>
-
-      <div class="product-form__actions">
-        <UiButton variant="ghost" type="button" @click="closeModal">{{ uiText('Annuler') }}</UiButton>
-        <UiButton
-          variant="primary"
+        <button
           type="button"
-          :icon="Save"
-          :loading="saving"
-          :disabled="saving"
-          @click="saveItem"
+          class="sachet-toggle"
+          :class="{ 'sachet-toggle--on': formSellBySachet }"
+          :aria-pressed="formSellBySachet"
+          @click="formSellBySachet = !formSellBySachet"
         >
-          {{ saving ? uiText('Enregistrement…') : uiText('Enregistrer') }}
-        </UiButton>
+          {{ uiText('Vente par sachet') }}
+        </button>
       </div>
     </form>
+
+    <template #footer>
+      <UiButton variant="ghost" type="button" @click="closeModal">{{ uiText('Annuler') }}</UiButton>
+      <UiButton
+        variant="primary"
+        type="submit"
+        form="pharmacy-product-form"
+        :icon="Save"
+        :loading="saving"
+        :disabled="saving"
+      >
+        {{ saving ? uiText('Enregistrement…') : uiText('Enregistrer') }}
+      </UiButton>
+    </template>
   </UiFormModal>
 </template>
 
@@ -1007,7 +1011,11 @@ defineExpose({
 .product-form {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.15rem;
+}
+
+.product-form :deep(.ui-field) {
+  margin-bottom: 0.55rem;
 }
 
 .product-form-feedback {
@@ -1031,19 +1039,9 @@ defineExpose({
   color: #15803d;
 }
 
-.product-form__actions {
-  display: flex;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 0.65rem;
-  margin-top: 0.75rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border);
-}
-
 .product-form__row {
   display: grid;
-  gap: 0.75rem;
+  gap: 0.65rem;
 }
 
 .product-form__row--name {
@@ -1054,8 +1052,13 @@ defineExpose({
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.product-form__row--supplier {
-  grid-template-columns: 1fr 1fr;
+.product-form__row--purchase-expiry {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+  align-items: end;
+}
+
+.product-form__row--sachets {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
   align-items: end;
 }
 
@@ -1068,23 +1071,19 @@ defineExpose({
 }
 
 .product-form__section {
-  margin: 0.75rem 0 0.35rem;
-  padding: 0.55rem 0.85rem;
+  margin: 0.35rem 0 0.2rem;
+  padding: 0.4rem 0.75rem;
   border-radius: 8px;
   background: #e8f5e9;
   color: #1b5e20;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   font-weight: 700;
-}
-
-.expiry-field--full {
-  grid-column: 1 / -1;
 }
 
 .expiry-field {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
   align-items: end;
 }
 
@@ -1094,7 +1093,7 @@ defineExpose({
 
 .amount-field {
   display: block;
-  margin-bottom: 1rem;
+  margin-bottom: 0.55rem;
 }
 
 .amount-field__label {
@@ -1155,16 +1154,14 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0.55rem;
+  min-height: 2.5rem;
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text);
   cursor: pointer;
   user-select: none;
-}
-
-.checkbox-field--block {
-  margin-top: 0.25rem;
+  white-space: nowrap;
 }
 
 .checkbox-field input {
@@ -1173,17 +1170,46 @@ defineExpose({
   accent-color: var(--accent-500);
 }
 
+.sachet-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+  margin-bottom: 0.55rem;
+  padding: 0 0.9rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sachet-toggle:hover {
+  border-color: var(--accent-500);
+}
+
+.sachet-toggle--on {
+  background: #e8f5e9;
+  border-color: #22c55e;
+  color: #166534;
+}
+
 @media (max-width: 768px) {
   .product-form__row--name,
   .product-form__row--2,
-  .product-form__row--supplier,
+  .product-form__row--purchase-expiry,
+  .product-form__row--sachets,
   .product-form__row--3,
   .product-form__row--4 {
     grid-template-columns: 1fr;
   }
 
   .expiry-field {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 }
 </style>
