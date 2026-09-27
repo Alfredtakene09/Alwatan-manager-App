@@ -683,6 +683,10 @@ export default {
     'Admission validée — {amount} ({nights} nuitée(s))':
       'Admission validée — {amount} ({nights} nuitée(s))',
     'Admission validée — {nights} nuitée(s).': 'Admission validée — {nights} nuitée(s).',
+    'Admission enregistrée — {amount} ({nights} nuitée(s)) à encaisser via « Encaisser ».':
+      'Admission enregistrée — {amount} ({nights} nuitée(s)) à encaisser via « Encaisser ».',
+    'Le montant sera ajouté à la caisse après clic sur « Encaisser » dans la liste.':
+      'Le montant sera ajouté à la caisse après clic sur « Encaisser » dans la liste.',
     'Sortie validée — {nights} nuitée(s), total {amount}':
       'Sortie validée — {nights} nuitée(s), total {amount}',
     "Chambre indisponible ou erreur lors de l'admission.":

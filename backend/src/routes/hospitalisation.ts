@@ -186,7 +186,7 @@ const admitDirectSchema = directAdmitSchema.and(
     attendingDoctor: z.string().optional(),
     attendingDoctorId: z.string().optional(),
     doctorInstructions: z.string().optional(),
-    paidNow: z.boolean().optional().default(true),
+    paidNow: z.boolean().optional().default(false),
   }),
 );
 
@@ -581,7 +581,8 @@ router.post("/actions", async (req, res) => {
         const reductionFcfa = Math.min(Math.max(0, body.reductionFcfa), grossFcfa);
         const totalDueFcfa = Math.max(0, grossFcfa - reductionFcfa);
 
-        const paidNow = body.paidNow !== false;
+        // Encaissement uniquement via l'action collect_payment (bouton « Encaisser »).
+        const paidNow = false;
         const hospitalization = await tx.hospitalization.update({
           where: { id: hospitalizationId },
           data: {
@@ -729,7 +730,7 @@ router.post("/actions", async (req, res) => {
             attendingDoctor: attending.attendingDoctor,
             attendingDoctorId: attending.attendingDoctorId,
             doctorInstructions: data.doctorInstructions?.trim() || null,
-            paidAt: totalDueFcfa > 0 ? new Date() : null,
+            paidAt: null,
           },
           include: { visit: true, room: true, bed: true, attendingDoctorUser: true },
         });
@@ -743,7 +744,10 @@ router.post("/actions", async (req, res) => {
                   hospitalizationId: hospitalization.id,
                   type: InvoiceType.HOSPITALIZATION_FINAL,
                   issuedById: user.id,
-                  ...immediatePaidInvoiceData(totalDueFcfa, user.id),
+                  amountFcfa: totalDueFcfa,
+                  paidAmountFcfa: 0,
+                  status: InvoiceStatus.PENDING,
+                  paidAt: null,
                 },
               })
             : null;

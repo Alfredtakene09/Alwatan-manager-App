@@ -530,22 +530,22 @@ async function load(opts?: { silent?: boolean }) {
   }
 }
 
+function admissionSavedMessage(totalDueFcfa: number, nights: number) {
+  if (!totalDueFcfa) {
+    return uiText('Admission validée — {nights} nuitée(s).').replace('{nights}', String(nights))
+  }
+  return uiText('Admission enregistrée — {amount} ({nights} nuitée(s)) à encaisser via « Encaisser ».')
+    .replace('{amount}', formatFcfa(totalDueFcfa))
+    .replace('{nights}', String(nights))
+}
+
 async function onDirectAdmitConfirmed(payload: {
   printForm: HospitalizationAdmissionForm
   nights: number
   totalDueFcfa: number
 }) {
   directAdmitOpen.value = false
-  try {
-    await printHospitalizationAdmission(payload.printForm)
-  } catch {
-    /* impression non bloquante */
-  }
-  message.value = payload.totalDueFcfa
-    ? uiText('Admission validée — {amount} ({nights} nuitée(s))')
-        .replace('{amount}', formatFcfa(payload.totalDueFcfa))
-        .replace('{nights}', String(payload.nights))
-    : uiText('Admission validée — {nights} nuitée(s).').replace('{nights}', String(payload.nights))
+  message.value = admissionSavedMessage(payload.totalDueFcfa, payload.nights)
   messageType.value = 'success'
   selectTab('hospitalized')
   await load()
@@ -590,12 +590,7 @@ async function confirmAdmission(payload: HospitalizationAdmissionForm & { hospit
       attendingDoctorId: payload.attendingDoctorId || undefined,
       doctorInstructions: payload.doctorInstructions,
     })
-    printHospitalizationAdmission(payload)
-    message.value = res.totalDueFcfa
-      ? uiText('Admission validée — {amount} ({nights} nuitée(s))')
-          .replace('{amount}', formatFcfa(res.totalDueFcfa))
-          .replace('{nights}', String(res.nights))
-      : uiText('Admission validée — {nights} nuitée(s).').replace('{nights}', String(res.nights))
+    message.value = admissionSavedMessage(res.totalDueFcfa, res.nights)
     messageType.value = 'success'
     closeAdmission()
     selectTab('hospitalized')

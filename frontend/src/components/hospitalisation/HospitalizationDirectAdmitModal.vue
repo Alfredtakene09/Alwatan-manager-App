@@ -26,13 +26,11 @@ import { sortDoctorsForReception } from '@/lib/doctor-compensation'
 type DoctorOption = { id: string; firstName: string; lastName: string }
 
 type RoomTypeChoice = '' | 'VIP' | 'SIMPLE'
-type PaymentChoice = 'paid' | 'pending'
 
 const props = defineProps<{
   open: boolean
   roomTypes: AdmissionRoomTypeOption[]
   submitting?: boolean
-  initialPayment?: PaymentChoice
 }>()
 
 const emit = defineEmits<{
@@ -65,7 +63,6 @@ const bedChoice = ref('')
 const startDate = ref(new Date().toISOString().slice(0, 10))
 const stayDays = ref(1)
 const reductionFcfa = ref(0)
-const paymentChoice = ref<PaymentChoice>('paid')
 const attendingDoctorId = ref('')
 const doctors = ref<DoctorOption[]>([])
 
@@ -138,10 +135,9 @@ const labels = computed(() => {
     roomSection: uiText('Salle et séjour'),
     doctorSection: uiText('Médecin hospitalier'),
     paymentSection: uiText('Paiement'),
-    paid: uiText('Payé'),
-    pending: uiText('En attente de paiement'),
+    paymentHint: uiText('Le montant sera ajouté à la caisse après clic sur « Encaisser » dans la liste.'),
     cancel: uiText('Annuler'),
-    confirm: uiText('Valider et imprimer'),
+    confirm: uiText('Enregistrer'),
     creating: uiText('Enregistrement…'),
   }
 })
@@ -162,7 +158,6 @@ function resetState() {
   startDate.value = new Date().toISOString().slice(0, 10)
   stayDays.value = 1
   reductionFcfa.value = 0
-  paymentChoice.value = props.initialPayment === 'pending' ? 'pending' : 'paid'
   attendingDoctorId.value = ''
   void loadDoctors()
 }
@@ -180,13 +175,6 @@ watch(
   () => props.open,
   (open) => {
     if (open) resetState()
-  },
-)
-
-watch(
-  () => props.initialPayment,
-  (value) => {
-    if (props.open) paymentChoice.value = value === 'pending' ? 'pending' : 'paid'
   },
 )
 
@@ -226,7 +214,7 @@ function buildPrintForm(patient: {
     reductionFcfa: Number(reductionFcfa.value) || 0,
     attendingDoctor: attendingDoctorLabel.value,
     attendingDoctorId: attendingDoctorId.value,
-    paymentPaid: paymentChoice.value === 'paid',
+    paymentPaid: false,
   })
 }
 
@@ -264,7 +252,7 @@ async function submit() {
       service: 'Hospitalisation',
       attendingDoctorId: attendingDoctorId.value || undefined,
       attendingDoctor: attendingDoctorLabel.value || undefined,
-      paidNow: paymentChoice.value === 'paid',
+      paidNow: false,
     })
 
     const printForm = buildPrintForm(data.hospitalization.visit.patient)
@@ -403,26 +391,7 @@ async function submit() {
 
       <section class="unified-admit__payment">
         <h3>{{ labels.paymentSection }}</h3>
-        <div class="unified-admit__pay-options" role="radiogroup" :aria-label="labels.paymentSection">
-          <button
-            type="button"
-            role="radio"
-            :aria-checked="paymentChoice === 'paid'"
-            :class="{ active: paymentChoice === 'paid' }"
-            @click="paymentChoice = 'paid'"
-          >
-            {{ labels.paid }}
-          </button>
-          <button
-            type="button"
-            role="radio"
-            :aria-checked="paymentChoice === 'pending'"
-            :class="{ active: paymentChoice === 'pending' }"
-            @click="paymentChoice = 'pending'"
-          >
-            {{ labels.pending }}
-          </button>
-        </div>
+        <p class="unified-admit__pay-hint">{{ labels.paymentHint }}</p>
       </section>
     </div>
 
@@ -491,29 +460,10 @@ async function submit() {
   font-weight: 700;
 }
 
-.unified-admit__pay-options {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.unified-admit__pay-options button {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.55rem 0.9rem;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-card);
-  cursor: pointer;
-  font-weight: 600;
+.unified-admit__pay-hint {
+  margin: 0;
   font-size: 0.875rem;
   color: var(--text-muted);
-}
-
-.unified-admit__pay-options button.active {
-  background: var(--primary-50);
-  border-color: var(--primary-500);
-  color: var(--primary-800);
 }
 
 .unified-admit__error {

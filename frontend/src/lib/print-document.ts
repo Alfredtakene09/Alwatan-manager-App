@@ -1081,7 +1081,8 @@ export const CLINIC_PRINT_STYLES = `
     unicode-bidi: isolate;
   }
 
-  /* Tickets thermiques — Arial, titre + n° + logo */
+  /* Tickets thermiques — Arial, titre + n° + logo.
+     Ne pas dépasser font-weight 700 : sous Windows, Arial 800/900 = Arial Black (texte bouché/flou en thermique). */
   body.print-thermal .thermal-receipt--ticket {
     font-family: Arial, Helvetica, sans-serif !important;
     font-size: 11px;
@@ -1188,14 +1189,14 @@ export const CLINIC_PRINT_STYLES = `
   body.print-thermal .thermal-receipt--exam .thermal-receipt__title--fr {
     color: #000 !important;
     font-size: 15px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__subtitle-no,
   body.print-thermal .thermal-receipt--external .thermal-receipt__subtitle-no,
   body.print-thermal .thermal-receipt--exam .thermal-receipt__subtitle-no {
     color: #000 !important;
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__contact,
   body.print-thermal .thermal-receipt--reception .thermal-receipt__name,
@@ -1228,7 +1229,7 @@ export const CLINIC_PRINT_STYLES = `
   body.print-thermal .thermal-receipt--exam .thermal-receipt__item-name {
     color: #000 !important;
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__line--total,
   body.print-thermal .thermal-receipt--reception .thermal-receipt__row--total,
@@ -1238,14 +1239,14 @@ export const CLINIC_PRINT_STYLES = `
   body.print-thermal .thermal-receipt--exam .thermal-receipt__row--total {
     color: #000 !important;
     font-size: 14px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__thanks,
   body.print-thermal .thermal-receipt--external .thermal-receipt__thanks,
   body.print-thermal .thermal-receipt--exam .thermal-receipt__thanks {
     color: #000 !important;
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--reception .thermal-receipt__note,
   body.print-thermal .thermal-receipt--external .thermal-receipt__note,
@@ -1258,7 +1259,7 @@ export const CLINIC_PRINT_STYLES = `
   body.print-thermal .thermal-receipt--exam .thermal-receipt__line--section {
     color: #000 !important;
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 700;
     border-bottom: 1px solid #000;
     margin-top: 4px;
   }
@@ -1283,7 +1284,7 @@ export const CLINIC_PRINT_STYLES = `
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__title--ar {
     color: #000 !important;
     font-size: 15px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__title--ar,
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__label-ar,
@@ -1293,7 +1294,7 @@ export const CLINIC_PRINT_STYLES = `
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__subtitle-no {
     color: #000 !important;
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__contact {
     color: #000 !important;
@@ -1310,18 +1311,18 @@ export const CLINIC_PRINT_STYLES = `
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__value {
     color: #000 !important;
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__line--total,
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__row--total {
     color: #000 !important;
     font-size: 14px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__thanks {
     color: #000 !important;
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--hospitalization .thermal-receipt__thanks--bi {
     display: flex;
@@ -1347,7 +1348,7 @@ export const CLINIC_PRINT_STYLES = `
   }
   body.print-thermal .thermal-receipt--day-closure .thermal-receipt__name {
     font-size: 15px;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.02em;
   }
   body.print-thermal .thermal-receipt--day-closure .day-closure__period {
@@ -1408,7 +1409,7 @@ export const CLINIC_PRINT_STYLES = `
     margin-top: 4px;
     border-top: 1px solid #000;
     padding-top: 4px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--day-closure .day-closure__footer {
     margin-top: 8px;
@@ -1541,11 +1542,11 @@ export const CLINIC_PRINT_STYLES = `
   body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__title,
   body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__title--fr {
     font-size: 15px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__subtitle-no {
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__contact {
     font-size: 10px;
@@ -1558,25 +1559,25 @@ export const CLINIC_PRINT_STYLES = `
   }
   body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__value {
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__items-table {
     font-size: 11px;
   }
   body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__items-table thead th {
     font-size: 11px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__items-table .col-product {
     font-weight: 700;
   }
   body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__items-table tfoot td {
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 700;
   }
   body.print-thermal .thermal-receipt--pharmacy .thermal-receipt__thanks {
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 700;
   }
 `
 

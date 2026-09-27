@@ -281,6 +281,8 @@ onUnmounted(() => {
   document.removeEventListener('pointerdown', onPointerDown, true)
   document.removeEventListener('focusin', onFocusIn, true)
   document.removeEventListener('focusout', onFocusOut, true)
+  if (target.value) restoreOsKeyboard(target.value)
+  document.documentElement.classList.remove('touch-kb-open')
 })
 </script>
 

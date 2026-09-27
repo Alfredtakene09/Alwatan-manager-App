@@ -675,6 +675,10 @@ export default {
     'Admission validée — {amount} ({nights} nuitée(s))':
       'تم تأكيد القبول — {amount} ({nights} ليلة/ليالٍ)',
     'Admission validée — {nights} nuitée(s).': 'تم تأكيد القبول — {nights} ليلة/ليالٍ.',
+    'Admission enregistrée — {amount} ({nights} nuitée(s)) à encaisser via « Encaisser ».':
+      'تم تسجيل القبول — {amount} ({nights} ليلة/ليالٍ) للتحصيل عبر زر «تحصيل».',
+    'Le montant sera ajouté à la caisse après clic sur « Encaisser » dans la liste.':
+      'يُضاف المبلغ إلى الصندوق فقط بعد الضغط على «تحصيل» في القائمة.',
     'Sortie validée — {nights} nuitée(s), total {amount}':
       'تم تأكيد الخروج — {nights} ليلة/ليالٍ، المجموع {amount}',
     "Chambre indisponible ou erreur lors de l'admission.":

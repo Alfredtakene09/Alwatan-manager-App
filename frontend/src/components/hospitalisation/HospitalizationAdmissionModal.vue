@@ -181,7 +181,7 @@ const footerLabels = computed(() => {
     printFree: uiText('Réimprimer le reçu'),
     saving: uiText('Enregistrement…'),
     save: uiText('Enregistrer'),
-    validate: uiText('Valider et imprimer'),
+    validate: uiText('Enregistrer'),
   }
 })
 
