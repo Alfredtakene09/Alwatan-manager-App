@@ -12,6 +12,7 @@ import {
   Search,
   Banknote,
   Layers,
+  Pencil,
 } from '@lucide/vue'
 import { isAxiosError } from 'axios'
 import api from '@/api/client'
@@ -43,6 +44,8 @@ import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
+import UiFormModal from '@/components/ui/UiFormModal.vue'
+import UiInput from '@/components/ui/UiInput.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
@@ -144,6 +147,10 @@ const PAYMENT_VARIANTS: Record<PaymentState, 'success' | 'warning' | 'danger'> =
 const auth = useAuthStore()
 const { uiText } = useAppI18n()
 const canSeeAllReceptionists = computed(() => auth.user?.role !== 'RECEPTIONNISTE')
+/** Correction montant / date : administrateur et gestionnaire uniquement. */
+const canEditOperations = computed(
+  () => auth.user?.role === 'ADMIN' || auth.user?.role === 'GESTIONNAIRE',
+)
 
 const surgeries = ref<SurgeryCaseRow[]>([])
 const otherOperations = ref<OtherOperationInvoice[]>([])
@@ -159,6 +166,11 @@ const searchQuery = ref('')
 const paymentFilter = ref<PaymentFilter>('all')
 const receptionistFilter = ref('')
 const sourceFilter = ref<SourceFilter>('all')
+
+const editRow = ref<OperationRow | null>(null)
+const editAmount = ref('')
+const editDate = ref('')
+const savingEdit = ref(false)
 
 const dateFilterMode = ref<PeriodMode>('all')
 const filterDay = ref(todayDateKey())
@@ -383,6 +395,58 @@ async function openEncaisser(row: OperationRow) {
 function closeEncaisser() {
   paymentItem.value = null
   submittingKind.value = null
+}
+
+function dateInputValue(timestamp: number) {
+  const date = new Date(timestamp)
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+function openEdit(row: OperationRow) {
+  editRow.value = row
+  editAmount.value = String(row.billedFcfa)
+  editDate.value = dateInputValue(row.timestamp)
+  message.value = ''
+}
+
+function closeEdit() {
+  editRow.value = null
+  savingEdit.value = false
+}
+
+const editAmountFcfa = computed(() => Math.max(0, Math.round(Number(editAmount.value) || 0)))
+const canSaveEdit = computed(
+  () => Boolean(editRow.value && editDate.value) && editAmount.value.trim() !== '',
+)
+
+async function submitEdit() {
+  const row = editRow.value
+  if (!row || !canSaveEdit.value || savingEdit.value) return
+
+  savingEdit.value = true
+  try {
+    const path =
+      row.source === 'bloc'
+        ? `/surgeries/${row.id}/billing`
+        : `/surgeries/other-operations/${row.id.replace(/^other-/, '')}/billing`
+    await api.patch(path, {
+      amountFcfa: editAmountFcfa.value,
+      operationDate: editDate.value,
+    })
+    closeEdit()
+    message.value = 'Opération modifiée.'
+    messageType.value = 'success'
+    await load()
+  } catch (error) {
+    const shown = await showApiErrorModal(error, 'Impossible de modifier l’opération.')
+    if (!shown) {
+      message.value = apiErrorText(error) ?? 'Impossible de modifier l’opération.'
+      messageType.value = 'error'
+    }
+    savingEdit.value = false
+  }
 }
 
 async function confirmEncaisser(payload: LabExamPaymentConfirmPayload) {
@@ -735,17 +799,31 @@ onMounted(load)
                       }}</span>
                     </td>
                     <td class="simple-table__actions">
-                      <button
-                        v-if="row.remainingFcfa > 0"
-                        type="button"
-                        class="st-btn st-btn--pay st-btn--labeled"
-                        :disabled="!!actionId || submittingPayment"
-                        @click="openEncaisser(row)"
-                      >
-                        <Banknote :size="15" />
-                        {{ uiText(actionId === row.id ? 'Ouverture…' : 'Encaisser') }}
-                      </button>
-                      <span v-else class="st-muted">—</span>
+                      <div class="st-actions">
+                        <button
+                          v-if="row.remainingFcfa > 0"
+                          type="button"
+                          class="st-btn st-btn--pay st-btn--labeled"
+                          :disabled="!!actionId || submittingPayment"
+                          @click="openEncaisser(row)"
+                        >
+                          <Banknote :size="15" />
+                          {{ uiText(actionId === row.id ? 'Ouverture…' : 'Encaisser') }}
+                        </button>
+                        <button
+                          v-if="canEditOperations"
+                          type="button"
+                          class="st-btn st-btn--edit"
+                          :title="uiText('Modifier le montant et la date')"
+                          :aria-label="uiText('Modifier le montant et la date')"
+                          @click="openEdit(row)"
+                        >
+                          <Pencil :size="15" />
+                        </button>
+                        <span v-if="row.remainingFcfa === 0 && !canEditOperations" class="st-muted">
+                          —
+                        </span>
+                      </div>
                     </td>
                   </tr>
                 </tbody>
@@ -763,10 +841,44 @@ onMounted(load)
       @close="closeEncaisser"
       @confirm="confirmEncaisser"
     />
+
+    <UiFormModal
+      v-if="editRow"
+      title="Modifier l'opération"
+      :subtitle="`${editRow.patientName} — ${editRow.intervention}`"
+      :icon="Pencil"
+      @close="closeEdit"
+    >
+      <UiInput v-model="editAmount" label="Montant (FCFA)" type="number" required />
+      <UiInput v-model="editDate" label="Date de l'opération" type="date" required />
+      <p v-if="editRow.paidFcfa > 0" class="edit-hint">
+        {{
+          translateTemplate('Déjà encaissé : {paid}', { paid: formatFcfa(editRow.paidFcfa) })
+        }}
+      </p>
+
+      <template #footer>
+        <UiButton variant="ghost" @click="closeEdit">{{ uiText('Annuler') }}</UiButton>
+        <UiButton
+          variant="primary"
+          :disabled="!canSaveEdit || savingEdit"
+          @click="submitEdit"
+        >
+          {{ uiText(savingEdit ? 'Enregistrement…' : 'Enregistrer') }}
+        </UiButton>
+      </template>
+    </UiFormModal>
   </div>
 </template>
 
 <style scoped>
+.edit-hint {
+  margin: 0.15rem 0 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
 .filter-bar {
   background: var(--bg-card);
   border: 1px solid var(--border);

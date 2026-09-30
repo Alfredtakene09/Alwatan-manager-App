@@ -764,6 +764,7 @@ export default {
     '% vs mois précédent': '% vs mois précédent',
     Consultations: 'Consultations',
     Opérations: 'Opérations',
+    'Autres prestations': 'Autres prestations',
     Autres: 'Autres',
     Salaires: 'Salaires',
     Fournitures: 'Fournitures',
@@ -1424,6 +1425,10 @@ export default {
     '{n} opération(s)': '{n} opération(s)',
     'Chargement des opérations…': 'Chargement des opérations…',
     "Modifier l'opération": "Modifier l'opération",
+    'Modifier le montant et la date': 'Modifier le montant et la date',
+    "Date de l'opération": "Date de l'opération",
+    'Déjà encaissé : {paid}': 'Déjà encaissé : {paid}',
+    'Opération modifiée.': 'Opération modifiée.',
     'Nouvelle opération avec répartition des honoraires':
       'Nouvelle opération avec répartition des honoraires',
     'Mettre à jour les tarifs, médecins et répartitions':
@@ -2375,6 +2380,7 @@ export default {
     'Récapitulatif par poste': 'Récapitulatif par poste',
     'Employés par poste': 'Employés par poste',
     'Liste complète': 'Liste complète',
+    'Total général': 'Total général',
     'Total général — employés': 'Total général — employés',
     'Total général — masse salariale': 'Total général — masse salariale',
     'Aucune donnée': 'Aucune donnée',

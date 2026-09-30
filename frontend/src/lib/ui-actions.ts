@@ -144,6 +144,12 @@ export const UI_ACTIONS: UiActionDef[] = [
     defaultRoles: DIRECTION_STAFF,
   },
   {
+    id: 'comptabilite.journal',
+    group: 'accounting',
+    label: 'Caisse & journal',
+    defaultRoles: DIRECTION_STAFF,
+  },
+  {
     id: 'comptabilite.depenses',
     group: 'accounting',
     label: 'Gestion des dépenses',

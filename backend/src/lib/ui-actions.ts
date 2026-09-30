@@ -36,6 +36,7 @@ export const UI_ACTION_IDS = [
   "lab.result_forms",
   "comptabilite.reduction",
   "comptabilite.encaissements",
+  "comptabilite.journal",
   "comptabilite.depenses",
   "comptabilite.salaires",
   "comptabilite.exam_payments",

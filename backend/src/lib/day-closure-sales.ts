@@ -12,10 +12,27 @@ import {
 } from "./revenue-stats.js";
 import { comptabiliteInvoicePatientWhere } from "./patient-billing.js";
 
+/** Sections du ticket cumulé, dans l'ordre d'impression. */
+export type DayClosureLineGroup =
+  | "consultation"
+  | "operation"
+  | "exam"
+  | "hospitalization"
+  | "other";
+
+const DAY_CLOSURE_GROUP_ORDER: DayClosureLineGroup[] = [
+  "consultation",
+  "operation",
+  "exam",
+  "hospitalization",
+  "other",
+];
+
 export type DayClosureServiceLine = {
   label: string;
   qty: number;
   totalFcfa: number;
+  group: DayClosureLineGroup;
 };
 
 export type DayClosureSalesSummary = {
@@ -61,6 +78,9 @@ type DayClosureInvoice = {
     consultation: { clinicalNotes: string | null } | null;
   } | null;
   hospitalization: { reductionFcfa: number } | null;
+  surgeryCase?: {
+    interventionType: { clinicService: { name: string } | null } | null;
+  } | null;
 };
 
 function normalizeDayClosureLabel(label: string): string {
@@ -88,24 +108,56 @@ function classifyLabExamForDayClosure(invoice: DayClosureInvoice): string {
   return normalizeDayClosureLabel(fallback);
 }
 
-export function classifyInvoiceForDayClosure(invoice: DayClosureInvoice): string {
+/**
+ * Une opération, au bloc (dossier chirurgie) comme prescrite en consultation,
+ * va dans la section « Opérations ».
+ */
+function isDayClosureOperation(invoice: DayClosureInvoice): boolean {
+  return (
+    invoice.type === InvoiceType.SURGERY ||
+    Boolean(invoice.surgeryCaseId) ||
+    invoice.billingExamKind?.trim() === "operation"
+  );
+}
+
+/** Service ayant réalisé l'opération : type d'intervention, sinon service de la visite. */
+function operationServiceLabel(invoice: DayClosureInvoice): string {
+  const serviceName =
+    invoice.surgeryCase?.interventionType?.clinicService?.name?.trim() ||
+    invoice.visit?.assignedClinicService?.name?.trim() ||
+    invoice.visit?.patient?.service?.trim() ||
+    "";
+  return serviceName ? normalizeDayClosureLabel(serviceName) : "Chirurgie";
+}
+
+export type DayClosureClassification = {
+  label: string;
+  group: DayClosureLineGroup;
+};
+
+export function classifyInvoiceForDayClosure(
+  invoice: DayClosureInvoice,
+): DayClosureClassification {
   if (invoice.type === InvoiceType.CONSULTATION) {
     const serviceName =
       invoice.visit?.assignedClinicService?.name?.trim() ||
       invoice.visit?.patient?.service?.trim() ||
       "";
-    return normalizeDayClosureLabel(serviceName || "Consultations");
+    return {
+      label: normalizeDayClosureLabel(serviceName || "Consultations"),
+      group: "consultation",
+    };
   }
-  if (isCollectedOperationInvoice(invoice) || invoice.type === InvoiceType.SURGERY) {
-    return "Chirurgie";
+  if (isDayClosureOperation(invoice)) {
+    return { label: operationServiceLabel(invoice), group: "operation" };
   }
   if (isCollectedHospitalizationInvoice(invoice)) {
-    return "Hospitalisation";
+    return { label: "Hospitalisation", group: "hospitalization" };
   }
   if (invoice.type === InvoiceType.LAB_EXAM) {
-    return classifyLabExamForDayClosure(invoice);
+    return { label: classifyLabExamForDayClosure(invoice), group: "exam" };
   }
-  return normalizeDayClosureLabel(classifyInvoiceForSettlement(invoice));
+  return { label: normalizeDayClosureLabel(classifyInvoiceForSettlement(invoice)), group: "other" };
 }
 
 function reductionForInvoice(invoice: DayClosureInvoice): number {
@@ -147,6 +199,11 @@ const dayClosureInvoiceSelect = {
     },
   },
   hospitalization: { select: { reductionFcfa: true } },
+  surgeryCase: {
+    select: {
+      interventionType: { select: { clinicService: { select: { name: true } } } },
+    },
+  },
 } satisfies Prisma.InvoiceSelect;
 
 /**
@@ -213,6 +270,7 @@ export async function buildDayClosureSalesSummary(
     });
   }
 
+  // Clé section + libellé : un même service peut apparaître en consultation et en opération.
   const grouped = new Map<string, DayClosureServiceLine & { patientIds: Set<string> }>();
   let collectedFcfa = 0;
   let reductionFcfa = 0;
@@ -227,15 +285,22 @@ export async function buildDayClosureSalesSummary(
     if (paid <= 0) continue;
     collectedFcfa += paid;
 
-    const label = classifyInvoiceForDayClosure(invoice);
-    const row = grouped.get(label) ?? { label, qty: 0, totalFcfa: 0, patientIds: new Set<string>() };
+    const { label, group } = classifyInvoiceForDayClosure(invoice);
+    const key = `${group}\u0000${label}`;
+    const row = grouped.get(key) ?? {
+      label,
+      group,
+      qty: 0,
+      totalFcfa: 0,
+      patientIds: new Set<string>(),
+    };
     const patientKey = invoice.patientId ?? invoice.id;
     if (!row.patientIds.has(patientKey)) {
       row.patientIds.add(patientKey);
       row.qty += 1;
     }
     row.totalFcfa += paid;
-    grouped.set(label, row);
+    grouped.set(key, row);
 
     // Remise consultation / hosp : une fois par facture (pas par tranche).
     const invoiceKey = invoice.id;
@@ -247,7 +312,12 @@ export async function buildDayClosureSalesSummary(
 
   const serviceLines = [...grouped.values()]
     .map(({ patientIds: _patientIds, ...line }) => line)
-    .sort((a, b) => a.label.localeCompare(b.label, "fr", { sensitivity: "base" }));
+    .sort((a, b) => {
+      const byGroup =
+        DAY_CLOSURE_GROUP_ORDER.indexOf(a.group) - DAY_CLOSURE_GROUP_ORDER.indexOf(b.group);
+      if (byGroup !== 0) return byGroup;
+      return a.label.localeCompare(b.label, "fr", { sensitivity: "base" });
+    });
 
   return {
     serviceLines,

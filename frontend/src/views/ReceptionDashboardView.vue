@@ -54,6 +54,7 @@ import {
   cancelPrintWindow,
   openPrintDocument,
   reservePrintWindow,
+  type DayClosureServiceLine,
 } from '@/lib/print-document'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import { useAuthStore } from '@/stores/auth'
@@ -166,7 +167,7 @@ type DayClosureStatus = {
   examsFcfa?: number
   surgeryFcfa?: number
   hospitalizationFcfa?: number
-  serviceLines?: Array<{ label: string; qty: number; totalFcfa: number }>
+  serviceLines?: DayClosureServiceLine[]
   reductionFcfa?: number
   saleFcfa?: number
   receptionistName: string

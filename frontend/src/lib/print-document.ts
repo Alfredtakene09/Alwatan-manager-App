@@ -1389,6 +1389,36 @@ export const CLINIC_PRINT_STYLES = `
     font-size: 11px;
     opacity: 0.9;
   }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__group td {
+    padding: 5px 0 2px;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid #000;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__group-ar {
+    font-size: 11px;
+    font-weight: 800;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table td.col-service {
+    padding-inline-start: 6px;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__group td.col-service,
+  body.print-thermal .thermal-receipt--day-closure .day-closure__grand-total td.col-service {
+    padding-inline-start: 0;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__subtotal td {
+    font-weight: 800;
+    border-bottom: 1px solid #000;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__grand-total td {
+    padding-top: 5px;
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    border-top: 1px solid #000;
+    border-bottom: none;
+  }
   body.print-thermal .thermal-receipt--day-closure .day-closure__totals {
     margin-top: 4px;
   }
@@ -1653,6 +1683,18 @@ export const CLINIC_PRINT_STYLES = `
   body.print-thermal .thermal-receipt--day-closure .day-closure__table td {
     border-bottom: 1px dashed #000;
     padding: 4px 0;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__group td {
+    padding: 6px 0 3px;
+    font-size: 14px;
+    font-weight: 800;
+    border-bottom: 1px solid #000;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__group-ar {
+    font-size: 13px;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__grand-total td {
+    font-size: 15px;
   }
   body.print-thermal .thermal-receipt--day-closure .day-closure__table .col-service {
     width: 56%;
@@ -2132,11 +2174,28 @@ export function buildConsultationReceiptHtml(data: ConsultationReceiptData): str
 </div>`
 }
 
+/** Sections du cumul, dans l'ordre d'impression. */
+export type DayClosureLineGroup =
+  | 'consultation'
+  | 'operation'
+  | 'exam'
+  | 'hospitalization'
+  | 'other'
+
 export type DayClosureServiceLine = {
   label: string
   qty: number
   totalFcfa: number
+  group?: DayClosureLineGroup
 }
+
+const DAY_CLOSURE_GROUPS: { id: DayClosureLineGroup; label: string }[] = [
+  { id: 'consultation', label: 'Consultations' },
+  { id: 'operation', label: 'Opérations' },
+  { id: 'exam', label: 'Examens' },
+  { id: 'hospitalization', label: 'Hospitalisation' },
+  { id: 'other', label: 'Autres prestations' },
+]
 
 export type DayClosureReceiptData = {
   businessDate: string
@@ -2174,27 +2233,69 @@ function formatDayClosureAmount(amount: number): string {
   return formatFcfaShort(amount)
 }
 
+function buildDayClosureLineHtml(line: DayClosureServiceLine): string {
+  const fr = line.label.trim()
+  const ar = thermalAr(fr)
+  const labelHtml = ar
+    ? `<span class="day-closure__service-fr" dir="ltr">${escapeHtml(fr)}</span>
+  <span class="day-closure__service-ar" dir="rtl" lang="ar">${escapeHtml(ar)}</span>`
+    : `<span class="day-closure__service-fr" dir="ltr">${escapeHtml(fr)}</span>`
+  return `<tr>
+  <td class="col-service">${labelHtml}</td>
+  <td class="col-qty" dir="ltr">${escapeHtml(String(line.qty))}</td>
+  <td class="col-total" dir="ltr">${escapeHtml(formatFcfaCompact(line.totalFcfa))}</td>
+</tr>`
+}
+
+function buildDayClosureGroupHeaderHtml(label: string): string {
+  const ar = thermalAr(label)
+  const arHtml = ar
+    ? ` <span class="day-closure__group-ar" dir="rtl" lang="ar">${escapeHtml(ar)}</span>`
+    : ''
+  return `<tr class="day-closure__group">
+  <td class="col-service" colspan="3" dir="ltr">${escapeHtml(label.toUpperCase())}${arHtml}</td>
+</tr>`
+}
+
+function buildDayClosureSumRowHtml(
+  label: string,
+  lines: DayClosureServiceLine[],
+  rowClass: string,
+): string {
+  const qty = lines.reduce((sum, line) => sum + line.qty, 0)
+  const totalFcfa = lines.reduce((sum, line) => sum + line.totalFcfa, 0)
+  return `<tr class="${rowClass}">
+  <td class="col-service" dir="ltr">${escapeHtml(label)}</td>
+  <td class="col-qty" dir="ltr">${qty}</td>
+  <td class="col-total" dir="ltr">${escapeHtml(formatFcfaCompact(totalFcfa))}</td>
+</tr>`
+}
+
 function buildDayClosureServiceRowsHtml(lines: DayClosureServiceLine[]): string {
   if (!lines.length) {
     return `<tr>
   <td class="col-service" colspan="3" dir="ltr">${escapeHtml(t('Aucune vente enregistrée'))}</td>
 </tr>`
   }
-  return lines
-    .map((line) => {
-      const fr = line.label.trim()
-      const ar = thermalAr(fr)
-      const labelHtml = ar
-        ? `<span class="day-closure__service-fr" dir="ltr">${escapeHtml(fr)}</span>
-  <span class="day-closure__service-ar" dir="rtl" lang="ar">${escapeHtml(ar)}</span>`
-        : `<span class="day-closure__service-fr" dir="ltr">${escapeHtml(fr)}</span>`
-      return `<tr>
-  <td class="col-service">${labelHtml}</td>
-  <td class="col-qty" dir="ltr">${escapeHtml(String(line.qty))}</td>
-  <td class="col-total" dir="ltr">${escapeHtml(formatFcfaCompact(line.totalFcfa))}</td>
-</tr>`
-    })
-    .join('')
+  // Sans section (ticket pharmacie), on garde la liste à plat.
+  if (!lines.some((line) => line.group)) {
+    return lines.map(buildDayClosureLineHtml).join('')
+  }
+
+  const fr = (key: string) => translateUiLocale(key, 'fr')
+  const sections = DAY_CLOSURE_GROUPS.flatMap((group) => {
+    const rows = lines.filter((line) => (line.group ?? 'other') === group.id)
+    if (!rows.length) return []
+    return [
+      buildDayClosureGroupHeaderHtml(fr(group.label)),
+      ...rows.map(buildDayClosureLineHtml),
+      buildDayClosureSumRowHtml(fr('Sous-total'), rows, 'day-closure__subtotal'),
+    ]
+  })
+  return [
+    ...sections,
+    buildDayClosureSumRowHtml(fr('Total général'), lines, 'day-closure__grand-total'),
+  ].join('')
 }
 
 export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string {

@@ -1,7 +1,8 @@
-import { Router } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { InvoiceStatus, InvoiceType, SurgeryStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
+import { computeSurgeryShares, resolveSurgeonPercent } from "../lib/doctor-compensation.js";
 import { parsePrescribedExamsByKind } from "../lib/lab-notes.js";
 import { comptabilitePatientWhere } from "../lib/patient-billing.js";
 import {
@@ -382,6 +383,178 @@ router.get("/other-operations", async (_req, res) => {
   } catch (error) {
     console.error("GET /surgeries/other-operations failed:", error);
     return res.status(500).json({ error: "Impossible de charger les autres opérations." });
+  }
+});
+
+/** Correction comptable (montant + date) : administrateur et gestionnaire uniquement. */
+function requireOperationEditor(req: Request, res: Response, next: NextFunction) {
+  const role = req.user?.role;
+  if (role !== "ADMIN" && role !== "GESTIONNAIRE") {
+    return res.status(403).json({
+      error: "Correction réservée à l'administrateur et au gestionnaire.",
+      code: "OPERATION_EDIT_FORBIDDEN",
+    });
+  }
+  next();
+}
+
+const operationBillingSchema = z.object({
+  amountFcfa: z.coerce.number().int().min(0),
+  operationDate: z.string().min(1),
+});
+
+/** Nouvelle date en conservant l'heure d'origine (la colonne affiche date + heure). */
+function replaceDatePart(input: string, previous: Date | null): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input.trim());
+  if (!match) throw new Error("INVALID_OPERATION_DATE");
+  const base = previous ?? new Date();
+  const next = new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    base.getHours(),
+    base.getMinutes(),
+    base.getSeconds(),
+    base.getMilliseconds(),
+  );
+  if (Number.isNaN(next.getTime())) throw new Error("INVALID_OPERATION_DATE");
+  return next;
+}
+
+function invoiceStatusFor(amountFcfa: number, paidAmountFcfa: number): InvoiceStatus {
+  if (amountFcfa > 0 && paidAmountFcfa >= amountFcfa) return InvoiceStatus.PAID;
+  if (paidAmountFcfa > 0) return InvoiceStatus.PARTIALLY_PAID;
+  return InvoiceStatus.PENDING;
+}
+
+/** Corriger le montant facturé et la date d'une opération du bloc opératoire. */
+router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
+  try {
+    const { amountFcfa, operationDate } = operationBillingSchema.parse(req.body);
+    const surgeryId = String(req.params.id);
+
+    const surgery = await prisma.surgeryCase.findUnique({
+      where: { id: surgeryId },
+      include: {
+        interventionType: { select: { surgeonPercent: true } },
+        surgeon: {
+          select: {
+            role: true,
+            employee: {
+              select: {
+                isMedecin: true,
+                doctorCompensationType: true,
+                surgeryQuotaPercent: true,
+              },
+            },
+          },
+        },
+        invoice: { select: { id: true, paidAmountFcfa: true, paidAt: true } },
+      },
+    });
+
+    if (!surgery) {
+      return res.status(404).json({ error: "Opération introuvable." });
+    }
+
+    let nextDate: Date;
+    try {
+      nextDate = replaceDatePart(
+        operationDate,
+        surgery.completedAt ?? surgery.operationScheduledAt ?? surgery.invoice?.paidAt ?? null,
+      );
+    } catch {
+      return res.status(400).json({ error: "Date d'opération invalide." });
+    }
+
+    const surgeonPercent = resolveSurgeonPercent(
+      surgery.interventionType.surgeonPercent,
+      surgery.surgeon,
+    );
+    const shares = computeSurgeryShares(amountFcfa, surgeonPercent, surgery.surgeon);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.surgeryCase.update({
+        where: { id: surgery.id },
+        data: {
+          totalCostFcfa: amountFcfa,
+          surgeonShareFcfa: shares.surgeonShareFcfa,
+          clinicShareFcfa: shares.clinicShareFcfa,
+          ...(surgery.completedAt
+            ? { completedAt: nextDate }
+            : { operationScheduledAt: nextDate }),
+        },
+      });
+
+      if (surgery.invoice) {
+        await tx.invoice.update({
+          where: { id: surgery.invoice.id },
+          data: {
+            amountFcfa,
+            status: invoiceStatusFor(amountFcfa, surgery.invoice.paidAmountFcfa),
+          },
+        });
+      }
+    });
+
+    const updated = await prisma.surgeryCase.findUniqueOrThrow({
+      where: { id: surgery.id },
+      include: surgeryInclude,
+    });
+
+    return res.json(updated);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: "Montant ou date invalide." });
+    }
+    console.error("PATCH /surgeries/:id/billing failed:", error);
+    return res.status(500).json({ error: "Impossible de modifier l'opération." });
+  }
+});
+
+/** Corriger le montant facturé et la date d'une opération hors bloc opératoire. */
+router.patch("/other-operations/:id/billing", requireOperationEditor, async (req, res) => {
+  try {
+    const { amountFcfa, operationDate } = operationBillingSchema.parse(req.body);
+    const invoiceId = String(req.params.id);
+
+    const invoice = await prisma.invoice.findFirst({
+      where: {
+        id: invoiceId,
+        type: InvoiceType.LAB_EXAM,
+        billingExamKind: "operation",
+        surgeryCaseId: null,
+      },
+      select: { id: true, paidAmountFcfa: true, paidAt: true, createdAt: true },
+    });
+
+    if (!invoice) {
+      return res.status(404).json({ error: "Opération introuvable." });
+    }
+
+    let nextDate: Date;
+    try {
+      nextDate = replaceDatePart(operationDate, invoice.paidAt ?? invoice.createdAt);
+    } catch {
+      return res.status(400).json({ error: "Date d'opération invalide." });
+    }
+
+    await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        amountFcfa,
+        status: invoiceStatusFor(amountFcfa, invoice.paidAmountFcfa),
+        ...(invoice.paidAt ? { paidAt: nextDate } : { createdAt: nextDate }),
+      },
+    });
+
+    return res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: "Montant ou date invalide." });
+    }
+    console.error("PATCH /surgeries/other-operations/:id/billing failed:", error);
+    return res.status(500).json({ error: "Impossible de modifier l'opération." });
   }
 });
 

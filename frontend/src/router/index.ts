@@ -168,7 +168,10 @@ const router = createRouter({
           component: () => import('@/views/comptabilite/ComptabiliteExamReclamationsView.vue'),
           meta: { module: 'comptabilite', uiAction: 'comptabilite.exam_payments' },
         },
-        { path: 'comptabilite/compte-rendu-caisse', redirect: { name: 'dashboard' } },
+        {
+          path: 'comptabilite/compte-rendu-caisse',
+          redirect: { path: '/gestionnaire/livre-journal', query: { tab: 'historique' } },
+        },
         {
           path: 'comptabilite/depenses',
           name: 'comptabilite-depenses',
@@ -395,8 +398,16 @@ const router = createRouter({
           path: 'gestionnaire/tableau-de-bord',
           redirect: { name: 'dashboard' },
         },
-        { path: 'gestionnaire/caisse', redirect: { name: 'dashboard' } },
-        { path: 'gestionnaire/livre-journal', redirect: { name: 'dashboard' } },
+        {
+          path: 'gestionnaire/caisse',
+          redirect: { path: '/gestionnaire/livre-journal', query: { tab: 'historique' } },
+        },
+        {
+          path: 'gestionnaire/livre-journal',
+          name: 'gestionnaire-journal',
+          component: () => import('@/views/gestionnaire/GestionnaireJournalView.vue'),
+          meta: { module: 'gestionnaire', uiAction: 'comptabilite.journal' },
+        },
         { path: 'gestionnaire/depenses', redirect: '/admin/depenses' },
         { path: 'gestionnaire/depenses/categories', redirect: '/admin/depenses' },
         { path: 'gestionnaire/services', redirect: '/admin/services' },
