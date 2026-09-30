@@ -26,6 +26,7 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiBadge from '@/components/ui/UiBadge.vue'
 import { useSilentRefresh } from '@/composables/useSilentRefresh'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import { useAuthStore } from '@/stores/auth'
 import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import '@/assets/comptabilite-section.css'
@@ -72,6 +73,8 @@ withDefaults(
 const route = useRoute()
 const router = useRouter()
 const { uiText, localeCode, dateText } = useAppI18n()
+const auth = useAuthStore()
+const canDeleteHospitalization = computed(() => auth.user?.role !== 'RECEPTIONNISTE')
 
 const data = ref<{
   rooms: Array<{
@@ -809,6 +812,7 @@ watch([dateFrom, dateTo], () => {
           @edit="openEdit"
           @discharge="openDischarge"
           @print="reprintReceipt"
+          :can-delete="canDeleteHospitalization"
           @delete="deleteHospitalization"
           @collect="collectPayment"
         />

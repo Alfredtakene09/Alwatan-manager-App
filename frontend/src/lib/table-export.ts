@@ -33,6 +33,10 @@ export type TableExportOptions = {
   sheetName?: string
   autoPrint?: boolean
   generatedAt?: Date
+  /** PDF uniquement. */
+  orientation?: 'portrait' | 'landscape'
+  /** PDF uniquement : bordures visibles sur toutes les cellules. */
+  gridLines?: boolean
 }
 
 export type WorkbookSheetDef<T = any> = {
@@ -155,6 +159,8 @@ export function exportTablePdf<T>(
       totalsRows: options?.totalsRows,
       sections: options?.sections,
       filename: options?.filename ?? exportBasename(title),
+      orientation: options?.orientation,
+      gridLines: options?.gridLines,
     }),
   )
 }

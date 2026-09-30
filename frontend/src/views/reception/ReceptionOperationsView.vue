@@ -16,6 +16,8 @@ import {
 import { isAxiosError } from 'axios'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
+import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import { showApiErrorModal } from '@/lib/api-modal-helper'
 import { EXAM_KIND_LABELS, type ExamKindSlug } from '@/lib/exam-catalog/types'
 import { remainingPayableExamKinds } from '@/lib/exam-billing'
@@ -140,6 +142,7 @@ const PAYMENT_VARIANTS: Record<PaymentState, 'success' | 'warning' | 'danger'> =
 }
 
 const auth = useAuthStore()
+const { uiText } = useAppI18n()
 const canSeeAllReceptionists = computed(() => auth.user?.role !== 'RECEPTIONNISTE')
 
 const surgeries = ref<SurgeryCaseRow[]>([])
@@ -314,7 +317,7 @@ const stats = computed(() => {
 
 const periodLabel = computed(() =>
   dateFilterMode.value === 'all'
-    ? 'Toutes les dates'
+    ? uiText('Toutes les dates')
     : formatPeriodLabel(
         dateFilterMode.value,
         filterDay.value,
@@ -421,9 +424,9 @@ async function confirmEncaisser(payload: LabExamPaymentConfirmPayload) {
         : 'Opération'
     const installmentNote =
       Array.isArray(res.installmentKinds) && res.installmentKinds.length > 0
-        ? ' Tranche enregistrée — solde restant à payer.'
+        ? ` ${uiText('Tranche enregistrée — solde restant à payer.')}`
         : ''
-    message.value = `${kindLabel} encaissé.${installmentNote}`
+    message.value = `${translateTemplate('{kind} encaissé.', { kind: uiText(kindLabel) })}${installmentNote}`
     messageType.value = 'success'
     await load()
     if (!shouldClose) submittingKind.value = null
@@ -520,23 +523,23 @@ onMounted(load)
         />
         <UiStatCard
           mini
-          :label="`Payées (${stats.paidCount})`"
+          :label="translateTemplate('Payées ({n})', { n: stats.paidCount })"
           :value="formatFcfa(stats.paidFcfa)"
           :icon="CheckCircle2"
           variant="green"
         />
         <UiStatCard
           mini
-          :label="`Non soldées (${stats.unpaidCount})`"
+          :label="translateTemplate('Non soldées ({n})', { n: stats.unpaidCount })"
           :value="formatFcfa(stats.remainingFcfa)"
           :icon="Clock"
           variant="violet"
         />
       </div>
 
-      <div class="filter-bar" role="region" aria-label="Filtres">
+      <div class="filter-bar" role="region" :aria-label="uiText('Filtres')">
         <div class="filter-bar__row">
-          <div class="filter-bar__modes" role="tablist" aria-label="Période">
+          <div class="filter-bar__modes" role="tablist" :aria-label="uiText('Période')">
             <button
               v-for="mode in DATE_MODES"
               :key="mode.id"
@@ -548,63 +551,67 @@ onMounted(load)
               @click="dateFilterMode = mode.id"
             >
               <component :is="mode.icon" :size="15" />
-              {{ mode.label }}
+              {{ uiText(mode.label) }}
             </button>
           </div>
 
           <div class="filter-bar__controls">
             <template v-if="dateFilterMode === 'day'">
               <label class="filter-bar__field">
-                <span class="filter-bar__field-label">Date</span>
+                <span class="filter-bar__field-label">{{ uiText('Date') }}</span>
                 <input v-model="filterDay" type="date" class="filter-bar__input" />
               </label>
               <div class="filter-bar__quick">
-                <button type="button" class="filter-bar__chip" @click="filterDay = todayDateKey()">Aujourd'hui</button>
-                <button type="button" class="filter-bar__chip" @click="filterDay = yesterdayDateKey()">Hier</button>
+                <button type="button" class="filter-bar__chip" @click="filterDay = todayDateKey()">
+                  {{ uiText("Aujourd'hui") }}
+                </button>
+                <button type="button" class="filter-bar__chip" @click="filterDay = yesterdayDateKey()">
+                  {{ uiText('Hier') }}
+                </button>
               </div>
             </template>
 
             <template v-else-if="dateFilterMode === 'month'">
               <label class="filter-bar__field">
-                <span class="filter-bar__field-label">Mois</span>
+                <span class="filter-bar__field-label">{{ uiText('Mois') }}</span>
                 <input v-model="filterMonth" type="month" class="filter-bar__input" />
               </label>
             </template>
 
             <template v-else-if="dateFilterMode === 'custom'">
               <label class="filter-bar__field">
-                <span class="filter-bar__field-label">Du</span>
+                <span class="filter-bar__field-label">{{ uiText('Du') }}</span>
                 <input v-model="filterFrom" type="date" class="filter-bar__input" />
               </label>
               <span class="filter-bar__sep" aria-hidden="true">→</span>
               <label class="filter-bar__field">
-                <span class="filter-bar__field-label">Au</span>
+                <span class="filter-bar__field-label">{{ uiText('Au') }}</span>
                 <input v-model="filterTo" type="date" class="filter-bar__input" />
               </label>
               <button type="button" class="filter-bar__chip filter-bar__chip--muted" @click="resetCustomRange">
-                Effacer
+                {{ uiText('Effacer') }}
               </button>
             </template>
 
             <label v-if="canSeeAllReceptionists" class="filter-bar__field">
-              <span class="filter-bar__field-label">Réceptionniste</span>
+              <span class="filter-bar__field-label">{{ uiText('Réceptionniste') }}</span>
               <select v-model="receptionistFilter" class="filter-bar__input">
-                <option value="">Tous les réceptionnistes</option>
+                <option value="">{{ uiText('Tous les réceptionnistes') }}</option>
                 <option v-for="r in receptionistSummaries" :key="r.id" :value="r.id">{{ r.name }}</option>
               </select>
             </label>
 
             <label class="filter-bar__field">
-              <span class="filter-bar__field-label">Type</span>
+              <span class="filter-bar__field-label">{{ uiText('Type') }}</span>
               <select v-model="sourceFilter" class="filter-bar__input">
-                <option v-for="f in SOURCE_FILTERS" :key="f.id" :value="f.id">{{ f.label }}</option>
+                <option v-for="f in SOURCE_FILTERS" :key="f.id" :value="f.id">{{ uiText(f.label) }}</option>
               </select>
             </label>
 
             <label class="filter-bar__field">
-              <span class="filter-bar__field-label">Paiement</span>
+              <span class="filter-bar__field-label">{{ uiText('Paiement') }}</span>
               <select v-model="paymentFilter" class="filter-bar__input">
-                <option v-for="f in PAYMENT_FILTERS" :key="f.id" :value="f.id">{{ f.label }}</option>
+                <option v-for="f in PAYMENT_FILTERS" :key="f.id" :value="f.id">{{ uiText(f.label) }}</option>
               </select>
             </label>
           </div>
@@ -614,7 +621,9 @@ onMounted(load)
           <CalendarRange :size="15" class="filter-bar__footer-icon" />
           <span class="filter-bar__period">{{ periodLabel }}</span>
           <span aria-hidden="true">·</span>
-          <span class="filter-bar__count">{{ displayedRows.length }} opération(s) affichée(s)</span>
+          <span class="filter-bar__count">{{
+            translateTemplate('{n} opération(s) affichée(s)', { n: displayedRows.length })
+          }}</span>
         </div>
       </div>
     </section>
@@ -635,8 +644,8 @@ onMounted(load)
               v-model="searchQuery"
               type="search"
               class="table-search__input"
-              placeholder="Patient, intervention, utilisateur…"
-              aria-label="Rechercher une opération"
+              :placeholder="uiText('Patient, intervention, utilisateur…')"
+              :aria-label="uiText('Rechercher une opération')"
             />
           </div>
           <ExportButtons
@@ -653,15 +662,17 @@ onMounted(load)
         <div class="simple-table-shell simple-table-shell--fill">
           <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
             <span class="simple-table-spinner" aria-hidden="true" />
-            Chargement des opérations…
+            {{ uiText('Chargement des opérations…') }}
           </div>
 
           <div class="simple-table-scroll">
             <p v-if="!loading && !displayedRows.length" class="simple-table__empty">
               {{
-                (surgeries.length || otherOperations.length) && !periodRows.length
-                  ? 'Aucune opération sur cette période — élargissez le filtre.'
-                  : 'Aucune opération trouvée'
+                uiText(
+                  (surgeries.length || otherOperations.length) && !periodRows.length
+                    ? 'Aucune opération sur cette période — élargissez le filtre.'
+                    : 'Aucune opération trouvée',
+                )
               }}
             </p>
             <div v-else class="simple-table-wrap">
@@ -669,13 +680,13 @@ onMounted(load)
                 <thead>
                   <tr>
                     <th class="simple-table__num">#</th>
-                    <th>Date</th>
-                    <th>Patient</th>
-                    <th>Intervention</th>
-                    <th>Montant</th>
-                    <th>Paiement</th>
-                    <th>Enregistré par</th>
-                    <th class="simple-table__actions-head">Actions</th>
+                    <th>{{ uiText('Date') }}</th>
+                    <th>{{ uiText('Patient') }}</th>
+                    <th>{{ uiText('Intervention') }}</th>
+                    <th>{{ uiText('Montant') }}</th>
+                    <th>{{ uiText('Paiement') }}</th>
+                    <th>{{ uiText('Enregistré par') }}</th>
+                    <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -685,8 +696,8 @@ onMounted(load)
                       <span class="st-date">{{ row.dateLabel }}</span>
                       <span class="st-sub">{{ row.timeLabel }}</span>
                       <template v-if="row.source === 'bloc'">
-                        <span v-if="row.completed" class="st-badge st-badge--success">Effectuée</span>
-                        <span v-else class="st-badge st-badge--info">En attente d'opération</span>
+                        <span v-if="row.completed" class="st-badge st-badge--success">{{ uiText('Effectuée') }}</span>
+                        <span v-else class="st-badge st-badge--info">{{ uiText("En attente d'opération") }}</span>
                       </template>
                     </td>
                     <td>
@@ -700,23 +711,30 @@ onMounted(load)
                         class="st-badge"
                         :class="row.source === 'bloc' ? 'st-badge--info' : 'st-badge--warning'"
                       >
-                        {{ SOURCE_LABELS[row.source] }}
+                        {{ uiText(SOURCE_LABELS[row.source]) }}
                       </span>
                     </td>
                     <td>
                       <span class="st-amount">{{ formatFcfa(row.billedFcfa) }}</span>
                       <span v-if="row.paidFcfa > 0 && row.remainingFcfa > 0" class="st-sub">
-                        Payé {{ formatFcfa(row.paidFcfa) }} · Reste {{ formatFcfa(row.remainingFcfa) }}
+                        {{
+                          translateTemplate('Payé {paid} · Reste {rest}', {
+                            paid: formatFcfa(row.paidFcfa),
+                            rest: formatFcfa(row.remainingFcfa),
+                          })
+                        }}
                       </span>
                     </td>
                     <td>
                       <span class="st-badge" :class="`st-badge--${PAYMENT_VARIANTS[row.paymentState]}`">
-                        {{ PAYMENT_LABELS[row.paymentState] }}
+                        {{ uiText(PAYMENT_LABELS[row.paymentState]) }}
                       </span>
                     </td>
                     <td>
                       <span class="st-name">{{ row.registeredBy }}</span>
-                      <span v-if="row.collectedBy" class="st-sub">Encaissé par {{ row.collectedBy }}</span>
+                      <span v-if="row.collectedBy" class="st-sub">{{
+                        translateTemplate('Encaissé par {name}', { name: row.collectedBy })
+                      }}</span>
                     </td>
                     <td class="simple-table__actions">
                       <button
@@ -727,7 +745,7 @@ onMounted(load)
                         @click="openEncaisser(row)"
                       >
                         <Banknote :size="15" />
-                        {{ actionId === row.id ? 'Ouverture…' : 'Encaisser' }}
+                        {{ uiText(actionId === row.id ? 'Ouverture…' : 'Encaisser') }}
                       </button>
                       <span v-else class="st-muted">—</span>
                     </td>

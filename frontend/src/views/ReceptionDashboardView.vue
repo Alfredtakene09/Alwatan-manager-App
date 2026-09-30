@@ -27,7 +27,8 @@ import {
   parsePatientAge,
   splitPatientFullName,
 } from '@/lib/patient-name'
-import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
+import { formatPatientAge, normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
+import { exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import { sortPatientsNewestFirst } from '@/lib/patient-sort'
 import {
   isExemptCategory,
@@ -64,6 +65,7 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import PatientsDataTable from '@/components/ui/PatientsDataTable.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
 import ReceptionReductionFields from '@/components/reception/ReceptionReductionFields.vue'
 import DoctorSharesReceivablePanel from '@/components/reception/DoctorSharesReceivablePanel.vue'
@@ -179,7 +181,7 @@ type DayClosureStatus = {
   } | null
 }
 
-const { uiText, clinicServiceText, dateText, localeCode } = useAppI18n()
+const { uiText, clinicServiceText, dateText, dateTimeText, localeCode } = useAppI18n()
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
@@ -618,6 +620,75 @@ const patientsPanelSubtitle = computed(() => {
 })
 
 const serviceFilterOptions = computed(() => services.value.map((service) => service.name))
+
+const canExportPatients = computed(
+  () => auth.user?.role === 'ADMIN' || auth.user?.role === 'GESTIONNAIRE',
+)
+
+const patientExportColumns: ExportColumn<Patient>[] = [
+  { header: 'Matricule', value: (p) => p.code },
+  { header: 'Patient', value: (p) => fullName(p.firstName, p.lastName) },
+  { header: 'Âge', value: (p) => formatPatientAge(p.age, normalizePatientAgeUnit(p.ageUnit)) ?? '—' },
+  { header: 'Sexe', value: (p) => (p.gender === 'F' ? uiText('Féminin') : p.gender === 'M' ? uiText('Masculin') : '—') },
+  { header: 'Téléphone', value: (p) => p.phone || '—' },
+  { header: 'Service', value: (p) => (p.service?.trim() ? clinicServiceText(p.service.trim()) : '—') },
+  {
+    header: "Date d'enregistrement",
+    value: (p) =>
+      p.createdAt
+        ? dateTimeText(p.createdAt, {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+        : '—',
+  },
+  {
+    header: 'Enregistré par',
+    value: (p) => (p.createdBy ? fullName(p.createdBy.firstName, p.createdBy.lastName) : '—'),
+  },
+  { header: 'Consultation (FCFA)', value: (p) => (p.consultationPayment ? formatFcfa(p.consultationPayment.amountFcfa) : '—') },
+  { header: 'Payé (FCFA)', value: (p) => (p.consultationPayment ? formatFcfa(p.consultationPayment.paidAmountFcfa) : '—') },
+]
+
+function localizedPatientExportColumns(): ExportColumn<Patient>[] {
+  return patientExportColumns.map((column) => ({ ...column, header: uiText(column.header) }))
+}
+
+function patientExportOptions() {
+  const sumBy = (pick: (payment: NonNullable<Patient['consultationPayment']>) => number) =>
+    patients.value.reduce((sum, p) => sum + (p.consultationPayment ? pick(p.consultationPayment) : 0), 0)
+  return {
+    captionRows: [
+      { label: uiText('Période'), value: listDateLabel.value },
+      ...(selectedReceptionistName.value
+        ? [{ label: uiText('Réceptionniste'), value: selectedReceptionistName.value }]
+        : []),
+      ...(serviceFilter.value.trim()
+        ? [{ label: uiText('Service'), value: clinicServiceText(serviceFilter.value.trim()) }]
+        : []),
+      ...(search.value.trim() ? [{ label: uiText('Recherche'), value: search.value.trim() }] : []),
+    ],
+    totalsRows: [
+      { label: uiText('Nombre de patients'), value: String(patients.value.length) },
+      { label: uiText('Total consultations'), value: formatFcfa(sumBy((p) => p.amountFcfa)) },
+      { label: uiText('Total encaissé'), value: formatFcfa(sumBy((p) => p.paidAmountFcfa)) },
+      { label: uiText('Reste à payer'), value: formatFcfa(sumBy((p) => p.remainingFcfa)) },
+    ],
+  }
+}
+
+const PATIENT_EXPORT_TITLE = 'Patients enregistrés'
+
+function exportPatientsPdf() {
+  exportTablePdf(uiText(PATIENT_EXPORT_TITLE), localizedPatientExportColumns(), patients.value, {
+    ...patientExportOptions(),
+    orientation: 'landscape',
+    gridLines: true,
+  })
+}
 
 const isListDateToday = computed(() => {
   const today = todayInputValue()
@@ -1593,9 +1664,18 @@ onUnmounted(clearAlert)
               <h3>{{ uiText('Patients enregistrés') }}</h3>
               <p>{{ patientsPanelSubtitle }}</p>
             </div>
-            <UiButton variant="primary" class="table-toolbar__new" @click="openModal">
-              Nouveau
-            </UiButton>
+            <div class="table-toolbar__actions">
+              <ExportButtons
+                v-if="canExportPatients"
+                :disabled="loadingPatients || !patients.length"
+                :show-excel="false"
+                :show-word="false"
+                @pdf="exportPatientsPdf"
+              />
+              <UiButton variant="primary" class="table-toolbar__new" @click="openModal">
+                Nouveau
+              </UiButton>
+            </div>
           </div>
 
           <div class="table-toolbar__filters">
@@ -2331,6 +2411,15 @@ onUnmounted(clearAlert)
   font-size: 0.6875rem;
   color: var(--text-muted);
   line-height: 1.3;
+}
+
+.table-toolbar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-shrink: 0;
 }
 
 .table-toolbar__new {

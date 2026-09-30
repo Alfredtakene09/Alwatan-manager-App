@@ -854,6 +854,9 @@ router.post("/actions", async (req, res) => {
     }
 
     if (action === "delete") {
+      if (user.role === "RECEPTIONNISTE") {
+        return res.status(403).json({ error: "Suppression d'hospitalisation non autorisée pour la réception." });
+      }
       const hospitalizationId = z.string().min(1).parse(req.body.hospitalizationId);
       const result = await prisma.$transaction((tx) =>
         deleteHospitalizationAndRefund(tx, hospitalizationId),

@@ -307,7 +307,7 @@ async function submit() {
             :value="room.type"
             :disabled="!(room.availableRooms?.length || room.availableCount)"
           >
-            {{ room.label }}
+            {{ uiText(room.label) }}
             {{
               room.availableCount
                 ? `— ${formatFcfa(room.dailyRateFcfa)}/${uiText('nuit')}`
@@ -318,7 +318,7 @@ async function submit() {
 
         <div v-if="selectedRoom" class="unified-admit__room-summary">
           <UiBadge :variant="selectedRoomType?.type === 'VIP' ? 'primary' : 'info'">
-            {{ selectedRoomType?.label }}
+            {{ uiText(selectedRoomType?.label ?? '') }}
           </UiBadge>
           <span>{{ selectedRoom.name }}</span>
           <strong>{{ formatFcfa(selectedRoom.dailyRateFcfa) }}/{{ uiText('nuit') }}</strong>

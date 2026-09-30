@@ -31,12 +31,16 @@ export type HospitalizationQueueItem = {
   room?: { name: string; type?: string } | null
 }
 
-const props = defineProps<{
-  items: HospitalizationQueueItem[]
-  loading?: boolean
-  fill?: boolean
-  focusedVisitId?: string | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    items: HospitalizationQueueItem[]
+    loading?: boolean
+    fill?: boolean
+    focusedVisitId?: string | null
+    canDelete?: boolean
+  }>(),
+  { canDelete: true },
+)
 
 const emit = defineEmits<{
   admit: [id: string]
@@ -280,6 +284,7 @@ const rows = computed(() => {
                     <Calendar :size="15" />
                   </button>
                   <button
+                    v-if="canDelete"
                     type="button"
                     class="st-btn st-btn--delete"
                     :title="uiText('Supprimer l\'hospitalisation')"

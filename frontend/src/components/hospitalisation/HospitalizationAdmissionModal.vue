@@ -20,6 +20,7 @@ import {
 } from '@/lib/hospitalization-admission'
 import { parsePrescribedHospitalisationDays } from '@/lib/lab-notes'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 export type AdmissionAvailableBed = {
   id: string
@@ -100,7 +101,7 @@ const emit = defineEmits<{
   confirm: [payload: HospitalizationAdmissionForm & { hospitalizationId: string; roomId?: string; bedId?: string }]
 }>()
 
-const { uiText, localeCode } = useAppI18n()
+const { uiText, localeCode, isArabic } = useAppI18n()
 
 const roomTypeChoice = ref<RoomTypeChoice>('')
 const roomChoice = ref('')
@@ -389,8 +390,8 @@ onMounted(loadDoctors)
       <ClinicLetterhead doc-title="Profil d'admission hospitalière" />
 
       <div class="hosp-adm-form__doc-title">
-        <h2>Profil d'admission hospitalière</h2>
-        <p dir="rtl">{{ isVipForm ? 'ملف دخول عنبر VIP' : 'ملف دخول عنبر' }}</p>
+        <h2>{{ uiText("Profil d'admission hospitalière") }}</h2>
+        <p v-if="!isArabic" dir="rtl">{{ isVipForm ? 'ملف دخول عنبر VIP' : 'ملف دخول عنبر' }}</p>
         <div v-if="isVipForm" class="hosp-adm-form__vip-banner" aria-hidden="true">VIP</div>
       </div>
 
@@ -424,7 +425,7 @@ onMounted(loadDoctors)
               :value="room.type"
             :disabled="!(room.availableRooms?.length || room.availableCount)"
             >
-              {{ room.label }}
+              {{ uiText(room.label) }}
               {{
                 room.availableCount
                   ? `— ${formatFcfa(room.dailyRateFcfa)}/${uiText('nuit')}`
@@ -437,7 +438,11 @@ onMounted(loadDoctors)
               {{ uiText('Aucune chambre VIP libre pour le moment.') }}
             </template>
             <template v-else>
-              Aucune place libre en chambre {{ selectedRoomType.label }} pour le moment.
+              {{
+                translateTemplate('Aucune place libre en chambre {type} pour le moment.', {
+                  type: uiText(selectedRoomType.label),
+                })
+              }}
             </template>
           </p>
           <UiSelect
@@ -453,7 +458,7 @@ onMounted(loadDoctors)
           </UiSelect>
           <div v-if="selectedRoom" class="hosp-adm-form__room-summary">
             <UiBadge :variant="selectedRoomType?.type === 'VIP' ? 'primary' : 'info'">
-              {{ selectedRoomType?.label }}
+              {{ uiText(selectedRoomType?.label ?? '') }}
             </UiBadge>
             <span>{{ selectedRoom.name }}</span>
             <strong>{{ formatFcfa(selectedRoom.dailyRateFcfa) }}/{{ uiText('nuit') }}</strong>
@@ -542,7 +547,7 @@ onMounted(loadDoctors)
           class="hosp-adm-form__textarea"
           rows="10"
           :readonly="isReadonly"
-          placeholder="Instructions médicales pour le séjour hospitalier…"
+          :placeholder="uiText('Instructions médicales pour le séjour hospitalier…')"
         />
       </section>
 

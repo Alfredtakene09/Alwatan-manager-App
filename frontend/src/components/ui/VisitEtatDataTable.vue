@@ -64,21 +64,21 @@ const rows = computed(() =>
   <div class="simple-table-shell" :class="{ 'simple-table-shell--fill': fill }">
     <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
       <span class="simple-table-spinner" aria-hidden="true" />
-      Chargement…
+      {{ uiText('Chargement…') }}
     </div>
     <div class="simple-table-scroll">
-      <p v-if="!loading && !rows.length" class="simple-table__empty">Aucune visite</p>
+      <p v-if="!loading && !rows.length" class="simple-table__empty">{{ uiText('Aucune visite') }}</p>
       <div v-else class="simple-table-wrap">
         <table class="simple-table">
           <thead>
             <tr>
               <th class="simple-table__num">#</th>
-              <th>Matricule</th>
-              <th>Patient</th>
-              <th>État</th>
-              <th>Pôle</th>
-              <th>Médecin</th>
-              <th>Durée</th>
+              <th>{{ uiText('Matricule') }}</th>
+              <th>{{ uiText('Patient') }}</th>
+              <th>{{ uiText('État') }}</th>
+              <th>{{ uiText('Pôle') }}</th>
+              <th>{{ uiText('Médecin') }}</th>
+              <th>{{ uiText('Durée') }}</th>
             </tr>
           </thead>
           <tbody>
