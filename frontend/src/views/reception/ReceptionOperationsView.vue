@@ -11,6 +11,7 @@ import {
   Clock,
   Search,
   Banknote,
+  Layers,
 } from '@lucide/vue'
 import { isAxiosError } from 'axios'
 import api from '@/api/client'
@@ -47,9 +48,32 @@ import '@/assets/simple-table.css'
 
 type PaymentFilter = 'all' | 'paid' | 'partial' | 'unpaid'
 type PaymentState = Exclude<PaymentFilter, 'all'>
+type SourceFilter = 'all' | OperationSource
+type OperationSource = 'bloc' | 'other'
+type PeriodMode = DateFilterMode | 'all'
+
+type OtherOperationInvoice = {
+  id: string
+  status: string
+  amountFcfa: number
+  paidAmountFcfa: number
+  paidAt?: string | null
+  createdAt: string
+  issuedBy?: SurgeryUserRef | null
+  payments?: { id: string; amountFcfa: number; paidAt: string; recordedBy?: SurgeryUserRef | null }[]
+  interventionLabel: string
+  doctor?: SurgeryUserRef | null
+  visit: {
+    id: string
+    createdBy?: SurgeryUserRef | null
+    patient: { code: string; firstName: string; lastName: string }
+    consultation?: { id: string } | null
+  }
+}
 
 type OperationRow = {
   id: string
+  source: OperationSource
   visitId: string
   consultationId: string | null
   patientName: string
@@ -78,7 +102,8 @@ type ReceptionistSummary = {
   remainingFcfa: number
 }
 
-const DATE_MODES: { id: DateFilterMode; label: string; icon: typeof CalendarDays }[] = [
+const DATE_MODES: { id: PeriodMode; label: string; icon: typeof CalendarDays }[] = [
+  { id: 'all', label: 'Tout', icon: Layers },
   { id: 'day', label: 'Jour', icon: CalendarDays },
   { id: 'month', label: 'Mois', icon: Calendar },
   { id: 'custom', label: 'Personnaliser', icon: CalendarRange },
@@ -90,6 +115,17 @@ const PAYMENT_FILTERS: { id: PaymentFilter; label: string }[] = [
   { id: 'partial', label: 'Partiel' },
   { id: 'unpaid', label: 'Non payé' },
 ]
+
+const SOURCE_FILTERS: { id: SourceFilter; label: string }[] = [
+  { id: 'all', label: 'Toutes' },
+  { id: 'bloc', label: 'Bloc opératoire' },
+  { id: 'other', label: 'Autres chirurgies' },
+]
+
+const SOURCE_LABELS: Record<OperationSource, string> = {
+  bloc: 'Bloc opératoire',
+  other: 'Autre chirurgie',
+}
 
 const PAYMENT_LABELS: Record<PaymentState, string> = {
   paid: 'Payé',
@@ -107,6 +143,7 @@ const auth = useAuthStore()
 const canSeeAllReceptionists = computed(() => auth.user?.role !== 'RECEPTIONNISTE')
 
 const surgeries = ref<SurgeryCaseRow[]>([])
+const otherOperations = ref<OtherOperationInvoice[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
 const message = ref('')
@@ -118,8 +155,9 @@ const submittingKind = ref<ExamKindSlug | null>(null)
 const searchQuery = ref('')
 const paymentFilter = ref<PaymentFilter>('all')
 const receptionistFilter = ref('')
+const sourceFilter = ref<SourceFilter>('all')
 
-const dateFilterMode = ref<DateFilterMode>('month')
+const dateFilterMode = ref<PeriodMode>('all')
 const filterDay = ref(todayDateKey())
 const filterMonth = ref(currentMonthKey())
 const filterFrom = ref('')
@@ -129,9 +167,10 @@ function userName(user?: SurgeryUserRef | null) {
   return user ? fullName(user.firstName, user.lastName) : ''
 }
 
-function toRow(surgery: SurgeryCaseRow): OperationRow {
-  const invoice = surgery.invoice
-  const billedFcfa = invoice?.amountFcfa ?? surgery.totalCostFcfa
+function paymentInfo(
+  billedFcfa: number,
+  invoice?: Pick<OtherOperationInvoice, 'status' | 'paidAmountFcfa' | 'issuedBy' | 'payments'> | null,
+) {
   const paidFcfa = invoice?.paidAmountFcfa ?? 0
   const remainingFcfa = Math.max(0, billedFcfa - paidFcfa)
   const paymentState: PaymentState =
@@ -145,10 +184,41 @@ function toRow(surgery: SurgeryCaseRow): OperationRow {
   const collectors = [
     ...new Set(paymentCollectors.length ? paymentCollectors : [userName(invoice?.issuedBy)].filter(Boolean)),
   ]
+  return { billedFcfa, paidFcfa, remainingFcfa, paymentState, collectedBy: collectors.join(', ') }
+}
+
+function otherOperationDateIso(op: OtherOperationInvoice) {
+  return op.paidAt ?? op.createdAt
+}
+
+function toOtherRow(op: OtherOperationInvoice): OperationRow {
+  const date = new Date(otherOperationDateIso(op))
+  const doctor = userName(op.doctor)
+  return {
+    id: `other-${op.id}`,
+    source: 'other',
+    visitId: op.visit.id,
+    consultationId: op.visit.consultation?.id ?? null,
+    patientName: fullName(op.visit.patient.firstName, op.visit.patient.lastName),
+    patientCode: op.visit.patient.code,
+    intervention: op.interventionLabel,
+    surgeonName: doctor ? `Dr ${doctor}` : '—',
+    completed: false,
+    timestamp: date.getTime(),
+    dateLabel: date.toLocaleDateString('fr-FR'),
+    timeLabel: date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+    ...paymentInfo(op.amountFcfa, op),
+    registeredById: op.visit.createdBy?.id ?? '',
+    registeredBy: userName(op.visit.createdBy) || '—',
+  }
+}
+
+function toRow(surgery: SurgeryCaseRow): OperationRow {
   const date = new Date(surgeryCompletedAtIso(surgery))
 
   return {
     id: surgery.id,
+    source: 'bloc',
     visitId: surgery.visit.id,
     consultationId: surgery.visit.consultation?.id ?? null,
     patientName: fullName(surgery.visit.patient.firstName, surgery.visit.patient.lastName),
@@ -159,34 +229,34 @@ function toRow(surgery: SurgeryCaseRow): OperationRow {
     timestamp: date.getTime(),
     dateLabel: date.toLocaleDateString('fr-FR'),
     timeLabel: date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-    billedFcfa,
-    paidFcfa,
-    remainingFcfa,
-    paymentState,
+    ...paymentInfo(surgery.invoice?.amountFcfa ?? surgery.totalCostFcfa, surgery.invoice),
     registeredById: surgery.visit.createdBy?.id ?? '',
     registeredBy: userName(surgery.visit.createdBy) || '—',
-    collectedBy: collectors.join(', '),
   }
 }
 
-const periodSurgeries = computed(() =>
-  surgeries.value.filter((surgery) =>
-    matchesDateFilter(
-      surgeryCompletedAtIso(surgery),
-      dateFilterMode.value,
-      filterDay.value,
-      filterMonth.value,
-      filterFrom.value,
-      filterTo.value,
-    ),
-  ),
-)
+function inPeriod(isoDate: string) {
+  if (dateFilterMode.value === 'all') return true
+  return matchesDateFilter(
+    isoDate,
+    dateFilterMode.value,
+    filterDay.value,
+    filterMonth.value,
+    filterFrom.value,
+    filterTo.value,
+  )
+}
 
-const periodRows = computed(() =>
-  periodSurgeries.value
-    .map(toRow)
-    .sort((a, b) => b.timestamp - a.timestamp),
-)
+const periodRows = computed(() => {
+  const rows: OperationRow[] = []
+  if (sourceFilter.value !== 'other') {
+    rows.push(...surgeries.value.filter((s) => inPeriod(surgeryCompletedAtIso(s))).map(toRow))
+  }
+  if (sourceFilter.value !== 'bloc') {
+    rows.push(...otherOperations.value.filter((op) => inPeriod(otherOperationDateIso(op))).map(toOtherRow))
+  }
+  return rows.sort((a, b) => b.timestamp - a.timestamp)
+})
 
 const receptionistSummaries = computed((): ReceptionistSummary[] => {
   const map = new Map<string, ReceptionistSummary>()
@@ -243,27 +313,34 @@ const stats = computed(() => {
 })
 
 const periodLabel = computed(() =>
-  formatPeriodLabel(
-    dateFilterMode.value,
-    filterDay.value,
-    filterMonth.value,
-    filterFrom.value,
-    filterTo.value,
-  ),
+  dateFilterMode.value === 'all'
+    ? 'Toutes les dates'
+    : formatPeriodLabel(
+        dateFilterMode.value,
+        filterDay.value,
+        filterMonth.value,
+        filterFrom.value,
+        filterTo.value,
+      ),
 )
 
 async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const { data } = await api.get<SurgeryCaseRow[]>('/surgeries', { params: { scope: 'all' } })
-    surgeries.value = data
+    const [blocRes, otherRes] = await Promise.all([
+      api.get<SurgeryCaseRow[]>('/surgeries', { params: { scope: 'all' } }),
+      api.get<OtherOperationInvoice[]>('/surgeries/other-operations'),
+    ])
+    surgeries.value = blocRes.data
+    otherOperations.value = otherRes.data
   } catch (error) {
     const apiMessage = isAxiosError(error)
       ? (error.response?.data as { error?: string } | undefined)?.error
       : undefined
     errorMessage.value = apiMessage ?? 'Impossible de charger les opérations.'
     surgeries.value = []
+    otherOperations.value = []
   } finally {
     loading.value = false
   }
@@ -372,9 +449,13 @@ const exportColumns: ExportColumn<OperationRow>[] = [
   { header: 'Date', value: (r) => `${r.dateLabel} ${r.timeLabel}` },
   { header: 'Patient', value: (r) => r.patientName },
   { header: 'Code', value: (r) => r.patientCode },
+  { header: 'Type', value: (r) => SOURCE_LABELS[r.source] },
   { header: 'Intervention', value: (r) => r.intervention },
   { header: 'Chirurgien', value: (r) => r.surgeonName },
-  { header: 'Opération', value: (r) => (r.completed ? 'Effectuée' : 'En attente') },
+  {
+    header: 'Opération',
+    value: (r) => (r.source === 'other' ? '—' : r.completed ? 'Effectuée' : 'En attente'),
+  },
   { header: 'Montant', value: (r) => formatFcfa(r.billedFcfa) },
   { header: 'Payé', value: (r) => formatFcfa(r.paidFcfa) },
   { header: 'Reste', value: (r) => formatFcfa(r.remainingFcfa) },
@@ -400,16 +481,18 @@ function exportShared() {
   }
 }
 
+const EXPORT_TITLE = 'Opérations (bloc et autres chirurgies)'
+
 function exportPdf() {
-  exportTablePdf('Opérations effectuées', exportColumns, displayedRows.value, exportShared())
+  exportTablePdf(EXPORT_TITLE, exportColumns, displayedRows.value, exportShared())
 }
 
 function exportExcel() {
-  exportTableExcel('Opérations effectuées', exportColumns, displayedRows.value, exportShared())
+  exportTableExcel(EXPORT_TITLE, exportColumns, displayedRows.value, exportShared())
 }
 
 function exportWord() {
-  void exportTableWord('Opérations effectuées', exportColumns, displayedRows.value, exportShared())
+  void exportTableWord(EXPORT_TITLE, exportColumns, displayedRows.value, exportShared())
 }
 
 onMounted(load)
@@ -419,8 +502,8 @@ onMounted(load)
   <div class="page-with-table reception-ops-page">
     <section class="page-with-table__head">
       <UiPageHeader
-        title="Opérations effectuées"
-        subtitle="Liste des opérations, utilisateur ayant enregistré et état du paiement patient"
+        title="Opérations"
+        subtitle="Toutes les opérations du bloc opératoire et autres chirurgies, utilisateur ayant enregistré et état du paiement patient"
         :icon="Scissors"
       />
       <UiAlert v-if="errorMessage" type="error" :message="errorMessage" />
@@ -488,7 +571,7 @@ onMounted(load)
               </label>
             </template>
 
-            <template v-else>
+            <template v-else-if="dateFilterMode === 'custom'">
               <label class="filter-bar__field">
                 <span class="filter-bar__field-label">Du</span>
                 <input v-model="filterFrom" type="date" class="filter-bar__input" />
@@ -508,6 +591,13 @@ onMounted(load)
               <select v-model="receptionistFilter" class="filter-bar__input">
                 <option value="">Tous les réceptionnistes</option>
                 <option v-for="r in receptionistSummaries" :key="r.id" :value="r.id">{{ r.name }}</option>
+              </select>
+            </label>
+
+            <label class="filter-bar__field">
+              <span class="filter-bar__field-label">Type</span>
+              <select v-model="sourceFilter" class="filter-bar__input">
+                <option v-for="f in SOURCE_FILTERS" :key="f.id" :value="f.id">{{ f.label }}</option>
               </select>
             </label>
 
@@ -569,7 +659,7 @@ onMounted(load)
           <div class="simple-table-scroll">
             <p v-if="!loading && !displayedRows.length" class="simple-table__empty">
               {{
-                surgeries.length && !periodRows.length
+                (surgeries.length || otherOperations.length) && !periodRows.length
                   ? 'Aucune opération sur cette période — élargissez le filtre.'
                   : 'Aucune opération trouvée'
               }}
@@ -594,8 +684,10 @@ onMounted(load)
                     <td>
                       <span class="st-date">{{ row.dateLabel }}</span>
                       <span class="st-sub">{{ row.timeLabel }}</span>
-                      <span v-if="row.completed" class="st-badge st-badge--success">Effectuée</span>
-                      <span v-else class="st-badge st-badge--info">En attente d'opération</span>
+                      <template v-if="row.source === 'bloc'">
+                        <span v-if="row.completed" class="st-badge st-badge--success">Effectuée</span>
+                        <span v-else class="st-badge st-badge--info">En attente d'opération</span>
+                      </template>
                     </td>
                     <td>
                       <span class="st-name">{{ row.patientName }}</span>
@@ -604,6 +696,12 @@ onMounted(load)
                     <td>
                       <span class="st-name">{{ row.intervention }}</span>
                       <span class="st-sub">{{ row.surgeonName }}</span>
+                      <span
+                        class="st-badge"
+                        :class="row.source === 'bloc' ? 'st-badge--info' : 'st-badge--warning'"
+                      >
+                        {{ SOURCE_LABELS[row.source] }}
+                      </span>
                     </td>
                     <td>
                       <span class="st-amount">{{ formatFcfa(row.billedFcfa) }}</span>

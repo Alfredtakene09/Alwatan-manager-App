@@ -144,19 +144,6 @@ export const UI_ACTIONS: UiActionDef[] = [
     defaultRoles: DIRECTION_STAFF,
   },
   {
-    id: 'comptabilite.encaissements',
-    group: 'accounting',
-    label: 'Encaissements',
-    hint: 'Menu Comptabilité → Encaissements.',
-    defaultRoles: DIRECTION_STAFF,
-  },
-  {
-    id: 'comptabilite.journal',
-    group: 'accounting',
-    label: 'Caisse & journal',
-    defaultRoles: DIRECTION_STAFF,
-  },
-  {
     id: 'comptabilite.depenses',
     group: 'accounting',
     label: 'Gestion des dépenses',
@@ -166,12 +153,6 @@ export const UI_ACTIONS: UiActionDef[] = [
     id: 'comptabilite.salaires',
     group: 'accounting',
     label: 'Salaires & paie',
-    defaultRoles: DIRECTION_STAFF,
-  },
-  {
-    id: 'comptabilite.factures',
-    group: 'accounting',
-    label: 'Factures',
     defaultRoles: DIRECTION_STAFF,
   },
   {

@@ -7,8 +7,6 @@ import { canAccessModule, formatFcfa, fullName } from '@/lib/roles'
 import type { AdminDashboardOverview } from '@/lib/admin-dashboard'
 import type { GestionnaireDashboardOverview } from '@/lib/gestionnaire-dashboard'
 import {
-  translateCashDelayLabel,
-  translateCashScheduleHint,
   translateDashboardLabel,
   translateTemplate,
 } from '@/lib/dashboard-i18n'
@@ -101,12 +99,6 @@ const canSeeHospitalizationAlerts = computed(() => hasModule('hospitalisation'))
 const canSeeGestionnaireAlerts = computed(() => hasModule('gestionnaire'))
 const canSeeAdminAlerts = computed(() => hasModule('admin'))
 
-const comptableCashAlert = computed(
-  () =>
-    gestionnaireOverview.value?.alerts.cashRegisters.find((row) => row.id === 'comptabilite') ??
-    null,
-)
-
 const dashboardAlerts = computed(() => {
   void localeCode.value
   const items: Array<{
@@ -144,7 +136,7 @@ const dashboardAlerts = computed(() => {
         title: translateDashboardLabel('Paiement consultation'),
         message: `${consult.patientCode} — ${consult.patientName} · ${formatFcfa(consult.amountFcfa)}`,
         actionLabel: translateDashboardLabel('Encaisser'),
-        actionTo: '/comptabilite/tableau-de-bord?tab=attente',
+        actionTo: '/comptabilite/en-attente-paiement',
       })
     }
   }
@@ -177,33 +169,6 @@ const dashboardAlerts = computed(() => {
   }
 
   if (canSeeGestionnaireAlerts.value) {
-    const cash = comptableCashAlert.value
-    if (cash && cash.pendingFcfa > 0) {
-      const delay = translateCashDelayLabel(cash.hoursSinceLastDisbursement, cash.lastDisbursementAt)
-      const scheduleHint = translateCashScheduleHint(cash.hint ?? cash.workflowHint ?? '')
-      const statusLabel = translateDashboardLabel(
-        cash.disbursementStatusLabel ?? 'Solde comptable en attente',
-      )
-      const isDuringDay = cash.disbursementPhase === 'during_day'
-      let cashSeverity: 'danger' | 'warning' | 'info' = 'warning'
-      if (cash.overdue) cashSeverity = 'danger'
-      else if (isDuringDay) cashSeverity = 'info'
-      items.push({
-        id: 'cash-comptable',
-        severity: cashSeverity,
-        title: statusLabel,
-        message: translateTemplate('{amount} en tirelire comptable ({delay}). {hint}', {
-          amount: formatFcfa(cash.pendingFcfa),
-          delay,
-          hint: scheduleHint,
-        }),
-        actionLabel: cash.overdue
-          ? translateDashboardLabel('Récupérer la tirelire')
-          : translateDashboardLabel('Voir la caisse comptable'),
-        actionTo: '/gestionnaire/livre-journal?tab=historique',
-      })
-    }
-
     const unpaidPayroll =
       gestionnaireOverview.value?.alerts.unpaidPayroll ?? overview.value?.alerts.unpaidPayroll ?? 0
     if (unpaidPayroll > 0) {

@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
-import { SurgeryStatus } from "@prisma/client";
+import { InvoiceStatus, InvoiceType, SurgeryStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
+import { parsePrescribedExamsByKind } from "../lib/lab-notes.js";
 import { comptabilitePatientWhere } from "../lib/patient-billing.js";
 import {
   AWAITING_PERFORMANCE_STATUSES,
@@ -321,6 +322,66 @@ router.get("/", async (req, res) => {
   } catch (error) {
     console.error("GET /surgeries failed:", error);
     return res.status(500).json({ error: "Impossible de charger les opérations." });
+  }
+});
+
+const userRefSelect = { select: { id: true, firstName: true, lastName: true } } as const;
+
+/** Opérations facturées depuis la consultation sans dossier bloc opératoire. */
+router.get("/other-operations", async (_req, res) => {
+  try {
+    const invoices = await prisma.invoice.findMany({
+      where: {
+        type: InvoiceType.LAB_EXAM,
+        billingExamKind: "operation",
+        surgeryCaseId: null,
+        status: { not: InvoiceStatus.CANCELLED },
+        patient: comptabilitePatientWhere(),
+      },
+      select: {
+        id: true,
+        status: true,
+        amountFcfa: true,
+        paidAmountFcfa: true,
+        paidAt: true,
+        createdAt: true,
+        issuedBy: userRefSelect,
+        payments: {
+          select: { id: true, amountFcfa: true, paidAt: true, recordedBy: userRefSelect },
+          orderBy: { paidAt: "asc" },
+        },
+        visit: {
+          select: {
+            id: true,
+            createdBy: userRefSelect,
+            assignedDoctor: userRefSelect,
+            patient: { select: { code: true, firstName: true, lastName: true } },
+            consultation: {
+              select: { id: true, clinicalNotes: true, doctor: userRefSelect },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const payload = invoices
+      .filter((invoice) => invoice.visit)
+      .map(({ visit, ...invoice }) => {
+        const { consultation, assignedDoctor, ...visitRest } = visit!;
+        const labels = parsePrescribedExamsByKind(consultation?.clinicalNotes).operation ?? [];
+        return {
+          ...invoice,
+          interventionLabel: labels.filter(Boolean).join(", ") || "Opération",
+          doctor: consultation?.doctor ?? assignedDoctor ?? null,
+          visit: { ...visitRest, consultation: consultation ? { id: consultation.id } : null },
+        };
+      });
+
+    return res.json(payload);
+  } catch (error) {
+    console.error("GET /surgeries/other-operations failed:", error);
+    return res.status(500).json({ error: "Impossible de charger les autres opérations." });
   }
 });
 

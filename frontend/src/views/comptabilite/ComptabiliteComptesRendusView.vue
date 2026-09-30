@@ -4,12 +4,9 @@ import { useRouter } from 'vue-router'
 import {
   ClipboardList,
   BedDouble,
-  FileText,
-  Receipt,
   Clock,
   ChevronRight,
   Scissors,
-  Banknote,
 } from '@lucide/vue'
 import { useComptabiliteQueue } from '@/composables/useComptabiliteQueue'
 import { useAppI18n } from '@/i18n/useAppI18n'
@@ -25,25 +22,11 @@ const sections = computed(() => {
   void localeCode.value
   return [
   {
-    to: '/comptabilite/tableau-de-bord?tab=attente',
+    to: '/comptabilite/en-attente-paiement',
     label: uiText('En attente de paiement'),
     description: uiText('Examens prescrits par les médecins'),
     icon: Clock,
     countKey: 'labPending' as const,
-  },
-  {
-    to: '/gestionnaire/livre-journal?tab=historique',
-    label: uiText('Caisse & journal'),
-    description: uiText('Livre journal et historique des journées'),
-    icon: Banknote,
-    countKey: null,
-  },
-  {
-    to: '/comptabilite/tableau-de-bord',
-    label: uiText('Encaissements'),
-    description: uiText('Consultations, examens, chirurgie et hospitalisation'),
-    icon: Receipt,
-    countKey: null,
   },
   {
     to: '/hospitalisation?tab=hospitalized',
@@ -58,13 +41,6 @@ const sections = computed(() => {
     description: uiText('Opérations payées à planifier'),
     icon: Scissors,
     countKey: 'surgeries' as const,
-  },
-  {
-    to: '/factures',
-    label: uiText('Factures'),
-    description: uiText('Tous les documents comptables'),
-    icon: FileText,
-    countKey: null,
   },
 ]
 })
