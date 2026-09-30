@@ -56,6 +56,12 @@ const router = createRouter({
           meta: { module: 'reception' },
         },
         {
+          path: 'reception/operations',
+          name: 'reception-operations',
+          component: () => import('@/views/reception/ReceptionOperationsView.vue'),
+          meta: { module: 'reception' },
+        },
+        {
           path: 'reception/operations-attente',
           name: 'reception-operations-attente',
           component: () => import('@/views/operations/OperationsAttenteView.vue'),

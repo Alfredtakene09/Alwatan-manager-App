@@ -269,6 +269,7 @@ async function syncWaitingVisit(
       data: {
         patientId,
         status: VisitStatus.WAITING_CONSULTATION,
+        createdById: issuedById,
         assignedDoctorId: doctorId,
         consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
         reductionFcfa: billing.reductionFcfa,
@@ -710,6 +711,7 @@ router.post(
                 data: {
                   patientId: patient.id,
                   status: VisitStatus.WAITING_CONSULTATION,
+                  createdById: req.user!.id,
                   assignedDoctorId: body.doctorId,
                   consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
                   reductionFcfa: billing.reductionFcfa,
@@ -778,6 +780,7 @@ router.post(
         data: {
           patientId: patient.id,
           status: VisitStatus.WAITING_CONSULTATION,
+          createdById: req.user!.id,
           assignedDoctorId: body.doctorId,
           consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
           reductionFcfa: billing.reductionFcfa,

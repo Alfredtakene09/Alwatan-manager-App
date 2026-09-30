@@ -911,6 +911,7 @@ onMounted(load)
 .ops-modal {
   width: 100%;
   max-width: 28rem;
+  max-height: min(90dvh, 820px);
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -929,6 +930,7 @@ onMounted(load)
   justify-content: space-between;
   gap: 0.75rem;
   padding: 1rem 1.15rem 0;
+  flex-shrink: 0;
 }
 
 .ops-modal__header h2 {
@@ -956,6 +958,9 @@ onMounted(load)
 }
 
 .ops-modal__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 0.85rem 1.15rem;
   display: flex;
   flex-direction: column;
@@ -1050,5 +1055,6 @@ onMounted(load)
   gap: 0.55rem;
   padding: 0.85rem 1.15rem 1.1rem;
   border-top: 1px solid var(--border);
+  flex-shrink: 0;
 }
 </style>

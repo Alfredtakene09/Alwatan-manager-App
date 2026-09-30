@@ -299,6 +299,13 @@ const receptionNav: NavSection[] = [
             module: 'reception',
             description: 'Parcours gratuit — recommandé par le personnel',
           },
+          {
+            to: '/reception/operations',
+            label: 'Opérations effectuées',
+            icon: Scissors,
+            module: 'reception',
+            description: 'Enregistré par et état du paiement',
+          },
         ],
       },
       {
@@ -430,6 +437,12 @@ const directionOperationalNav: NavSection[] = [
             to: '/reception/patient-personnel',
             label: 'Personnel',
             icon: UserCheck,
+            module: 'reception',
+          },
+          {
+            to: '/reception/operations',
+            label: 'Opérations effectuées',
+            icon: Scissors,
             module: 'reception',
           },
         ],

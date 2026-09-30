@@ -363,6 +363,7 @@ router.post("/:patientId/reconsult", requireAnyModule(...DOSSIER_MODULES), async
         data: {
           patientId,
           status: VisitStatus.IN_CONSULTATION,
+          createdById: req.user!.id,
           assignedDoctorId: doctorId,
           consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
           reductionFcfa: billing.reductionFcfa,

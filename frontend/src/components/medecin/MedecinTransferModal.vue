@@ -147,7 +147,7 @@ function submit() {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: 1000;
   display: grid;
   place-items: center;
   padding: 1rem;
@@ -156,6 +156,9 @@ function submit() {
 
 .modal--transfer {
   width: min(420px, 100%);
+  max-height: min(90dvh, 820px);
+  display: flex;
+  flex-direction: column;
   background: var(--surface, #fff);
   border-radius: 16px;
   box-shadow: 0 20px 50px rgba(15, 23, 42, 0.2);
@@ -167,6 +170,7 @@ function submit() {
   justify-content: space-between;
   gap: 1rem;
   padding: 1.1rem 1.25rem 0.75rem;
+  flex-shrink: 0;
 }
 
 .modal__header h2 {
@@ -188,6 +192,9 @@ function submit() {
 }
 
 .modal__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 0.5rem 1.25rem 1rem;
 }
 
@@ -207,5 +214,6 @@ function submit() {
   justify-content: flex-end;
   gap: 0.5rem;
   padding: 0.85rem 1.25rem 1.15rem;
+  flex-shrink: 0;
 }
 </style>

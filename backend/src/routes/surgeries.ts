@@ -27,6 +27,7 @@ const surgeryInclude = {
     include: {
       patient: true,
       consultation: { select: { id: true, doctorComment: true, diagnosis: true } },
+      createdBy: { select: { id: true, firstName: true, lastName: true } },
     },
   },
   interventionType: {
@@ -35,6 +36,7 @@ const surgeryInclude = {
     },
   },
   surgeon: { select: { id: true, firstName: true, lastName: true } },
+  accountant: { select: { id: true, firstName: true, lastName: true } },
   invoice: {
     select: {
       id: true,
@@ -44,6 +46,17 @@ const surgeryInclude = {
       paidAt: true,
       type: true,
       billingExamKind: true,
+      createdAt: true,
+      issuedBy: { select: { id: true, firstName: true, lastName: true } },
+      payments: {
+        select: {
+          id: true,
+          amountFcfa: true,
+          paidAt: true,
+          recordedBy: { select: { id: true, firstName: true, lastName: true } },
+        },
+        orderBy: { paidAt: "asc" },
+      },
     },
   },
 } as const;
@@ -283,6 +296,19 @@ router.get("/", async (req, res) => {
               invoice: { paidAmountFcfa: { gt: 0 } },
             },
           ],
+        },
+        include: surgeryInclude,
+        orderBy: [{ completedAt: "desc" }, { updatedAt: "desc" }],
+      });
+
+      return res.json(surgeries);
+    }
+
+    if (scope === "all") {
+      const surgeries = await prisma.surgeryCase.findMany({
+        where: {
+          status: { not: SurgeryStatus.CANCELLED },
+          visit: { patient: comptabilitePatientWhere() },
         },
         include: surgeryInclude,
         orderBy: [{ completedAt: "desc" }, { updatedAt: "desc" }],

@@ -8,7 +8,7 @@ export type TouchKey = {
   variant?: 'fn' | 'accent'
 }
 
-export type TouchLayoutId = 'letters' | 'qwerty' | 'accents' | 'digits' | 'symbols' | 'arabic' | 'numpad'
+export type TouchLayoutId = 'letters' | 'qwerty' | 'accents' | 'digits' | 'symbols' | 'arabic'
 
 const PREF_KEY = 'alwatan-touch-kb'
 
@@ -44,13 +44,6 @@ export function isTouchTextField(target: EventTarget | null): target is HTMLInpu
   return ['text', 'search', 'tel', 'url', 'email', 'password', 'number'].includes(type)
 }
 
-export function prefersNumpad(el: HTMLInputElement | HTMLTextAreaElement): boolean {
-  if (el instanceof HTMLTextAreaElement) return false
-  const type = (el.type || 'text').toLowerCase()
-  const mode = (el.getAttribute('inputmode') || '').toLowerCase()
-  return type === 'number' || type === 'tel' || mode === 'numeric' || mode === 'decimal' || mode === 'tel'
-}
-
 function key(label: string, extra: Partial<TouchKey> = {}): TouchKey {
   return { label, value: extra.value ?? label, ...extra }
 }
@@ -60,16 +53,6 @@ function fn(label: string, action: TouchKeyAction, grow = 1.6): TouchKey {
 }
 
 export function layoutKeys(id: TouchLayoutId, shifted: boolean): TouchKey[][] {
-  if (id === 'numpad') {
-    return [
-      [key('1'), key('2'), key('3')],
-      [key('4'), key('5'), key('6')],
-      [key('7'), key('8'), key('9')],
-      [key(','), key('0'), fn('⌫', 'backspace', 1)],
-      [fn('ABC', 'letters', 1), fn('Espace', 'space', 1.4), fn('Entrée', 'enter', 1.4)],
-    ]
-  }
-
   if (id === 'digits') {
     return [
       ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].map((label) => key(label)),

@@ -8,7 +8,6 @@ import {
   insertFieldText,
   isTouchTextField,
   layoutKeys,
-  prefersNumpad,
   pressFieldEnter,
   type TouchKey,
   type TouchLayoutId,
@@ -39,7 +38,6 @@ const rootRef = ref<HTMLElement | null>(null)
 const touchCapable = deviceHasTouch()
 
 const rows = computed(() => layoutKeys(layout.value, shifted.value || shiftLocked.value))
-const numpad = computed(() => layout.value === 'numpad')
 
 function activeLetterLayout(): TouchLayoutId {
   const override = letterLayoutOverride.value
@@ -61,11 +59,6 @@ const modes = computed(() => {
   return items
 })
 
-function defaultLayout(el: HTMLInputElement | HTMLTextAreaElement): TouchLayoutId {
-  if (prefersNumpad(el)) return 'numpad'
-  return activeLetterLayout()
-}
-
 watch(localeCode, () => {
   letterLayoutOverride.value = null
   if (!LETTER_LAYOUTS.has(layout.value)) return
@@ -79,14 +72,8 @@ function fieldFrom(node: EventTarget | null) {
 }
 
 function rememberTarget(el: HTMLInputElement | HTMLTextAreaElement) {
-  const prev = target.value
   target.value = el
-  if (!open.value) {
-    layout.value = defaultLayout(el)
-    return
-  }
-  if (prefersNumpad(el)) layout.value = 'numpad'
-  else if (prev && prefersNumpad(prev) && layout.value === 'numpad') layout.value = defaultLayout(el)
+  if (!open.value) layout.value = activeLetterLayout()
 }
 
 function setLetterLayout(id: TouchLayoutId) {
@@ -291,7 +278,6 @@ onUnmounted(() => {
     v-if="open"
     ref="rootRef"
     class="touch-kb"
-    :class="{ 'touch-kb--numpad': numpad }"
     role="group"
     :aria-label="uiText('Clavier tactile')"
     @pointerdown="keepFocus"
@@ -310,7 +296,8 @@ onUnmounted(() => {
           {{ mode.label }}
         </button>
       </div>
-      <button type="button" class="touch-kb__hide" @pointerdown.prevent="hideKeyboard">
+      <!-- Masquer au click (pas au pointerdown) : sinon le click retombe sur le fond du modal et le ferme. -->
+      <button type="button" class="touch-kb__hide" @pointerdown.prevent @click.prevent.stop="hideKeyboard">
         <X :size="22" />
         {{ uiText('Masquer') }}
       </button>
@@ -380,8 +367,29 @@ onUnmounted(() => {
   width: 100%;
 }
 
-:global(html.touch-kb-open .ui-form-modal) {
-  max-height: calc(100dvh - var(--touch-kb-height, 18rem) - 1.5rem);
+/* Modales : l'overlay s'arrête au-dessus du clavier, le pied (Enregistrer) reste visible. */
+:global(html.touch-kb-open .ui-form-modal-overlay),
+:global(html.touch-kb-open .modal-overlay),
+:global(html.touch-kb-open .ops-modal-overlay),
+:global(html.touch-kb-open .app-modal-overlay),
+:global(html.touch-kb-open .modal-backdrop) {
+  bottom: var(--touch-kb-height, 18rem);
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+:global(html.touch-kb-open .ui-form-modal),
+:global(html.touch-kb-open .ui-form-modal-overlay .ui-form-modal--no-scroll),
+:global(html.touch-kb-open .modal-overlay > .modal),
+:global(html.touch-kb-open .modal-overlay > .invoice-modal),
+:global(html.touch-kb-open .ops-modal-overlay > .ops-modal),
+:global(html.touch-kb-open .app-modal-overlay .app-modal) {
+  max-height: 100%;
+}
+
+:global(html.touch-kb-open .ui-form-modal--no-scroll .ui-form-modal__body) {
+  overflow-y: auto;
+  flex: 1 1 auto;
 }
 
 .touch-kb__modes {
@@ -451,28 +459,10 @@ onUnmounted(() => {
   color: #052e16;
 }
 
-.touch-kb--numpad {
-  padding-inline: max(0.8rem, calc(50vw - 16rem));
-}
-
-.touch-kb--numpad .touch-kb__key {
-  min-height: 5rem;
-  font-size: 2.1rem;
-}
-
-.touch-kb--numpad .touch-kb__key--fn {
-  font-size: 1.2rem;
-}
-
 @media (max-height: 760px) {
   .touch-kb__key {
     min-height: 3.15rem;
     font-size: 1.3rem;
-  }
-
-  .touch-kb--numpad .touch-kb__key {
-    min-height: 3.6rem;
-    font-size: 1.7rem;
   }
 }
 </style>

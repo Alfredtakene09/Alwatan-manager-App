@@ -470,6 +470,7 @@ router.patch("/:id/transfer", requireModule("consultation"), async (req, res) =>
             assignedDoctorId: targetDoctor.id,
             assignedClinicServiceId: service.id,
             notes: transferNote,
+            createdById: existing.createdById,
           },
           include: visitInclude,
         });
@@ -883,6 +884,7 @@ router.post("/", requireModule("reception"), requireUiAction("reception.reconsul
         data: {
           patientId: body.patientId,
           status: VisitStatus.WAITING_CONSULTATION,
+          createdById: req.user!.id,
           assignedDoctorId: body.doctorId,
           consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
           reductionFcfa: billing.reductionFcfa,
@@ -1553,6 +1555,7 @@ router.post("/external-patient", requireModule("reception"), async (req, res) =>
           status: VisitStatus.IN_TREATMENT,
           notes: buildExternalPatientVisitNote(service),
           assignedDoctorId: assignedDoctorId ?? undefined,
+          createdById: req.user!.id,
         },
         include: { patient: true },
       });
@@ -1730,6 +1733,7 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
             status: VisitStatus.IN_TREATMENT,
             notes: buildExternalPatientVisitNote(service),
             assignedDoctorId: assignedDoctorId ?? undefined,
+            createdById: req.user!.id,
           },
           include: { patient: true },
         });

@@ -35,8 +35,10 @@ export type SurgeryCaseRow = {
     firstName: string
     lastName: string
   }
+  accountant?: SurgeryUserRef | null
   visit: {
     id: string
+    createdBy?: SurgeryUserRef | null
     patient: {
       code: string
       firstName: string
@@ -57,7 +59,21 @@ export type SurgeryCaseRow = {
     paidAt?: string | null
     type?: string
     billingExamKind?: string | null
+    createdAt?: string
+    issuedBy?: SurgeryUserRef | null
+    payments?: {
+      id: string
+      amountFcfa: number
+      paidAt: string
+      recordedBy?: SurgeryUserRef | null
+    }[]
   } | null
+}
+
+export type SurgeryUserRef = {
+  id: string
+  firstName: string
+  lastName: string
 }
 
 export const SURGERY_STATUS_LABELS: Record<string, string> = {

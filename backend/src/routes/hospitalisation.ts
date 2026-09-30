@@ -486,6 +486,7 @@ router.post("/actions", async (req, res) => {
             patientId,
             status: VisitStatus.NEEDS_HOSPITALIZATION,
             notes: "Hospitalisation — admission réception",
+            createdById: user.id,
           },
         });
 
@@ -557,6 +558,7 @@ router.post("/actions", async (req, res) => {
               patientId,
               status: VisitStatus.NEEDS_HOSPITALIZATION,
               notes: "Hospitalisation — admission réception",
+              createdById: user.id,
             },
           });
           await ensureHospitalizationFromReferral(tx, visit.id, "Hospitalisation");

@@ -61,6 +61,16 @@ const pendingConsultationPayments = ref<
 >([])
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 
+const ALERT_MAX_AGE_MS = 24 * 60 * 60 * 1000
+
+/** Alerte liée à un événement daté : masquée de la cloche au-delà de 24 h. */
+function isRecentAlert(at?: string | null) {
+  if (!at) return true
+  const time = new Date(at).getTime()
+  if (Number.isNaN(time)) return true
+  return Date.now() - time <= ALERT_MAX_AGE_MS
+}
+
 function hasModule(module: string) {
   return Boolean(auth.user && canAccessModule(auth.user.role, module))
 }
@@ -321,6 +331,7 @@ async function loadPaymentAlerts() {
       examsSummary?: string
       examCount?: number
       amountFcfa: number
+      updatedAt?: string
     }>
     consultations?: Array<{
       id: string
@@ -328,11 +339,12 @@ async function loadPaymentAlerts() {
       patientCode: string
       patientName: string
       amountFcfa: number
+      createdAt?: string
     }>
   }
 
   const { data } = await api.get<PaymentAlertsResponse>('/comptabilite/payment-alerts')
-  pendingExamPayments.value = (data.exams ?? []).map((row) => ({
+  pendingExamPayments.value = (data.exams ?? []).filter((row) => isRecentAlert(row.updatedAt)).map((row) => ({
     id: row.id,
     visitId: row.visitId,
     patientCode: row.patientCode,
@@ -341,7 +353,9 @@ async function loadPaymentAlerts() {
     examCount: row.examCount ?? 0,
     amountFcfa: row.amountFcfa,
   }))
-  pendingConsultationPayments.value = data.consultations ?? []
+  pendingConsultationPayments.value = (data.consultations ?? []).filter((row) =>
+    isRecentAlert(row.createdAt),
+  )
 }
 
 async function loadHospitalizationAlerts() {
@@ -371,7 +385,7 @@ async function loadHospitalizationAlerts() {
     .filter((row) => {
       if (row.status === 'DISCHARGED' || row.status === 'CANCELLED') return false
       const admitted = row.status === 'ACTIVE' || (Boolean(row.room) && Boolean(row.startDate))
-      return !admitted
+      return !admitted && isRecentAlert(row.createdAt)
     })
     .sort((a, b) => {
       const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0
@@ -386,7 +400,7 @@ async function loadHospitalizationAlerts() {
     }))
 
   overdueHospitalizations.value = rows
-    .filter((row) => hospitalizationStayEnded(row))
+    .filter((row) => hospitalizationStayEnded(row) && isRecentAlert(row.endDate))
     .map((row) => ({
       id: row.id,
       visitId: row.visit.id,

@@ -1579,6 +1579,134 @@ export const CLINIC_PRINT_STYLES = `
     font-size: 13px;
     font-weight: 700;
   }
+
+  /* Reçu consultation — plus grand pour la thermique 203 dpi. */
+  body.print-thermal .thermal-receipt--reception.thermal-receipt--ticket {
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__title,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__title--fr,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__title--ar {
+    font-size: 17px;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__subtitle-no {
+    font-size: 14px;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__contact {
+    font-size: 12px;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__row,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__line,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__label-locale,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__label-fr,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__label-ar {
+    font-size: 14px;
+    margin: 4px 0;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__value {
+    font-size: 15px;
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: none;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: right !important;
+  }  body.print-thermal .thermal-receipt--reception .thermal-receipt__label-locale {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__line--total,
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__row--total {
+    font-size: 16px;
+  }
+  body.print-thermal .thermal-receipt--reception .thermal-receipt__thanks {
+    font-size: 15px;
+  }
+
+  /* Cumul / clôture de journée — texte plus grand, noir plein (pas de gris ni opacité). */
+  body.print-thermal .thermal-receipt--day-closure,
+  body.print-thermal .thermal-receipt--day-closure * {
+    color: #000 !important;
+    opacity: 1 !important;
+  }
+  body.print-thermal .thermal-receipt--day-closure.thermal-receipt--ticket {
+    font-size: 14px;
+    font-weight: 700;
+  }
+  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__name {
+    font-size: 16px;
+  }
+  body.print-thermal .thermal-receipt--day-closure .thermal-receipt__contact {
+    font-size: 12px;
+    font-weight: 700;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__period {
+    font-size: 15px;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table,
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table td,
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table thead th {
+    font-size: 14px;
+    font-weight: 700;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table td {
+    border-bottom: 1px dashed #000;
+    padding: 4px 0;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table .col-service {
+    width: 56%;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table .col-qty {
+    width: 14%;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__table .col-total {
+    width: 30%;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__service-ar {
+    font-size: 15px;
+    margin-top: 1px;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__totals-line span,
+  body.print-thermal .thermal-receipt--day-closure .day-closure__totals-line strong {
+    font-size: 14px;
+    font-weight: 700;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__totals-line strong {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__service-ar {
+    text-align: right;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__totals-line--total span,
+  body.print-thermal .thermal-receipt--day-closure .day-closure__totals-line--total strong {
+    font-size: 16px;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__footer {
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  /* Arabe sur thermique : Tahoma gras (installée sur Windows, lisible en petite taille).
+     Arial / Noto Naskh (non chargée dans la fenêtre d'impression) rendent l'arabe fin ou illisible. */
+  body.print-thermal .thermal-receipt[lang="ar"],
+  body.print-thermal .thermal-receipt[lang="ar"] *,
+  body.print-thermal .thermal-receipt [lang="ar"],
+  body.print-thermal .thermal-receipt [lang="ar"] * {
+    font-family: Tahoma, 'Segoe UI', Arial, sans-serif !important;
+    font-weight: 700 !important;
+    color: #000 !important;
+    letter-spacing: 0 !important;
+  }
+  body.print-thermal .thermal-receipt__name-ar {
+    font-size: 15px !important;
+    line-height: 1.3;
+  }
+  body.print-thermal .thermal-receipt--reception[lang="ar"] .thermal-receipt__label-locale,
+  body.print-thermal .thermal-receipt--reception [lang="ar"].thermal-receipt__thanks {
+    font-size: 15px;
+  }
 `
 
 import { EXAM_KIND_LABELS, EXAM_KIND_ORDER, type ExamKindSlug } from '@/lib/exam-catalog/types'
@@ -1936,7 +2064,15 @@ function parseReceiptDateTime(dateStr: string, shortDate = false) {
       hour: '2-digit',
       minute: '2-digit',
     }),
+    /** Chiffres latins (tickets thermiques) : les chiffres arabes-indiens sont peu lisibles en 203 dpi. */
+    latinShortDate: `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)}/${date.getFullYear()}`,
+    latinTime: `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`,
+    latinTimeShort: `${pad2(date.getHours())}:${pad2(date.getMinutes())}`,
   }
+}
+
+function pad2(value: number) {
+  return String(value).padStart(2, '0')
 }
 
 function labExamDensityClass(examCount: number) {
@@ -1956,9 +2092,9 @@ function translateStatus(status: string) {
 
 export function buildConsultationReceiptHtml(data: ConsultationReceiptData): string {
   const rtl = isPrintArabic()
-  const { shortDate, timeShort } = parseReceiptDateTime(data.date, true)
+  const { latinShortDate, latinTimeShort } = parseReceiptDateTime(data.date, true)
   const consultNo = data.invoiceNumber ?? '—'
-  const dateLabel = `${shortDate} ${timeShort}`
+  const dateLabel = `${latinShortDate} ${latinTimeShort}`
   const grossFcfa = data.amount > 0 ? data.amount : data.total + Math.max(0, data.reduction)
   const reductionFcfa = Math.max(0, data.reduction)
   const netFcfa = data.total > 0 ? data.total : Math.max(0, grossFcfa - reductionFcfa)
@@ -2087,7 +2223,7 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
   const totalsBlock = `
   <div class="day-closure__totals" dir="ltr">
     <p class="day-closure__totals-line day-closure__totals-line--sub">
-      <span>${escapeHtml(username.toUpperCase())} - ${escapeHtml(fr('Sous-total Perçu'))} :</span>
+      <span>${escapeHtml(username.toUpperCase())} - ${escapeHtml(fr('Sous-total Perçu'))}&nbsp;:</span>
       <strong>${escapeHtml(formatDayClosureAmount(collectedFcfa))}</strong>
     </p>
     <p class="day-closure__totals-line">
@@ -2109,8 +2245,8 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
   </div>`
 
   const footerLine = fr('Le {date} - {time} par {user}')
-    .replace('{date}', closed.shortDate !== '—' ? closed.shortDate : dateFull)
-    .replace('{time}', closed.time)
+    .replace('{date}', closed.latinShortDate || dateFull)
+    .replace('{time}', closed.latinTime)
     .replace('{user}', username)
 
   return `

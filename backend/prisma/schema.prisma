@@ -272,6 +272,7 @@ model User {
   prescriptions         Prescription[]
   auditLogs             AuditLog[]
   assignedVisits        Visit[]             @relation("VisitAssignedDoctor")
+  createdVisits         Visit[]             @relation("VisitCreatedBy")
   labApprovals          Consultation[]      @relation("LabApprovedBy")
   labRecordings         Consultation[]      @relation("LabRecordedBy")
   uploadedDocuments     PatientDocument[]
@@ -392,11 +393,14 @@ model Visit {
   consultationFeeFcfa     Int?
   reductionFcfa           Int?        @default(0)
   notes                   String?
+  /// Utilisateur (réception) ayant enregistré la visite.
+  createdById             String?
   createdAt               DateTime    @default(now())
   updatedAt               DateTime    @updatedAt
 
   patient               Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
   assignedDoctor        User?            @relation("VisitAssignedDoctor", fields: [assignedDoctorId], references: [id])
+  createdBy             User?            @relation("VisitCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   assignedClinicService  ClinicService?   @relation(fields: [assignedClinicServiceId], references: [id], onDelete: SetNull)
   vitalSigns            VitalSign[]
   consultation          Consultation?
