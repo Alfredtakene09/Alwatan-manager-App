@@ -2856,6 +2856,7 @@ export default {
     Mouvements: 'Movements',
     Enregistrement: 'Registration',
     'Parts médecins à percevoir': 'Doctors’ shares receivable',
+    'Part médecin': 'Doctor share',
     Patients: 'Patients',
     'Patient externe': 'External patient',
     'Examens & paiements': 'Exams & payments',

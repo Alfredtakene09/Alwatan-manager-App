@@ -229,12 +229,12 @@ const receptionTabs = computed(() => {
   void localeCode.value
   const tabs: Array<{ id: ReceptionPageTab; label: string; icon: typeof UserPlus }> = [
     { id: 'enregistrement', label: uiText('Enregistrement'), icon: UserPlus },
-    { id: 'plan', label: uiText('Plan des salles'), icon: LayoutDashboard },
+    { id: 'plan', label: uiText('Salles'), icon: LayoutDashboard },
   ]
   if (canSeeDoctorSharesTab.value) {
     tabs.push({
       id: 'doctor-shares',
-      label: uiText('Parts médecins à percevoir'),
+      label: uiText('Part médecin'),
       icon: CircleDollarSign,
     })
   }
@@ -1664,18 +1664,6 @@ onUnmounted(clearAlert)
               <h3>{{ uiText('Patients enregistrés') }}</h3>
               <p>{{ patientsPanelSubtitle }}</p>
             </div>
-            <div class="table-toolbar__actions">
-              <ExportButtons
-                v-if="canExportPatients"
-                :disabled="loadingPatients || !patients.length"
-                :show-excel="false"
-                :show-word="false"
-                @pdf="exportPatientsPdf"
-              />
-              <UiButton variant="primary" class="table-toolbar__new" @click="openModal">
-                Nouveau
-              </UiButton>
-            </div>
           </div>
 
           <div class="table-toolbar__filters">
@@ -1741,6 +1729,19 @@ onUnmounted(clearAlert)
                 </button>
               </div>
               <span class="search-count">{{ searchLabel }}</span>
+            </div>
+
+            <div class="table-toolbar__actions">
+              <ExportButtons
+                v-if="canExportPatients"
+                :disabled="loadingPatients || !patients.length"
+                :show-excel="false"
+                :show-word="false"
+                @pdf="exportPatientsPdf"
+              />
+              <UiButton variant="primary" class="table-toolbar__new" @click="openModal">
+                Nouveau
+              </UiButton>
             </div>
           </div>
         </div>
@@ -2415,11 +2416,12 @@ onUnmounted(clearAlert)
 
 .table-toolbar__actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-end;
   gap: 0.5rem;
   flex-shrink: 0;
+  margin-inline-start: auto;
 }
 
 .table-toolbar__new {
@@ -2515,9 +2517,9 @@ onUnmounted(clearAlert)
   flex-direction: column;
   align-items: stretch;
   gap: 0.2rem;
-  flex: 1 1 14rem;
-  min-width: 12rem;
-  max-width: 22rem;
+  flex: 0 1 15rem;
+  min-width: 9rem;
+  max-width: 15rem;
   padding: 0;
 }
 
@@ -2913,6 +2915,11 @@ onUnmounted(clearAlert)
 
   .table-toolbar__filters {
     flex-wrap: wrap;
+  }
+
+  .table-toolbar__actions {
+    width: 100%;
+    margin-inline-start: 0;
   }
 
   .receptionist-filter,

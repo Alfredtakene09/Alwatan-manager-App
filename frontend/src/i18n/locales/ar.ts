@@ -2857,6 +2857,7 @@ export default {
     Mouvements: 'الحركات',
     Enregistrement: 'التسجيل',
     'Parts médecins à percevoir': 'حصص الأطباء المستحقة',
+    'Part médecin': 'حصة الطبيب',
     Patients: 'المرضى',
     'Patient externe': 'مريض خارجي',
     'Examens & paiements': 'الفحوصات والمدفوعات',

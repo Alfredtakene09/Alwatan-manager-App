@@ -175,13 +175,11 @@ function paymentInfo(
   invoice?: Pick<OtherOperationInvoice, 'status' | 'paidAmountFcfa' | 'issuedBy' | 'payments'> | null,
 ) {
   const paidFcfa = invoice?.paidAmountFcfa ?? 0
-  const remainingFcfa = Math.max(0, billedFcfa - paidFcfa)
-  const paymentState: PaymentState =
-    invoice?.status === 'PAID' || (billedFcfa > 0 && remainingFcfa === 0)
-      ? 'paid'
-      : paidFcfa > 0
-        ? 'partial'
-        : 'unpaid'
+  const outstandingFcfa = Math.max(0, billedFcfa - paidFcfa)
+  const isPaid = invoice?.status === 'PAID' || (billedFcfa > 0 && outstandingFcfa === 0)
+  const paymentState: PaymentState = isPaid ? 'paid' : paidFcfa > 0 ? 'partial' : 'unpaid'
+  // Facture soldée : plus rien à encaisser, même si le montant réglé est saisi ailleurs.
+  const remainingFcfa = isPaid ? 0 : outstandingFcfa
 
   const paymentCollectors = (invoice?.payments ?? []).map((p) => userName(p.recordedBy)).filter(Boolean)
   const collectors = [

@@ -2719,6 +2719,7 @@ export default {
     Mouvements: 'Mouvements',
     Enregistrement: 'Enregistrement',
     'Parts médecins à percevoir': 'Parts médecins à percevoir',
+    'Part médecin': 'Part médecin',
     Patients: 'Patients',
     'Patient externe': 'Patient externe',
     'Examens & paiements': 'Examens & paiements',
