@@ -1130,32 +1130,33 @@ watch(
             </UiButton>
           </div>
 
-          <div class="cart-total">
-            <span class="cart-total__label">{{ uiText('Total à payer') }}</span>
-            <strong class="cart-total__value">{{ formatFcfa(cartTotalFcfa) }}</strong>
-            <span class="cart-total__meta">{{ translateTemplate('{n} article(s)', { n: cartArticlesCount }) }}</span>
-          </div>
+          <div class="cart-summary">
+            <div class="cart-total">
+              <span class="cart-total__label">{{ uiText('Total à payer') }}</span>
+              <strong class="cart-total__value">{{ formatFcfa(cartTotalFcfa) }}</strong>
+              <span class="cart-total__meta">{{ translateTemplate('{n} article(s)', { n: cartArticlesCount }) }}</span>
+            </div>
 
-          <div class="cart-actions">
-            <UiButton type="button" variant="secondary" size="lg" :disabled="!cart.length || submitting" @click="clearCart">
-              {{ uiText('Vider le panier') }}
-            </UiButton>
-            <UiButton
-              type="button"
-              variant="primary"
-              size="lg"
-              :icon="PillBottle"
-              :disabled="!cart.length || submitting"
-              @click="openCheckoutModal"
-            >
-              {{
-                submitting
-                  ? uiText('Validation…')
-                  : buyerType === 'external'
-                    ? uiText('Valider la vente')
-                    : uiText('Valider la dispensation')
-              }}
-            </UiButton>
+            <div class="cart-actions">
+              <UiButton type="button" variant="secondary" :disabled="!cart.length || submitting" @click="clearCart">
+                {{ uiText('Vider le panier') }}
+              </UiButton>
+              <UiButton
+                type="button"
+                variant="primary"
+                :icon="PillBottle"
+                :disabled="!cart.length || submitting"
+                @click="openCheckoutModal"
+              >
+                {{
+                  submitting
+                    ? uiText('Validation…')
+                    : buyerType === 'external'
+                      ? uiText('Valider la vente')
+                      : uiText('Valider la dispensation')
+                }}
+              </UiButton>
+            </div>
           </div>
         </footer>
       </section>
@@ -1703,8 +1704,8 @@ watch(
 
 .cashier__grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(360px, 1fr);
-  gap: 1rem;
+  grid-template-columns: minmax(0, 1.3fr) minmax(24rem, 1fr);
+  gap: 0.75rem;
   min-height: 0;
   flex: 1;
   overflow: hidden;
@@ -1805,9 +1806,9 @@ watch(
 
 .catalog-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
-  gap: 0.65rem;
-  padding: 0.75rem;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.45rem;
+  padding: 0.5rem;
   align-content: start;
 }
 
@@ -1816,11 +1817,11 @@ watch(
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 0.28rem;
-  min-height: 9.25rem;
-  padding: 0.75rem 0.7rem 0.65rem;
+  gap: 0.2rem;
+  min-height: 6.2rem;
+  padding: 0.45rem 0.4rem 0.4rem;
   border: 1px solid #86efac;
-  border-radius: 12px;
+  border-radius: 10px;
   background: linear-gradient(180deg, #dcfce7 0%, #bbf7d0 100%);
   color: inherit;
   text-align: left;
@@ -1852,17 +1853,17 @@ watch(
 
 .catalog-card__qty {
   position: absolute;
-  top: 0.4rem;
-  right: 0.4rem;
-  min-width: 1.35rem;
-  height: 1.35rem;
-  padding: 0 0.3rem;
+  top: 0.25rem;
+  right: 0.25rem;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.25rem;
   border-radius: 999px;
   background: #16a34a;
   color: #fff;
-  font-size: 0.7rem;
+  font-size: 0.62rem;
   font-weight: 800;
-  line-height: 1.35rem;
+  line-height: 1.1rem;
   text-align: center;
 }
 
@@ -1870,16 +1871,21 @@ watch(
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2.15rem;
-  height: 2.15rem;
+  width: 1.3rem;
+  height: 1.3rem;
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #166534;
   color: #fff;
 }
 
+.catalog-card__icon :deep(svg) {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
 .catalog-card__name {
-  font-size: 1.4rem;
+  font-size: 0.78rem;
   font-weight: 800;
   line-height: 1.2;
   color: #14532d;
@@ -1887,10 +1893,11 @@ watch(
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .catalog-card__dosage {
-  font-size: 0.95rem;
+  font-size: 0.66rem;
   font-weight: 600;
   color: var(--text-muted);
 }
@@ -1898,12 +1905,12 @@ watch(
 .catalog-card__detail-badge {
   display: inline-flex;
   align-self: flex-start;
-  padding: 0.1rem 0.4rem;
+  padding: 0.05rem 0.3rem;
   border-radius: 999px;
   background: #ecfdf5;
   color: #047857;
   border: 1px solid #a7f3d0;
-  font-size: 0.65rem;
+  font-size: 0.56rem;
   font-weight: 800;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -1911,15 +1918,16 @@ watch(
 
 .catalog-card__meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.4rem;
+  gap: 0.1rem 0.3rem;
   margin-top: auto;
-  padding-top: 0.4rem;
+  padding-top: 0.3rem;
 }
 
 .catalog-card__stock {
-  font-size: 0.95rem;
+  font-size: 0.68rem;
   font-weight: 700;
   color: #166534;
 }
@@ -1929,17 +1937,20 @@ watch(
 }
 
 .catalog-card__price {
-  font-size: 1.2rem;
+  margin-inline-start: auto;
+  font-size: 0.74rem;
   font-weight: 800;
   color: #1d4ed8;
+  white-space: nowrap;
 }
 
 .catalog-card__prices {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0.15rem;
+  gap: 0.1rem;
   min-width: 0;
+  margin-inline-start: auto;
 }
 
 .catalog-card__prices .catalog-card__price {
@@ -1947,11 +1958,11 @@ watch(
   flex-direction: column;
   align-items: flex-end;
   line-height: 1.15;
-  font-size: 0.95rem;
+  font-size: 0.72rem;
 }
 
 .catalog-card__prices .catalog-card__price small {
-  font-size: 0.6rem;
+  font-size: 0.55rem;
   font-weight: 700;
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -1968,7 +1979,7 @@ watch(
 
 .cart-table-wrap {
   flex: 1;
-  min-height: 14rem;
+  min-height: 8rem;
   overflow: auto;
   border-top: 1px solid var(--border);
 }
@@ -2031,24 +2042,33 @@ watch(
 .cart-controls {
   display: flex;
   gap: 0.5rem;
-  padding: 0.65rem 1rem 0;
+  padding: 0.55rem 0.8rem 0;
   flex-wrap: wrap;
   flex-shrink: 0;
 }
 
+/* Total + actions sur une seule ligne : pied de panier court, tableau plus haut. */
+.cart-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.8rem 0.7rem;
+  flex-shrink: 0;
+}
+
 .cart-total {
-  margin: 0.65rem 1rem 0;
-  padding: 0.75rem 0.9rem;
-  border-radius: 12px;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 0.35rem 0.7rem;
+  border-radius: 10px;
   background: linear-gradient(135deg, #ecfdf5, #d1fae5);
   border: 1px solid #86efac;
-  text-align: center;
-  flex-shrink: 0;
+  text-align: start;
 }
 
 .cart-total__label {
   display: block;
-  font-size: 1rem;
+  font-size: 0.68rem;
   font-weight: 700;
   color: #166534;
   text-transform: uppercase;
@@ -2057,30 +2077,34 @@ watch(
 
 .cart-total__value {
   display: block;
-  margin-top: 0.35rem;
-  font-size: 2rem;
-  line-height: 1.1;
+  font-size: 1.4rem;
+  line-height: 1.15;
   color: #14532d;
+  white-space: nowrap;
 }
 
 .cart-total__meta {
   display: block;
-  margin-top: 0.35rem;
-  font-size: 1rem;
+  font-size: 0.68rem;
   color: #166534;
 }
 
 .cart-actions {
+  flex: 1;
+  min-width: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.65rem;
-  padding: 0.65rem 1rem 0.85rem;
-  flex-shrink: 0;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 0.5rem;
 }
 
-.cart-controls :deep(.ui-btn),
+.cart-controls :deep(.ui-btn) {
+  font-size: 0.95rem;
+}
+
 .cart-actions :deep(.ui-btn) {
-  font-size: 1.05rem;
+  width: 100%;
+  font-size: 0.95rem;
+  padding-inline: 0.6rem;
 }
 
 .checkout-adjustment {
@@ -2118,20 +2142,101 @@ watch(
   }
 }
 
+/* Densité catalogue : 6 cartes par ligne sur PC, jamais moins de 4 sur tablette. */
+@media (min-width: 1700px) {
+  .catalog-grid {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 1100px) {
+  .cashier__grid {
+    grid-template-columns: minmax(0, 1.25fr) minmax(20rem, 1fr);
+    gap: 0.6rem;
+  }
+
+  .cart-table {
+    font-size: 0.95rem;
+  }
+
+  .cart-table th {
+    font-size: 0.78rem;
+    padding: 0.5rem 0.5rem;
+  }
+
+  .cart-table td {
+    padding: 0.5rem;
+  }
+
+  .cart-total__value {
+    font-size: 1.25rem;
+  }
+
+  .cart-actions :deep(.ui-btn) {
+    font-size: 0.88rem;
+  }
+}
+
+@media (max-width: 1000px) {
+  .catalog-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 880px) {
+  .cashier__grid {
+    grid-template-columns: minmax(0, 1.2fr) minmax(17rem, 1fr);
+  }
+
+  .cart-summary {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.45rem;
+  }
+
+  .cart-total {
+    text-align: center;
+  }
+
+  .catalog-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Écrans de portable peu hauts : on compresse le pied du panier, pas la mise en page. */
+@media (max-height: 820px) {
+  .cart-summary {
+    padding: 0.45rem 0.7rem 0.55rem;
+  }
+
+  .cart-total {
+    padding: 0.25rem 0.6rem;
+  }
+
+  .cart-total__value {
+    font-size: 1.25rem;
+  }
+
+  .cart-controls {
+    padding-top: 0.45rem;
+  }
+}
+
+/* Empilement (panier sous le catalogue) réservé aux mobiles. */
+@media (max-width: 620px) {
   .cashier__grid {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
     overflow: auto;
   }
+
+  .catalog-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 620px) {
   .external-client-row {
-    grid-template-columns: 1fr;
-  }
-
-  .cart-actions {
     grid-template-columns: 1fr;
   }
 }
