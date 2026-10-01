@@ -1789,6 +1789,13 @@ export default {
     Stock: 'Stock',
     État: 'Status',
     Quantité: 'Quantity',
+    '% des médecins': 'Doctors share',
+    '% opération': 'Surgery rate',
+    'Toutes sections': 'All sections',
+    'Aucune prestation à exporter sur cette période.':
+      'No service to export for this period.',
+    'Impossible de générer le PDF des enregistrements.':
+      'Unable to generate the registrations PDF.',
     'Stock après': 'Stock after',
     Par: 'By',
     'Réf.': 'Ref.',

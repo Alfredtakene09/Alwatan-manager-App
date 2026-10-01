@@ -2189,7 +2189,7 @@ export type DayClosureServiceLine = {
   group?: DayClosureLineGroup
 }
 
-const DAY_CLOSURE_GROUPS: { id: DayClosureLineGroup; label: string }[] = [
+export const DAY_CLOSURE_GROUPS: { id: DayClosureLineGroup; label: string }[] = [
   { id: 'consultation', label: 'Consultations' },
   { id: 'operation', label: 'Opérations' },
   { id: 'exam', label: 'Examens' },

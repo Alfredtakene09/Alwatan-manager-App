@@ -7,6 +7,7 @@ import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
 import { ageUnitSchema, refinePatientAge } from "../lib/patient-age.js";
 import { comptabilitePatientWhere, resolveConsultationBilling, shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
 import { aggregateCollectedToday } from "../lib/revenue-stats.js";
+import { buildRegistrationSummary } from "../lib/registration-summary.js";
 import {
   aggregateCollectedForCashier,
   sumExpensesForCashierOnDate,
@@ -565,6 +566,51 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     hospitalizationTodayFcfa: collectedToday.hospitalizationFcfa,
     serviceFilter: service || null,
   });
+});
+
+/** Cumul par section/service des patients enregistrés — alimente le PDF des enregistrements. */
+router.get("/registration-summary", requireModule("reception"), async (req, res) => {
+  try {
+    const user = req.user!;
+    const createdById = String(req.query.createdById ?? "").trim();
+    const service = String(req.query.service ?? "").trim();
+    const q = String(req.query.q ?? "").trim();
+    const fromParam = String(req.query.from ?? "").trim();
+    const toParam = String(req.query.to ?? "").trim();
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const fromDay = parseDayStart(fromParam) ?? startOfToday;
+    const toDay = parseDayStart(toParam || fromParam) ?? startOfToday;
+    const rangeStart = fromDay <= toDay ? fromDay : toDay;
+    const rangeEndExclusive = new Date(fromDay <= toDay ? toDay : fromDay);
+    rangeEndExclusive.setDate(rangeEndExclusive.getDate() + 1);
+
+    const terms = q.split(/\s+/).filter(Boolean);
+    const patientWhere: Prisma.PatientWhereInput = {
+      ...receptionistOwnPatientsWhere(user, createdById),
+      ...(service ? { service } : {}),
+      createdAt: { gte: rangeStart, lt: rangeEndExclusive },
+      ...(terms.length > 0
+        ? {
+            AND: terms.map((term) => ({
+              OR: [
+                { code: { contains: term, mode: "insensitive" as const } },
+                { firstName: { contains: term, mode: "insensitive" as const } },
+                { lastName: { contains: term, mode: "insensitive" as const } },
+                { phone: { contains: term, mode: "insensitive" as const } },
+              ],
+            })),
+          }
+        : {}),
+    };
+
+    const lines = await buildRegistrationSummary({ patientWhere });
+    return res.json({ lines });
+  } catch (error) {
+    console.error("GET /patients/registration-summary failed:", error);
+    return res.status(500).json({ error: "Impossible de calculer le cumul des enregistrements." });
+  }
 });
 
 const registerConsultationSchema = patientSchema

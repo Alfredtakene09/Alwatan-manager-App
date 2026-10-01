@@ -2054,6 +2054,13 @@ export default {
     Stock: 'Stock',
     État: 'État',
     Quantité: 'Quantité',
+    '% des médecins': '% des médecins',
+    '% opération': '% opération',
+    'Toutes sections': 'Toutes sections',
+    'Aucune prestation à exporter sur cette période.':
+      'Aucune prestation à exporter sur cette période.',
+    'Impossible de générer le PDF des enregistrements.':
+      'Impossible de générer le PDF des enregistrements.',
     'Stock après': 'Stock après',
     Par: 'Par',
     'Réf.': 'Réf.',
