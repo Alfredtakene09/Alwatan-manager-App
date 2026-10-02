@@ -6,13 +6,12 @@ import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
 import { ageUnitSchema, refinePatientAge } from "../lib/patient-age.js";
 import { resolveConsultationBilling, shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
-import { aggregateCollectedToday } from "../lib/revenue-stats.js";
+import { aggregateCollectedBetween } from "../lib/revenue-stats.js";
 import { buildRegistrationSummary } from "../lib/registration-summary.js";
 import {
-  aggregateCollectedForCashier,
   applyOpenClosureAdjustments,
   listPatientClosureAmounts,
-  sumExpensesForCashierOnDate,
+  sumExpensesForCashierBetween,
 } from "../lib/cashier-personal-stats.js";
 import { CASH_COLLECTOR_ROLES } from "../lib/cash-shift.js";
 import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
@@ -493,8 +492,6 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   const doctorId = String(req.query.doctorId ?? "").trim();
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
-  const tomorrowStart = new Date(startOfToday);
-  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
   const fromParam = String(req.query.from ?? "").trim();
   const toParam = String(req.query.to ?? "").trim();
   const fromDay = parseDayStart(fromParam) ?? startOfToday;
@@ -513,8 +510,12 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   const patientPeriodScope = { ...patientScope, createdAt: createdAtRange };
   const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
   const scopedReceptionistId = isReceptionist ? user.id : createdById || null;
-  const revenueOptions = service ? { patientService: service } : undefined;
-  // L'admin voit tous les encaissements du jour, pas seulement les siens.
+  const revenueOptions = {
+    ...(service ? { patientService: service } : {}),
+    ...(scopedReceptionistId ? { cashierId: scopedReceptionistId } : {}),
+    ...(doctorId ? { doctorId } : {}),
+  };
+  // L'admin voit tous les encaissements de la période, sauf s'il filtre un réceptionniste.
   const personalCashScope =
     user.role !== UserRole.ADMIN && CASH_COLLECTOR_ROLES.includes(user.role);
 
@@ -568,11 +569,9 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
         patient: { ...patientScope },
       },
     }),
-    personalCashScope
-      ? aggregateCollectedForCashier(user.id, startOfToday, tomorrowStart, revenueOptions)
-      : aggregateCollectedToday(revenueOptions),
-    personalCashScope && !service
-      ? sumExpensesForCashierOnDate(user.id, startOfToday)
+    aggregateCollectedBetween(rangeStart, rangeEndExclusive, revenueOptions),
+    personalCashScope && !service && !doctorId
+      ? sumExpensesForCashierBetween(user.id, rangeStart, rangeEndExclusive)
       : Promise.resolve({ totalFcfa: 0, count: 0, rows: [] }),
   ]);
 

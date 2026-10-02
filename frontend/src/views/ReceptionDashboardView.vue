@@ -804,6 +804,21 @@ const dashboardStats = computed(() => {
   const periodLabel = isListDateToday.value
     ? uiText("aujourd'hui")
     : listDateLabel.value
+  const revenueScope = [
+    !isListDateToday.value ? periodLabel : '',
+    selectedReceptionistName.value,
+    selectedDoctorName.value,
+    serviceHint,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const revenueLabel = stats.value.isPersonalScope
+    ? serviceHint
+      ? translateTemplate('Mes encaissements · {service}', { service: serviceHint })
+      : 'Mes encaissements (jour)'
+    : revenueScope
+      ? translateTemplate('Recettes · {scope}', { scope: revenueScope })
+      : 'Recettes du jour'
   return [
   {
     id: 'today',
@@ -840,13 +855,7 @@ const dashboardStats = computed(() => {
   },
   {
     id: 'revenue',
-    label: stats.value.isPersonalScope
-      ? serviceHint
-        ? translateTemplate('Mes encaissements · {service}', { service: serviceHint })
-        : 'Mes encaissements (jour)'
-      : serviceHint
-        ? translateTemplate('Recettes du jour · {service}', { service: serviceHint })
-        : 'Recettes du jour',
+    label: revenueLabel,
     value: formatFcfaCompact(stats.value.netTodayFcfa ?? stats.value.revenueTodayFcfa),
     hint: stats.value.isPersonalScope
       ? stats.value.expensesTodayFcfa

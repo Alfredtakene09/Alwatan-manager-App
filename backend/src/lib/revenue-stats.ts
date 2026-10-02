@@ -271,19 +271,32 @@ export type CollectedSlice = CollectedInvoiceFields & {
 export async function loadCollectedSlicesBetween(
   from: Date,
   to: Date,
-  options?: { cashierId?: string; patientService?: string },
+  options?: { cashierId?: string; patientService?: string; doctorId?: string },
 ): Promise<CollectedSlice[]> {
   const service = options?.patientService?.trim();
+  const doctorId = options?.doctorId?.trim();
   const patientServiceWhere = service
     ? { patient: countedPatientWhere({ service }) }
     : undefined;
-  const invoiceWhere: Prisma.InvoiceWhereInput = patientServiceWhere
+  const doctorWhere: Prisma.InvoiceWhereInput | undefined = doctorId
     ? {
-        type: { in: COLLECTED_INVOICE_TYPES },
-        status: { not: InvoiceStatus.CANCELLED },
-        ...patientServiceWhere,
+        OR: [
+          { visit: { is: { assignedDoctorId: doctorId } } },
+          { surgeryCase: { is: { surgeonId: doctorId } } },
+          { hospitalization: { is: { attendingDoctorId: doctorId } } },
+        ],
       }
-    : collectedInvoiceParentWhere();
+    : undefined;
+  const invoiceWhere: Prisma.InvoiceWhereInput = {
+    ...(patientServiceWhere
+      ? {
+          type: { in: COLLECTED_INVOICE_TYPES },
+          status: { not: InvoiceStatus.CANCELLED },
+          ...patientServiceWhere,
+        }
+      : collectedInvoiceParentWhere()),
+    ...doctorWhere,
+  };
   const [payments, legacyInvoices] = await Promise.all([
     prisma.invoicePayment.findMany({
       where: {
@@ -305,6 +318,7 @@ export async function loadCollectedSlicesBetween(
       where: {
         ...collectedInvoicesWhere(from, to),
         ...(patientServiceWhere ?? {}),
+        ...doctorWhere,
         payments: { none: {} },
         ...(options?.cashierId ? { issuedById: options.cashierId } : {}),
       },
@@ -367,7 +381,7 @@ export async function loadCollectedSlicesBetween(
 export async function aggregateCollectedBetween(
   from: Date,
   to: Date,
-  options?: { patientService?: string },
+  options?: { patientService?: string; cashierId?: string; doctorId?: string },
 ) {
   const slices = await loadCollectedSlicesBetween(from, to, options);
   return sumCollectedBreakdown(slices);

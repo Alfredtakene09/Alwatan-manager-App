@@ -43,6 +43,35 @@ export async function sumExpensesForCashierOnDate(cashierId: string, businessDat
   return sumExpensesForCashierInWindow(cashierId, businessDate, null, null);
 }
 
+/** Dépenses du caissier sur une plage de dates métier [from, toExclusive). */
+export async function sumExpensesForCashierBetween(
+  cashierId: string,
+  from: Date,
+  toExclusive: Date,
+) {
+  const rangeStart = parseBusinessDate(formatBusinessDate(from));
+  const rangeEnd = parseBusinessDate(formatBusinessDate(toExclusive));
+  const rows = await prisma.clinicExpense.findMany({
+    where: {
+      paidById: cashierId,
+      status: countedClinicExpenseStatus,
+      businessDate: { gte: rangeStart, lt: rangeEnd },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return {
+    totalFcfa: rows.reduce((sum, row) => sum + row.amountFcfa, 0),
+    count: rows.length,
+    rows: rows.map((row) => ({
+      id: row.id,
+      label: row.label,
+      amountFcfa: row.amountFcfa,
+      createdAt: row.createdAt.toISOString(),
+    })),
+  };
+}
+
 /** Dépenses payées par le caissier — optionnellement limitées à [from, to) via createdAt. */
 export async function sumExpensesForCashierInWindow(
   cashierId: string,
