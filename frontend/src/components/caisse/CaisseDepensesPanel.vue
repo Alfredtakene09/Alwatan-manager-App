@@ -99,6 +99,7 @@ const messageType = ref<'success' | 'error'>('success')
 
 type ExpenseRow = {
   id: string
+  businessDate?: string
   amountFcfa: number
   label: string
   comment: string | null
@@ -113,6 +114,7 @@ const internalIndices = ref<ExpenseIndiceOption[]>([])
 const indices = computed(() => props.activeIndices ?? internalIndices.value)
 
 const form = ref({
+  businessDate: '',
   indiceId: '',
   label: '',
   amountFcfa: '',
@@ -313,6 +315,7 @@ async function load() {
 }
 
 function resetForm() {
+  form.value.businessDate = expenseBusinessDate.value
   form.value.indiceId = ''
   form.value.label = ''
   form.value.amountFcfa = ''
@@ -331,6 +334,7 @@ function openEditModal(id: string) {
   if (!row) return
   editingId.value = id
   form.value = {
+    businessDate: (row.businessDate ?? expenseBusinessDate.value).slice(0, 10),
     indiceId: '',
     label: row.label,
     amountFcfa: String(row.amountFcfa),
@@ -373,6 +377,7 @@ async function submit() {
   message.value = ''
   try {
     const payload = {
+      businessDate: form.value.businessDate || expenseBusinessDate.value,
       label,
       amountFcfa: amount,
       comment: form.value.comment.trim() || undefined,
@@ -382,10 +387,7 @@ async function submit() {
       const { data } = await api.put(`/cash-desk/expenses/${editingId.value}`, payload)
       message.value = data.message ?? uiText('Dépense modifiée.')
     } else {
-      const { data } = await api.post('/cash-desk/expenses', {
-        businessDate: expenseBusinessDate.value,
-        ...payload,
-      })
+      const { data } = await api.post('/cash-desk/expenses', payload)
       message.value = data.message ?? uiText('Dépense enregistrée.')
     }
     messageType.value = 'success'
@@ -637,6 +639,13 @@ onMounted(async () => {
     >
       <UiAlert v-if="message && modalOpen" :type="messageType" :message="message" />
       <form class="expense-form" @submit.prevent="submit">
+        <UiInput
+          v-model="form.businessDate"
+          :label="uiText('Date de la dépense')"
+          type="date"
+          required
+          class="expense-form__full"
+        />
         <UiSelect
           v-if="!isEditing"
           v-model="form.indiceId"

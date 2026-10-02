@@ -19,6 +19,8 @@ import { useExpenseIndices } from '@/composables/useExpenseIndices'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -42,8 +44,7 @@ const canManageExpenses = computed(() =>
 )
 
 const activeSection = ref<SectionId>('liste')
-const listFilter = ref<ListFilter>('range')
-const selectedDate = ref(todayIso())
+const listFilter = ref<ListFilter>('all')
 const dateFrom = ref(todayIso())
 const dateTo = ref(todayIso())
 const { activeIndices, loadIndices } = useExpenseIndices()
@@ -119,10 +120,12 @@ function setListFilter(next: ListFilter) {
   }
 }
 
-function onSelectedDateChange() {
-  if (!selectedDate.value) selectedDate.value = todayIso()
-  dateFrom.value = selectedDate.value
-  dateTo.value = selectedDate.value
+function onDateRangeChange() {
+  if (!dateFrom.value) dateFrom.value = todayIso()
+  if (!dateTo.value) dateTo.value = todayIso()
+  if (dateFrom.value > dateTo.value) {
+    dateTo.value = dateFrom.value
+  }
   listFilter.value = 'range'
   selectSection('liste')
   if (canManageExpenses.value) {
@@ -181,6 +184,47 @@ async function submitExpense(payload: AdminExpenseFormPayload) {
   }
 }
 
+const expensePeriodLabel = computed(() => {
+  if (listFilter.value === 'all') return uiText('toutes les périodes')
+  if (listFilter.value === 'month') return uiText('Ce mois')
+  if (dateFrom.value === dateTo.value) return formatShortDate(dateFrom.value)
+  return `${formatShortDate(dateFrom.value)} – ${formatShortDate(dateTo.value)}`
+})
+
+const expenseTotalFcfa = computed(() =>
+  rows.value.reduce((sum, row) => sum + row.amountFcfa, 0),
+)
+
+const expenseExportColumns: ExportColumn<AdminExpenseRow>[] = [
+  { header: 'Date', value: (row) => formatShortDate(row.date) },
+  { header: 'Catégorie', value: (row) => row.category },
+  { header: 'Description', value: (row) => row.description },
+  { header: 'Montant', value: (row) => formatFcfa(row.amountFcfa) },
+  { header: 'Statut', value: (row) => row.statusLabel },
+  { header: 'Commentaire', value: (row) => row.comment?.trim() || '—' },
+]
+
+function expenseExportShared() {
+  return {
+    captionRows: [
+      { label: 'Période', value: expensePeriodLabel.value },
+      { label: 'Total', value: formatFcfa(expenseTotalFcfa.value) },
+    ],
+  }
+}
+
+function exportExpensesPdf() {
+  exportTablePdf(uiText('Dépenses'), expenseExportColumns, rows.value, expenseExportShared())
+}
+
+function exportExpensesExcel() {
+  exportTableExcel(uiText('Dépenses'), expenseExportColumns, rows.value, expenseExportShared())
+}
+
+function exportExpensesWord() {
+  void exportTableWord(uiText('Dépenses'), expenseExportColumns, rows.value, expenseExportShared())
+}
+
 function goBack() {
   if (window.history.state?.back) {
     router.back()
@@ -210,6 +254,13 @@ onMounted(() => {
         <UiButton variant="ghost" size="sm" :icon="ArrowLeft" @click="goBack">
           {{ uiText('Retour') }}
         </UiButton>
+        <ExportButtons
+          v-if="canManageExpenses && activeSection === 'liste'"
+          :disabled="loading || !rows.length"
+          @pdf="exportExpensesPdf"
+          @excel="exportExpensesExcel"
+          @word="exportExpensesWord"
+        />
         <UiButton
           v-if="canManageExpenses && activeSection === 'liste'"
           :icon="Plus"
@@ -222,6 +273,15 @@ onMounted(() => {
 
     <div class="depenses-toolbar-row">
       <CaisseToolbar role="toolbar" :aria-label="uiText('Filtres dépenses')" class="depenses-toolbar-row__filters">
+        <button
+          type="button"
+          class="depenses-toolbar__tab"
+          :class="{ 'depenses-toolbar__tab--active': activeSection === 'liste' && listFilter === 'all' }"
+          :aria-selected="activeSection === 'liste' && listFilter === 'all'"
+          @click="setListFilter('all')"
+        >
+          {{ uiText('Toutes') }}
+        </button>
         <template v-if="canManageExpenses">
           <button
             type="button"
@@ -235,11 +295,18 @@ onMounted(() => {
         </template>
 
         <CaisseCompactDateField
-          v-model="selectedDate"
-          :label="uiText('Date')"
+          v-model="dateFrom"
+          :label="uiText('Du')"
           :disabled="activeSection === 'indices'"
           :inactive="activeSection === 'indices' || listFilter !== 'range'"
-          @update:model-value="onSelectedDateChange"
+          @update:model-value="onDateRangeChange"
+        />
+        <CaisseCompactDateField
+          v-model="dateTo"
+          :label="uiText('Au')"
+          :disabled="activeSection === 'indices'"
+          :inactive="activeSection === 'indices' || listFilter !== 'range'"
+          @update:model-value="onDateRangeChange"
         />
 
         <button

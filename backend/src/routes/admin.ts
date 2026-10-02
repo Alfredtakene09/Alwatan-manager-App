@@ -1322,7 +1322,7 @@ function serializeAdminExpense(row: {
 }) {
   return {
     id: row.id,
-    date: row.businessDate.toISOString().slice(0, 10),
+    date: formatBusinessDate(row.businessDate),
     businessDate: formatBusinessDate(row.businessDate),
     categoryCode: row.category,
     amountFcfa: row.amountFcfa,

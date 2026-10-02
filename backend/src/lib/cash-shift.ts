@@ -52,9 +52,10 @@ export const SHIFT_WINDOWS: Record<ReceptionShiftSlot, { startHour: number; endH
   NIGHT: { startHour: 21, endHour: 6 },
 };
 
+/** Jour calendaire YYYY-MM-DD à minuit UTC, pour une colonne SQL date (évite le décalage J-1). */
 export function parseBusinessDate(iso: string): Date {
   const [year, month, day] = iso.split("-").map(Number);
-  return new Date(year, month - 1, day);
+  return new Date(Date.UTC(year, month - 1, day));
 }
 
 export function formatBusinessDate(date: Date): string {

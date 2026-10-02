@@ -125,7 +125,11 @@ export function formatTrendPercent(value: number) {
 }
 
 export function formatShortDate(iso: string) {
-  return new Date(iso).toLocaleDateString('fr-FR', {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso)
+  const date = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date(iso)
+  return date.toLocaleDateString('fr-FR', {
     day: 'numeric',
     month: 'long',
     year: 'numeric',

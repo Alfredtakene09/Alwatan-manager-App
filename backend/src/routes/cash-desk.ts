@@ -61,6 +61,7 @@ const expenseSchema = z.object({
 });
 
 const expenseUpdateSchema = z.object({
+  businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   label: z.string().min(2).max(200).optional(),
   amountFcfa: z.coerce.number().int().positive().optional(),
   comment: z.string().max(500).optional(),
@@ -287,6 +288,9 @@ router.put("/expenses/:id", async (req, res) => {
     const updated = await prisma.clinicExpense.update({
       where: { id: row.id },
       data: {
+        ...(body.businessDate !== undefined
+          ? { businessDate: parseBusinessDate(body.businessDate) }
+          : {}),
         ...(body.label !== undefined ? { label: body.label.trim() } : {}),
         ...(body.amountFcfa !== undefined ? { amountFcfa: body.amountFcfa } : {}),
         ...(body.comment !== undefined ? { comment: body.comment.trim() || null } : {}),
