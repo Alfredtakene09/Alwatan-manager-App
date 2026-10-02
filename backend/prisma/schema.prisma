@@ -305,6 +305,7 @@ model User {
   labStockMovements                      LabStockMovement[]
   treatingDoctorPatients                 Patient[]                 @relation("TreatingDoctorPatients")
   registeredPatients                     Patient[]                 @relation("PatientRegisteredBy")
+  updatedPatients                        Patient[]                 @relation("PatientUpdatedBy")
   attendingHospitalizations              Hospitalization[]         @relation("HospitalizationAttendingDoctor")
   pharmacyDayClosures                    PharmacyDayClosure[]
 }
@@ -334,11 +335,16 @@ model Patient {
   treatingDoctorId String?
   /// Utilisateur qui a créé le dossier à la réception (pour périmètre réceptionniste)
   createdById String?
+  /// Dernier utilisateur ayant modifié la ligne à la réception (admin compris)
+  updatedById String?
+  /// false = dossier désactivé à la réception (données conservées)
+  active      Boolean          @default(true)
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
   treatingDoctor User? @relation("TreatingDoctorPatients", fields: [treatingDoctorId], references: [id])
   createdBy     User?  @relation("PatientRegisteredBy", fields: [createdById], references: [id])
+  updatedBy     User?  @relation("PatientUpdatedBy", fields: [updatedById], references: [id])
   visits        Visit[]
   prescriptions Prescription[]
   invoices      Invoice[]

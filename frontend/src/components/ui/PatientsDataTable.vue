@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { ChevronDown, Pencil, RefreshCw, Trash2, Banknote, Printer } from '@lucide/vue'
+import { ChevronDown, Pencil, RefreshCw, Ban, Check, Banknote, Printer } from '@lucide/vue'
 import { fullName, formatFcfa, isDirectionOrGestionnaire } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth'
 import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
@@ -27,9 +27,12 @@ export type PatientRow = {
   service?: string | null
   gender?: string
   createdAt?: string
-  /** false = déjà envoyé / consulté (ou données liées) — bouton masqué sauf pour l’admin */
+  /** false = déjà envoyé / consulté (ou données liées) */
   canDelete?: boolean
+  /** false = dossier désactivé (données conservées) */
+  active?: boolean
   createdBy?: { id: string; firstName: string; lastName: string } | null
+  updatedBy?: { id: string; firstName: string; lastName: string } | null
   consultationPayment?: ConsultationPaymentInfo | null
 }
 
@@ -38,7 +41,7 @@ const props = withDefaults(
     patients: PatientRow[]
     loading?: boolean
     fill?: boolean
-    showDelete?: boolean
+    showToggleActive?: boolean
     showReceptionist?: boolean
     /** Si omis : visible pour admin / gestionnaire / direction, masqué pour les réceptionnistes. */
     showPay?: boolean
@@ -50,7 +53,7 @@ const props = withDefaults(
     serviceFilter?: string
   }>(),
   {
-    showDelete: true,
+    showToggleActive: true,
     showReceptionist: false,
     showPrint: false,
     printingPatientId: null,
@@ -62,7 +65,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   edit: [patient: PatientRow]
   reconsult: [patient: PatientRow]
-  delete: [patient: PatientRow]
+  'toggle-active': [patient: PatientRow]
   pay: [patient: PatientRow]
   print: [patient: PatientRow]
   'update:serviceFilter': [service: string]
@@ -78,8 +81,9 @@ const showPayButton = computed(() =>
 const showPrintButton = computed(() => props.showPrint)
 const showEditButton = computed(() => canSeeUiAction('reception.edit_patient'))
 const showReconsultButton = computed(() => canSeeUiAction('reception.reconsult'))
-const canForceDelete = computed(() => Boolean(auth.user && isDirectionOrGestionnaire(auth.user.role)))
-const allowDelete = computed(() => props.showDelete && canSeeUiAction('reception.delete_patient'))
+const allowToggleActive = computed(
+  () => props.showToggleActive && canSeeUiAction('reception.delete_patient'),
+)
 
 const serviceMenuOpen = ref(false)
 const serviceHeaderRef = ref<HTMLElement | null>(null)
@@ -111,11 +115,11 @@ const rows = computed(() =>
     phone: p.phone || '',
     gender: p.gender,
     createdAt: formatDate(p.createdAt),
-    receptionistName: p.createdBy
-      ? fullName(p.createdBy.firstName, p.createdBy.lastName)
-      : '',
-    canDelete: allowDelete.value && (canForceDelete.value || p.canDelete !== false),
-    forceDelete: canForceDelete.value && p.canDelete === false,
+    receptionistName: (() => {
+      const person = p.updatedBy ?? p.createdBy
+      return person ? fullName(person.firstName, person.lastName) : ''
+    })(),
+    active: p.active !== false,
     payable: Boolean(p.consultationPayment?.payable),
     paid: p.consultationPayment?.status === 'PAID',
     payment: consultationPaymentMark(p.consultationPayment),
@@ -291,13 +295,20 @@ onUnmounted(() => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(row, index) in rows" :key="row.patient.id">
+            <tr
+              v-for="(row, index) in rows"
+              :key="row.patient.id"
+              :class="{ 'st-row--inactive': !row.active }"
+            >
               <td class="simple-table__num">{{ index + 1 }}</td>
               <td>
                 <span class="st-badge">{{ row.code }}</span>
               </td>
               <td>
                 <span class="st-name">{{ row.fullName }}</span>
+                <span v-if="!row.active" class="st-badge st-badge--danger st-inactive-badge">
+                  {{ uiText('Inactif') }}
+                </span>
               </td>
               <td>
                 <button
@@ -386,24 +397,18 @@ onUnmounted(() => {
                   >
                     <RefreshCw :size="15" />
                   </button>
-                  <template v-if="row.canDelete">
+                  <template v-if="allowToggleActive">
                     <span class="st-sep" aria-hidden="true" />
                     <button
                       type="button"
-                      class="st-btn st-btn--delete"
-                      :title="
-                        row.forceDelete
-                          ? uiText('Supprimer le dossier (admin, même après consultation)')
-                          : uiText('Supprimer le dossier')
-                      "
-                      :aria-label="
-                        row.forceDelete
-                          ? uiText('Supprimer le dossier (admin, même après consultation)')
-                          : uiText('Supprimer le dossier')
-                      "
-                      @click="emit('delete', row.patient)"
+                      class="st-btn"
+                      :class="row.active ? 'st-btn--catalog-off' : 'st-btn--catalog-on'"
+                      :title="row.active ? uiText('Désactiver') : uiText('Réactiver')"
+                      :aria-label="row.active ? uiText('Désactiver') : uiText('Réactiver')"
+                      @click="emit('toggle-active', row.patient)"
                     >
-                      <Trash2 :size="15" />
+                      <Ban v-if="row.active" :size="15" />
+                      <Check v-else :size="15" />
                     </button>
                   </template>
                 </div>
@@ -417,6 +422,15 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.st-row--inactive td:not(.simple-table__actions) {
+  opacity: 0.55;
+}
+
+.st-inactive-badge {
+  margin-inline-start: 0.4rem;
+  font-size: 0.68rem;
+}
+
 .simple-table__service-head {
   position: relative;
   overflow: visible;

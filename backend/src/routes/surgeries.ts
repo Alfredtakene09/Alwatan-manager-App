@@ -1,9 +1,9 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { InvoiceStatus, InvoiceType, SurgeryStatus } from "@prisma/client";
+import { InvoiceStatus, InvoiceType, Prisma, SurgeryStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { computeSurgeryShares, resolveSurgeonPercent } from "../lib/doctor-compensation.js";
-import { parsePrescribedExamsByKind } from "../lib/lab-notes.js";
+import { parsePrescribedExamsByKind, removePrescribedExamLabelsFromNotes } from "../lib/lab-notes.js";
 import { comptabilitePatientWhere } from "../lib/patient-billing.js";
 import {
   AWAITING_PERFORMANCE_STATUSES,
@@ -555,6 +555,116 @@ router.patch("/other-operations/:id/billing", requireOperationEditor, async (req
     }
     console.error("PATCH /surgeries/other-operations/:id/billing failed:", error);
     return res.status(500).json({ error: "Impossible de modifier l'opération." });
+  }
+});
+
+const DELETABLE_SURGERY_STATUSES: SurgeryStatus[] = [
+  SurgeryStatus.NOTIFIED,
+  SurgeryStatus.QUOTED,
+  SurgeryStatus.AUTHORIZED,
+];
+
+async function removeOperationFromPrescription(
+  tx: Prisma.TransactionClient,
+  visitId: string,
+) {
+  const consultation = await tx.consultation.findUnique({
+    where: { visitId },
+    select: { id: true, clinicalNotes: true },
+  });
+  if (!consultation) return;
+  const labels = parsePrescribedExamsByKind(consultation.clinicalNotes).operation ?? [];
+  if (!labels.length) return;
+  await tx.consultation.update({
+    where: { id: consultation.id },
+    data: {
+      clinicalNotes: removePrescribedExamLabelsFromNotes(
+        consultation.clinicalNotes,
+        labels.map((examLabel) => ({ examKind: "operation" as const, examLabel })),
+      ),
+    },
+  });
+}
+
+/** Réception : supprimer une opération du bloc pas encore encaissée. */
+router.delete("/:id", async (req, res) => {
+  try {
+    const surgery = await prisma.surgeryCase.findUnique({
+      where: { id: String(req.params.id) },
+      include: { invoice: { select: { id: true, paidAmountFcfa: true } } },
+    });
+    if (!surgery || surgery.status === SurgeryStatus.CANCELLED) {
+      return res.status(404).json({ error: "Opération introuvable." });
+    }
+    if ((surgery.invoice?.paidAmountFcfa ?? 0) > 0 || !DELETABLE_SURGERY_STATUSES.includes(surgery.status)) {
+      return res.status(409).json({
+        error: "Impossible de supprimer : un paiement a déjà été encaissé pour cette opération.",
+      });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.surgeryCase.update({
+        where: { id: surgery.id },
+        data: { status: SurgeryStatus.CANCELLED },
+      });
+      if (surgery.invoice) {
+        await tx.invoice.update({
+          where: { id: surgery.invoice.id },
+          data: { status: InvoiceStatus.CANCELLED },
+        });
+      }
+      await removeOperationFromPrescription(tx, surgery.visitId);
+    });
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error("DELETE /surgeries/:id failed:", error);
+    return res.status(500).json({ error: "Impossible de supprimer l'opération." });
+  }
+});
+
+/** Réception : supprimer une autre chirurgie (facture opération) pas encore encaissée. */
+router.delete("/other-operations/:invoiceId", async (req, res) => {
+  try {
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: String(req.params.invoiceId) },
+      select: {
+        id: true,
+        type: true,
+        billingExamKind: true,
+        surgeryCaseId: true,
+        status: true,
+        paidAmountFcfa: true,
+        visitId: true,
+      },
+    });
+    if (
+      !invoice ||
+      invoice.type !== InvoiceType.LAB_EXAM ||
+      invoice.billingExamKind !== "operation" ||
+      invoice.surgeryCaseId ||
+      invoice.status === InvoiceStatus.CANCELLED
+    ) {
+      return res.status(404).json({ error: "Opération introuvable." });
+    }
+    if (invoice.paidAmountFcfa > 0 || invoice.status === InvoiceStatus.PAID) {
+      return res.status(409).json({
+        error: "Impossible de supprimer : un paiement a déjà été encaissé pour cette opération.",
+      });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: { status: InvoiceStatus.CANCELLED },
+      });
+      if (invoice.visitId) await removeOperationFromPrescription(tx, invoice.visitId);
+    });
+
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error("DELETE /surgeries/other-operations/:invoiceId failed:", error);
+    return res.status(500).json({ error: "Impossible de supprimer l'opération." });
   }
 });
 

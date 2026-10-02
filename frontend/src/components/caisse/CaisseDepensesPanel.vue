@@ -57,7 +57,7 @@ const emit = defineEmits<{
   'summary-update': [payload: ExpenseSummaryPayload]
 }>()
 
-const { uiText, t, localeCode, isArabic } = useAppI18n()
+const { uiText, localeCode, isArabic } = useAppI18n()
 const dateLocale = computed(() => (isArabic.value ? 'ar-TD' : 'fr-FR'))
 
 const todayIso = new Date().toISOString().slice(0, 10)
@@ -616,13 +616,13 @@ onMounted(async () => {
         </div>
       </dl>
       <template #footer>
-        <UiButton variant="ghost" @click="closeViewModal">{{ t('common.Fermer') }}</UiButton>
+        <UiButton variant="ghost" @click="closeViewModal">{{ uiText('Fermer') }}</UiButton>
         <UiButton
           variant="primary"
           :icon="Pencil"
           @click="closeViewModal(); openEditModal(viewExpense.id)"
         >
-          {{ t('common.Modifier') }}
+          {{ uiText('Modifier') }}
         </UiButton>
       </template>
     </UiFormModal>
@@ -672,14 +672,14 @@ onMounted(async () => {
         />
       </form>
       <template #footer>
-        <UiButton variant="ghost" @click="closeModal">{{ t('common.Annuler') }}</UiButton>
+        <UiButton variant="ghost" @click="closeModal">{{ uiText('Annuler') }}</UiButton>
         <UiButton
           variant="primary"
           :icon="isEditing ? Save : Plus"
           :disabled="submitting"
           @click="submit"
         >
-          {{ submitting ? t('common.Enregistrement…') : t('common.Enregistrer') }}
+          {{ submitting ? uiText('Enregistrement…') : uiText('Enregistrer') }}
         </UiButton>
       </template>
     </UiFormModal>

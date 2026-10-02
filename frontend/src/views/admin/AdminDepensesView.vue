@@ -27,19 +27,23 @@ type SectionId = 'liste' | 'indices'
 type ListFilter = 'range' | 'all' | 'month'
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10)
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${now.getFullYear()}-${month}-${day}`
 }
 
 const router = useRouter()
 const auth = useAuthStore()
-const { uiText, t } = useAppI18n()
+const { uiText } = useAppI18n()
 
 const canManageExpenses = computed(() =>
   auth.user ? canAccessModule(auth.user.role, 'admin') : false,
 )
 
 const activeSection = ref<SectionId>('liste')
-const listFilter = ref<ListFilter>('all')
+const listFilter = ref<ListFilter>('range')
+const selectedDate = ref(todayIso())
 const dateFrom = ref(todayIso())
 const dateTo = ref(todayIso())
 const { activeIndices, loadIndices } = useExpenseIndices()
@@ -115,10 +119,10 @@ function setListFilter(next: ListFilter) {
   }
 }
 
-function onDateRangeChange() {
-  if (dateFrom.value > dateTo.value) {
-    dateTo.value = dateFrom.value
-  }
+function onSelectedDateChange() {
+  if (!selectedDate.value) selectedDate.value = todayIso()
+  dateFrom.value = selectedDate.value
+  dateTo.value = selectedDate.value
   listFilter.value = 'range'
   selectSection('liste')
   if (canManageExpenses.value) {
@@ -204,7 +208,7 @@ onMounted(() => {
     <UiPageHeader title="Gestion des dépenses" :subtitle="pageSubtitle" :icon="Wallet">
       <template #actions>
         <UiButton variant="ghost" size="sm" :icon="ArrowLeft" @click="goBack">
-          {{ t('common.Retour') }}
+          {{ uiText('Retour') }}
         </UiButton>
         <UiButton
           v-if="canManageExpenses && activeSection === 'liste'"
@@ -231,18 +235,11 @@ onMounted(() => {
         </template>
 
         <CaisseCompactDateField
-          v-model="dateFrom"
-          :label="uiText('Du')"
+          v-model="selectedDate"
+          :label="uiText('Date')"
           :disabled="activeSection === 'indices'"
           :inactive="activeSection === 'indices' || listFilter !== 'range'"
-          @update:model-value="onDateRangeChange"
-        />
-        <CaisseCompactDateField
-          v-model="dateTo"
-          :label="uiText('Au')"
-          :disabled="activeSection === 'indices'"
-          :inactive="activeSection === 'indices' || listFilter !== 'range'"
-          @update:model-value="onDateRangeChange"
+          @update:model-value="onSelectedDateChange"
         />
 
         <button
@@ -271,8 +268,14 @@ onMounted(() => {
 
     <template v-if="activeSection === 'liste'">
       <UiCard v-if="canManageExpenses" title="Liste des dépenses">
-        <div v-if="loading" class="chart-empty">{{ t('common.Chargement…') }}</div>
-        <div v-else-if="!rows.length" class="chart-empty">{{ uiText('Aucune dépense') }}</div>
+        <div v-if="loading" class="chart-empty">{{ uiText('Chargement…') }}</div>
+        <div v-else-if="!rows.length" class="chart-empty">
+          {{
+            listFilter === 'range'
+              ? uiText('Aucune dépense pour cette date')
+              : uiText('Aucune dépense')
+          }}
+        </div>
         <table v-else class="admin-table">
           <thead>
             <tr>
@@ -281,7 +284,7 @@ onMounted(() => {
               <th>{{ uiText('Description') }}</th>
               <th>{{ uiText('Montant') }}</th>
               <th>{{ uiText('Statut') }}</th>
-              <th>{{ t('common.Actions') }}</th>
+              <th>{{ uiText('Actions') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -298,10 +301,10 @@ onMounted(() => {
               <td class="actions">
                 <template v-if="row.source !== 'payroll'">
                 <UiButton size="sm" variant="ghost" :icon="Pencil" @click="openEditExpense(row)">
-                  {{ t('common.Modifier') }}
+                  {{ uiText('Modifier') }}
                 </UiButton>
                 <UiButton size="sm" variant="danger" :icon="Trash2" @click="deleteExpense(row)">
-                  {{ t('common.Supprimer') }}
+                  {{ uiText('Supprimer') }}
                 </UiButton>
                 </template>
                 <span v-else class="text-muted">{{ uiText('Paie versée') }}</span>

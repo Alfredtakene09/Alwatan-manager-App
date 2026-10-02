@@ -303,7 +303,7 @@ onMounted(refreshAll)
 
         <PatientsDataTable
           fill
-          :show-delete="false"
+          :show-toggle-active="false"
           :show-pay="false"
           :show-receptionist="canFilterByReceptionist"
           :patients="patients"

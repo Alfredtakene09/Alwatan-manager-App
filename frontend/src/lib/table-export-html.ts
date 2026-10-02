@@ -15,6 +15,8 @@ export type ExportSection<T = any> = {
   columns: ExportColumn<T>[]
   rows: T[]
   totalsRows?: ExportCaptionRow[]
+  /** Ligne de total en pied de tableau PDF, une cellule par colonne. */
+  footRow?: ExportCell[]
   /** Page / feuille dédiée (récapitulatif, etc.). */
   ownPage?: boolean
 }

@@ -5,6 +5,7 @@ import { translateUi } from '@/i18n/translate'
 import {
   cellText,
   type ExportCaptionRow,
+  type ExportCell,
   type ExportColumn,
   type ExportSection,
 } from '@/lib/table-export-html'
@@ -185,6 +186,7 @@ function drawTable<T>(
   title?: string,
   totalsRows?: ExportCaptionRow[],
   gridLines = false,
+  footRow?: ExportCell[],
 ) {
   let y = startY
   if (title) {
@@ -199,6 +201,9 @@ function drawTable<T>(
     startY: y,
     head: [head(columns)],
     body: body(columns, rows),
+    ...(footRow?.length
+      ? { foot: [['', ...footRow.map((cell) => pdfText(cellText(cell)))]], showFoot: 'lastPage' as const }
+      : {}),
     theme: gridLines ? 'grid' : 'striped',
     styles: {
       font: 'helvetica',
@@ -208,6 +213,7 @@ function drawTable<T>(
       ...(gridLines ? { lineColor: [100, 116, 139], lineWidth: 0.2, textColor: [30, 41, 59] } : {}),
     },
     headStyles: { fillColor: [15, 118, 110], textColor: 255, fontStyle: 'bold' },
+    footStyles: { fillColor: [226, 232, 240], textColor: [15, 23, 42], fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     margin: { left: 14, right: 14 },
     didParseCell: applyCellFont,
@@ -287,6 +293,7 @@ export async function saveReportPdfFile(
         section.title || undefined,
         section.totalsRows,
         options?.gridLines,
+        section.footRow,
       ) + 8
   })
 

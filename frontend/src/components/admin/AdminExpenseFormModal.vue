@@ -51,17 +51,19 @@ const emit = defineEmits<{
 }>()
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10)
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${now.getFullYear()}-${month}-${day}`
 }
 
 function createEmptyForm() {
   return {
+    businessDate: (props.defaultBusinessDate || '').slice(0, 10) || todayIso(),
     indiceId: '',
     label: '',
     amountFcfa: '',
-    status: 'VALIDATED' as ClinicExpenseStatus,
     comment: '',
-    rejectionReason: '',
   }
 }
 
@@ -86,13 +88,6 @@ function applySelectedIndice() {
   }
 }
 
-function resolveBusinessDate() {
-  if (props.editing?.id) {
-    return (props.editing.businessDate ?? '').slice(0, 10) || todayIso()
-  }
-  return props.defaultBusinessDate || todayIso()
-}
-
 function resolveLabel() {
   if (isEditing.value) return form.value.label.trim()
   return selectedIndice.value?.name ?? form.value.label.trim()
@@ -107,12 +102,11 @@ watch(
       return
     }
     form.value = {
+      businessDate: (editing.businessDate ?? '').slice(0, 10) || todayIso(),
       indiceId: '',
       label: editing.label,
       amountFcfa: String(editing.amountFcfa),
-      status: editing.status,
       comment: editing.comment ?? '',
-      rejectionReason: editing.rejectionReason ?? '',
     }
   },
 )
@@ -131,15 +125,12 @@ const canSubmit = computed(() => {
   const amount = Number(form.value.amountFcfa)
   const hasIndice = isEditing.value || Boolean(form.value.indiceId)
   const hasLabel = isEditing.value ? Boolean(form.value.label.trim()) : Boolean(selectedIndice.value)
-  const hasRejectionReason =
-    form.value.status !== 'REJECTED' || Boolean(form.value.rejectionReason.trim())
   return (
     hasIndice
     && hasLabel
     && Number.isFinite(amount)
     && amount > 0
-    && Boolean(form.value.status)
-    && hasRejectionReason
+    && Boolean(form.value.businessDate)
   )
 })
 
@@ -151,14 +142,16 @@ const amountPreview = computed(() => {
 
 function submit() {
   if (!canSubmit.value) return
+  const status = props.editing?.status ?? 'VALIDATED'
   emit('submit', {
-    businessDate: resolveBusinessDate(),
+    businessDate: form.value.businessDate,
     label: resolveLabel(),
     amountFcfa: Number(form.value.amountFcfa),
     category: props.editing?.categoryCode ?? 'AUTRE',
-    status: form.value.status,
+    status,
     comment: form.value.comment.trim() || undefined,
-    rejectionReason: form.value.status === 'REJECTED' ? form.value.rejectionReason.trim() : undefined,
+    rejectionReason:
+      status === 'REJECTED' ? props.editing?.rejectionReason?.trim() || undefined : undefined,
   })
 }
 </script>
@@ -182,6 +175,13 @@ function submit() {
       />
 
       <div class="form-grid-2">
+        <UiInput
+          v-model="form.businessDate"
+          label="Date de la dépense"
+          type="date"
+          required
+        />
+
         <UiSelect
           v-if="!isEditing"
           v-model="form.indiceId"
@@ -209,21 +209,6 @@ function submit() {
           min="1"
           placeholder="Ex. 15 000"
           required
-        />
-
-        <UiSelect v-model="form.status" label="Statut" required>
-          <option value="VALIDATED">Validée</option>
-          <option value="PENDING">En attente</option>
-          <option value="REJECTED">Rejetée</option>
-        </UiSelect>
-
-        <UiTextarea
-          v-if="form.status === 'REJECTED'"
-          v-model="form.rejectionReason"
-          label="Motif du rejet"
-          placeholder="Précisez le motif du rejet"
-          required
-          class="expense-form__full"
         />
 
         <UiTextarea

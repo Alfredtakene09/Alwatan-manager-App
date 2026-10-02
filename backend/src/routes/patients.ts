@@ -399,6 +399,7 @@ router.get("/", async (req, res) => {
     include: {
       treatingDoctor: { select: treatingDoctorSelect },
       createdBy: { select: { id: true, firstName: true, lastName: true } },
+      updatedBy: { select: { id: true, firstName: true, lastName: true } },
       invoices: {
         where: {
           type: { in: [InvoiceType.CONSULTATION, InvoiceType.LAB_EXAM] },
@@ -491,6 +492,9 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
   const scopedReceptionistId = isReceptionist ? user.id : createdById || null;
   const revenueOptions = service ? { patientService: service } : undefined;
+  // L'admin voit tous les encaissements du jour, pas seulement les siens.
+  const personalCashScope =
+    user.role !== UserRole.ADMIN && CASH_COLLECTOR_ROLES.includes(user.role);
 
   const [
     registeredToday,
@@ -539,10 +543,10 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
         patient: { ...patientScope },
       },
     }),
-    CASH_COLLECTOR_ROLES.includes(user.role)
+    personalCashScope
       ? aggregateCollectedForCashier(user.id, startOfToday, tomorrowStart, revenueOptions)
       : aggregateCollectedToday(revenueOptions),
-    CASH_COLLECTOR_ROLES.includes(user.role) && !service
+    personalCashScope && !service
       ? sumExpensesForCashierOnDate(user.id, startOfToday)
       : Promise.resolve({ totalFcfa: 0, count: 0, rows: [] }),
   ]);
@@ -559,7 +563,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     revenueTodayFcfa: collectedToday.totalFcfa,
     expensesTodayFcfa: myExpensesToday.totalFcfa,
     netTodayFcfa,
-    isPersonalScope: CASH_COLLECTOR_ROLES.includes(user.role),
+    isPersonalScope: personalCashScope,
     consultationsTodayFcfa: collectedToday.consultationsFcfa,
     examsTodayFcfa: collectedToday.examsFcfa,
     surgeryTodayFcfa: collectedToday.surgeryFcfa,
@@ -1044,6 +1048,7 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
           recommendedByName: normalizeRecommendedByName(body.recommendedByName),
           dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : undefined,
           ...(treatingDoctorId !== undefined ? { treatingDoctorId } : {}),
+          updatedById: req.user!.id,
         },
         include: { treatingDoctor: { select: treatingDoctorSelect } },
       });
@@ -1074,6 +1079,30 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
     return res.status(400).json({ error: "Données invalides" });
   }
 });
+
+router.patch(
+  "/:id/active",
+  requireModule("reception"),
+  requireUiAction("reception.delete_patient"),
+  async (req, res) => {
+    const parsed = z.object({ active: z.boolean() }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Données invalides" });
+
+    const patientId = String(req.params.id);
+    const existing = await prisma.patient.findFirst({
+      where: { id: patientId, ...receptionistOwnPatientsWhere(req.user!) },
+      select: { id: true },
+    });
+    if (!existing) return res.status(404).json({ error: "Patient introuvable" });
+
+    const patient = await prisma.patient.update({
+      where: { id: patientId },
+      data: { active: parsed.data.active },
+      select: { id: true, code: true, active: true },
+    });
+    return res.json(patient);
+  },
+);
 
 router.delete("/:id", requireModule("reception"), requireUiAction("reception.delete_patient"), async (req, res) => {
   try {

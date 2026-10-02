@@ -28,7 +28,12 @@ import {
   splitPatientFullName,
 } from '@/lib/patient-name'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
-import { exportTablePdf, type ExportColumn, type ExportSection } from '@/lib/table-export'
+import {
+  exportTablePdf,
+  type ExportCell,
+  type ExportColumn,
+  type ExportSection,
+} from '@/lib/table-export'
 import { sortPatientsNewestFirst } from '@/lib/patient-sort'
 import {
   isExemptCategory,
@@ -104,8 +109,10 @@ type Patient = {
   treatingDoctorId?: string | null
   treatingDoctor?: Doctor | null
   createdBy?: { id: string; firstName: string; lastName: string } | null
+  updatedBy?: { id: string; firstName: string; lastName: string } | null
   createdAt?: string
   canDelete?: boolean
+  active?: boolean
   consultationPayment?: {
     invoiceId: string
     invoiceNumber: string
@@ -338,7 +345,7 @@ const selectedPatient = ref<PatientDetail | null>(null)
 const savingEdit = ref(false)
 const loadingEdit = ref(false)
 const submittingReconsult = ref(false)
-const deletingPatientId = ref<string | null>(null)
+const togglingPatientId = ref<string | null>(null)
 
 const reconsultForm = ref({
   doctorId: '',
@@ -654,16 +661,13 @@ type RegistrationSummaryLine = {
   operationPercent: number | null
 }
 
-/** Taux affiché seulement s'il est identique sur toute la ligne. */
 function doctorShareLabel(row: RegistrationSummaryLine): string {
   if (row.doctorShareFcfa <= 0) return '—'
-  if (row.doctorPercent == null) return formatFcfa(row.doctorShareFcfa)
-  return `${row.doctorPercent} % · ${formatFcfa(row.doctorShareFcfa)}`
+  return formatFcfa(row.doctorShareFcfa)
 }
 
-function operationShareLabel(row: RegistrationSummaryLine): string {
-  if (row.group !== 'operation' || row.operationPercent == null) return '—'
-  return `${row.operationPercent} %`
+function clinicShareLabel(row: RegistrationSummaryLine): string {
+  return formatFcfa(Math.max(0, row.amountFcfa - row.doctorShareFcfa))
 }
 
 const registrationExportColumns: ExportColumn<RegistrationSummaryLine>[] = [
@@ -671,20 +675,19 @@ const registrationExportColumns: ExportColumn<RegistrationSummaryLine>[] = [
   { header: 'Quantité', value: (row) => row.qty },
   { header: 'Montant', value: (row) => formatFcfa(row.amountFcfa) },
   { header: '% des médecins', value: (row) => doctorShareLabel(row) },
-  { header: '% opération', value: (row) => operationShareLabel(row) },
+  { header: '% clinique', value: (row) => clinicShareLabel(row) },
 ]
 
-function registrationSectionTotals(rows: RegistrationSummaryLine[]) {
+function registrationSectionFootRow(rows: RegistrationSummaryLine[]): ExportCell[] {
+  const qty = rows.reduce((sum, row) => sum + row.qty, 0)
+  const amountFcfa = rows.reduce((sum, row) => sum + row.amountFcfa, 0)
+  const doctorShareFcfa = rows.reduce((sum, row) => sum + row.doctorShareFcfa, 0)
   return [
-    { label: uiText('Quantité'), value: String(rows.reduce((sum, row) => sum + row.qty, 0)) },
-    {
-      label: uiText('Sous-total'),
-      value: formatFcfa(rows.reduce((sum, row) => sum + row.amountFcfa, 0)),
-    },
-    {
-      label: uiText('% des médecins'),
-      value: formatFcfa(rows.reduce((sum, row) => sum + row.doctorShareFcfa, 0)),
-    },
+    uiText('Sous-total'),
+    qty,
+    formatFcfa(amountFcfa),
+    formatFcfa(doctorShareFcfa),
+    formatFcfa(Math.max(0, amountFcfa - doctorShareFcfa)),
   ]
 }
 
@@ -705,7 +708,7 @@ function registrationExportSections(
       title: uiText(group.label),
       columns,
       rows,
-      totalsRows: registrationSectionTotals(rows),
+      footRow: registrationSectionFootRow(rows),
     })
   }
 
@@ -765,7 +768,7 @@ async function exportPatientsPdf() {
     exportTablePdf(uiText(PATIENT_EXPORT_TITLE), [], [], {
       captionRows: patientExportCaptionRows(),
       sections,
-      orientation: 'landscape',
+      orientation: 'portrait',
       gridLines: true,
     })
   } catch (error) {
@@ -1345,47 +1348,39 @@ function printPatientReceipt(patient: Patient) {
     })
 }
 
-async function deletePatient(patient: Patient) {
-  const canForceDelete = Boolean(auth.user && isDirectionOrGestionnaire(auth.user.role))
-  if (patient.canDelete === false && !canForceDelete) {
-    showAlert(
-      'Impossible de supprimer : ce patient a déjà été envoyé et consulté.',
-      'error',
-    )
-    return
+async function togglePatientActive(patient: Patient) {
+  const nextActive = patient.active === false
+  const patientName = fullName(patient.firstName, patient.lastName)
+  if (!nextActive) {
+    const confirmed = await confirmAppModal({
+      type: 'WARNING',
+      title: 'Désactiver le patient',
+      message: translateTemplate(
+        'Désactiver le dossier {code} — {name} ? Les visites, consultations et factures sont conservées ; le dossier pourra être réactivé.',
+        { code: patient.code, name: patientName },
+      ),
+      confirmLabel: 'Désactiver',
+    })
+    if (!confirmed) return
   }
 
-  const patientName = fullName(patient.firstName, patient.lastName)
-  const forceDelete = canForceDelete && patient.canDelete === false
-  const confirmed = await confirmAppModal({
-    type: 'DELETE',
-    title: forceDelete ? 'Supprimer le patient (admin)' : 'Supprimer le patient',
-    message: forceDelete
-      ? translateTemplate(
-          'Supprimer le dossier {code} — {name} même s’il a déjà été consulté ? Visites, consultations, factures et documents liés seront aussi supprimés. Cette action est irréversible.',
-          { code: patient.code, name: patientName },
-        )
-      : translateTemplate(
-          'Supprimer le dossier {code} — {name} ? Les factures, visites et documents liés seront aussi supprimés. Cette action est irréversible.',
-          { code: patient.code, name: patientName },
-        ),
-    confirmLabel: 'Supprimer',
-  })
-  if (!confirmed) return
-
-  deletingPatientId.value = patient.id
+  togglingPatientId.value = patient.id
   clearAlert()
   try {
-    await api.delete(`/patients/${patient.id}`)
-    showAlert(translateTemplate('Dossier {code} supprimé.', { code: patient.code }))
+    await api.patch(`/patients/${patient.id}/active`, { active: nextActive })
+    showAlert(
+      translateTemplate(nextActive ? 'Dossier {code} réactivé.' : 'Dossier {code} désactivé.', {
+        code: patient.code,
+      }),
+    )
     await refreshAll()
   } catch (error: unknown) {
     await showApiErrorModal(
       error,
-      'Impossible de supprimer ce patient.',
+      nextActive ? 'Impossible de réactiver ce patient.' : 'Impossible de désactiver ce patient.',
     )
   } finally {
-    deletingPatientId.value = null
+    togglingPatientId.value = null
   }
 }
 
@@ -1851,7 +1846,7 @@ onUnmounted(clearAlert)
           <PatientsDataTable
             fill
             :patients="patients"
-            :loading="loadingPatients || !!deletingPatientId"
+            :loading="loadingPatients || !!togglingPatientId"
             :service-options="serviceFilterOptions"
             v-model:service-filter="serviceFilter"
             :show-receptionist="canFilterByReceptionist"
@@ -1860,7 +1855,7 @@ onUnmounted(clearAlert)
             @print="printPatientReceipt"
             @edit="openEditModal"
             @reconsult="openReconsultModal"
-            @delete="deletePatient"
+            @toggle-active="togglePatientActive"
           />
         </div>
       </div>
@@ -2227,19 +2222,15 @@ onUnmounted(clearAlert)
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  height: calc(100dvh - 7.5rem);
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
 
 .dashboard-sticky {
-  flex: 0 1 auto;
-  min-height: 0;
-  max-height: min(48dvh, 26rem);
-  overflow-x: hidden;
-  overflow-y: auto;
-  position: sticky;
-  top: 0;
+  flex: 0 0 auto;
+  overflow: visible;
+  position: relative;
   z-index: 30;
   margin: calc(-1 * var(--page-padding-y)) calc(-1 * var(--page-padding-x)) 0;
   padding: 0.65rem var(--page-padding-x) 0.5rem;
@@ -2426,7 +2417,7 @@ onUnmounted(clearAlert)
 
 .dashboard-body {
   flex: 1 1 0;
-  min-height: 16rem;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   padding-top: 0;
@@ -2442,7 +2433,7 @@ onUnmounted(clearAlert)
 
 .patients-table-card {
   flex: 1 1 0;
-  min-height: 14rem;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   margin-top: 0.25rem;
@@ -2455,7 +2446,7 @@ onUnmounted(clearAlert)
 
 .patients-table-card .table-wrap {
   flex: 1 1 0;
-  min-height: 12rem;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2937,7 +2928,6 @@ onUnmounted(clearAlert)
   }
 
   .dashboard-sticky {
-    max-height: none;
     margin: calc(-1 * var(--page-padding-y)) calc(-1 * var(--page-padding-x)) 0;
     padding: 0.5rem var(--page-padding-x) 0.55rem;
   }

@@ -13,22 +13,20 @@ import {
   Banknote,
   Layers,
   Pencil,
+  Trash2,
+  X,
 } from '@lucide/vue'
 import { isAxiosError } from 'axios'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
-import { showApiErrorModal } from '@/lib/api-modal-helper'
-import { EXAM_KIND_LABELS, type ExamKindSlug } from '@/lib/exam-catalog/types'
-import { remainingPayableExamKinds } from '@/lib/exam-billing'
-import { normalizeLabExamPendingItem } from '@/lib/lab-exam-pending'
+import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
+import { emptyExamReductionsByKind } from '@/lib/exam-billing'
+import { type LabExamPendingItem } from '@/lib/lab-exam-pending'
 import { printLabExamPaymentReceipts } from '@/lib/lab-exam-invoice'
 import { cancelPrintWindow, reservePrintWindow } from '@/lib/print-document'
-import LabExamPaymentModal, {
-  type LabExamPaymentConfirmPayload,
-  type LabExamPaymentItem,
-} from '@/components/comptabilite/LabExamPaymentModal.vue'
+import UiInput from '@/components/ui/UiInput.vue'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { type SurgeryCaseRow, type SurgeryUserRef } from '@/lib/surgery-case'
 import { surgeryCompletedAtIso } from '@/lib/surgery-shares'
@@ -45,7 +43,6 @@ import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
-import UiInput from '@/components/ui/UiInput.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
@@ -78,6 +75,7 @@ type OtherOperationInvoice = {
 
 type OperationRow = {
   id: string
+  recordId: string
   source: OperationSource
   visitId: string
   consultationId: string | null
@@ -159,9 +157,9 @@ const errorMessage = ref('')
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const actionId = ref<string | null>(null)
-const paymentItem = ref<LabExamPaymentItem | null>(null)
+const payTarget = ref<{ row: OperationRow; item: LabExamPendingItem } | null>(null)
+const payAmount = ref('')
 const submittingPayment = ref(false)
-const submittingKind = ref<ExamKindSlug | null>(null)
 const searchQuery = ref('')
 const paymentFilter = ref<PaymentFilter>('all')
 const receptionistFilter = ref('')
@@ -209,6 +207,7 @@ function toOtherRow(op: OtherOperationInvoice): OperationRow {
   const doctor = userName(op.doctor)
   return {
     id: `other-${op.id}`,
+    recordId: op.id,
     source: 'other',
     visitId: op.visit.id,
     consultationId: op.visit.consultation?.id ?? null,
@@ -231,6 +230,7 @@ function toRow(surgery: SurgeryCaseRow): OperationRow {
 
   return {
     id: surgery.id,
+    recordId: surgery.id,
     source: 'bloc',
     visitId: surgery.visit.id,
     consultationId: surgery.visit.consultation?.id ?? null,
@@ -369,7 +369,7 @@ async function openEncaisser(row: OperationRow) {
   actionId.value = row.id
   message.value = ''
   try {
-    const { data } = await api.get<{ labExamsPending?: LabExamPaymentItem[] }>('/comptabilite')
+    const { data } = await api.get<{ labExamsPending?: LabExamPendingItem[] }>('/comptabilite')
     const pending = data.labExamsPending ?? []
     const item =
       pending.find((p) => p.visitId === row.visitId) ??
@@ -380,7 +380,8 @@ async function openEncaisser(row: OperationRow) {
       messageType.value = 'error'
       return
     }
-    paymentItem.value = item
+    payTarget.value = { row, item }
+    payAmount.value = String(row.remainingFcfa)
   } catch (error) {
     const shown = await showApiErrorModal(error, 'Impossible d’ouvrir l’encaissement.')
     if (!shown) {
@@ -393,8 +394,9 @@ async function openEncaisser(row: OperationRow) {
 }
 
 function closeEncaisser() {
-  paymentItem.value = null
-  submittingKind.value = null
+  if (submittingPayment.value) return
+  payTarget.value = null
+  payAmount.value = ''
 }
 
 function dateInputValue(timestamp: number) {
@@ -449,49 +451,64 @@ async function submitEdit() {
   }
 }
 
-async function confirmEncaisser(payload: LabExamPaymentConfirmPayload) {
-  const paidItem = paymentItem.value
-  const normalizedPaid = paidItem ? normalizeLabExamPendingItem(paidItem) : null
-  const payingAll = payload.kinds.length > 1
+const parsedPayAmount = computed(() => {
+  const raw = payAmount.value.replace(/\s/g, '').replace(',', '.')
+  const value = Math.round(Number(raw))
+  return Number.isFinite(value) ? value : 0
+})
+
+const payAmountError = computed(() => {
+  const target = payTarget.value
+  if (!target) return ''
+  if (parsedPayAmount.value <= 0) return uiText('Saisissez un montant supérieur à 0.')
+  if (parsedPayAmount.value > target.row.remainingFcfa) {
+    return translateTemplate('Le montant ne peut pas dépasser le reste ({amount}).', {
+      amount: formatFcfa(target.row.remainingFcfa),
+    })
+  }
+  return ''
+})
+
+const remainingAfterPayment = computed(() =>
+  payTarget.value ? Math.max(0, payTarget.value.row.remainingFcfa - parsedPayAmount.value) : 0,
+)
+
+async function confirmEncaisser() {
+  const target = payTarget.value
+  if (!target || payAmountError.value || submittingPayment.value) return
+  const amountFcfa = parsedPayAmount.value
+  const reductionsByKind = emptyExamReductionsByKind()
   submittingPayment.value = true
-  submittingKind.value = payingAll ? null : (payload.kinds[0] ?? null)
   message.value = ''
-  if (normalizedPaid) reservePrintWindow('80mm')
+  reservePrintWindow('80mm')
   try {
     const { data: res } = await api.post('/comptabilite', {
       action: 'pay_lab_exams',
-      consultationId: payload.consultationId,
-      kinds: payload.kinds,
-      reductionsByKind: payload.reductionsByKind,
-      reductionFcfa: payload.reductionFcfa,
-      installmentAmountFcfa: payload.installmentAmountFcfa,
-      installmentsByKind: payload.installmentsByKind,
+      consultationId: target.item.id,
+      kinds: ['operation'],
+      reductionsByKind,
+      reductionFcfa: 0,
+      installmentAmountFcfa: amountFcfa,
+      installmentsByKind: { operation: amountFcfa },
     })
-    const shouldClose =
-      res.allKindsPaid ||
-      remainingPayableExamKinds((res.remainingUnpaidKinds ?? []) as ExamKindSlug[]).length === 0
-    if (shouldClose) closeEncaisser()
-    if (normalizedPaid) {
-      const printed = printLabExamPaymentReceipts(
-        normalizedPaid,
-        { kinds: payload.kinds, reductionsByKind: payload.reductionsByKind },
-        res.invoicesByKind,
-      )
-      if (!printed) cancelPrintWindow()
-    }
-    const kindLabel = payingAll
-      ? 'Tous les examens'
-      : payload.kinds[0]
-        ? EXAM_KIND_LABELS[payload.kinds[0]]
-        : 'Opération'
-    const installmentNote =
-      Array.isArray(res.installmentKinds) && res.installmentKinds.length > 0
-        ? ` ${uiText('Tranche enregistrée — solde restant à payer.')}`
-        : ''
-    message.value = `${translateTemplate('{kind} encaissé.', { kind: uiText(kindLabel) })}${installmentNote}`
+    const printed = printLabExamPaymentReceipts(
+      target.item,
+      { kinds: ['operation'], reductionsByKind },
+      res.invoicesByKind,
+    )
+    if (!printed) cancelPrintWindow()
+    const remaining = res.invoicesByKind?.operation?.remainingFcfa ?? remainingAfterPayment.value
+    message.value =
+      remaining > 0
+        ? translateTemplate('{amount} encaissé — reste à payer : {rest}.', {
+            amount: formatFcfa(amountFcfa),
+            rest: formatFcfa(remaining),
+          })
+        : translateTemplate('{amount} encaissé — opération soldée.', { amount: formatFcfa(amountFcfa) })
     messageType.value = 'success'
+    submittingPayment.value = false
+    closeEncaisser()
     await load()
-    if (!shouldClose) submittingKind.value = null
   } catch (error) {
     cancelPrintWindow()
     const shown = await showApiErrorModal(error, 'Erreur lors de l’encaissement.')
@@ -499,9 +516,46 @@ async function confirmEncaisser(payload: LabExamPaymentConfirmPayload) {
       message.value = apiErrorText(error) ?? 'Erreur lors de l’encaissement.'
       messageType.value = 'error'
     }
-    submittingKind.value = null
   } finally {
     submittingPayment.value = false
+  }
+}
+
+function canDelete(row: OperationRow) {
+  return row.paidFcfa === 0 && !row.completed
+}
+
+async function deleteRow(row: OperationRow) {
+  const confirmed = await confirmAppModal({
+    title: uiText('Supprimer l’opération'),
+    message: translateTemplate('Supprimer « {intervention} » pour {patient} ? Cette action est définitive.', {
+      intervention: row.intervention,
+      patient: row.patientName,
+    }),
+    confirmLabel: uiText('Supprimer'),
+  })
+  if (!confirmed) return
+  actionId.value = row.id
+  message.value = ''
+  try {
+    const url =
+      row.source === 'bloc'
+        ? `/surgeries/${row.recordId}`
+        : `/surgeries/other-operations/${row.recordId}`
+    await api.delete(url)
+    message.value = translateTemplate('Opération « {intervention} » supprimée.', {
+      intervention: row.intervention,
+    })
+    messageType.value = 'success'
+    await load()
+  } catch (error) {
+    const shown = await showApiErrorModal(error, 'Impossible de supprimer l’opération.')
+    if (!shown) {
+      message.value = apiErrorText(error) ?? 'Impossible de supprimer l’opération.'
+      messageType.value = 'error'
+    }
+  } finally {
+    actionId.value = null
   }
 }
 
@@ -572,7 +626,7 @@ onMounted(load)
         :icon="Scissors"
       />
       <UiAlert v-if="errorMessage" type="error" :message="errorMessage" />
-      <UiAlert v-if="message && !paymentItem" :type="messageType" :message="message" />
+      <UiAlert v-if="message && !payTarget" :type="messageType" :message="message" />
 
       <div class="stats-grid">
         <UiStatCard mini label="Opérations" :value="String(stats.count)" :icon="Scissors" variant="teal" />
@@ -746,6 +800,8 @@ onMounted(load)
                     <th>{{ uiText('Patient') }}</th>
                     <th>{{ uiText('Intervention') }}</th>
                     <th>{{ uiText('Montant') }}</th>
+                    <th>{{ uiText('Payé') }}</th>
+                    <th>{{ uiText('Reste') }}</th>
                     <th>{{ uiText('Paiement') }}</th>
                     <th>{{ uiText('Enregistré par') }}</th>
                     <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
@@ -778,14 +834,15 @@ onMounted(load)
                     </td>
                     <td>
                       <span class="st-amount">{{ formatFcfa(row.billedFcfa) }}</span>
-                      <span v-if="row.paidFcfa > 0 && row.remainingFcfa > 0" class="st-sub">
-                        {{
-                          translateTemplate('Payé {paid} · Reste {rest}', {
-                            paid: formatFcfa(row.paidFcfa),
-                            rest: formatFcfa(row.remainingFcfa),
-                          })
-                        }}
-                      </span>
+                    </td>
+                    <td>
+                      <span class="st-amount">{{ formatFcfa(row.paidFcfa) }}</span>
+                    </td>
+                    <td>
+                      <span
+                        class="st-amount"
+                        :class="{ 'st-amount--due': row.remainingFcfa > 0 }"
+                      >{{ formatFcfa(row.remainingFcfa) }}</span>
                     </td>
                     <td>
                       <span class="st-badge" :class="`st-badge--${PAYMENT_VARIANTS[row.paymentState]}`">
@@ -799,7 +856,7 @@ onMounted(load)
                       }}</span>
                     </td>
                     <td class="simple-table__actions">
-                      <div class="st-actions">
+                      <div class="ops-actions">
                         <button
                           v-if="row.remainingFcfa > 0"
                           type="button"
@@ -820,9 +877,21 @@ onMounted(load)
                         >
                           <Pencil :size="15" />
                         </button>
-                        <span v-if="row.remainingFcfa === 0 && !canEditOperations" class="st-muted">
-                          —
-                        </span>
+                        <button
+                          v-if="canDelete(row)"
+                          type="button"
+                          class="st-btn st-btn--delete"
+                          :title="uiText('Supprimer')"
+                          :aria-label="uiText('Supprimer')"
+                          :disabled="!!actionId || submittingPayment"
+                          @click="deleteRow(row)"
+                        >
+                          <Trash2 :size="15" />
+                        </button>
+                        <span
+                          v-if="row.remainingFcfa <= 0 && !canDelete(row) && !canEditOperations"
+                          class="st-muted"
+                        >—</span>
                       </div>
                     </td>
                   </tr>
@@ -833,14 +902,6 @@ onMounted(load)
         </div>
       </UiCard>
     </section>
-
-    <LabExamPaymentModal
-      :item="paymentItem"
-      :submitting="submittingPayment"
-      :submitting-kind="submittingKind"
-      @close="closeEncaisser"
-      @confirm="confirmEncaisser"
-    />
 
     <UiFormModal
       v-if="editRow"
@@ -868,6 +929,113 @@ onMounted(load)
         </UiButton>
       </template>
     </UiFormModal>
+
+    <Teleport to="body">
+      <div v-if="payTarget" class="ops-pay-overlay" @click.self="closeEncaisser">
+        <form
+          class="ops-pay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="ops-pay-title"
+          @submit.prevent="confirmEncaisser"
+        >
+          <header class="ops-pay__head">
+            <div>
+              <p id="ops-pay-title" class="ops-pay__title">{{ uiText('Encaisser l’opération') }}</p>
+              <p class="ops-pay__subtitle">
+                {{ payTarget.row.patientName }} · {{ payTarget.row.patientCode }}
+              </p>
+            </div>
+            <button
+              type="button"
+              class="ops-pay__close"
+              :aria-label="uiText('Fermer')"
+              :disabled="submittingPayment"
+              @click="closeEncaisser"
+            >
+              <X :size="18" />
+            </button>
+          </header>
+
+          <p class="ops-pay__intervention">
+            <Scissors :size="14" />
+            <span>{{ payTarget.row.intervention }}</span>
+            <span class="ops-pay__muted">{{ payTarget.row.surgeonName }}</span>
+          </p>
+
+          <dl class="ops-pay__amounts">
+            <div>
+              <dt>{{ uiText('Montant total') }}</dt>
+              <dd>{{ formatFcfa(payTarget.row.billedFcfa) }}</dd>
+            </div>
+            <div>
+              <dt>{{ uiText('Déjà payé') }}</dt>
+              <dd>{{ formatFcfa(payTarget.row.paidFcfa) }}</dd>
+            </div>
+            <div class="ops-pay__amounts-due">
+              <dt>{{ uiText('Reste à payer') }}</dt>
+              <dd>{{ formatFcfa(payTarget.row.remainingFcfa) }}</dd>
+            </div>
+          </dl>
+
+          <UiInput
+            v-model="payAmount"
+            :label="uiText('Montant à encaisser (FCFA)')"
+            type="number"
+            min="1"
+            :max="payTarget.row.remainingFcfa"
+            :disabled="submittingPayment"
+          />
+          <div class="ops-pay__quick">
+            <button
+              type="button"
+              class="filter-bar__chip"
+              :disabled="submittingPayment"
+              @click="payAmount = String(payTarget.row.remainingFcfa)"
+            >
+              {{ uiText('Tout le reste') }}
+            </button>
+            <button
+              type="button"
+              class="filter-bar__chip"
+              :disabled="submittingPayment"
+              @click="payAmount = String(Math.max(1, Math.floor(payTarget.row.remainingFcfa / 2)))"
+            >
+              {{ uiText('Moitié') }}
+            </button>
+          </div>
+
+          <p v-if="payAmountError" class="ops-pay__error">{{ payAmountError }}</p>
+          <p v-else class="ops-pay__after">
+            {{
+              remainingAfterPayment > 0
+                ? translateTemplate('Reste après ce paiement : {amount}', {
+                    amount: formatFcfa(remainingAfterPayment),
+                  })
+                : uiText('L’opération sera entièrement soldée.')
+            }}
+          </p>
+
+          <footer class="ops-pay__foot">
+            <UiButton variant="ghost" type="button" :disabled="submittingPayment" @click="closeEncaisser">
+              {{ uiText('Annuler') }}
+            </UiButton>
+            <UiButton
+              variant="success"
+              type="submit"
+              :icon="Banknote"
+              :disabled="submittingPayment || !!payAmountError"
+            >
+              {{
+                submittingPayment
+                  ? uiText('Validation…')
+                  : translateTemplate('Encaisser {amount}', { amount: formatFcfa(parsedPayAmount) })
+              }}
+            </UiButton>
+          </footer>
+        </form>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -1057,5 +1225,138 @@ onMounted(load)
 .st-sub,
 .st-amount {
   display: block;
+}
+
+.st-amount--due {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.ops-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ops-pay-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.ops-pay {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  width: min(100%, 26rem);
+  padding: 1.1rem 1.2rem;
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.25);
+}
+
+.ops-pay__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ops-pay__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.ops-pay__subtitle,
+.ops-pay__muted {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.ops-pay__close {
+  display: inline-flex;
+  padding: 0.3rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ops-pay__intervention {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-weight: 600;
+}
+
+.ops-pay__amounts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.ops-pay__amounts div {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.ops-pay__amounts dt {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-light);
+}
+
+.ops-pay__amounts dd {
+  margin: 0.2rem 0 0;
+  font-weight: 700;
+}
+
+.ops-pay__amounts-due {
+  border-color: #fecaca !important;
+  background: #fef2f2 !important;
+}
+
+.ops-pay__amounts-due dd {
+  color: #b91c1c;
+}
+
+.ops-pay__quick {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: -0.4rem;
+}
+
+.ops-pay__error,
+.ops-pay__after {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.ops-pay__error {
+  color: #b91c1c;
+}
+
+.ops-pay__after {
+  color: var(--text-muted);
+}
+
+.ops-pay__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
 }
 </style>
