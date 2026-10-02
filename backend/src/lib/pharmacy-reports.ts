@@ -89,13 +89,34 @@ export async function buildPharmacyReport(options?: {
     },
   });
 
-  const prescriptions = await prisma.prescription.findMany({
-    where: {
-      createdAt: { gte: from, lt: to },
-      ...pharmacistFilter,
-    },
-    select: { id: true, createdAt: true },
-  });
+  const [prescriptions, returns] = await Promise.all([
+    prisma.prescription.findMany({
+      where: {
+        createdAt: { gte: from, lt: to },
+        ...pharmacistFilter,
+      },
+      select: { id: true, createdAt: true },
+    }),
+    prisma.pharmacySaleReturn.findMany({
+      where: {
+        createdAt: { gte: from, lt: to },
+        prescription: pharmacistFilter,
+      },
+      select: {
+        quantity: true,
+        grossRefundFcfa: true,
+        netRefundFcfa: true,
+        createdAt: true,
+        product: {
+          select: {
+            id: true,
+            name: true,
+            category: { select: { id: true, name: true } },
+          },
+        },
+      },
+    }),
+  ]);
 
   let totalRevenueFcfa = 0;
   let totalUnitsSold = 0;
@@ -132,6 +153,39 @@ export async function buildPharmacyReport(options?: {
     byDay.set(dayKey, (byDay.get(dayKey) ?? 0) + line.lineTotalFcfa);
   }
 
+  for (const row of returns) {
+    const refundFcfa = row.grossRefundFcfa || row.netRefundFcfa;
+    totalRevenueFcfa -= refundFcfa;
+    totalUnitsSold -= row.quantity;
+
+    const productKey = row.product.id;
+    const productRow = byProduct.get(productKey) ?? {
+      name: row.product.name,
+      quantity: 0,
+      revenueFcfa: 0,
+    };
+    productRow.quantity -= row.quantity;
+    productRow.revenueFcfa -= refundFcfa;
+    byProduct.set(productKey, productRow);
+
+    const categoryId = row.product.category?.id ?? "_none";
+    const categoryName = row.product.category?.name ?? "Sans catégorie";
+    const categoryRow = byCategory.get(categoryId) ?? {
+      name: categoryName,
+      quantity: 0,
+      revenueFcfa: 0,
+    };
+    categoryRow.quantity -= row.quantity;
+    categoryRow.revenueFcfa -= refundFcfa;
+    byCategory.set(categoryId, categoryRow);
+
+    const dayKey = row.createdAt.toISOString().slice(0, 10);
+    byDay.set(dayKey, (byDay.get(dayKey) ?? 0) - refundFcfa);
+  }
+
+  totalRevenueFcfa = Math.max(0, totalRevenueFcfa);
+  totalUnitsSold = Math.max(0, totalUnitsSold);
+
   const salesByDay = [...byDay.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, totalFcfa]) => ({
@@ -141,14 +195,19 @@ export async function buildPharmacyReport(options?: {
         day: "numeric",
         month: "short",
       }),
-      totalFcfa,
+      totalFcfa: Math.max(0, totalFcfa),
     }));
 
   const topProducts = [...byProduct.values()]
+    .map((row) => ({ ...row, revenueFcfa: Math.max(0, row.revenueFcfa), quantity: Math.max(0, row.quantity) }))
+    .filter((row) => row.quantity > 0 || row.revenueFcfa > 0)
     .sort((a, b) => b.revenueFcfa - a.revenueFcfa)
     .slice(0, 10);
 
-  const salesByCategory = [...byCategory.values()].sort((a, b) => b.revenueFcfa - a.revenueFcfa);
+  const salesByCategory = [...byCategory.values()]
+    .map((row) => ({ ...row, revenueFcfa: Math.max(0, row.revenueFcfa), quantity: Math.max(0, row.quantity) }))
+    .filter((row) => row.quantity > 0 || row.revenueFcfa > 0)
+    .sort((a, b) => b.revenueFcfa - a.revenueFcfa);
 
   return {
     from: from.toISOString(),

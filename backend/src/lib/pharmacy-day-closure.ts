@@ -97,6 +97,7 @@ export async function buildPharmacyDayClosureSnapshot(
       },
       select: {
         quantity: true,
+        grossRefundFcfa: true,
         netRefundFcfa: true,
         product: { select: { name: true } },
       },
@@ -108,7 +109,12 @@ export async function buildPharmacyDayClosureSnapshot(
     mergeProductLine(productMap, line.product.name, line.quantity, line.lineTotalFcfa);
   }
   for (const row of returnRows) {
-    mergeProductLine(productMap, row.product.name, -row.quantity, -row.netRefundFcfa);
+    mergeProductLine(
+      productMap,
+      row.product.name,
+      -row.quantity,
+      -(row.grossRefundFcfa || row.netRefundFcfa),
+    );
   }
   const productLines = [...productMap.values()]
     .map((line) => ({
@@ -122,7 +128,9 @@ export async function buildPharmacyDayClosureSnapshot(
   const pharmacistName = user
     ? `${user.firstName} ${user.lastName}`.trim()
     : "Tous les pharmaciens";
-  const discountFcfa = Math.max(0, report.grossSalesFcfa - report.netSalesFcfa);
+  const catalogueSalesFcfa = Math.max(0, report.grossSalesFcfa - report.returnsGrossFcfa);
+  const netFcfa = report.netRevenueFcfa;
+  const discountFcfa = Math.max(0, catalogueSalesFcfa - netFcfa);
   return {
     businessDate: fromIso,
     periodTo: toIso,
@@ -131,10 +139,10 @@ export async function buildPharmacyDayClosureSnapshot(
     salesCount: report.prescriptionsCount,
     returnsCount: report.returnsCount,
     grossSalesFcfa: report.netSalesFcfa,
-    catalogueSalesFcfa: report.grossSalesFcfa,
+    catalogueSalesFcfa,
     discountFcfa,
     returnsFcfa: report.returnsNetFcfa,
-    netFcfa: report.netRevenueFcfa,
+    netFcfa,
     productLines,
     closed: Boolean(existing),
     closedAt: existing?.closedAt.toISOString() ?? null,

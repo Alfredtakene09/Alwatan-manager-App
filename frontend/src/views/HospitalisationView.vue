@@ -70,6 +70,10 @@ withDefaults(
   { embedded: false },
 )
 
+const emit = defineEmits<{
+  collected: []
+}>()
+
 const route = useRoute()
 const router = useRouter()
 const { uiText, localeCode, dateText } = useAppI18n()
@@ -507,6 +511,7 @@ async function collectPayment(hospId: string) {
     )
     message.value = uiText('Paiement encaissé.')
     messageType.value = 'success'
+    emit('collected')
     await load()
   } catch (error: unknown) {
     await showApiErrorModal(error, uiText("Impossible d'encaisser l'hospitalisation."))
@@ -623,6 +628,7 @@ async function confirmDischarge(payload: { hospitalizationId: string; endDate: s
       .replace('{nights}', String(res.nights))
       .replace('{amount}', formatFcfa(res.totalDue))
     messageType.value = 'success'
+    emit('collected')
     closeDischarge()
     await load()
   } catch {

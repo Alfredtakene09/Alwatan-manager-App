@@ -52,6 +52,20 @@ const DAY_CLOSURE_KIND_LABEL: Partial<Record<ExamKindSlug, string>> = {
   hospitalisation: "Hospitalisation",
 };
 
+/**
+ * La section « Examens » est réservée au laboratoire ; « Autres prestations »
+ * regroupe l'échographie et la radiologie. Spécialité et odontologie restent
+ * des actes de consultation.
+ */
+const DAY_CLOSURE_EXAM_LABELS = new Set(["Laboratoire"]);
+const DAY_CLOSURE_CONSULTATION_LABELS = new Set(["Spécialité", "Odontologie"]);
+
+function dayClosureExamGroup(label: string): DayClosureLineGroup {
+  if (DAY_CLOSURE_EXAM_LABELS.has(label)) return "exam";
+  if (DAY_CLOSURE_CONSULTATION_LABELS.has(label)) return "consultation";
+  return "other";
+}
+
 const DAY_CLOSURE_LABEL_ALIASES: Record<string, string> = {
   Opérations: "Chirurgie",
   Opération: "Chirurgie",
@@ -155,9 +169,23 @@ export function classifyInvoiceForDayClosure(
     return { label: "Hospitalisation", group: "hospitalization" };
   }
   if (invoice.type === InvoiceType.LAB_EXAM) {
-    return { label: classifyLabExamForDayClosure(invoice), group: "exam" };
+    const label = classifyLabExamForDayClosure(invoice);
+    return { label, group: dayClosureExamGroup(label) };
   }
   return { label: normalizeDayClosureLabel(classifyInvoiceForSettlement(invoice)), group: "other" };
+}
+
+/**
+ * Montant retenu dans le cumul du jour.
+ * Une facture soldée avec paidAmountFcfa à 0 (hospitalisation encaissée
+ * sans ligne de versement) compte quand même son montant facturé.
+ */
+export function dayClosureCountedFcfa(
+  invoice: { amountFcfa: number; paidAmountFcfa?: number | null },
+  paidGross: number,
+) {
+  const cap = collectedAmountFcfa(invoice);
+  return Math.min(Math.max(0, paidGross), cap);
 }
 
 function reductionForInvoice(invoice: DayClosureInvoice): number {
@@ -277,11 +305,7 @@ export async function buildDayClosureSalesSummary(
   const reductionVisitIds = new Set<string>();
 
   for (const { invoice, collectedFcfa: paidGross } of byInvoice.values()) {
-    const paidCap =
-      invoice.paidAmountFcfa != null
-        ? Math.max(0, invoice.paidAmountFcfa)
-        : Math.max(0, invoice.amountFcfa);
-    const paid = Math.min(Math.max(0, paidGross), paidCap);
+    const paid = dayClosureCountedFcfa(invoice, paidGross);
     if (paid <= 0) continue;
     collectedFcfa += paid;
 

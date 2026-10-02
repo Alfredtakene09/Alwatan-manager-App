@@ -25,21 +25,36 @@ export async function computePharmacyProfit(
   toExclusive: Date,
   options?: { pharmacistId?: string },
 ): Promise<PharmacyProfitPeriod> {
-  const saleLines = await prisma.pharmacySaleLine.findMany({
-    where: {
-      prescription: {
-        createdAt: { gte: from, lt: toExclusive },
-        ...(options?.pharmacistId ? { pharmacistId: options.pharmacistId } : {}),
+  const pharmacistFilter = options?.pharmacistId ? { pharmacistId: options.pharmacistId } : {};
+  const [saleLines, returns] = await Promise.all([
+    prisma.pharmacySaleLine.findMany({
+      where: {
+        prescription: {
+          createdAt: { gte: from, lt: toExclusive },
+          ...pharmacistFilter,
+        },
       },
-    },
-    select: {
-      quantity: true,
-      lineTotalFcfa: true,
-      product: { select: { purchasePriceFcfa: true } },
-    },
-  });
+      select: {
+        quantity: true,
+        lineTotalFcfa: true,
+        product: { select: { purchasePriceFcfa: true } },
+      },
+    }),
+    prisma.pharmacySaleReturn.findMany({
+      where: {
+        createdAt: { gte: from, lt: toExclusive },
+        prescription: pharmacistFilter,
+      },
+      select: {
+        quantity: true,
+        grossRefundFcfa: true,
+        netRefundFcfa: true,
+        product: { select: { purchasePriceFcfa: true } },
+      },
+    }),
+  ]);
 
-  if (!saleLines.length) return emptyProfit();
+  if (!saleLines.length && !returns.length) return emptyProfit();
 
   let revenueFcfa = 0;
   let costFcfa = 0;
@@ -47,5 +62,9 @@ export async function computePharmacyProfit(
     revenueFcfa += line.lineTotalFcfa;
     costFcfa += line.quantity * (line.product.purchasePriceFcfa ?? 0);
   }
-  return finalizeProfit(revenueFcfa, costFcfa);
+  for (const row of returns) {
+    revenueFcfa -= row.grossRefundFcfa || row.netRefundFcfa;
+    costFcfa -= row.quantity * (row.product.purchasePriceFcfa ?? 0);
+  }
+  return finalizeProfit(Math.max(0, revenueFcfa), Math.max(0, costFcfa));
 }

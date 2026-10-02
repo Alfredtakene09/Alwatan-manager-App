@@ -370,7 +370,7 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
           createdAt: { gte: summaryFrom, lt: summaryToExclusive },
           prescription: pharmacistFilter,
         },
-        _sum: { netRefundFcfa: true },
+        _sum: { netRefundFcfa: true, grossRefundFcfa: true, quantity: true },
         _count: { _all: true },
       }),
     ]);
@@ -415,18 +415,24 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
     netTotalFcfa += net;
     if (net <= 0 && gross > 0) freeSalesCount += 1;
   }
+  const returnsGrossFcfa = weekReturnsAgg._sum.grossRefundFcfa ?? 0;
+  const returnsNetFcfa = weekReturnsAgg._sum.netRefundFcfa ?? 0;
+  const returnsQuantity = weekReturnsAgg._sum.quantity ?? 0;
+  // Un retour retire l'argent du produit de la somme encaissée (et du brut correspondant).
+  grossTotalFcfa = Math.max(0, grossTotalFcfa - returnsGrossFcfa);
+  netTotalFcfa = Math.max(0, netTotalFcfa - returnsNetFcfa);
   const reductionFcfa = Math.max(0, grossTotalFcfa - netTotalFcfa);
   const salesSummary = {
     from: toIsoDay(summaryFrom),
     to: toIsoDay(summaryToStart),
     salesCount: weekPrescriptions.length,
-    productsSoldCount: weekLineAgg._sum.quantity ?? 0,
+    productsSoldCount: Math.max(0, (weekLineAgg._sum.quantity ?? 0) - returnsQuantity),
     grossTotalFcfa,
     reductionFcfa,
     netTotalFcfa,
     freeSalesCount,
     returnsCount: weekReturnsAgg._count._all,
-    returnsNetFcfa: weekReturnsAgg._sum.netRefundFcfa ?? 0,
+    returnsNetFcfa,
   };
 
   return res.json({

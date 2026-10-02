@@ -883,6 +883,10 @@ async function loadDayClosure() {
   }
 }
 
+async function onHospitalizationCollected() {
+  await Promise.all([loadReceptionStats(), loadDayClosure()])
+}
+
 function printDayClosure(data: DayClosureStatus) {
   const closedAt = data.closure?.closedAt ?? new Date().toISOString()
   openPrintDocument(
@@ -1835,7 +1839,7 @@ onUnmounted(clearAlert)
     </section>
 
     <section v-if="isHospitalisationTab" class="dashboard-body dashboard-body--hospitalisation">
-      <HospitalisationView embedded />
+      <HospitalisationView embedded @collected="onHospitalizationCollected" />
     </section>
 
     <section

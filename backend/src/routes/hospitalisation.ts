@@ -670,6 +670,7 @@ router.post("/actions", async (req, res) => {
               data: {
                 ...immediatePaidInvoiceData(totalDueFcfa, user.id),
                 paidAt,
+                issuedById: user.id,
               },
             })
           : await tx.invoice.create({

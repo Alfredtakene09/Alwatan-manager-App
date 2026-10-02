@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { InvoiceType } from "@prisma/client";
-import { classifyInvoiceForDayClosure } from "./day-closure-sales.js";
+import { classifyInvoiceForDayClosure, dayClosureCountedFcfa } from "./day-closure-sales.js";
 
 describe("classifyInvoiceForDayClosure", () => {
   it("classe les consultations par service clinique", () => {
@@ -26,20 +26,62 @@ describe("classifyInvoiceForDayClosure", () => {
     assert.deepEqual(line, { label: "Généraliste", group: "consultation" });
   });
 
-  it("classe les examens via billingExamKind", () => {
+  it("réserve la section « Examens » au laboratoire", () => {
     const line = classifyInvoiceForDayClosure({
       id: "2",
       patientId: "p2",
       type: InvoiceType.LAB_EXAM,
       amountFcfa: 10000,
       paidAmountFcfa: 10000,
-      billingExamKind: "echo",
+      billingExamKind: "examen",
       surgeryCaseId: null,
       hospitalizationId: null,
       visit: null,
       hospitalization: null,
     });
-    assert.deepEqual(line, { label: "Echographie", group: "exam" });
+    assert.deepEqual(line, { label: "Laboratoire", group: "exam" });
+  });
+
+  it("bascule échographie et radiologie dans « Autres »", () => {
+    const base = {
+      patientId: "p3",
+      type: InvoiceType.LAB_EXAM,
+      amountFcfa: 10000,
+      paidAmountFcfa: 10000,
+      surgeryCaseId: null,
+      hospitalizationId: null,
+      visit: null,
+      hospitalization: null,
+    };
+    assert.deepEqual(
+      classifyInvoiceForDayClosure({ ...base, id: "3", billingExamKind: "echo" }),
+      { label: "Echographie", group: "other" },
+    );
+    assert.deepEqual(
+      classifyInvoiceForDayClosure({ ...base, id: "4", billingExamKind: "radio" }),
+      { label: "Radiologie", group: "other" },
+    );
+  });
+
+  it("garde spécialité et odontologie dans « Consultations »", () => {
+    const base = {
+      patientId: "p5",
+      type: InvoiceType.LAB_EXAM,
+      amountFcfa: 8000,
+      paidAmountFcfa: 8000,
+      surgeryCaseId: null,
+      hospitalizationId: null,
+      visit: null,
+      hospitalization: null,
+    };
+    assert.deepEqual(
+      classifyInvoiceForDayClosure({ ...base, id: "5", billingExamKind: "specialty" }),
+      { label: "Spécialité", group: "consultation" },
+    );
+    assert.deepEqual(
+      classifyInvoiceForDayClosure({ ...base, id: "6", billingExamKind: "odonto" }),
+      { label: "Odontologie", group: "consultation" },
+    );
   });
 
   it("classe une opération du bloc sous le service du type d'intervention", () => {
@@ -95,5 +137,21 @@ describe("classifyInvoiceForDayClosure", () => {
       hospitalization: null,
     });
     assert.deepEqual(line, { label: "Chirurgie", group: "operation" });
+  });
+});
+
+describe("dayClosureCountedFcfa", () => {
+  it("compte l'hospitalisation encaissée même si paidAmountFcfa est à 0", () => {
+    assert.equal(
+      dayClosureCountedFcfa({ amountFcfa: 150000, paidAmountFcfa: 0 }, 150000),
+      150000,
+    );
+  });
+
+  it("plafonne un versement au montant déjà enregistré", () => {
+    assert.equal(
+      dayClosureCountedFcfa({ amountFcfa: 10000, paidAmountFcfa: 5000 }, 10000),
+      5000,
+    );
   });
 });

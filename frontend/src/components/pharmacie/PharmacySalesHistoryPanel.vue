@@ -61,6 +61,16 @@ function escapeReceiptText(value: string) {
     .replace(/\n/g, '<br />')
 }
 
+function saleRemainingFcfa(item: SaleRecord) {
+  const refunded = item.returnedGrossFcfa ?? item.returnedNetFcfa ?? 0
+  return Math.max(0, item.totalFcfa - refunded)
+}
+
+function lineRemainingFcfa(line: SaleLine) {
+  const remainingQty = line.quantityReturnable ?? Math.max(0, line.quantity - (line.quantityReturned ?? 0))
+  return line.unitPriceFcfa * remainingQty
+}
+
 function saleBuyerLabel(item: SaleRecord) {
   if (item.externalClient) {
     const name =
@@ -104,8 +114,8 @@ const tableRows = computed(() => {
     pharmacist: fullName(item.pharmacist.firstName, item.pharmacist.lastName),
     linesCount: item.lines.length,
     linesLabel: translateTemplate('{n} ligne(s)', { n: item.lines.length }),
-    total: formatFcfa(item.totalFcfa),
-    totalSort: item.totalFcfa,
+    total: formatFcfa(saleRemainingFcfa(item)),
+    totalSort: saleRemainingFcfa(item),
     invoice: item.invoiceNumber ?? '—',
   }))
 })
@@ -176,13 +186,18 @@ async function printSale(sale: SaleRecord) {
 
   const internalBlock = isInternal ? thermalLocaleMetaRow('Type', uiText('Interne')) : ''
   const itemsTable = buildPharmacyTicketItemsTableHtml({
-    lines: sale.lines.map((line) => ({
-      name: line.productName,
-      quantity: line.quantity,
-      unitPriceFcfa: line.unitPriceFcfa,
-      lineTotalFcfa: line.lineTotalFcfa,
-    })),
-    totalFcfa: sale.totalFcfa,
+    lines: sale.lines
+      .map((line) => {
+        const quantity = line.quantityReturnable ?? Math.max(0, line.quantity - (line.quantityReturned ?? 0))
+        return {
+          name: line.productName,
+          quantity,
+          unitPriceFcfa: line.unitPriceFcfa,
+          lineTotalFcfa: line.unitPriceFcfa * quantity,
+        }
+      })
+      .filter((line) => line.quantity > 0),
+    totalFcfa: saleRemainingFcfa(sale),
   })
 
   openPrintDocument(
@@ -381,7 +396,7 @@ const exportColumns = computed<ExportColumn<ExportSaleRow>[]>(() => {
 function exportCaption() {
   const fromLabel = filterFrom.value || uiText('début')
   const toLabel = filterTo.value || uiText("aujourd’hui")
-  const totalGlobal = formatFcfa(items.value.reduce((sum, item) => sum + item.totalFcfa, 0))
+  const totalGlobal = formatFcfa(items.value.reduce((sum, item) => sum + saleRemainingFcfa(item), 0))
   return [
     { label: uiText('Période'), value: `${fromLabel} → ${toLabel}` },
     { label: uiText('Nombre de ventes'), value: String(items.value.length) },
@@ -541,9 +556,14 @@ defineExpose({ reload: loadItems })
           <tr v-for="line in expandedSale.lines" :key="line.id">
             <td>{{ line.productName }} <span class="sku">{{ line.sku }}</span></td>
             <td>{{ line.categoryName ?? '—' }}</td>
-            <td>{{ line.quantity }}</td>
+            <td>
+              {{ line.quantityReturnable ?? line.quantity }}
+              <span v-if="line.quantityReturned" class="sku">
+                {{ translateTemplate('({n} retourné(s))', { n: line.quantityReturned }) }}
+              </span>
+            </td>
             <td>{{ formatFcfa(line.unitPriceFcfa) }}</td>
-            <td>{{ formatFcfa(line.lineTotalFcfa) }}</td>
+            <td>{{ formatFcfa(lineRemainingFcfa(line)) }}</td>
             <td v-if="canDeleteSaleLine" class="detail-table__actions">
               <button
                 type="button"

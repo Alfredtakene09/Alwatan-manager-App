@@ -172,7 +172,7 @@ const kpiRows = computed(() => {
   if (!revenueReport.value) return []
   const rev = revenueReport.value
   const rows = [
-    { label: uiText('Ventes (net encaissé)'), value: formatFcfa(rev.netSalesFcfa) },
+    { label: uiText('Ventes (net encaissé)'), value: formatFcfa(rev.netRevenueFcfa) },
     { label: uiText('Retours'), value: formatFcfa(rev.returnsNetFcfa) },
     { label: uiText('CA net'), value: formatFcfa(rev.netRevenueFcfa) },
     { label: uiText('Nombre de ventes'), value: rev.prescriptionsCount },
@@ -288,7 +288,7 @@ onMounted(() => {
       <div v-if="revenueReport" class="report-kpis">
         <div class="kpi">
           <span>{{ uiText('Ventes net') }}</span>
-          <strong>{{ formatFcfa(revenueReport.netSalesFcfa) }}</strong>
+          <strong>{{ formatFcfa(revenueReport.netRevenueFcfa) }}</strong>
         </div>
         <div class="kpi">
           <span>{{ uiText('Retours') }}</span>
