@@ -19,7 +19,9 @@ import { formatFcfa, fullName } from '@/lib/roles'
 import { parsePatientAge, splitPatientFullName } from '@/lib/patient-name'
 import { parsePrescribedExamsByKind, hasLabResults } from '@/lib/lab-notes'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
-import MultiExamPrescriptionPicker from '@/components/MultiExamPrescriptionPicker.vue'
+import MultiExamPrescriptionPicker, {
+  type OperationAssistantPayload,
+} from '@/components/MultiExamPrescriptionPicker.vue'
 import {
   emptyExamsByKind,
   countExamsByKind,
@@ -134,6 +136,8 @@ const editForm = ref({
 const examsByKind = ref<ExamsByKind>(emptyExamsByKind())
 /** Montant opération personnalisé (depuis le sélecteur). */
 const operationAmountFcfa = ref<number | null>(null)
+const operationAssistant = ref<OperationAssistantPayload | null>(null)
+const operationServiceId = ref('')
 const reductionFcfaInput = ref('')
 const reductionPercent = ref('')
 const EXTERNAL_REDUCTION_PERCENTS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50] as const
@@ -180,6 +184,8 @@ const editParsedName = computed(() => splitPatientFullName(editForm.value.fullNa
 const editParsedAge = computed(() => parsePatientAge(editForm.value.age, editForm.value.ageUnit))
 
 const newPatientExamCount = computed(() => countExamsByKind(examsByKind.value))
+const hasOperationExam = computed(() => (examsByKind.value.operation?.length ?? 0) > 0)
+const operationDoctorReady = computed(() => !hasOperationExam.value || !!selectedDoctorId.value)
 
 const canConfirmNewPatient = computed(() => {
   const { firstName, lastName } = parsedName.value
@@ -188,7 +194,11 @@ const canConfirmNewPatient = computed(() => {
 
 /** Enregistrement + prescription directe en une étape (sans encaissement ni médecin). */
 const canConfirmNewPatientWithExams = computed(
-  () => canConfirmNewPatient.value && newPatientExamCount.value > 0 && examNetFcfa.value > 0,
+  () =>
+    canConfirmNewPatient.value &&
+    newPatientExamCount.value > 0 &&
+    examNetFcfa.value > 0 &&
+    operationDoctorReady.value,
 )
 
 const editExamsLocked = computed(() =>
@@ -199,13 +209,18 @@ const canSaveEdit = computed(() => {
   const { firstName, lastName } = editParsedName.value
   if (firstName.length < 2 || lastName.length < 2 || editParsedAge.value === null) return false
   if (editExamsLocked.value) return true
+  if (!operationDoctorReady.value) return false
   if (activeRow.value?.hasExams) return newPatientExamCount.value > 0 && examNetFcfa.value > 0
   if (newPatientExamCount.value > 0) return examNetFcfa.value > 0
   return true
 })
 
 const canSubmitExams = computed(
-  () => !!activeRow.value && countExamsByKind(examsByKind.value) > 0 && examNetFcfa.value > 0,
+  () =>
+    !!activeRow.value &&
+    countExamsByKind(examsByKind.value) > 0 &&
+    examNetFcfa.value > 0 &&
+    operationDoctorReady.value,
 )
 
 const externalExamKinds = EXTERNAL_PATIENT_EXAM_KINDS
@@ -305,6 +320,8 @@ function resetExamsForm() {
   examsByKind.value = emptyExamsByKind()
   selectedDoctorId.value = ''
   operationAmountFcfa.value = null
+  operationAssistant.value = null
+  operationServiceId.value = ''
   reductionFcfaInput.value = ''
   reductionPercent.value = ''
 }
@@ -318,6 +335,12 @@ function examsPayload() {
         ? { operationAmountFcfa: operationAmountFcfa.value }
         : {}
     ),
+    ...(hasOperationExam.value && operationAssistant.value
+      ? { operationAssistant: operationAssistant.value }
+      : {}),
+    ...(hasOperationExam.value && operationServiceId.value
+      ? { operationServiceId: operationServiceId.value }
+      : {}),
   }
 }
 
@@ -327,8 +350,8 @@ function buildExamLinesFromForm(): LabExamLine[] {
     const labels = examsByKind.value[kind] ?? []
     for (const label of labels) {
       const unitPriceFcfa =
-        kind === 'operation' && operationAmountFcfa.value != null
-          ? operationAmountFcfa.value
+        kind === 'operation'
+          ? Math.max(0, Math.round(operationAmountFcfa.value ?? 0))
           : getLabExamPriceFcfa(label)
       lines.push({ label, unitPriceFcfa, kind })
     }
@@ -1088,12 +1111,15 @@ onMounted(() => {
           <MultiExamPrescriptionPicker
             v-model="examsByKind"
             v-model:operation-amount-fcfa="operationAmountFcfa"
+            v-model:operation-doctor-id="selectedDoctorId"
+            v-model:operation-assistant="operationAssistant"
+            v-model:operation-service-id="operationServiceId"
             :kinds="externalExamKinds"
             :show-comments="false"
             :show-consultation="false"
             @active-service-change="onActiveServiceChange"
           />
-          <div class="doctor-service-row">
+          <div v-if="!hasOperationExam" class="doctor-service-row">
             <UiSelect
               v-model="selectedDoctorId"
               :label="uiText('Médecin (optionnel)')"
@@ -1217,12 +1243,15 @@ onMounted(() => {
           <MultiExamPrescriptionPicker
             v-model="examsByKind"
             v-model:operation-amount-fcfa="operationAmountFcfa"
+            v-model:operation-doctor-id="selectedDoctorId"
+            v-model:operation-assistant="operationAssistant"
+            v-model:operation-service-id="operationServiceId"
             :kinds="externalExamKinds"
             :show-comments="false"
             :show-consultation="false"
             @active-service-change="onActiveServiceChange"
           />
-          <div class="doctor-service-row">
+          <div v-if="!hasOperationExam" class="doctor-service-row">
             <UiSelect
               v-model="selectedDoctorId"
               :label="uiText('Médecin (optionnel)')"
@@ -1307,12 +1336,15 @@ onMounted(() => {
         <MultiExamPrescriptionPicker
           v-model="examsByKind"
           v-model:operation-amount-fcfa="operationAmountFcfa"
+          v-model:operation-doctor-id="selectedDoctorId"
+          v-model:operation-assistant="operationAssistant"
+          v-model:operation-service-id="operationServiceId"
           :kinds="externalExamKinds"
           :show-comments="false"
           :show-consultation="false"
           @active-service-change="onActiveServiceChange"
         />
-        <div class="doctor-service-row">
+        <div v-if="!hasOperationExam" class="doctor-service-row">
           <UiSelect
             v-model="selectedDoctorId"
             :label="uiText('Médecin (optionnel)')"

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { InvoiceStatus, InvoiceType, PatientCategory, Prisma, SurgeryStatus, UserRole, VisitStatus } from "@prisma/client";
+import { InterventionCategory, InvoiceStatus, InvoiceType, PatientCategory, Prisma, SurgeryStatus, UserRole, VisitStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
 import { backfillClinicServiceDoctorLinks, findSelectableDoctorInClinicService, listTransferDoctorsForClinicService } from "../lib/clinic-service-doctors.js";
@@ -45,6 +45,7 @@ import {
 } from "../lib/patient-payment-guard.js";
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
 import { serializeDoctorFields, selectableDoctorIncludingPausedWhere, selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
+import { isOperationAssistantStaff } from "../lib/doctor-profile.js";
 import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
 import {
   resolveConsultationBilling,
@@ -210,6 +211,50 @@ router.get("/doctors", async (req, res) => {
       };
     }),
   );
+});
+
+router.get("/operation-assistants", async (req, res) => {
+  const user = req.user!;
+  if (
+    !canAccessModule(user.role, "reception") &&
+    !canAccessModule(user.role, "consultation")
+  ) {
+    return res.status(403).json({ error: "Accès refusé" });
+  }
+
+  const employees = await prisma.employee.findMany({
+    where: { active: true },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      jobTitle: true,
+      specialty: true,
+      isMedecin: true,
+      user: {
+        select: { id: true, active: true, firstName: true, lastName: true },
+      },
+    },
+    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+  });
+
+  const assistants = employees
+    .filter(
+      (employee) =>
+        isOperationAssistantStaff(employee) &&
+        (employee.user == null || employee.user.active),
+    )
+    .map((employee) => ({
+      id: employee.user?.id ?? null,
+      employeeId: employee.id,
+      firstName: employee.user?.firstName ?? employee.firstName,
+      lastName: employee.user?.lastName ?? employee.lastName,
+      isMedecin: employee.isMedecin,
+      jobTitle: employee.jobTitle,
+      specialty: employee.specialty,
+    }));
+
+  return res.json(assistants);
 });
 
 router.get("/external-services", requireModule("reception"), async (_req, res) => {
@@ -955,6 +1000,14 @@ const examsByKindSchema = z.object({
   hospitalisation: z.array(z.string().min(1)).default([]),
 });
 
+const operationAssistantSchema = z
+  .object({
+    anesthesiologistId: z.string().min(1).nullable().optional(),
+    anesthesiologistName: z.string().min(2).max(120).nullable().optional(),
+    anesthesiologistPercent: z.number().int().min(0).max(99).optional(),
+  })
+  .optional();
+
 const externalLabOrderSchema = z
   .object({
     patientId: z.string().optional(),
@@ -974,6 +1027,9 @@ const externalLabOrderSchema = z
     amountFcfa: z.number().int().min(0).optional(),
     /** Montant dédié à l’opération (parts % appliquées sur le SurgeryCase). */
     operationAmountFcfa: z.number().int().min(0).optional(),
+    operationAssistant: operationAssistantSchema,
+    /** Service choisi pour l’opération (patient externe : prix saisi, pas le catalogue). */
+    operationServiceId: z.string().min(1).optional(),
   })
   .refine((data) => data.patientId || (data.firstName && data.lastName), {
     message: "Patient requis",
@@ -1156,9 +1212,211 @@ const externalQueueUpdateSchema = z
     examsByKind: examsByKindSchema.optional(),
     reductionFcfa: z.coerce.number().int().min(0).default(0),
     operationAmountFcfa: z.number().int().min(0).optional(),
+    operationAssistant: operationAssistantSchema,
+    operationServiceId: z.string().min(1).optional(),
     ...patientAgeShape,
   })
   .superRefine(refinePatientAge);
+
+async function assertRegisteredOperationAssistant(
+  tx: Prisma.TransactionClient,
+  input: { userId?: string | null; name?: string | null },
+) {
+  const userId = input.userId?.trim() || "";
+  if (userId) {
+    const linked = await tx.user.findUnique({
+      where: { id: userId },
+      select: {
+        active: true,
+        employee: { select: { jobTitle: true, specialty: true, active: true } },
+      },
+    });
+    if (
+      !linked?.active ||
+      !linked.employee?.active ||
+      !isOperationAssistantStaff(linked.employee)
+    ) {
+      throw new Error("ASSISTANT_NOT_ALLOWED");
+    }
+    return;
+  }
+
+  const name = input.name?.trim().toLowerCase() ?? "";
+  if (name.length < 2) throw new Error("ASSISTANT_NOT_ALLOWED");
+  const employees = await tx.employee.findMany({
+    where: { active: true },
+    select: { firstName: true, lastName: true, jobTitle: true, specialty: true },
+  });
+  const known = employees.some((employee) => {
+    if (!isOperationAssistantStaff(employee)) return false;
+    const full = `${employee.firstName} ${employee.lastName}`.trim().toLowerCase();
+    return full === name;
+  });
+  if (!known) throw new Error("ASSISTANT_NOT_ALLOWED");
+}
+
+function generateReceptionInterventionCode(label: string) {
+  const slug = label
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 18);
+  return `OP-${slug || "SERVICE"}-${Date.now().toString(36).toUpperCase()}`;
+}
+
+type ReceptionOperationAssistant = {
+  anesthesiologistId?: string | null;
+  anesthesiologistName?: string | null;
+  anesthesiologistPercent?: number;
+};
+
+/** Crée ou met à jour le dossier d’opération avec le médecin et le % assistant. */
+async function syncReceptionOperationCase(
+  tx: Prisma.TransactionClient,
+  params: {
+    visitId: string;
+    consultationId: string;
+    operationLabel: string;
+    assignedDoctorId: string;
+    totalCostFcfa: number;
+    operationAssistant?: ReceptionOperationAssistant | null;
+    clinicServiceId?: string | null;
+  },
+): Promise<string> {
+  const doctorServices = await resolveDoctorClinicServices(params.assignedDoctorId);
+  const serviceIds = doctorServices?.ids ?? [];
+  let intervention = await tx.interventionType.findFirst({
+    where: {
+      label: params.operationLabel,
+      active: true,
+      ...(serviceIds.length
+        ? interventionVisibleForServicesWhere(serviceIds, {
+            doctorUserId: params.assignedDoctorId,
+          })
+        : {}),
+    },
+  });
+  if (!intervention) {
+    intervention = await tx.interventionType.findFirst({
+      where: { label: params.operationLabel, active: true },
+    });
+  }
+  if (!intervention) {
+    if (params.totalCostFcfa <= 0) {
+      throw new Error("OPERATION_AMOUNT_REQUIRED");
+    }
+    const requestedServiceId = params.clinicServiceId?.trim() || "";
+    const clinicService = requestedServiceId
+      ? await tx.clinicService.findFirst({
+          where: { id: requestedServiceId, active: true },
+          select: { id: true },
+        })
+      : await tx.clinicService.findFirst({
+          where: { name: params.operationLabel, active: true },
+          select: { id: true },
+        });
+    if (!clinicService) {
+      throw new Error("OPERATION_SERVICE_NOT_FOUND");
+    }
+    const surgeonUserForCreate = await tx.user.findUnique({
+      where: { id: params.assignedDoctorId },
+      select: { employee: { select: { surgeryQuotaPercent: true } } },
+    });
+    const createPercent =
+      surgeonUserForCreate?.employee?.surgeryQuotaPercent != null &&
+      surgeonUserForCreate.employee.surgeryQuotaPercent > 0
+        ? surgeonUserForCreate.employee.surgeryQuotaPercent
+        : 70;
+    intervention = await tx.interventionType.create({
+      data: {
+        code: generateReceptionInterventionCode(params.operationLabel),
+        label: params.operationLabel,
+        category: InterventionCategory.MOYENNE_B,
+        totalCostFcfa: params.totalCostFcfa,
+        surgeonPercent: createPercent,
+        anesthesiologistPercent: 0,
+        clinicServiceId: clinicService.id,
+        surgeonId: params.assignedDoctorId,
+        active: true,
+      },
+    });
+  }
+
+  const surgeonUser = await tx.user.findUnique({
+    where: { id: params.assignedDoctorId },
+    select: { employee: { select: { surgeryQuotaPercent: true } } },
+  });
+  const quota = surgeonUser?.employee?.surgeryQuotaPercent;
+  const surgeonPercent =
+    quota != null && quota > 0 ? quota : intervention.surgeonPercent;
+
+  const assistant = params.operationAssistant;
+  let assistantPercent = Math.min(
+    99,
+    Math.max(
+      0,
+      Math.round(
+        assistant?.anesthesiologistPercent ??
+          intervention.anesthesiologistPercent ??
+          0,
+      ),
+    ),
+  );
+  if (surgeonPercent + assistantPercent > 100) {
+    assistantPercent = Math.max(0, 100 - surgeonPercent);
+  }
+  const assistantId = assistant?.anesthesiologistId?.trim() || null;
+  const assistantName = assistant?.anesthesiologistName?.trim() || null;
+  if (assistantId || (assistantName && assistantPercent > 0)) {
+    await assertRegisteredOperationAssistant(tx, {
+      userId: assistantId,
+      name: assistantName,
+    });
+  }
+
+  if (assistant) {
+    intervention = await tx.interventionType.update({
+      where: { id: intervention.id },
+      data: {
+        anesthesiologistPercent: assistantPercent,
+        anesthesiologistId: assistantPercent > 0 ? assistantId : null,
+        anesthesiologistName:
+          assistantPercent > 0 && !assistantId ? assistantName : null,
+      },
+    });
+  }
+
+  const shares = computeInterventionCostShares(params.totalCostFcfa, surgeonPercent);
+
+  const surgery = await tx.surgeryCase.upsert({
+    where: { visitId: params.visitId },
+    update: {
+      interventionTypeId: intervention.id,
+      surgeonId: params.assignedDoctorId,
+      totalCostFcfa: shares.totalCostFcfa,
+      surgeonShareFcfa: shares.surgeonShareFcfa,
+      clinicShareFcfa: shares.clinicShareFcfa,
+      status: SurgeryStatus.NOTIFIED,
+    },
+    create: {
+      visitId: params.visitId,
+      interventionTypeId: intervention.id,
+      surgeonId: params.assignedDoctorId,
+      totalCostFcfa: shares.totalCostFcfa,
+      surgeonShareFcfa: shares.surgeonShareFcfa,
+      clinicShareFcfa: shares.clinicShareFcfa,
+      status: SurgeryStatus.NOTIFIED,
+    },
+  });
+  await tx.consultation.update({
+    where: { id: params.consultationId },
+    data: { needsSurgery: true },
+  });
+  return surgery.id;
+}
 
 function catalogGrossWithOperationAmount(
   examsByKind: Record<ExamKindSlug, string[]>,
@@ -1257,6 +1515,15 @@ router.patch(
         if (!doctor) return res.status(400).json({ error: "Médecin invalide" });
         assignedDoctorId = doctor.id;
       }
+      if ((examsByKind?.operation?.filter(Boolean).length ?? 0) > 0 && !assignedDoctorId) {
+        return res.status(400).json({ error: "Le médecin est obligatoire pour une opération." });
+      }
+      if (
+        (examsByKind?.operation?.filter(Boolean).length ?? 0) > 0 &&
+        (body.operationAmountFcfa == null || body.operationAmountFcfa <= 0)
+      ) {
+        return res.status(400).json({ error: "Indiquez le prix de l’opération." });
+      }
 
       let catalogGrossFcfa = 0;
       let examReduction = 0;
@@ -1351,63 +1618,27 @@ router.patch(
         const operationLabel = examsByKind?.operation?.find(Boolean);
         let surgeryCaseId: string | null = null;
         if (operationLabel && assignedDoctorId) {
-          const doctorServices = await resolveDoctorClinicServices(assignedDoctorId);
-          const serviceIds = doctorServices?.ids ?? [];
-          const intervention = await tx.interventionType.findFirst({
-            where: {
-              label: operationLabel,
-              active: true,
-              ...(serviceIds.length
-                ? interventionVisibleForServicesWhere(serviceIds, {
-                    doctorUserId: assignedDoctorId,
-                  })
-                : {}),
-            },
+          const operationLabels = examsByKind?.operation ?? [];
+          const operationOnly =
+            examLabels.length > 0 && operationLabels.length === examLabels.length;
+          const catalogIntervention = await tx.interventionType.findFirst({
+            where: { label: operationLabel, active: true },
+            select: { totalCostFcfa: true },
           });
-          if (intervention) {
-            const operationLabels = examsByKind?.operation ?? [];
-            const operationOnly =
-              examLabels.length > 0 && operationLabels.length === examLabels.length;
-            const totalCostFcfa =
-              body.operationAmountFcfa != null
-                ? body.operationAmountFcfa
-                : operationOnly
-                  ? netFcfa
-                  : intervention.totalCostFcfa;
-            const shares = computeInterventionCostShares(
-              totalCostFcfa,
-              intervention.surgeonPercent,
-            );
-            const surgery = await tx.surgeryCase.upsert({
-              where: { visitId: existing.visitId },
-              update: {
-                interventionTypeId: intervention.id,
-                surgeonId: assignedDoctorId,
-                totalCostFcfa: shares.totalCostFcfa,
-                surgeonShareFcfa: shares.surgeonShareFcfa,
-                clinicShareFcfa: shares.clinicShareFcfa,
-                status: SurgeryStatus.NOTIFIED,
-              },
-              create: {
-                visitId: existing.visitId,
-                interventionTypeId: intervention.id,
-                surgeonId: assignedDoctorId,
-                totalCostFcfa: shares.totalCostFcfa,
-                surgeonShareFcfa: shares.surgeonShareFcfa,
-                clinicShareFcfa: shares.clinicShareFcfa,
-                status: SurgeryStatus.NOTIFIED,
-              },
-            });
-            surgeryCaseId = surgery.id;
-            await tx.consultation.update({
-              where: { id: consultation.id },
-              data: { needsSurgery: true },
-            });
-          }
-        } else if (operationLabel) {
-          await tx.consultation.update({
-            where: { id: consultation.id },
-            data: { needsSurgery: true },
+          const totalCostFcfa =
+            body.operationAmountFcfa != null
+              ? body.operationAmountFcfa
+              : operationOnly
+                ? netFcfa
+                : (catalogIntervention?.totalCostFcfa ?? netFcfa);
+          surgeryCaseId = await syncReceptionOperationCase(tx, {
+            visitId: existing.visitId,
+            consultationId: consultation.id,
+            operationLabel,
+            assignedDoctorId,
+            totalCostFcfa,
+            operationAssistant: body.operationAssistant,
+            clinicServiceId: body.operationServiceId,
           });
         }
 
@@ -1418,6 +1649,7 @@ router.patch(
           clinicalNotes,
           examReduction,
           surgeryCaseId,
+          operationAmountFcfa: body.operationAmountFcfa,
         });
         const paidAt = new Date();
         if (payment.notes !== clinicalNotes || payment.sendToLab) {
@@ -1452,6 +1684,20 @@ router.patch(
       }
       if (error instanceof Error && error.message === "PATIENT_NOT_FOUND") {
         return res.status(404).json({ error: "Patient introuvable" });
+      }
+      if (error instanceof Error && error.message === "OPERATION_TYPE_NOT_FOUND") {
+        return res.status(400).json({ error: "Type d’opération introuvable." });
+      }
+      if (error instanceof Error && error.message === "OPERATION_SERVICE_NOT_FOUND") {
+        return res.status(400).json({ error: "Service de l’opération introuvable." });
+      }
+      if (error instanceof Error && error.message === "OPERATION_AMOUNT_REQUIRED") {
+        return res.status(400).json({ error: "Indiquez le prix de l’opération." });
+      }
+      if (error instanceof Error && error.message === "ASSISTANT_NOT_ALLOWED") {
+        return res.status(400).json({
+          error: "L’assistant doit être un médecin ou un employé enregistré comme assistant ou anesthésiste.",
+        });
       }
       console.error("[visits] patch external-queue:", error);
       return res.status(500).json({
@@ -1602,7 +1848,12 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
     const examLabels = body.examsByKind
       ? flattenPrescribedExams(body.examsByKind as Record<ExamKindSlug, string[]>)
       : body.exams ?? [];
-    const catalogGrossFcfa = computeGrossFcfaFromExamLabels(examLabels);
+    const catalogGrossFcfa = body.examsByKind
+      ? catalogGrossWithOperationAmount(
+          body.examsByKind as Record<ExamKindSlug, string[]>,
+          body.operationAmountFcfa,
+        )
+      : computeGrossFcfaFromExamLabels(examLabels);
 
     if (catalogGrossFcfa <= 0 && body.amountFcfa == null) {
       return res.status(400).json({ error: "Aucun examen facturable." });
@@ -1631,6 +1882,19 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
       });
       if (!doctor) return res.status(400).json({ error: "Médecin invalide" });
       assignedDoctorId = doctor.id;
+    }
+    const postedOperationLabels = (
+      body.examsByKind?.operation ??
+      []
+    ).filter(Boolean);
+    if (postedOperationLabels.length > 0 && !assignedDoctorId) {
+      return res.status(400).json({ error: "Le médecin est obligatoire pour une opération." });
+    }
+    if (
+      postedOperationLabels.length > 0 &&
+      (body.operationAmountFcfa == null || body.operationAmountFcfa <= 0)
+    ) {
+      return res.status(400).json({ error: "Indiquez le prix de l’opération." });
     }
 
     const clinicalNotes = body.examsByKind
@@ -1753,64 +2017,27 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
       const operationLabel = body.examsByKind?.operation?.find(Boolean);
       let surgeryCaseId: string | null = null;
       if (operationLabel && assignedDoctorId) {
-        const doctorServices = await resolveDoctorClinicServices(assignedDoctorId);
-        const serviceIds = doctorServices?.ids ?? [];
-        const intervention = await tx.interventionType.findFirst({
-          where: {
-            label: operationLabel,
-            active: true,
-            ...(serviceIds.length
-              ? interventionVisibleForServicesWhere(serviceIds, {
-                  doctorUserId: assignedDoctorId,
-                })
-              : {}),
-          },
+        const operationLabels = body.examsByKind?.operation ?? [];
+        const operationOnly =
+          examLabels.length > 0 && operationLabels.length === examLabels.length;
+        const catalogIntervention = await tx.interventionType.findFirst({
+          where: { label: operationLabel, active: true },
+          select: { totalCostFcfa: true },
         });
-        if (intervention) {
-          const operationLabels = body.examsByKind?.operation ?? [];
-          const operationOnly =
-            examLabels.length > 0 &&
-            operationLabels.length === examLabels.length;
-          const totalCostFcfa =
-            body.operationAmountFcfa != null
-              ? body.operationAmountFcfa
-              : operationOnly && body.amountFcfa != null
-                ? body.amountFcfa
-                : intervention.totalCostFcfa;
-          const shares = computeInterventionCostShares(
-            totalCostFcfa,
-            intervention.surgeonPercent,
-          );
-          const surgery = await tx.surgeryCase.upsert({
-            where: { visitId },
-            update: {
-              interventionTypeId: intervention.id,
-              surgeonId: assignedDoctorId,
-              totalCostFcfa: shares.totalCostFcfa,
-              surgeonShareFcfa: shares.surgeonShareFcfa,
-              clinicShareFcfa: shares.clinicShareFcfa,
-              status: SurgeryStatus.NOTIFIED,
-            },
-            create: {
-              visitId,
-              interventionTypeId: intervention.id,
-              surgeonId: assignedDoctorId,
-              totalCostFcfa: shares.totalCostFcfa,
-              surgeonShareFcfa: shares.surgeonShareFcfa,
-              clinicShareFcfa: shares.clinicShareFcfa,
-              status: SurgeryStatus.NOTIFIED,
-            },
-          });
-          surgeryCaseId = surgery.id;
-          await tx.consultation.update({
-            where: { id: consultation.id },
-            data: { needsSurgery: true },
-          });
-        }
-      } else if (operationLabel) {
-        await tx.consultation.update({
-          where: { id: consultation.id },
-          data: { needsSurgery: true },
+        const totalCostFcfa =
+          body.operationAmountFcfa != null
+            ? body.operationAmountFcfa
+            : operationOnly && body.amountFcfa != null
+              ? body.amountFcfa
+              : (catalogIntervention?.totalCostFcfa ?? netFcfa);
+        surgeryCaseId = await syncReceptionOperationCase(tx, {
+          visitId,
+          consultationId: consultation.id,
+          operationLabel,
+          assignedDoctorId,
+          totalCostFcfa,
+          operationAssistant: body.operationAssistant,
+          clinicServiceId: body.operationServiceId,
         });
       }
 
@@ -1821,6 +2048,7 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
         clinicalNotes,
         examReduction,
         surgeryCaseId,
+        operationAmountFcfa: body.operationAmountFcfa,
       });
       const paidAt = new Date();
       if (payment.notes !== clinicalNotes || payment.sendToLab) {
@@ -1860,6 +2088,20 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
       if (error.message === "PATIENT_NOT_BILLABLE") {
         return res.status(400).json({
           error: "Ce patient associé ne peut pas être enregistré comme patient externe.",
+        });
+      }
+      if (error.message === "OPERATION_TYPE_NOT_FOUND") {
+        return res.status(400).json({ error: "Type d’opération introuvable." });
+      }
+      if (error.message === "OPERATION_SERVICE_NOT_FOUND") {
+        return res.status(400).json({ error: "Service de l’opération introuvable." });
+      }
+      if (error.message === "OPERATION_AMOUNT_REQUIRED") {
+        return res.status(400).json({ error: "Indiquez le prix de l’opération." });
+      }
+      if (error.message === "ASSISTANT_NOT_ALLOWED") {
+        return res.status(400).json({
+          error: "L’assistant doit être un médecin ou un employé enregistré comme assistant ou anesthésiste.",
         });
       }
     }

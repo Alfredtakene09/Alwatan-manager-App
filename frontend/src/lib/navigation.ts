@@ -531,6 +531,7 @@ const directionOperationalNav: NavSection[] = [
             label: 'Opérations effectuées',
             icon: CheckCircle2,
             module: 'reception',
+            description: 'Enregistré par et état du paiement',
           },
           {
             to: '/hospitalisation?tab=hospitalized',

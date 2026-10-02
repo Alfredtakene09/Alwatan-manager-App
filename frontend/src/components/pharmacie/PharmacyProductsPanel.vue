@@ -174,11 +174,14 @@ const hasActiveFilters = computed(
   () => Boolean(filterQuery.value.trim() || filterForm.value || filterCategoryId.value),
 )
 
+/** Stock encore au catalogue : une ligne supprimée ou désactivée sort des totaux. */
+const valuedStockItems = computed(() => filteredItems.value.filter((item) => item.active))
+
 const priceTotals = computed(() => {
   let purchase = 0
   let sale = 0
   let profit = 0
-  for (const item of filteredItems.value) {
+  for (const item of valuedStockItems.value) {
     const qty = item.quantity
     sale += qty * item.unitPriceFcfa
     const purchaseUnit = item.purchasePriceFcfa
@@ -581,7 +584,7 @@ const productExportColumns = computed<ExportColumn<ProductExportRow>[]>(() => {
 })
 
 function productExportTotals() {
-  const source = filteredItems.value
+  const source = valuedStockItems.value
   const saleValue = source.reduce((sum, item) => sum + item.quantity * item.unitPriceFcfa, 0)
   const purchaseValue = source.reduce(
     (sum, item) => sum + item.quantity * (item.purchasePriceFcfa ?? 0),

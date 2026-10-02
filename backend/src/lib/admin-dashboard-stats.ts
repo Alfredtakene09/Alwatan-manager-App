@@ -51,10 +51,7 @@ async function buildOperationsByService(
         invoice: {
           status: { not: InvoiceStatus.CANCELLED },
           ...comptabiliteInvoicePatientWhere(),
-          OR: [
-            { type: InvoiceType.SURGERY },
-            { AND: [{ billingExamKind: "operation" }, { surgeryCaseId: { not: null } }] },
-          ],
+          OR: [{ type: InvoiceType.SURGERY }, { billingExamKind: "operation" }],
         },
       },
       select: {
@@ -77,6 +74,9 @@ async function buildOperationsByService(
                 },
               },
             },
+            visit: {
+              select: { assignedClinicService: { select: { id: true, name: true } } },
+            },
           },
         },
       },
@@ -85,10 +85,7 @@ async function buildOperationsByService(
       where: {
         ...collectedInvoicesWhere(from, to),
         payments: { none: {} },
-        OR: [
-          { type: InvoiceType.SURGERY },
-          { AND: [{ billingExamKind: "operation" }, { surgeryCaseId: { not: null } }] },
-        ],
+        OR: [{ type: InvoiceType.SURGERY }, { billingExamKind: "operation" }],
       },
       select: {
         id: true,
@@ -104,6 +101,9 @@ async function buildOperationsByService(
               },
             },
           },
+        },
+        visit: {
+          select: { assignedClinicService: { select: { id: true, name: true } } },
         },
       },
     }),
@@ -161,15 +161,21 @@ async function buildOperationsByService(
           clinicService: { id: string; name: string } | null;
         };
       } | null;
+      visit: { assignedClinicService: { id: string; name: string } | null } | null;
     },
     amountFcfa: number,
   ) {
     if (amountFcfa <= 0) return;
-    const serviceId = invoice.surgeryCase?.interventionType.clinicServiceId ?? null;
+    const service =
+      invoice.surgeryCase?.interventionType.clinicService ??
+      invoice.visit?.assignedClinicService ??
+      null;
+    const serviceId =
+      invoice.surgeryCase?.interventionType.clinicServiceId ?? service?.id ?? null;
     const key = serviceId;
     const current = byService.get(key) ?? {
       serviceId: key,
-      serviceName: invoice.surgeryCase?.interventionType.clinicService?.name ?? "Sans service",
+      serviceName: service?.name ?? "Sans service",
       count: 0,
       amountFcfa: 0,
     };

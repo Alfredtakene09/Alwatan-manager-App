@@ -84,14 +84,14 @@ describe("sumCollectedBreakdown operations", () => {
     assert.equal(breakdown.examsFcfa, 0);
   });
 
-  it("n'ajoute pas un paiement opération orphelin (sans dossier) aux entrées opérations", () => {
+  it("ajoute une autre chirurgie (sans dossier bloc) aux entrées opérations", () => {
     assert.equal(
       isCollectedOperationInvoice({
         type: InvoiceType.LAB_EXAM,
         billingExamKind: "operation",
         surgeryCaseId: null,
       }),
-      false,
+      true,
     );
     const breakdown = sumCollectedBreakdown([
       {
@@ -125,7 +125,7 @@ describe("sumCollectedBreakdown operations", () => {
         surgeryCaseId: "surg-femur",
       },
     ]);
-    assert.equal(breakdown.surgeryFcfa, 850_000);
-    assert.equal(breakdown.examsFcfa, 500_000);
+    assert.equal(breakdown.surgeryFcfa, 1_350_000);
+    assert.equal(breakdown.examsFcfa, 0);
   });
 });

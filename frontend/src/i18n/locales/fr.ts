@@ -437,6 +437,7 @@ export default {
     Matricule: 'Matricule',
     Patient: 'Patient',
     Médecin: 'Médecin',
+    Enregistrement: 'Enregistrement',
     Examens: 'Examens',
     'Net payé': 'Net payé',
     'Payé le': 'Payé le',
@@ -1065,6 +1066,7 @@ export default {
     'Vos dossiers créés à la réception': 'Vos dossiers créés à la réception',
     Réceptionniste: 'Réceptionniste',
     'Tous les réceptionnistes': 'Tous les réceptionnistes',
+    'Tous les médecins': 'Tous les médecins',
     'Dossiers enregistrés par {name}': 'Dossiers enregistrés par {name}',
     Reconsultation: 'Reconsultation',
     'Calcul du tarif…': 'Calcul du tarif…',
@@ -1637,6 +1639,10 @@ export default {
     'Supprimer le compte': 'Supprimer le compte',
     'Supprimer définitivement le compte de {name} ({email}) ? L\'employé lié sera conservé. Cette action est irréversible.':
       'Supprimer définitivement le compte de {name} ({email}) ? L\'employé lié sera conservé. Cette action est irréversible.',
+    'Supprimer définitivement le compte de {name} ({email}) et sa fiche employé ? Les dossiers patients restent. Cette action est irréversible.':
+      'Supprimer définitivement le compte de {name} ({email}) et sa fiche employé ? Les dossiers patients restent. Cette action est irréversible.',
+    'Supprimer définitivement « {name} » ? Le compte application lié sera aussi supprimé. Les dossiers patients restent. Cette action est irréversible.':
+      'Supprimer définitivement « {name} » ? Le compte application lié sera aussi supprimé. Les dossiers patients restent. Cette action est irréversible.',
     'Compte supprimé.': 'Compte supprimé.',
     'Vous ne pouvez pas supprimer ce compte.': 'Vous ne pouvez pas supprimer ce compte.',
     'Suppression impossible : ce compte a {n} {suffix}. Désactivez-le plutôt.':
@@ -2747,6 +2753,11 @@ export default {
     'Suivi hospitalier': 'Suivi hospitalier',
     'Opérations en attente': 'Opérations en attente',
     'Opérations effectuées': 'Opérations effectuées',
+    'Enregistrer une opération': 'Enregistrer une opération',
+    'Même saisie qu’un patient externe : service, prix, médecin obligatoire et assistant.':
+      'Même saisie qu’un patient externe : service, prix, médecin obligatoire et assistant.',
+    'Opération enregistrée.': 'Opération enregistrée.',
+    'Opération enregistrée — {invoice}.': 'Opération enregistrée — {invoice}.',
     Hospitalisation: 'Hospitalisation',
     Comptabilité: 'Comptabilité',
     Dépenses: 'Dépenses',
@@ -2992,6 +3003,17 @@ export default {
       'Aucune nomenclature liée pour l’instant. Ajoutez des examens (nomenclature médecin) ou des types d’opérations pour ce service.',
     'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.':
       'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.',
+    'Médecin et assistant': 'Médecin et assistant',
+    'Aucun assistant ou anesthésiste enregistré.':
+      'Aucun assistant ou anesthésiste enregistré.',
+    'Choisissez un assistant ou un anesthésiste enregistré.':
+      'Choisissez un assistant ou un anesthésiste enregistré.',
+    'Choisissez le service de l’opération, puis saisissez le prix.':
+      'Choisissez le service de l’opération, puis saisissez le prix.',
+    'Opération pour le service « {name} ». Saisissez le prix ci-dessous.':
+      'Opération pour le service « {name} ». Saisissez le prix ci-dessous.',
+    'Médecin obligatoire pour « {op} ». L’assistant est facultatif. Les % s’appliquent au montant.':
+      'Médecin obligatoire pour « {op} ». L’assistant est facultatif. Les % s’appliquent au montant.',
     'Médecin (optionnel)': 'Médecin (optionnel)',
     'Sélectionner un médecin…': 'Sélectionner un médecin…',
     'Aucun médecin lié à ce service': 'Aucun médecin lié à ce service',

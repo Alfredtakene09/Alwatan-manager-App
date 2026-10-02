@@ -43,6 +43,7 @@ type DoctorOption = {
   id: string
   firstName: string
   lastName: string
+  isMedecin?: boolean
 }
 
 type ServiceInfo = {
@@ -95,7 +96,8 @@ const serviceName = computed(() => props.serviceInfo?.clinicServiceName || uiTex
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 
 function doctorLabel(doctor: DoctorOption) {
-  return `Dr ${doctor.firstName} ${doctor.lastName}`.trim()
+  const name = `${doctor.firstName} ${doctor.lastName}`.trim()
+  return doctor.isMedecin === false ? name : `Dr ${name}`
 }
 
 function assistantDisplay(item: InterventionItem) {
@@ -228,11 +230,24 @@ function resetMessages() {
 
 async function loadDoctors() {
   try {
-    const [{ data: all }, { data: service }] = await Promise.all([
-      api.get<DoctorOption[]>('/consultation/operation-types/doctors'),
+    const [{ data: assistants }, { data: service }] = await Promise.all([
+      api.get<
+        Array<{
+          id: string | null
+          employeeId: string
+          firstName: string
+          lastName: string
+          isMedecin: boolean
+        }>
+      >('/visits/operation-assistants'),
       api.get<DoctorOption[]>('/consultation/operation-types/service-doctors'),
     ])
-    doctors.value = Array.isArray(all) ? all : []
+    doctors.value = (Array.isArray(assistants) ? assistants : []).map((person) => ({
+      id: person.id ?? `emp:${person.employeeId}`,
+      firstName: person.firstName,
+      lastName: person.lastName,
+      isMedecin: person.isMedecin,
+    }))
     serviceDoctors.value = Array.isArray(service) ? service : []
   } catch {
     doctors.value = []
@@ -322,6 +337,12 @@ function buildPayload(form: ReturnType<typeof emptyForm>) {
     }
   }
 
+  const selectedAssistant =
+    form.withAssistant && form.assistantInputMode === 'select'
+      ? doctors.value.find((doctor) => doctor.id === form.anesthesiologistId)
+      : undefined
+  const employeeOnly = selectedAssistant?.id.startsWith('emp:') ?? false
+
   return {
     payload: {
       label: form.label.trim(),
@@ -329,11 +350,11 @@ function buildPayload(form: ReturnType<typeof emptyForm>) {
       totalCostFcfa: Number(form.totalCostFcfa),
       surgeonPercent,
       anesthesiologistPercent,
-      anesthesiologistId: form.withAssistant && form.assistantInputMode === 'select'
-        ? form.anesthesiologistId || null
-        : null,
-      anesthesiologistName:
-        form.withAssistant && form.assistantInputMode === 'custom'
+      anesthesiologistId:
+        selectedAssistant && !employeeOnly ? selectedAssistant.id : null,
+      anesthesiologistName: employeeOnly
+        ? `${selectedAssistant?.firstName ?? ''} ${selectedAssistant?.lastName ?? ''}`.trim()
+        : form.withAssistant && form.assistantInputMode === 'custom'
           ? form.anesthesiologistName.trim()
           : null,
       surgeonIds: form.surgeonIds,

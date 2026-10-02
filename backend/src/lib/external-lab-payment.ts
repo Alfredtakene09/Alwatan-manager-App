@@ -37,11 +37,21 @@ export async function collectExternalLabOrderPayment(
     clinicalNotes: string;
     examReduction: number;
     surgeryCaseId?: string | null;
+    /** Prix saisi pour l’opération (service choisi, hors catalogue). */
+    operationAmountFcfa?: number | null;
   },
 ): Promise<ExternalLabPaymentResult> {
   const sheets = buildExamSheetsByKind(params.clinicalNotes, { billableOnly: false }).filter(
     (sheet) => (CASHIER_PAYMENT_QUEUE_KINDS as readonly ExamKindSlug[]).includes(sheet.kind),
   );
+  const operationAmount = params.operationAmountFcfa;
+  if (operationAmount != null && operationAmount > 0) {
+    for (const sheet of sheets) {
+      if (sheet.kind !== "operation" || !sheet.lines.length) continue;
+      for (const line of sheet.lines) line.unitPriceFcfa = operationAmount;
+      sheet.grossFcfa = sheet.lines.reduce((sum, line) => sum + line.unitPriceFcfa, 0);
+    }
+  }
   const reductions = normalizeExamReductionsByKind(sheets, undefined, params.examReduction);
   const payable = sheets
     .map((sheet) => ({

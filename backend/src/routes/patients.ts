@@ -5,11 +5,13 @@ import { prisma } from "../lib/db.js";
 import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.js";
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
 import { ageUnitSchema, refinePatientAge } from "../lib/patient-age.js";
-import { comptabilitePatientWhere, resolveConsultationBilling, shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
+import { resolveConsultationBilling, shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
 import { aggregateCollectedToday } from "../lib/revenue-stats.js";
 import { buildRegistrationSummary } from "../lib/registration-summary.js";
 import {
   aggregateCollectedForCashier,
+  applyOpenClosureAdjustments,
+  listPatientClosureAmounts,
   sumExpensesForCashierOnDate,
 } from "../lib/cashier-personal-stats.js";
 import { CASH_COLLECTOR_ROLES } from "../lib/cash-shift.js";
@@ -349,6 +351,7 @@ router.get("/", async (req, res) => {
   const toParam = String(req.query.to ?? "").trim();
   const createdById = String(req.query.createdById ?? "").trim();
   const service = String(req.query.service ?? "").trim();
+  const doctorId = String(req.query.doctorId ?? "").trim();
   const terms = q.split(/\s+/).filter(Boolean);
   if (!canFullList && terms.length === 0) {
     return res.json([]);
@@ -383,6 +386,7 @@ router.get("/", async (req, res) => {
       ...(category ? { category: category as PatientCategory } : {}),
       ...(service ? { service } : {}),
       ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
+      ...patientsAssignedToDoctorWhere(doctorId, createdAtFilter),
       ...(terms.length > 0
         ? {
             AND: terms.map((term) => ({
@@ -467,10 +471,26 @@ function parseDayStart(value: string): Date | null {
   return start;
 }
 
+function patientsAssignedToDoctorWhere(
+  doctorId: string,
+  createdAt?: { gte?: Date; lt?: Date },
+): Prisma.PatientWhereInput {
+  if (!doctorId) return {};
+  return {
+    visits: {
+      some: {
+        assignedDoctorId: doctorId,
+        ...(createdAt ? { createdAt } : {}),
+      },
+    },
+  };
+}
+
 router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   const user = req.user!;
   const createdById = String(req.query.createdById ?? "").trim();
   const service = String(req.query.service ?? "").trim();
+  const doctorId = String(req.query.doctorId ?? "").trim();
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
   const tomorrowStart = new Date(startOfToday);
@@ -486,7 +506,9 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   const ownScope = receptionistOwnPatientsWhere(user, createdById);
   const patientScope = {
     ...ownScope,
+    active: true,
     ...(service ? { service } : {}),
+    ...patientsAssignedToDoctorWhere(doctorId, createdAtRange),
   };
   const patientPeriodScope = { ...patientScope, createdAt: createdAtRange };
   const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
@@ -516,6 +538,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
       ? prisma.visit.count({
           where: {
             createdAt: createdAtRange,
+            ...(doctorId ? { assignedDoctorId: doctorId } : {}),
             OR: [
               { patient: { createdById: scopedReceptionistId, ...(service ? { service } : {}) } },
               {
@@ -533,12 +556,14 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
       : prisma.visit.count({
           where: {
             createdAt: createdAtRange,
+            ...(doctorId ? { assignedDoctorId: doctorId } : {}),
             ...(service ? { patient: { service } } : {}),
           },
         }),
     prisma.visit.count({
       where: {
         createdAt: createdAtRange,
+        ...(doctorId ? { assignedDoctorId: doctorId } : {}),
         notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE },
         patient: { ...patientScope },
       },
@@ -578,6 +603,7 @@ router.get("/registration-summary", requireModule("reception"), async (req, res)
     const user = req.user!;
     const createdById = String(req.query.createdById ?? "").trim();
     const service = String(req.query.service ?? "").trim();
+    const doctorId = String(req.query.doctorId ?? "").trim();
     const q = String(req.query.q ?? "").trim();
     const fromParam = String(req.query.from ?? "").trim();
     const toParam = String(req.query.to ?? "").trim();
@@ -593,8 +619,10 @@ router.get("/registration-summary", requireModule("reception"), async (req, res)
     const terms = q.split(/\s+/).filter(Boolean);
     const patientWhere: Prisma.PatientWhereInput = {
       ...receptionistOwnPatientsWhere(user, createdById),
+      active: true,
       ...(service ? { service } : {}),
       createdAt: { gte: rangeStart, lt: rangeEndExclusive },
+      ...patientsAssignedToDoctorWhere(doctorId, { gte: rangeStart, lt: rangeEndExclusive }),
       ...(terms.length > 0
         ? {
             AND: terms.map((term) => ({
@@ -1095,11 +1123,13 @@ router.patch(
     });
     if (!existing) return res.status(404).json({ error: "Patient introuvable" });
 
+    const adjustments = await listPatientClosureAmounts(patientId);
     const patient = await prisma.patient.update({
       where: { id: patientId },
       data: { active: parsed.data.active },
       select: { id: true, code: true, active: true },
     });
+    await applyOpenClosureAdjustments(adjustments, parsed.data.active ? 1 : -1);
     return res.json(patient);
   },
 );
@@ -1115,7 +1145,9 @@ router.delete("/:id", requireModule("reception"), requireUiAction("reception.del
     if (!isDirectionOrGestionnaire(req.user!.role as AppUserRole)) {
       await assertPatientDeletable(patientId);
     }
+    const adjustments = await listPatientClosureAmounts(patientId);
     await forceDeletePatientCascade(patientId);
+    await applyOpenClosureAdjustments(adjustments, -1);
 
     return res.json({ success: true });
   } catch (error) {

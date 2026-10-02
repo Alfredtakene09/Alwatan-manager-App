@@ -131,6 +131,9 @@ const canExportSalaries = computed(() =>
   auth.user ? canViewEmployeeCompensation(auth.user.role) : false,
 )
 const isGestionnaireRegistry = computed(() => route.meta.employeeRegistry === 'gestionnaire')
+const adminHardDelete = computed(
+  () => auth.user?.role === 'ADMIN' && !isGestionnaireRegistry.value,
+)
 const apiBase = computed(() => (isGestionnaireRegistry.value ? '/gestionnaire' : '/admin'))
 const showPayrollSection = computed(() => isGestionnaireRegistry.value)
 const jobTitlesTableKey = computed(() =>
@@ -1058,7 +1061,7 @@ async function deleteEmployee(id: string) {
 
   const name = fullName(employee.firstName, employee.lastName)
 
-  if (!employee.isMedecin && employee.hasUserAccount) {
+  if (!adminHardDelete.value && !employee.isMedecin && employee.hasUserAccount) {
     message.value = translateTemplate(
       'Impossible de supprimer « {name} » : un compte application y est lié. Supprimez d\'abord le compte.',
       { name },
@@ -1067,19 +1070,22 @@ async function deleteEmployee(id: string) {
     return
   }
 
+  const deactivateDoctor = !adminHardDelete.value && employee.isMedecin
   const confirmed = await confirmAppModal({
-    type: employee.isMedecin ? 'WARNING' : 'DELETE',
-    title: employee.isMedecin ? 'Désactiver le médecin' : "Supprimer l'employé",
-    message: employee.isMedecin
+    type: deactivateDoctor ? 'WARNING' : 'DELETE',
+    title: deactivateDoctor ? 'Désactiver le médecin' : "Supprimer l'employé",
+    message: deactivateDoctor
       ? translateTemplate(
           'Désactiver « {name} » ? L’historique clinique (visites, consultations, opérations) sera conservé. Le compte application sera désactivé s’il existe.',
           { name },
         )
       : translateTemplate(
-          'Supprimer définitivement « {name} » ? Cette action est irréversible.',
+          adminHardDelete.value
+            ? 'Supprimer définitivement « {name} » ? Le compte application lié sera aussi supprimé. Les dossiers patients restent. Cette action est irréversible.'
+            : 'Supprimer définitivement « {name} » ? Cette action est irréversible.',
           { name },
         ),
-    confirmLabel: employee.isMedecin ? 'Désactiver' : 'Supprimer',
+    confirmLabel: deactivateDoctor ? 'Désactiver' : 'Supprimer',
   })
   if (!confirmed) return
 

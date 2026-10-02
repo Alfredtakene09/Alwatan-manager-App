@@ -192,7 +192,9 @@ const expensePeriodLabel = computed(() => {
 })
 
 const expenseTotalFcfa = computed(() =>
-  rows.value.reduce((sum, row) => sum + row.amountFcfa, 0),
+  rows.value
+    .filter((row) => row.status !== 'REJECTED')
+    .reduce((sum, row) => sum + row.amountFcfa, 0),
 )
 
 const expenseExportColumns: ExportColumn<AdminExpenseRow>[] = [

@@ -37,6 +37,10 @@ import {
 } from "../lib/employee-job-titles-sync.js";
 import { buildGestionnaireDashboardOverview, buildGestionnaireNavBadges } from "../lib/gestionnaire-dashboard-stats.js";
 import {
+  refreshUnvalidatedDayClosure,
+  refreshUnvalidatedDayClosureForExpense,
+} from "../lib/cashier-personal-stats.js";
+import {
   disburseCashRegister,
   disburseFromDayClosure,
   getCashRegisterDetail,
@@ -567,8 +571,11 @@ router.get("/expenses", async (req, res) => {
     filter === "pending"
       ? { status: ClinicExpenseStatus.PENDING }
       : filter === "month"
-        ? { businessDate: { gte: monthStart, lt: monthEnd } }
-        : {};
+        ? {
+            businessDate: { gte: monthStart, lt: monthEnd },
+            status: { not: ClinicExpenseStatus.REJECTED },
+          }
+        : { status: { not: ClinicExpenseStatus.REJECTED } };
 
   const rows = await prisma.clinicExpense.findMany({
     where,
@@ -674,6 +681,10 @@ router.put("/expenses/:id", requireUiAction("comptabilite.depenses"), expenseUpl
       },
       include: gestionnaireExpenseInclude,
     });
+    await refreshUnvalidatedDayClosureForExpense(row.paidById, row.businessDate);
+    if (updated.businessDate.getTime() !== row.businessDate.getTime()) {
+      await refreshUnvalidatedDayClosureForExpense(updated.paidById, updated.businessDate);
+    }
     return res.json(serializeGestionnaireExpense(updated));
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -700,6 +711,7 @@ router.delete("/expenses/:id", requireUiAction("comptabilite.depenses"), async (
   }
 
   await prisma.clinicExpense.delete({ where: { id: row.id } });
+  await refreshUnvalidatedDayClosureForExpense(row.paidById, row.businessDate);
   return res.status(204).send();
 });
 
@@ -752,6 +764,7 @@ router.patch("/expenses/:id/reject", requireUiAction("comptabilite.depenses"), a
     },
     include: gestionnaireExpenseInclude,
   });
+  await refreshUnvalidatedDayClosureForExpense(updated.paidById, updated.businessDate);
   return res.json(serializeGestionnaireExpense(updated));
 });
 
@@ -1559,7 +1572,25 @@ router.get("/day-closures", async (req, res) => {
       take: 500,
     });
 
-    const sorted = [...closures].sort((a, b) => {
+    const pending = closures.filter((row) => !row.validatedAt && !row.settlementId);
+    if (pending.length) {
+      await Promise.all(
+        pending.map((row) => refreshUnvalidatedDayClosure(row.receptionistId, row.businessDate)),
+      );
+    }
+    const refreshed = pending.length
+      ? await prisma.receptionDayClosure.findMany({
+          where,
+          include: {
+            receptionist: { select: { id: true, firstName: true, lastName: true } },
+            validatedBy: { select: { id: true, firstName: true, lastName: true } },
+          },
+          orderBy: [{ closedAt: "desc" }],
+          take: 500,
+        })
+      : closures;
+
+    const sorted = [...refreshed].sort((a, b) => {
       const aPending = a.validatedAt ? 1 : 0;
       const bPending = b.validatedAt ? 1 : 0;
       if (aPending !== bPending) return aPending - bPending;
@@ -1661,17 +1692,28 @@ router.post("/day-closures/:id/validate", async (req, res) => {
       return res.status(409).json({ error: "Cette clôture est déjà validée." });
     }
 
+    await refreshUnvalidatedDayClosure(existing.receptionistId, existing.businessDate);
+    const current = await prisma.receptionDayClosure.findUnique({
+      where: { id: existing.id },
+      include: {
+        receptionist: { select: { firstName: true, lastName: true } },
+      },
+    });
+    if (!current) {
+      return res.status(404).json({ error: "Clôture introuvable." });
+    }
+
     const result = await disburseFromDayClosure({
       closure: {
-        id: existing.id,
-        receptionistId: existing.receptionistId,
-        businessDate: existing.businessDate,
-        shiftSlot: existing.shiftSlot,
-        collectedFcfa: existing.collectedFcfa,
-        expensesFcfa: existing.expensesFcfa,
-        netFcfa: existing.netFcfa,
-        closedAt: existing.closedAt,
-        comment: existing.comment,
+        id: current.id,
+        receptionistId: current.receptionistId,
+        businessDate: current.businessDate,
+        shiftSlot: current.shiftSlot,
+        collectedFcfa: current.collectedFcfa,
+        expensesFcfa: current.expensesFcfa,
+        netFcfa: current.netFcfa,
+        closedAt: current.closedAt,
+        comment: current.comment,
       },
       gestionnaireId: user.id,
       validationComment: body.comment,

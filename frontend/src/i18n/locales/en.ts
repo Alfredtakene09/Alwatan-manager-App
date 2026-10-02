@@ -436,6 +436,7 @@ export default {
     Matricule: 'ID',
     Patient: 'Patient',
     Médecin: 'Doctor',
+    Enregistrement: 'Registration',
     Examens: 'Exams',
     'Net payé': 'Net paid',
     'Payé le': 'Paid on',
@@ -1089,6 +1090,7 @@ export default {
     '{date} à {time}': '{date} at {time}',
     Réceptionniste: 'Receptionist',
     'Tous les réceptionnistes': 'All receptionists',
+    'Tous les médecins': 'All doctors',
     'Dossiers enregistrés par {name}': 'Records registered by {name}',
     'Enregistrements de {name} aujourd’hui': '{name}’s registrations today',
     Inscriptions: 'Registrations',
@@ -1703,6 +1705,10 @@ export default {
     'Supprimer le compte': 'Delete account',
     'Supprimer définitivement le compte de {name} ({email}) ? L\'employé lié sera conservé. Cette action est irréversible.':
       'Permanently delete account for {name} ({email})? Linked employee will be kept. This cannot be undone.',
+    'Supprimer définitivement le compte de {name} ({email}) et sa fiche employé ? Les dossiers patients restent. Cette action est irréversible.':
+      'Permanently delete the account of {name} ({email}) and the employee record? Patient files stay. This cannot be undone.',
+    'Supprimer définitivement « {name} » ? Le compte application lié sera aussi supprimé. Les dossiers patients restent. Cette action est irréversible.':
+      'Permanently delete "{name}"? The linked application account is removed too. Patient files stay. This cannot be undone.',
     'Compte supprimé.': 'Account deleted.',
     'Vous ne pouvez pas supprimer ce compte.': 'You cannot delete this account.',
     'Suppression impossible : ce compte a {n} {suffix}. Désactivez-le plutôt.':
@@ -2884,6 +2890,11 @@ export default {
     'Suivi hospitalier': 'Hospital follow-up',
     'Opérations en attente': 'Pending operations',
     'Opérations effectuées': 'Completed operations',
+    'Enregistrer une opération': 'Register an operation',
+    'Même saisie qu’un patient externe : service, prix, médecin obligatoire et assistant.':
+      'Same entry as an external patient: service, price, required doctor and assistant.',
+    'Opération enregistrée.': 'Operation registered.',
+    'Opération enregistrée — {invoice}.': 'Operation registered — {invoice}.',
     Hospitalisation: 'Hospitalization',
     Comptabilité: 'Accounting',
     Dépenses: 'Expenses',
@@ -3143,6 +3154,16 @@ export default {
       'No catalog linked yet. Add exams (doctor nomenclature) or operation types for this service.',
     'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.':
       'Choose the service then exams or operations. The doctor is optional.',
+    'Médecin et assistant': 'Doctor and assistant',
+    'Aucun assistant ou anesthésiste enregistré.': 'No registered assistant or anesthetist.',
+    'Choisissez un assistant ou un anesthésiste enregistré.':
+      'Choose a registered assistant or anesthetist.',
+    'Choisissez le service de l’opération, puis saisissez le prix.':
+      'Choose the service for the operation, then enter the price.',
+    'Opération pour le service « {name} ». Saisissez le prix ci-dessous.':
+      'Operation for the “{name}” service. Enter the price below.',
+    'Médecin obligatoire pour « {op} ». L’assistant est facultatif. Les % s’appliquent au montant.':
+      'A doctor is required for “{op}”. The assistant is optional. Percentages apply to the amount.',
     'Médecin (optionnel)': 'Doctor (optional)',
     'Sélectionner un médecin…': 'Select a doctor…',
     'Aucun médecin lié à ce service': 'No doctor linked to this service',

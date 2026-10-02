@@ -285,10 +285,17 @@ const listTo = ref(todayInputValue())
 const serviceFilter = ref('')
 const receptionists = ref<{ id: string; name: string }[]>([])
 const filterReceptionistId = ref('')
+const filterDoctorId = ref('')
 const canFilterByReceptionist = computed(() => auth.user?.role !== 'RECEPTIONNISTE')
+const canFilterByDoctor = computed(() => auth.user?.role === 'ADMIN')
 const selectedReceptionistName = computed(() => {
   if (!filterReceptionistId.value) return ''
   return receptionists.value.find((item) => item.id === filterReceptionistId.value)?.name ?? ''
+})
+const selectedDoctorName = computed(() => {
+  if (!filterDoctorId.value) return ''
+  const doctor = doctors.value.find((item) => item.id === filterDoctorId.value)
+  return doctor ? fullName(doctor.firstName, doctor.lastName) : ''
 })
 const sortedDoctors = computed(() =>
   [...doctors.value].sort((a, b) => {
@@ -622,11 +629,14 @@ const patientsPanelSubtitle = computed(() => {
         service: clinicServiceText(serviceFilter.value.trim()),
       })
     : ''
-  return translateTemplate('{scope} — {date}{service}', {
-    scope,
-    date: listDateLabel.value,
-    service: servicePart,
-  })
+  const doctorPart = selectedDoctorName.value ? ` — ${selectedDoctorName.value}` : ''
+  return (
+    translateTemplate('{scope} — {date}{service}', {
+      scope,
+      date: listDateLabel.value,
+      service: servicePart,
+    }) + doctorPart
+  )
 })
 
 const serviceFilterOptions = computed(() => services.value.map((service) => service.name))
@@ -641,11 +651,14 @@ function patientExportCaptionRows() {
     ...(selectedReceptionistName.value
       ? [{ label: uiText('Réceptionniste'), value: selectedReceptionistName.value }]
       : []),
+    ...(selectedDoctorName.value
+      ? [{ label: uiText('Médecin'), value: selectedDoctorName.value }]
+      : []),
     ...(serviceFilter.value.trim()
       ? [{ label: uiText('Service'), value: clinicServiceText(serviceFilter.value.trim()) }]
       : []),
     ...(search.value.trim() ? [{ label: uiText('Recherche'), value: search.value.trim() }] : []),
-    { label: uiText('Nombre de patients'), value: String(patients.value.length) },
+    { label: uiText('Nombre de patients'), value: String(patients.value.filter((patient) => patient.active !== false).length) },
   ]
 }
 
@@ -747,6 +760,7 @@ async function loadRegistrationSummary(): Promise<RegistrationSummaryLine[]> {
         createdById: canFilterByReceptionist.value
           ? filterReceptionistId.value || undefined
           : undefined,
+        doctorId: canFilterByDoctor.value ? filterDoctorId.value || undefined : undefined,
         service: serviceFilter.value.trim() || undefined,
       },
     },
@@ -863,6 +877,7 @@ async function loadReceptionStats() {
         createdById: canFilterByReceptionist.value
           ? filterReceptionistId.value || undefined
           : undefined,
+        doctorId: canFilterByDoctor.value ? filterDoctorId.value || undefined : undefined,
         service: serviceFilter.value.trim() || undefined,
         from,
         to,
@@ -983,6 +998,7 @@ async function loadPatients() {
         createdById: canFilterByReceptionist.value
           ? filterReceptionistId.value || undefined
           : undefined,
+        doctorId: canFilterByDoctor.value ? filterDoctorId.value || undefined : undefined,
         service: serviceFilter.value.trim() || undefined,
       },
     })
@@ -1626,6 +1642,11 @@ watch(filterReceptionistId, () => {
   loadReceptionStats()
 })
 
+watch(filterDoctorId, () => {
+  loadPatients()
+  loadReceptionStats()
+})
+
 watch(() => form.value.service, () => {
   syncDoctorForService('form')
   applyDoctorBillingDefaults('form')
@@ -1788,6 +1809,16 @@ onUnmounted(clearAlert)
                 <option value="">{{ uiText('Tous les réceptionnistes') }}</option>
                 <option v-for="item in receptionists" :key="item.id" :value="item.id">
                   {{ item.name }}
+                </option>
+              </select>
+            </label>
+
+            <label v-if="canFilterByDoctor" class="receptionist-filter">
+              <span class="date-filter__label">{{ uiText('Médecin') }}</span>
+              <select v-model="filterDoctorId" class="receptionist-filter__select">
+                <option value="">{{ uiText('Tous les médecins') }}</option>
+                <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
+                  {{ fullName(doctor.firstName, doctor.lastName) }}
                 </option>
               </select>
             </label>

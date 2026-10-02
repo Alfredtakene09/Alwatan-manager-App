@@ -70,7 +70,7 @@ const router = createRouter({
         {
           path: 'reception/operations-effectuees',
           name: 'reception-operations-effectuees',
-          component: () => import('@/views/operations/OperationsEffectueesView.vue'),
+          component: () => import('@/views/reception/ReceptionOperationsView.vue'),
           meta: { module: 'reception' },
         },
         {

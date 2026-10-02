@@ -14,6 +14,8 @@ import {
 import {
   aggregateCollectedForCashier,
   netAfterExpenses,
+  refreshUnvalidatedDayClosure,
+  refreshUnvalidatedDayClosureForExpense,
   sumExpensesForCashierOnDate,
 } from "../lib/cashier-personal-stats.js";
 import { buildDayClosureSalesSummary } from "../lib/day-closure-sales.js";
@@ -258,6 +260,7 @@ router.patch("/expenses/:id/deactivate", async (req, res) => {
       rejectionReason: "Désactivée",
     },
   });
+  await refreshUnvalidatedDayClosureForExpense(row.paidById, row.businessDate);
   return res.json({ message: "Dépense désactivée." });
 });
 
@@ -271,6 +274,7 @@ router.delete("/expenses/:id", async (req, res) => {
   }
 
   await prisma.clinicExpense.delete({ where: { id: row.id } });
+  await refreshUnvalidatedDayClosureForExpense(row.paidById, row.businessDate);
   return res.json({ message: "Dépense supprimée." });
 });
 
@@ -300,6 +304,11 @@ router.put("/expenses/:id", async (req, res) => {
         recordedBy: { select: userSelect },
       },
     });
+
+    await refreshUnvalidatedDayClosureForExpense(row.paidById, row.businessDate);
+    if (updated.businessDate.getTime() !== row.businessDate.getTime()) {
+      await refreshUnvalidatedDayClosureForExpense(updated.paidById, updated.businessDate);
+    }
 
     return res.json({
       id: updated.id,
@@ -438,7 +447,9 @@ async function buildDayClosureSnapshot(userId: string, businessDate: Date) {
     aggregateCollectedForCashier(userId, dayStart, dayEnd),
     sumExpensesForCashierOnDate(userId, dayStart),
     prisma.visit.count({ where: { createdAt: { gte: dayStart, lt: dayEnd } } }),
-    prisma.patient.count({ where: { createdAt: { gte: dayStart, lt: dayEnd } } }),
+    prisma.patient.count({
+      where: { active: true, createdAt: { gte: dayStart, lt: dayEnd } },
+    }),
     prisma.user.findUnique({
       where: { id: userId },
       select: { cashShiftSlot: true, firstName: true, lastName: true, username: true },
@@ -483,7 +494,7 @@ router.get("/day-closure", async (req, res) => {
       : formatBusinessDate(new Date());
   const businessDate = parseBusinessDate(businessDateIso);
   const snapshot = await buildDayClosureSnapshot(user.id, businessDate);
-  const existing = await prisma.receptionDayClosure.findUnique({
+  let existing = await prisma.receptionDayClosure.findUnique({
     where: {
       receptionistId_businessDate: {
         receptionistId: user.id,
@@ -491,6 +502,17 @@ router.get("/day-closure", async (req, res) => {
       },
     },
   });
+  if (existing && !existing.validatedAt && !existing.settlementId) {
+    await refreshUnvalidatedDayClosure(user.id, businessDate);
+    existing = await prisma.receptionDayClosure.findUnique({
+      where: {
+        receptionistId_businessDate: {
+          receptionistId: user.id,
+          businessDate,
+        },
+      },
+    });
+  }
 
   return res.json({
     ...snapshot,

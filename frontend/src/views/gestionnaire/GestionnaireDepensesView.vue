@@ -35,6 +35,7 @@ type ExpenseRow = {
   comment: string | null
   recordedByName: string | null
   recordedByRoleLabel: string | null
+  status?: string
   source?: 'clinic' | 'payroll'
 }
 
@@ -52,8 +53,9 @@ const showExpenseModal = ref(false)
 const expenseSaving = ref(false)
 const editingExpense = ref<GestionnaireExpenseEdit | null>(null)
 
-const totalFcfa = computed(() => rows.value.reduce((sum, row) => sum + row.amountFcfa, 0))
-const expenseCount = computed(() => rows.value.length)
+const countedRows = computed(() => rows.value.filter((row) => row.status !== 'REJECTED'))
+const totalFcfa = computed(() => countedRows.value.reduce((sum, row) => sum + row.amountFcfa, 0))
+const expenseCount = computed(() => countedRows.value.length)
 const averageFcfa = computed(() =>
   expenseCount.value > 0 ? Math.round(totalFcfa.value / expenseCount.value) : 0,
 )
@@ -133,15 +135,15 @@ function expenseExportShared() {
 }
 
 function exportPdf() {
-  exportTablePdf('Historique des dépenses', expenseExportColumns, rows.value, expenseExportShared())
+  exportTablePdf('Historique des dépenses', expenseExportColumns, countedRows.value, expenseExportShared())
 }
 
 function exportExcel() {
-  exportTableExcel('Historique des dépenses', expenseExportColumns, rows.value, expenseExportShared())
+  exportTableExcel('Historique des dépenses', expenseExportColumns, countedRows.value, expenseExportShared())
 }
 
 function exportWord() {
-  void exportTableWord('Historique des dépenses', expenseExportColumns, rows.value, expenseExportShared())
+  void exportTableWord('Historique des dépenses', expenseExportColumns, countedRows.value, expenseExportShared())
 }
 
 function openExpenseModal() {
@@ -317,7 +319,7 @@ onMounted(async () => {
             </p>
           </div>
           <div class="depenses-card__head-actions">
-            <ExportButtons :disabled="loading || !rows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
+            <ExportButtons :disabled="loading || !countedRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
             <div class="depenses-segment" role="group" aria-label="Filtrer par période">
               <button
                 type="button"
@@ -346,7 +348,7 @@ onMounted(async () => {
           Chargement des dépenses…
         </div>
 
-        <div v-else-if="!rows.length" class="depenses-empty">
+        <div v-else-if="!countedRows.length" class="depenses-empty">
           <div class="depenses-empty__icon" aria-hidden="true">
             <Receipt :size="32" />
           </div>
@@ -374,7 +376,7 @@ onMounted(async () => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in rows" :key="row.id">
+              <tr v-for="row in countedRows" :key="row.id">
                 <td class="depenses-table__date">{{ formatShortDate(row.date) }}</td>
                 <td>
                   <span
@@ -417,7 +419,7 @@ onMounted(async () => {
           </table>
         </div>
 
-        <div v-if="rows.length" class="depenses-summary">
+        <div v-if="countedRows.length" class="depenses-summary">
           <span class="depenses-summary__count">{{ expenseCount }} dépense{{ expenseCount > 1 ? 's' : '' }}</span>
           <span class="depenses-summary__total">
             Total : <strong>{{ formatFcfa(totalFcfa) }}</strong>

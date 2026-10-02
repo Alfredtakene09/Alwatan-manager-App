@@ -21,8 +21,17 @@ export function comptabilitePatientWhere() {
   return { category: { in: [PatientCategory.STANDARD, PatientCategory.ONG] } };
 }
 
+/** Dossier encore actif : un patient désactivé ou supprimé sort des totaux et du solde. */
+export function countedPatientWhere(extra?: { service?: string }) {
+  return {
+    ...comptabilitePatientWhere(),
+    active: true,
+    ...(extra?.service ? { service: extra.service } : {}),
+  };
+}
+
 export function comptabiliteInvoicePatientWhere() {
-  return { patient: comptabilitePatientWhere() };
+  return { patient: countedPatientWhere() };
 }
 
 export function resolveConsultationBilling(

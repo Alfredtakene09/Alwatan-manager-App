@@ -69,6 +69,11 @@ export async function sendEmployeePhoto(employeeId: string, res: Response) {
   return res.sendFile(absolute);
 }
 
+export function removeStoredEmployeePhoto(photoPath: string | null | undefined) {
+  if (!photoPath) return;
+  fs.unlink(path.join(UPLOADS_ROOT, photoPath), () => undefined);
+}
+
 export function multerPhotoError(error: unknown, _req: Request, res: Response) {
   if (error instanceof multer.MulterError) {
     if (error.code === "LIMIT_FILE_SIZE") {

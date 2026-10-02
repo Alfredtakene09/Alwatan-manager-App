@@ -15,21 +15,36 @@ import {
   Pencil,
   Trash2,
   X,
+  Plus,
 } from '@lucide/vue'
 import { isAxiosError } from 'axios'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
-import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
+import { confirmAppModal, showApiErrorModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { emptyExamReductionsByKind } from '@/lib/exam-billing'
 import { type LabExamPendingItem } from '@/lib/lab-exam-pending'
 import { printLabExamPaymentReceipts } from '@/lib/lab-exam-invoice'
 import { cancelPrintWindow, reservePrintWindow } from '@/lib/print-document'
 import UiInput from '@/components/ui/UiInput.vue'
+import UiSelect from '@/components/ui/UiSelect.vue'
 import { formatFcfa, fullName } from '@/lib/roles'
+import { parsePatientAge, splitPatientFullName } from '@/lib/patient-name'
+import type { PatientAgeUnit } from '@/lib/patient-age'
+import {
+  emptyExamsByKind,
+  getExamCatalogSync,
+  loadExamCatalog,
+  type CatalogExam,
+  type ExamsByKind,
+} from '@/lib/exam-catalog'
+import MultiExamPrescriptionPicker, {
+  type OperationAssistantPayload,
+} from '@/components/MultiExamPrescriptionPicker.vue'
+import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
 import { type SurgeryCaseRow, type SurgeryUserRef } from '@/lib/surgery-case'
-import { surgeryCompletedAtIso } from '@/lib/surgery-shares'
+import { formatAssistantLabel, surgeryCompletedAtIso } from '@/lib/surgery-shares'
 import {
   currentMonthKey,
   formatPeriodLabel,
@@ -65,6 +80,7 @@ type OtherOperationInvoice = {
   payments?: { id: string; amountFcfa: number; paidAt: string; recordedBy?: SurgeryUserRef | null }[]
   interventionLabel: string
   doctor?: SurgeryUserRef | null
+  assistantName?: string | null
   visit: {
     id: string
     createdBy?: SurgeryUserRef | null
@@ -82,7 +98,9 @@ type OperationRow = {
   patientName: string
   patientCode: string
   intervention: string
+  interventionTypeId: string
   surgeonName: string
+  assistantName: string
   completed: boolean
   timestamp: number
   dateLabel: string
@@ -165,9 +183,112 @@ const paymentFilter = ref<PaymentFilter>('all')
 const receptionistFilter = ref('')
 const sourceFilter = ref<SourceFilter>('all')
 
+const showRegisterModal = ref(false)
+const registeringOperation = ref(false)
+const patientForm = ref({
+  fullName: '',
+  age: '',
+  ageUnit: 'YEARS' as PatientAgeUnit,
+  phone: '',
+  gender: 'F',
+})
+const registerExams = ref<ExamsByKind>(emptyExamsByKind())
+const operationAmountFcfa = ref<number | null>(null)
+const operationAssistant = ref<OperationAssistantPayload | null>(null)
+const operationServiceId = ref('')
+const selectedDoctorId = ref('')
+
+const canRegisterOperation = computed(() => {
+  const { firstName, lastName } = splitPatientFullName(patientForm.value.fullName)
+  const age = parsePatientAge(patientForm.value.age, patientForm.value.ageUnit)
+  const hasOperation = (registerExams.value.operation?.length ?? 0) > 0
+  const price = operationAmountFcfa.value ?? 0
+  return (
+    firstName.length >= 2 &&
+    lastName.length >= 2 &&
+    age !== null &&
+    hasOperation &&
+    !!selectedDoctorId.value &&
+    price > 0
+  )
+})
+
+function resetRegisterForm() {
+  patientForm.value = { fullName: '', age: '', ageUnit: 'YEARS', phone: '', gender: 'F' }
+  registerExams.value = emptyExamsByKind()
+  operationAmountFcfa.value = null
+  operationAssistant.value = null
+  operationServiceId.value = ''
+  selectedDoctorId.value = ''
+}
+
+function openRegisterModal() {
+  resetRegisterForm()
+  showRegisterModal.value = true
+}
+
+function closeRegisterModal() {
+  if (registeringOperation.value) return
+  showRegisterModal.value = false
+}
+
+async function submitRegisterOperation() {
+  if (registeringOperation.value || !canRegisterOperation.value) return
+  const { firstName, lastName } = splitPatientFullName(patientForm.value.fullName)
+  const age = parsePatientAge(patientForm.value.age, patientForm.value.ageUnit)
+  const price = Math.max(0, Math.round(operationAmountFcfa.value ?? 0))
+  const operationLabel = registerExams.value.operation?.find(Boolean)
+  registeringOperation.value = true
+  message.value = ''
+  try {
+    const { data } = await api.post<{ invoice?: { invoiceNumber?: string } | null }>(
+      '/visits/external-lab-order',
+      {
+        firstName,
+        lastName,
+        age: age ?? undefined,
+        ageUnit: patientForm.value.ageUnit,
+        phone: patientForm.value.phone.trim() || undefined,
+        gender: patientForm.value.gender,
+        service: operationLabel,
+        examsByKind: registerExams.value,
+        reductionFcfa: 0,
+        operationAmountFcfa: price,
+        amountFcfa: price,
+        doctorId: selectedDoctorId.value,
+        ...(operationAssistant.value ? { operationAssistant: operationAssistant.value } : {}),
+        ...(operationServiceId.value ? { operationServiceId: operationServiceId.value } : {}),
+      },
+    )
+    message.value = data.invoice?.invoiceNumber
+      ? translateTemplate('Opération enregistrée — {invoice}.', {
+          invoice: data.invoice.invoiceNumber,
+        })
+      : uiText('Opération enregistrée.')
+    messageType.value = 'success'
+    showRegisterModal.value = false
+    resetRegisterForm()
+    await load()
+  } catch (error: unknown) {
+    const shown = await showDuplicateModalFromError(error)
+    if (shown) return
+    const apiMessage =
+      error && typeof error === 'object' && 'response' in error
+        ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined
+    message.value = apiMessage ?? uiText("Erreur lors de l'enregistrement.")
+    messageType.value = 'error'
+  } finally {
+    registeringOperation.value = false
+  }
+}
+
 const editRow = ref<OperationRow | null>(null)
 const editAmount = ref('')
 const editDate = ref('')
+const editInterventionId = ref('')
+const openedInterventionId = ref('')
+const operationCatalog = ref<CatalogExam[]>([])
 const savingEdit = ref(false)
 
 const dateFilterMode = ref<PeriodMode>('all')
@@ -214,7 +335,9 @@ function toOtherRow(op: OtherOperationInvoice): OperationRow {
     patientName: fullName(op.visit.patient.firstName, op.visit.patient.lastName),
     patientCode: op.visit.patient.code,
     intervention: op.interventionLabel,
-    surgeonName: doctor ? `Dr ${doctor}` : '—',
+    interventionTypeId: '',
+    surgeonName: doctor ? `Dr ${doctor.replace(/^dr\.?\s+/i, '')}` : '—',
+    assistantName: op.assistantName?.trim() || '—',
     completed: false,
     timestamp: date.getTime(),
     dateLabel: date.toLocaleDateString('fr-FR'),
@@ -237,7 +360,9 @@ function toRow(surgery: SurgeryCaseRow): OperationRow {
     patientName: fullName(surgery.visit.patient.firstName, surgery.visit.patient.lastName),
     patientCode: surgery.visit.patient.code,
     intervention: surgery.interventionType.label,
-    surgeonName: `Dr ${fullName(surgery.surgeon.firstName, surgery.surgeon.lastName)}`,
+    interventionTypeId: surgery.interventionType.id,
+    surgeonName: `Dr ${fullName(surgery.surgeon.firstName, surgery.surgeon.lastName).replace(/^dr\.?\s+/i, '')}`,
+    assistantName: formatAssistantLabel(surgery) || '—',
     completed: surgery.status === 'COMPLETED',
     timestamp: date.getTime(),
     dateLabel: date.toLocaleDateString('fr-FR'),
@@ -307,6 +432,7 @@ const displayedRows = computed(() => {
       row.patientCode.toLowerCase().includes(q) ||
       row.intervention.toLowerCase().includes(q) ||
       row.surgeonName.toLowerCase().includes(q) ||
+      row.assistantName.toLowerCase().includes(q) ||
       row.registeredBy.toLowerCase().includes(q) ||
       row.collectedBy.toLowerCase().includes(q)
     )
@@ -344,9 +470,13 @@ async function load() {
     const [blocRes, otherRes] = await Promise.all([
       api.get<SurgeryCaseRow[]>('/surgeries', { params: { scope: 'all' } }),
       api.get<OtherOperationInvoice[]>('/surgeries/other-operations'),
+      loadExamCatalog().catch(() => null),
     ])
     surgeries.value = blocRes.data
     otherOperations.value = otherRes.data
+    operationCatalog.value = [...getExamCatalogSync().operation].sort((a, b) =>
+      a.label.localeCompare(b.label, 'fr'),
+    )
   } catch (error) {
     const apiMessage = isAxiosError(error)
       ? (error.response?.data as { error?: string } | undefined)?.error
@@ -406,11 +536,46 @@ function dateInputValue(timestamp: number) {
   return `${date.getFullYear()}-${month}-${day}`
 }
 
+function matchOperationCatalogId(row: OperationRow) {
+  if (
+    row.interventionTypeId &&
+    operationCatalog.value.some((item) => item.id === row.interventionTypeId)
+  ) {
+    return row.interventionTypeId
+  }
+  const label = row.intervention.trim().toLowerCase()
+  return operationCatalog.value.find((item) => item.label.trim().toLowerCase() === label)?.id ?? ''
+}
+
+const editKeepsCustomName = computed(() => {
+  const row = editRow.value
+  if (!row) return false
+  const label = row.intervention.trim().toLowerCase()
+  return !operationCatalog.value.some(
+    (item) => item.id === row.interventionTypeId || item.label.trim().toLowerCase() === label,
+  )
+})
+
 function openEdit(row: OperationRow) {
+  const matchedId = matchOperationCatalogId(row)
   editRow.value = row
   editAmount.value = String(row.billedFcfa)
   editDate.value = dateInputValue(row.timestamp)
+  editInterventionId.value = matchedId
+  openedInterventionId.value = matchedId
   message.value = ''
+}
+
+function onEditIntervention(id: string) {
+  editInterventionId.value = id
+  const row = editRow.value
+  if (!row) return
+  if (id === openedInterventionId.value) {
+    editAmount.value = String(row.billedFcfa)
+    return
+  }
+  const chosen = operationCatalog.value.find((item) => item.id === id)
+  if (chosen) editAmount.value = String(chosen.priceFcfa)
 }
 
 function closeEdit() {
@@ -433,9 +598,15 @@ async function submitEdit() {
       row.source === 'bloc'
         ? `/surgeries/${row.id}/billing`
         : `/surgeries/other-operations/${row.id.replace(/^other-/, '')}/billing`
+    const chosen = operationCatalog.value.find((item) => item.id === editInterventionId.value)
+    const nameChanged =
+      !!chosen &&
+      (chosen.id !== row.interventionTypeId ||
+        chosen.label.trim().toLowerCase() !== row.intervention.trim().toLowerCase())
     await api.patch(path, {
       amountFcfa: editAmountFcfa.value,
       operationDate: editDate.value,
+      ...(nameChanged && chosen ? { interventionTypeId: chosen.id } : {}),
     })
     closeEdit()
     message.value = 'Opération modifiée.'
@@ -570,7 +741,8 @@ const exportColumns: ExportColumn<OperationRow>[] = [
   { header: 'Code', value: (r) => r.patientCode },
   { header: 'Type', value: (r) => SOURCE_LABELS[r.source] },
   { header: 'Intervention', value: (r) => r.intervention },
-  { header: 'Chirurgien', value: (r) => r.surgeonName },
+  { header: 'Médecin', value: (r) => r.surgeonName },
+  { header: 'Assistant', value: (r) => r.assistantName },
   {
     header: 'Opération',
     value: (r) => (r.source === 'other' ? '—' : r.completed ? 'Effectuée' : 'En attente'),
@@ -624,7 +796,13 @@ onMounted(load)
         title="Opérations"
         subtitle="Toutes les opérations du bloc opératoire et autres chirurgies, utilisateur ayant enregistré et état du paiement patient"
         :icon="Scissors"
-      />
+      >
+        <template #actions>
+          <UiButton variant="primary" :icon="Plus" @click="openRegisterModal">
+            {{ uiText('Enregistrer une opération') }}
+          </UiButton>
+        </template>
+      </UiPageHeader>
       <UiAlert v-if="errorMessage" type="error" :message="errorMessage" />
       <UiAlert v-if="message && !payTarget" :type="messageType" :message="message" />
 
@@ -799,11 +977,13 @@ onMounted(load)
                     <th>{{ uiText('Date') }}</th>
                     <th>{{ uiText('Patient') }}</th>
                     <th>{{ uiText('Intervention') }}</th>
+                    <th>{{ uiText('Médecin') }}</th>
+                    <th>{{ uiText('Assistant') }}</th>
+                    <th>{{ uiText('Enregistrement') }}</th>
                     <th>{{ uiText('Montant') }}</th>
                     <th>{{ uiText('Payé') }}</th>
                     <th>{{ uiText('Reste') }}</th>
                     <th>{{ uiText('Paiement') }}</th>
-                    <th>{{ uiText('Enregistré par') }}</th>
                     <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
                   </tr>
                 </thead>
@@ -824,13 +1004,25 @@ onMounted(load)
                     </td>
                     <td>
                       <span class="st-name">{{ row.intervention }}</span>
-                      <span class="st-sub">{{ row.surgeonName }}</span>
                       <span
                         class="st-badge"
                         :class="row.source === 'bloc' ? 'st-badge--info' : 'st-badge--warning'"
                       >
                         {{ uiText(SOURCE_LABELS[row.source]) }}
                       </span>
+                    </td>
+                    <td>
+                      <span class="st-name">{{ row.surgeonName }}</span>
+                    </td>
+                    <td>
+                      <span class="st-name">{{ row.assistantName }}</span>
+                    </td>
+                    <td>
+                      <span class="st-name">{{ row.registeredBy }}</span>
+                      <span class="st-sub">{{ uiText('Enregistré par') }}</span>
+                      <span v-if="row.collectedBy" class="st-sub">{{
+                        translateTemplate('Encaissé par {name}', { name: row.collectedBy })
+                      }}</span>
                     </td>
                     <td>
                       <span class="st-amount">{{ formatFcfa(row.billedFcfa) }}</span>
@@ -848,12 +1040,6 @@ onMounted(load)
                       <span class="st-badge" :class="`st-badge--${PAYMENT_VARIANTS[row.paymentState]}`">
                         {{ uiText(PAYMENT_LABELS[row.paymentState]) }}
                       </span>
-                    </td>
-                    <td>
-                      <span class="st-name">{{ row.registeredBy }}</span>
-                      <span v-if="row.collectedBy" class="st-sub">{{
-                        translateTemplate('Encaissé par {name}', { name: row.collectedBy })
-                      }}</span>
                     </td>
                     <td class="simple-table__actions">
                       <div class="ops-actions">
@@ -904,12 +1090,70 @@ onMounted(load)
     </section>
 
     <UiFormModal
+      v-if="showRegisterModal"
+      title="Enregistrer une opération"
+      subtitle="Même saisie qu’un patient externe : service, prix, médecin obligatoire et assistant."
+      :icon="Scissors"
+      size="wide"
+      @close="closeRegisterModal"
+    >
+      <UiAlert
+        v-if="message && messageType === 'error'"
+        type="error"
+        :message="message"
+      />
+      <form id="register-operation-form" class="register-op-form" @submit.prevent="submitRegisterOperation">
+        <ReceptionPatientIdentityFields
+          v-model:full-name="patientForm.fullName"
+          v-model:age="patientForm.age"
+          v-model:age-unit="patientForm.ageUnit"
+          v-model:phone="patientForm.phone"
+          v-model:gender="patientForm.gender"
+        />
+        <MultiExamPrescriptionPicker
+          v-model="registerExams"
+          v-model:operation-amount-fcfa="operationAmountFcfa"
+          v-model:operation-doctor-id="selectedDoctorId"
+          v-model:operation-assistant="operationAssistant"
+          v-model:operation-service-id="operationServiceId"
+          :kinds="['operation']"
+          :show-comments="false"
+          :show-consultation="false"
+        />
+      </form>
+      <template #footer>
+        <UiButton variant="ghost" type="button" @click="closeRegisterModal">
+          {{ uiText('Annuler') }}
+        </UiButton>
+        <UiButton
+          variant="primary"
+          type="submit"
+          form="register-operation-form"
+          :disabled="!canRegisterOperation || registeringOperation"
+        >
+          {{ uiText(registeringOperation ? 'Enregistrement…' : 'Enregistrer') }}
+        </UiButton>
+      </template>
+    </UiFormModal>
+
+    <UiFormModal
       v-if="editRow"
       title="Modifier l'opération"
       :subtitle="`${editRow.patientName} — ${editRow.intervention}`"
       :icon="Pencil"
       @close="closeEdit"
     >
+      <UiSelect
+        :model-value="editInterventionId"
+        label="Opération"
+        :disabled="!operationCatalog.length"
+        @update:model-value="onEditIntervention"
+      >
+        <option v-if="editKeepsCustomName" value="">{{ editRow.intervention }}</option>
+        <option v-for="item in operationCatalog" :key="item.id" :value="item.id">
+          {{ item.label }}
+        </option>
+      </UiSelect>
       <UiInput v-model="editAmount" label="Montant (FCFA)" type="number" required />
       <UiInput v-model="editDate" label="Date de l'opération" type="date" required />
       <p v-if="editRow.paidFcfa > 0" class="edit-hint">
@@ -1040,6 +1284,12 @@ onMounted(load)
 </template>
 
 <style scoped>
+.register-op-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
 .edit-hint {
   margin: 0.15rem 0 0;
   font-size: 0.8125rem;

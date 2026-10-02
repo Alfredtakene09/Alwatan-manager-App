@@ -26,6 +26,7 @@ function readCompensation(profile: DoctorProfile) {
       consultationQuotaMode: ConsultationQuotaMode.PERCENT,
       consultationQuotaPercent: null as number | null,
       consultationQuotaFcfa: null as number | null,
+      surgeryQuotaPercent: null as number | null,
     };
   }
   return {
@@ -175,6 +176,7 @@ export function serializeDoctorFields(user: DoctorProfile) {
     consultationQuotaMode: comp.consultationQuotaMode,
     consultationQuotaPercent: comp.consultationQuotaPercent,
     consultationQuotaFcfa: comp.consultationQuotaFcfa,
+    surgeryQuotaPercent: comp.surgeryQuotaPercent ?? null,
     consultationValidityDays: user.employee?.consultationValidityDays ?? null,
     consultationRenewalPolicy:
       user.employee?.consultationRenewalPolicy ?? ConsultationRenewalPolicy.FULL,

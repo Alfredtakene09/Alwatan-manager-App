@@ -14,6 +14,7 @@ import {
   SalaryAdvanceStatus,
 } from "@prisma/client";
 import { parseShiftSlot } from "../lib/cash-shift.js";
+import { refreshUnvalidatedDayClosureForExpense } from "../lib/cashier-personal-stats.js";
 import { prisma } from "../lib/db.js";
 import { ensureDefaultBedsForRoom } from "../lib/hospitalization-rooms.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
@@ -33,6 +34,8 @@ import { recalculateAfterEmployeeFicheChangeSafe } from "../lib/recalculate-empl
 import {
   deleteOrDeactivateEmployee,
   doctorAvailabilitySlotsSchema,
+  hardDeleteEmployee,
+  hardDeleteUserAccount,
   normalizeAvailabilitySlots,
   normalizeSpecialty,
   resolveEmployeeIsMedecin,
@@ -345,9 +348,12 @@ function serializeUser(
 
 type SerializedUserInput = Parameters<typeof serializeUser>[0];
 
-async function enrichUserForAdmin(user: SerializedUserInput, currentUserId: string) {
+async function enrichUserForAdmin(
+  user: SerializedUserInput,
+  actor: { id: string; role: UserRole },
+) {
   const relatedDataCount = await countUserRelatedData(user.id);
-  const canDelete = await canHardDeleteUser(user, currentUserId, relatedDataCount);
+  const canDelete = await canHardDeleteUser(user, actor, relatedDataCount);
   return serializeUser(user, { canDelete, relatedDataCount });
 }
 
@@ -811,7 +817,10 @@ router.get("/employees/:id/photo", requireModule("utilisateurs"), async (req, re
 });
 
 router.delete("/employees/:id", requireModule("utilisateurs"), async (req, res) => {
-  const result = await deleteOrDeactivateEmployee(String(req.params.id));
+  const result =
+    req.user!.role === UserRole.ADMIN
+      ? await hardDeleteEmployee(String(req.params.id), req.user!.id)
+      : await deleteOrDeactivateEmployee(String(req.params.id));
   if (result.mode === "not_found") {
     return res.status(404).json({ error: "Employé introuvable" });
   }
@@ -836,8 +845,8 @@ router.get("/users", requireModule("user-accounts"), async (req, res) => {
     select: userSelect,
   });
 
-  const currentUserId = req.user!.id;
-  const enriched = await Promise.all(users.map((user) => enrichUserForAdmin(user, currentUserId)));
+  const actor = { id: req.user!.id, role: req.user!.role };
+  const enriched = await Promise.all(users.map((user) => enrichUserForAdmin(user, actor)));
 
   return res.json(enriched);
 });
@@ -849,7 +858,7 @@ router.get("/users/:id", requireModule("user-accounts"), async (req, res) => {
     select: userSelect,
   });
   if (!user) return res.status(404).json({ error: "Utilisateur introuvable" });
-  return res.json(await enrichUserForAdmin(user, req.user!.id));
+  return res.json(await enrichUserForAdmin(user, { id: req.user!.id, role: req.user!.role }));
 });
 
 router.post("/users", requireModule("user-accounts"), requireUiAction("users.create"), async (req, res) => {
@@ -900,7 +909,9 @@ router.post("/users", requireModule("user-accounts"), requireUiAction("users.cre
       select: userSelect,
     });
 
-    return res.status(201).json(await enrichUserForAdmin(user, req.user!.id));
+    return res.status(201).json(
+      await enrichUserForAdmin(user, { id: req.user!.id, role: req.user!.role }),
+    );
   } catch (error) {
     return res.status(400).json({ error: zodErrorMessage(error, "Données invalides") });
   }
@@ -1036,7 +1047,7 @@ router.put("/users/:id", requireModule("user-accounts"), async (req, res) => {
       select: userSelect,
     });
 
-    return res.json(await enrichUserForAdmin(user, currentUser.id));
+    return res.json(await enrichUserForAdmin(user, { id: currentUser.id, role: currentUser.role }));
   } catch (error) {
     if (
       error &&
@@ -1092,7 +1103,7 @@ router.post(
       });
 
       return res.json({
-        ...(await enrichUserForAdmin(user, req.user!.id)),
+        ...(await enrichUserForAdmin(user, { id: req.user!.id, role: req.user!.role })),
         message: "Compte déverrouillé. L'utilisateur peut se reconnecter avec le nouveau mot de passe.",
       });
     } catch (error) {
@@ -1118,6 +1129,17 @@ router.delete("/users/:id", requireModule("user-accounts"), async (req, res) => 
   }
   if (userId === currentUser.id) {
     return res.status(409).json({ error: "Vous ne pouvez pas supprimer votre propre compte." });
+  }
+
+  if (currentUser.role === UserRole.ADMIN) {
+    const result = await hardDeleteUserAccount(userId, currentUser.id);
+    if (result.mode === "not_found") {
+      return res.status(404).json({ error: "Utilisateur introuvable" });
+    }
+    if (result.mode === "blocked") {
+      return res.status(result.status).json({ error: result.error });
+    }
+    return res.json({ ok: true, message: result.message });
   }
 
   const relatedDataCount = await countUserRelatedData(userId);
@@ -1342,7 +1364,10 @@ router.get("/expenses", async (req, res) => {
   const fromIso = typeof req.query.from === "string" ? req.query.from : "";
   const toIso = typeof req.query.to === "string" ? req.query.to : "";
 
-  let where: { businessDate?: { gte: Date; lt: Date }; status?: ClinicExpenseStatus } = {};
+  let where: {
+    businessDate?: { gte: Date; lt: Date };
+    status?: ClinicExpenseStatus | { not: ClinicExpenseStatus };
+  } = {};
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(fromIso) && /^\d{4}-\d{2}-\d{2}$/.test(toIso)) {
     const fromDate = parseBusinessDate(fromIso);
@@ -1352,7 +1377,10 @@ router.get("/expenses", async (req, res) => {
     }
     const endExclusive = new Date(toDate);
     endExclusive.setDate(endExclusive.getDate() + 1);
-    where = { businessDate: { gte: fromDate, lt: endExclusive } };
+    where = {
+      businessDate: { gte: fromDate, lt: endExclusive },
+      status: { not: ClinicExpenseStatus.REJECTED },
+    };
   } else {
     const filter = typeof req.query.filter === "string" ? req.query.filter : "all";
     const now = new Date();
@@ -1363,8 +1391,11 @@ router.get("/expenses", async (req, res) => {
       filter === "pending"
         ? { status: ClinicExpenseStatus.PENDING }
         : filter === "month"
-          ? { businessDate: { gte: monthStart, lt: monthEnd } }
-          : {};
+          ? {
+              businessDate: { gte: monthStart, lt: monthEnd },
+              status: { not: ClinicExpenseStatus.REJECTED },
+            }
+          : { status: { not: ClinicExpenseStatus.REJECTED } };
   }
 
   const rows = await prisma.clinicExpense.findMany({
@@ -1473,6 +1504,10 @@ router.put("/expenses/:id", requireUiAction("comptabilite.depenses"), async (req
         validatedAt: status !== ClinicExpenseStatus.PENDING ? new Date() : null,
       },
     });
+    await refreshUnvalidatedDayClosureForExpense(existing.paidById, existing.businessDate);
+    if (updated.businessDate.getTime() !== existing.businessDate.getTime()) {
+      await refreshUnvalidatedDayClosureForExpense(updated.paidById, updated.businessDate);
+    }
     return res.json(serializeAdminExpense(updated));
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -1489,6 +1524,7 @@ router.delete("/expenses/:id", requireUiAction("comptabilite.depenses"), async (
   const row = await prisma.clinicExpense.findUnique({ where: { id: String(req.params.id) } });
   if (!row) return res.status(404).json({ error: "Dépense introuvable" });
   await prisma.clinicExpense.delete({ where: { id: row.id } });
+  await refreshUnvalidatedDayClosureForExpense(row.paidById, row.businessDate);
   return res.status(204).send();
 });
 
@@ -1562,6 +1598,7 @@ router.patch("/expenses/:id/reject", requireUiAction("comptabilite.depenses"), a
     },
   });
 
+  await refreshUnvalidatedDayClosureForExpense(updated.paidById, updated.businessDate);
   return res.json(serializeAdminExpense(updated));
 });
 

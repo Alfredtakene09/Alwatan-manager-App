@@ -38,11 +38,12 @@ export async function canHardDeleteUser(user: {
   id: string;
   role: UserRole;
   active: boolean;
-}, currentUserId: string, relatedDataCount: number): Promise<boolean> {
-  if (user.id === currentUserId || relatedDataCount > 0) return false;
+}, actor: { id: string; role: UserRole }, relatedDataCount: number): Promise<boolean> {
+  if (user.id === actor.id) return false;
   if (user.role === UserRole.ADMIN && user.active) {
     const others = await countOtherActiveAdmins(user.id);
     if (others === 0) return false;
   }
-  return true;
+  if (actor.role === UserRole.ADMIN) return true;
+  return relatedDataCount === 0;
 }

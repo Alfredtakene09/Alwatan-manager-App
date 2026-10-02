@@ -81,6 +81,10 @@ const props = withDefaults(
     operationAmountFcfa?: number | null
     /** Assistant chirurgie choisi pour l’envoi (sans enregistrement catalogue séparé). */
     operationAssistant?: OperationAssistantPayload | null
+    /** Médecin de l’opération (réception : obligatoire dès qu’une opération est au panier). */
+    operationDoctorId?: string | null
+    /** Service clinique choisi comme opération (patient externe). */
+    operationServiceId?: string | null
   }>(),
   {
     comments: () => emptyExamCommentsByKind(),
@@ -91,6 +95,8 @@ const props = withDefaults(
     hideConsultationTab: false,
     operationAmountFcfa: null,
     operationAssistant: null,
+    operationDoctorId: null,
+    operationServiceId: null,
   },
 )
 
@@ -100,6 +106,8 @@ const emit = defineEmits<{
   'update:hospitalisationDays': [value: number | null]
   'update:operationAmountFcfa': [value: number | null]
   'update:operationAssistant': [value: OperationAssistantPayload | null]
+  'update:operationDoctorId': [value: string]
+  'update:operationServiceId': [value: string]
   'active-service-change': [
     payload: {
       kind: ExamKindSlug | 'consultation' | null
@@ -129,6 +137,7 @@ const specialtyTabs = computed(() => {
   void catalogEpoch.value
   const base = props.kinds ?? EXAM_KIND_ORDER
   if (!base.includes('specialty') && !base.includes('operation')) return []
+  if (!props.showConsultation && base.length === 1 && base[0] === 'operation') return []
   // Médecin : masquer services sans nomenclature. Patient externe : garder les services vides (choix destination).
   let tabs = props.showConsultation
     ? specialtyServiceTabs.value.filter((svc) => svc.hasExams || svc.hasOperations)
@@ -152,6 +161,12 @@ const visibleKinds = computed(() => {
       return specialtyExamCount.value > 0
     }
     if (kind === 'operation') {
+      if (!props.showConsultation) {
+        return (
+          specialtyServiceTabs.value.length > 0 ||
+          getCatalogForKind('operation', props.doctorId, props.serviceId).length > 0
+        )
+      }
       return getCatalogForKind('operation', props.doctorId, props.serviceId).length > 0
     }
     return true
@@ -417,6 +432,26 @@ function selectKind(kind: ExamKindSlug) {
 
 function selectSpecialtyService(serviceId: string) {
   activePanel.value = `specialty:${serviceId}`
+  if (props.showConsultation) return
+  const service = specialtyServiceTabs.value.find((item) => item.id === serviceId)
+  if (service && !service.hasExams) selectOperationService(service)
+}
+
+const showExternalOperationServices = computed(() => {
+  if (props.showConsultation) return false
+  if (activePanel.value === 'operation') return true
+  return !!activeSpecialtyClinicServiceId.value && specialtyTabUsesOperations(activeSpecialtyTab())
+})
+
+const selectedOperationServiceId = computed(() => {
+  const label = cartOperationLabel.value
+  if (!label) return ''
+  return specialtyServiceTabs.value.find((service) => service.name === label)?.id ?? ''
+})
+
+function selectOperationService(service: SpecialtyServiceInfo) {
+  updateKind('operation', [service.name])
+  emit('update:operationServiceId', service.id)
 }
 
 const KIND_SERVICE_NAME_HINTS: Partial<Record<ExamKindSlug, string[]>> = {
@@ -510,10 +545,23 @@ function onActivePickerUpdate(selected: string[]) {
   updateKind(activeKind.value, selected)
 }
 
-type DoctorOption = { id: string; firstName: string; lastName: string }
+type DoctorOption = {
+  id: string
+  firstName: string
+  lastName: string
+  surgeryQuotaPercent?: number | null
+}
+
+type AssistantOption = {
+  id: string
+  firstName: string
+  lastName: string
+  isMedecin: boolean
+}
 type AssistantInputMode = 'select' | 'custom'
 
-const assistantDoctors = ref<DoctorOption[]>([])
+const surgeonDoctors = ref<DoctorOption[]>([])
+const assistantDoctors = ref<AssistantOption[]>([])
 const assistantSaving = ref(false)
 const assistantMessage = ref('')
 const assistantMessageType = ref<'success' | 'error'>('success')
@@ -580,9 +628,12 @@ const showCustomOperationPanel = computed(
 
 const showOperationPricePanel = computed(() => !!cartOperationLabel.value)
 
-const showOperationAssistantPanel = computed(
-  () => props.showConsultation && !!cartOperationLabel.value,
-)
+const showOperationAssistantPanel = computed(() => !!cartOperationLabel.value)
+
+const operationDoctorIdModel = computed({
+  get: () => props.operationDoctorId ?? '',
+  set: (value: string) => emit('update:operationDoctorId', value),
+})
 
 const customOpName = ref('')
 const customOpMessage = ref('')
@@ -633,7 +684,12 @@ const operationSharePreview = computed(() => {
   const exam = cartOperationExam.value
   const total = Math.max(0, Math.round(Number(operationAmountDraft.value) || 0))
   if (!exam || total <= 0) return null
-  const surgeonPct = Math.min(100, Math.max(0, Math.round(exam.surgeonPercent ?? 70)))
+  const selectedSurgeon = surgeonDoctors.value.find((doctor) => doctor.id === props.operationDoctorId)
+  const quota = selectedSurgeon?.surgeryQuotaPercent
+  const surgeonPct = Math.min(
+    100,
+    Math.max(0, Math.round(quota != null && quota > 0 ? quota : (exam.surgeonPercent ?? 70))),
+  )
   const formAssistantPct = assistantForm.value.withAssistant
     ? Math.min(99, Math.max(0, Math.round(Number(assistantForm.value.percent) || 0)))
     : 0
@@ -661,15 +717,71 @@ const operationSharePreview = computed(() => {
   }
 })
 
-function doctorOptionLabel(doctor: DoctorOption) {
+function doctorOptionLabel(doctor: { firstName: string; lastName: string }) {
   return `Dr ${doctor.firstName} ${doctor.lastName}`.trim()
 }
 
-async function loadAssistantDoctors() {
-  if (!props.showConsultation) return
+function assistantOptionLabel(person: AssistantOption) {
+  const name = `${person.firstName} ${person.lastName}`.trim()
+  return person.isMedecin ? `Dr ${name}` : name
+}
+
+function surgeonOptionLabel(doctor: DoctorOption) {
+  const name = doctorOptionLabel(doctor)
+  return doctor.surgeryQuotaPercent ? `${name} (${doctor.surgeryQuotaPercent} %)` : name
+}
+
+async function loadSurgeonDoctors() {
+  if (props.showConsultation || surgeonDoctors.value.length) return
   try {
-    const { data } = await api.get<DoctorOption[]>('/consultation/operation-types/doctors')
-    assistantDoctors.value = Array.isArray(data) ? data : []
+    const { data } = await api.get<
+      Array<{
+        id: string
+        firstName: string
+        lastName: string
+        surgeryQuotaPercent?: number | null
+      }>
+    >('/visits/doctors')
+    surgeonDoctors.value = (Array.isArray(data) ? data : []).map((doctor) => ({
+      id: doctor.id,
+      firstName: doctor.firstName,
+      lastName: doctor.lastName,
+      surgeryQuotaPercent: doctor.surgeryQuotaPercent ?? null,
+    }))
+  } catch {
+    surgeonDoctors.value = []
+  }
+}
+
+async function loadAssistantDoctors() {
+  if (assistantDoctors.value.length) return
+  try {
+    const { data } = await api.get<
+      Array<{
+        id: string | null
+        employeeId: string
+        firstName: string
+        lastName: string
+        isMedecin: boolean
+      }>
+    >('/visits/operation-assistants')
+    assistantDoctors.value = (Array.isArray(data) ? data : []).map((person) => ({
+      id: person.id ?? `emp:${person.employeeId}`,
+      firstName: person.firstName,
+      lastName: person.lastName,
+      isMedecin: person.isMedecin,
+    }))
+    const currentName = assistantForm.value.name.trim().toLowerCase()
+    if (!assistantForm.value.doctorId && currentName) {
+      const found = assistantDoctors.value.find(
+        (person) => `${person.firstName} ${person.lastName}`.trim().toLowerCase() === currentName,
+      )
+      if (found) {
+        assistantForm.value.doctorId = found.id
+        assistantForm.value.mode = 'select'
+        assistantForm.value.name = ''
+      }
+    }
   } catch {
     assistantDoctors.value = []
   }
@@ -708,17 +820,18 @@ function emitOperationAssistant() {
     return
   }
   const percent = Math.min(99, Math.max(1, Math.round(Number(assistantForm.value.percent) || 10)))
-  const hasDoctor = assistantForm.value.mode === 'select' && assistantForm.value.doctorId
-  const hasName =
-    assistantForm.value.mode === 'custom' && assistantForm.value.name.trim().length >= 2
-  if (!hasDoctor && !hasName) {
+  const selected = assistantDoctors.value.find((person) => person.id === assistantForm.value.doctorId)
+  if (!selected) {
     emit('update:operationAssistant', null)
     return
   }
+  const employeeOnly = selected.id.startsWith('emp:')
   emit('update:operationAssistant', {
     anesthesiologistPercent: percent,
-    anesthesiologistId: hasDoctor ? assistantForm.value.doctorId : null,
-    anesthesiologistName: hasName ? assistantForm.value.name.trim() : null,
+    anesthesiologistId: employeeOnly ? null : selected.id,
+    anesthesiologistName: employeeOnly
+      ? `${selected.firstName} ${selected.lastName}`.trim()
+      : null,
   })
 }
 
@@ -766,24 +879,23 @@ async function saveOperationAssistant() {
     return
   }
 
-  const hasDoctor = assistantForm.value.mode === 'select' && assistantForm.value.doctorId
-  const hasName =
-    assistantForm.value.mode === 'custom' && assistantForm.value.name.trim().length >= 2
-  if (!hasDoctor && !hasName) {
+  const selected = assistantDoctors.value.find((person) => person.id === assistantForm.value.doctorId)
+  if (!selected) {
     assistantMessageType.value = 'error'
-    assistantMessage.value = uiText(
-      "Liez un médecin ou saisissez le nom de l'assistant chirurgie (2 caractères min.).",
-    )
+    assistantMessage.value = uiText('Choisissez un assistant ou un anesthésiste enregistré.')
     return
   }
+  const employeeOnly = selected.id.startsWith('emp:')
 
   assistantSaving.value = true
   assistantMessage.value = ''
   try {
     await api.put(`/consultation/operation-types/${exam.id}`, {
       anesthesiologistPercent: percent,
-      anesthesiologistId: hasDoctor ? assistantForm.value.doctorId : null,
-      anesthesiologistName: hasName ? assistantForm.value.name.trim() : null,
+      anesthesiologistId: employeeOnly ? null : selected.id,
+      anesthesiologistName: employeeOnly
+        ? `${selected.firstName} ${selected.lastName}`.trim()
+        : null,
     })
     invalidateExamCatalogCache()
     await refreshCatalogState()
@@ -801,7 +913,7 @@ async function saveOperationAssistant() {
 
 onMounted(async () => {
   window.addEventListener(examCatalogInvalidateEventName(), onCatalogInvalidate)
-  await Promise.all([refreshCatalogState(), loadAssistantDoctors()])
+  await Promise.all([refreshCatalogState(), loadSurgeonDoctors(), loadAssistantDoctors()])
 })
 
 onUnmounted(() => {
@@ -855,6 +967,13 @@ watch(
       props.operationAmountFcfa != null && Number.isFinite(props.operationAmountFcfa)
         ? Math.max(0, Math.round(props.operationAmountFcfa))
         : null
+    if (!props.showConsultation) {
+      if (fromParent != null && fromParent > 0) {
+        operationAmountDraft.value = String(fromParent)
+        emit('update:operationAmountFcfa', fromParent)
+      }
+      return
+    }
     const amount = fromParent ?? Math.max(0, Math.round(exam.priceFcfa || 0))
     if (amount > 0 || exam.id.startsWith('custom:')) {
       operationAmountDraft.value = amount > 0 ? String(amount) : operationAmountDraft.value
@@ -1069,6 +1188,38 @@ watch(
         </p>
       </div>
 
+      <div
+        v-else-if="showExternalOperationServices"
+        class="multi-exam-picker__op-services"
+      >
+        <template v-if="activePanel === 'operation'">
+          <p class="multi-exam-picker__consultation-hint">
+            {{ uiText('Choisissez le service de l’opération, puis saisissez le prix.') }}
+          </p>
+          <div class="multi-exam-picker__op-services-grid">
+            <button
+              v-for="service in specialtyServiceTabs"
+              :key="`op-service-${service.id}`"
+              type="button"
+              class="multi-exam-picker__op-service"
+              :class="{
+                'multi-exam-picker__op-service--active': selectedOperationServiceId === service.id,
+              }"
+              @click="selectOperationService(service)"
+            >
+              {{ uiText(service.name) }}
+            </button>
+          </div>
+        </template>
+        <p v-else class="multi-exam-picker__consultation-hint">
+          {{
+            translateTemplate('Opération pour le service « {name} ». Saisissez le prix ci-dessous.', {
+              name: activeSpecialtyTab()?.name ?? '',
+            })
+          }}
+        </p>
+      </div>
+
       <ExamPrescriptionPicker
         v-else
         :key="`${activePanel}-${activeKind}-${doctorId ?? ''}-${serviceId ?? ''}`"
@@ -1144,7 +1295,7 @@ watch(
 
         <UiInput
           :model-value="operationAmountDraft"
-          :label="uiText('Montant (FCFA)')"
+          :label="uiText(showConsultation ? 'Montant (FCFA)' : 'Prix (FCFA)')"
           type="number"
           min="0"
           step="1"
@@ -1181,19 +1332,36 @@ watch(
         class="multi-exam-picker__assistant"
       >
         <header class="multi-exam-picker__assistant-head">
-          <h4>{{ uiText('Assistant chirurgie') }}</h4>
+          <h4>{{ uiText(showConsultation ? 'Assistant chirurgie' : 'Médecin et assistant') }}</h4>
           <p>
             {{
-              cartOperationExam.hasAssistant
-                ? translateTemplate('Déjà lié à « {op} » — vous pouvez modifier.', {
-                    op: cartOperationExam.label,
-                  })
-                : translateTemplate('Choisissez un assistant pour « {op} » (optionnel).', {
-                    op: cartOperationExam.label,
-                  })
+              showConsultation
+                ? cartOperationExam.hasAssistant
+                  ? translateTemplate('Déjà lié à « {op} » — vous pouvez modifier.', {
+                      op: cartOperationExam.label,
+                    })
+                  : translateTemplate('Choisissez un assistant pour « {op} » (optionnel).', {
+                      op: cartOperationExam.label,
+                    })
+                : translateTemplate(
+                    'Médecin obligatoire pour « {op} ». L’assistant est facultatif. Les % s’appliquent au montant.',
+                    { op: cartOperationExam.label },
+                  )
             }}
           </p>
         </header>
+
+        <UiSelect
+          v-if="!showConsultation"
+          v-model="operationDoctorIdModel"
+          :label="uiText('Médecin')"
+          required
+        >
+          <option value="">{{ uiText('— Sélectionner —') }}</option>
+          <option v-for="doctor in surgeonDoctors" :key="`surgeon-${doctor.id}`" :value="doctor.id">
+            {{ surgeonOptionLabel(doctor) }}
+          </option>
+        </UiSelect>
 
         <p v-if="cartOperationExam.hasAssistant" class="multi-exam-picker__assistant-current">
           {{
@@ -1214,45 +1382,16 @@ watch(
         </label>
 
         <template v-if="assistantForm.withAssistant">
-          <div class="multi-exam-picker__assistant-modes">
-            <button
-              type="button"
-              class="multi-exam-picker__assistant-mode"
-              :class="{
-                'multi-exam-picker__assistant-mode--active': assistantForm.mode === 'select',
-              }"
-              @click="assistantForm.mode = 'select'; assistantForm.name = ''"
-            >
-              {{ uiText('Médecin enregistré') }}
-            </button>
-            <button
-              type="button"
-              class="multi-exam-picker__assistant-mode"
-              :class="{
-                'multi-exam-picker__assistant-mode--active': assistantForm.mode === 'custom',
-              }"
-              @click="assistantForm.mode = 'custom'; assistantForm.doctorId = ''"
-            >
-              {{ uiText('Autre (saisie libre)') }}
-            </button>
-          </div>
           <div class="multi-exam-picker__assistant-grid">
             <UiSelect
-              v-if="assistantForm.mode === 'select'"
               v-model="assistantForm.doctorId"
               :label="uiText('Assistant chirurgie')"
             >
               <option value="">{{ uiText('— Sélectionner —') }}</option>
-              <option v-for="doctor in assistantDoctors" :key="doctor.id" :value="doctor.id">
-                {{ doctorOptionLabel(doctor) }}
+              <option v-for="person in assistantDoctors" :key="person.id" :value="person.id">
+                {{ assistantOptionLabel(person) }}
               </option>
             </UiSelect>
-            <UiInput
-              v-else
-              v-model="assistantForm.name"
-              :label="uiText('Nom assistant chirurgie')"
-              placeholder="Nom de l'assistant"
-            />
             <UiInput
               v-model="assistantForm.percent"
               :label="uiText('% Assistant chirurgie')"
@@ -1261,6 +1400,9 @@ watch(
               max="99"
             />
           </div>
+          <p v-if="!assistantDoctors.length" class="multi-exam-picker__consultation-hint">
+            {{ uiText('Aucun assistant ou anesthésiste enregistré.') }}
+          </p>
         </template>
 
         <p
@@ -1272,6 +1414,7 @@ watch(
         </p>
 
         <UiButton
+          v-if="showConsultation"
           type="button"
           size="sm"
           variant="secondary"
@@ -1404,6 +1547,36 @@ watch(
   font-size: 0.8125rem;
   color: var(--text-muted);
   line-height: 1.45;
+}
+
+.multi-exam-picker__op-services {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.multi-exam-picker__op-services-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.multi-exam-picker__op-service {
+  border: 1px solid var(--primary-200);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--primary-800);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 0.45rem 0.75rem;
+  cursor: pointer;
+}
+
+.multi-exam-picker__op-service--active {
+  background: var(--primary-700);
+  border-color: var(--primary-700);
+  color: #fff;
 }
 
 .multi-exam-picker__consultation-clear {

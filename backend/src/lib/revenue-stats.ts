@@ -1,6 +1,6 @@
 import { InvoiceStatus, InvoiceType, Prisma } from "@prisma/client";
 import { prisma } from "./db.js";
-import { comptabiliteInvoicePatientWhere, comptabilitePatientWhere } from "./patient-billing.js";
+import { comptabiliteInvoicePatientWhere, countedPatientWhere } from "./patient-billing.js";
 
 /** Encaissements comptoir : consultations, examens, chirurgie, hospitalisation — hors associés et pharmacie. */
 export const COLLECTED_INVOICE_TYPES: InvoiceType[] = [
@@ -68,9 +68,8 @@ export function isCollectedOperationInvoice(invoice: {
   surgeryCaseId?: string | null;
 }) {
   if (invoice.type === InvoiceType.SURGERY) return true;
-  // Un encaissement « opération » sans dossier chirurgie n’apparaît pas dans
-  // Opérations effectuées — ne pas l’ajouter aux entrées opérations.
-  return invoice.billingExamKind === "operation" && Boolean(invoice.surgeryCaseId);
+  // Bloc opératoire ou autre chirurgie facturée en consultation (sans dossier).
+  return invoice.billingExamKind === "operation";
 }
 
 export function isCollectedHospitalizationInvoice(invoice: {
@@ -276,7 +275,7 @@ export async function loadCollectedSlicesBetween(
 ): Promise<CollectedSlice[]> {
   const service = options?.patientService?.trim();
   const patientServiceWhere = service
-    ? { patient: { ...comptabilitePatientWhere(), service } }
+    ? { patient: countedPatientWhere({ service }) }
     : undefined;
   const invoiceWhere: Prisma.InvoiceWhereInput = patientServiceWhere
     ? {

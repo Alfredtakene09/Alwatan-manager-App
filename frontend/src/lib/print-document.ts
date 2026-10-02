@@ -2247,16 +2247,6 @@ function buildDayClosureLineHtml(line: DayClosureServiceLine): string {
 </tr>`
 }
 
-function buildDayClosureGroupHeaderHtml(label: string): string {
-  const ar = thermalAr(label)
-  const arHtml = ar
-    ? ` <span class="day-closure__group-ar" dir="rtl" lang="ar">${escapeHtml(ar)}</span>`
-    : ''
-  return `<tr class="day-closure__group">
-  <td class="col-service" colspan="3" dir="ltr">${escapeHtml(label.toUpperCase())}${arHtml}</td>
-</tr>`
-}
-
 function buildDayClosureSumRowHtml(
   label: string,
   lines: DayClosureServiceLine[],
@@ -2277,25 +2267,13 @@ function buildDayClosureServiceRowsHtml(lines: DayClosureServiceLine[]): string 
   <td class="col-service" colspan="3" dir="ltr">${escapeHtml(t('Aucune vente enregistrée'))}</td>
 </tr>`
   }
-  // Sans section (ticket pharmacie), on garde la liste à plat.
-  if (!lines.some((line) => line.group)) {
-    return lines.map(buildDayClosureLineHtml).join('')
-  }
+  const rows = lines.map(buildDayClosureLineHtml).join('')
+  // Ticket pharmacie : pas de ligne de somme dans le tableau (déjà dans le pied).
+  if (!lines.some((line) => line.group)) return rows
 
+  // Reçu réception : chaque prestation sur sa ligne, une seule somme en bas.
   const fr = (key: string) => translateUiLocale(key, 'fr')
-  const sections = DAY_CLOSURE_GROUPS.flatMap((group) => {
-    const rows = lines.filter((line) => (line.group ?? 'other') === group.id)
-    if (!rows.length) return []
-    return [
-      buildDayClosureGroupHeaderHtml(fr(group.label)),
-      ...rows.map(buildDayClosureLineHtml),
-      buildDayClosureSumRowHtml(fr('Sous-total'), rows, 'day-closure__subtotal'),
-    ]
-  })
-  return [
-    ...sections,
-    buildDayClosureSumRowHtml(fr('Total général'), lines, 'day-closure__grand-total'),
-  ].join('')
+  return rows + buildDayClosureSumRowHtml(fr('Total général'), lines, 'day-closure__grand-total')
 }
 
 export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string {

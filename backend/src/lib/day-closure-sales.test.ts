@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { InvoiceType } from "@prisma/client";
-import { classifyInvoiceForDayClosure, dayClosureCountedFcfa } from "./day-closure-sales.js";
+import {
+  assembleDayClosureReceiptLines,
+  classifyInvoiceForDayClosure,
+  dayClosureCountedFcfa,
+  type DayClosureInvoice,
+} from "./day-closure-sales.js";
 
 describe("classifyInvoiceForDayClosure", () => {
   it("classe les consultations par service clinique", () => {
@@ -152,6 +157,124 @@ describe("dayClosureCountedFcfa", () => {
     assert.equal(
       dayClosureCountedFcfa({ amountFcfa: 10000, paidAmountFcfa: 5000 }, 10000),
       5000,
+    );
+  });
+});
+
+function receiptInvoice(overrides: Partial<DayClosureInvoice> & Pick<DayClosureInvoice, "id" | "type">): DayClosureInvoice {
+  return {
+    patientId: "p",
+    amountFcfa: 5000,
+    paidAmountFcfa: 5000,
+    billingExamKind: null,
+    surgeryCaseId: null,
+    hospitalizationId: null,
+    visit: null,
+    hospitalization: null,
+    ...overrides,
+  };
+}
+
+describe("assembleDayClosureReceiptLines", () => {
+  it("cumule les consultations et les opérations par service, sans le nom du patient", () => {
+    const summary = assembleDayClosureReceiptLines([
+      {
+        collectedFcfa: 5000,
+        invoice: receiptInvoice({
+          id: "c1",
+          type: InvoiceType.CONSULTATION,
+          visit: {
+            reductionFcfa: 0,
+            consultationFeeFcfa: 5000,
+            assignedClinicService: { name: "Généraliste" },
+            patient: null,
+            consultation: null,
+          },
+        }),
+      },
+      {
+        collectedFcfa: 4000,
+        invoice: receiptInvoice({
+          id: "c2",
+          type: InvoiceType.CONSULTATION,
+          visit: {
+            reductionFcfa: 0,
+            consultationFeeFcfa: 4000,
+            assignedClinicService: { name: "Généraliste" },
+            patient: null,
+            consultation: null,
+          },
+          amountFcfa: 4000,
+          paidAmountFcfa: 4000,
+        }),
+      },
+      {
+        collectedFcfa: 50000,
+        invoice: receiptInvoice({
+          id: "o1",
+          type: InvoiceType.SURGERY,
+          amountFcfa: 50000,
+          paidAmountFcfa: 50000,
+          surgeryCaseId: "s1",
+          surgeryCase: { interventionType: { clinicService: { name: "Orthopédie" } } },
+        }),
+      },
+      {
+        collectedFcfa: 70000,
+        invoice: receiptInvoice({
+          id: "o2",
+          type: InvoiceType.SURGERY,
+          amountFcfa: 70000,
+          paidAmountFcfa: 70000,
+          surgeryCaseId: "s2",
+          patientId: "p-same",
+          surgeryCase: { interventionType: { clinicService: { name: "Orthopédie" } } },
+        }),
+      },
+    ]);
+
+    assert.deepEqual(
+      summary.serviceLines.map((line) => ({ label: line.label, qty: line.qty, totalFcfa: line.totalFcfa })),
+      [
+        { label: "Consultation — Généraliste", qty: 2, totalFcfa: 9000 },
+        { label: "Opération — Orthopédie", qty: 2, totalFcfa: 120000 },
+      ],
+    );
+    assert.equal(summary.collectedFcfa, 129000);
+  });
+
+  it("distingue une consultation Orthopédie d'une opération Orthopédie", () => {
+    const summary = assembleDayClosureReceiptLines([
+      {
+        collectedFcfa: 5000,
+        invoice: receiptInvoice({
+          id: "c-ortho",
+          type: InvoiceType.CONSULTATION,
+          visit: {
+            reductionFcfa: 0,
+            consultationFeeFcfa: 5000,
+            assignedClinicService: { name: "Orthopédie" },
+            patient: null,
+            consultation: null,
+          },
+        }),
+      },
+      {
+        collectedFcfa: 80000,
+        invoice: receiptInvoice({
+          id: "o-ortho",
+          type: InvoiceType.SURGERY,
+          amountFcfa: 80000,
+          paidAmountFcfa: 80000,
+          surgeryCaseId: "s-ortho",
+          surgeryCase: { interventionType: { clinicService: { name: "Orthopédie" } } },
+        }),
+      },
+    ]);
+
+    assert.deepEqual(
+      summary.serviceLines.map((line) => line.label),
+      ["Consultation — Orthopédie", "Opération — Orthopédie"],
     );
   });
 });

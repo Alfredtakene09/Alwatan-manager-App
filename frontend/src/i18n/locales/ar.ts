@@ -436,6 +436,7 @@ export default {
     Matricule: 'الرقم',
     Patient: 'المريض',
     Médecin: 'الطبيب',
+    Enregistrement: 'التسجيل',
     Examens: 'الفحوصات',
     'Net payé': 'صافي المدفوع',
     'Payé le': 'تاريخ الدفع',
@@ -1090,6 +1091,7 @@ export default {
     '{date} à {time}': '{date} الساعة {time}',
     Réceptionniste: 'موظف الاستقبال',
     'Tous les réceptionnistes': 'كل موظفي الاستقبال',
+    'Tous les médecins': 'كل الأطباء',
     'Dossiers enregistrés par {name}': 'الملفات المسجلة بواسطة {name}',
     'Enregistrements de {name} aujourd’hui': 'تسجيلات {name} اليوم',
     Inscriptions: 'التسجيلات',
@@ -1703,6 +1705,10 @@ export default {
     'Supprimer le compte': 'حذف الحساب',
     'Supprimer définitivement le compte de {name} ({email}) ? L\'employé lié sera conservé. Cette action est irréversible.':
       'حذف حساب {name} ({email}) نهائياً؟ سيُحفظ الموظف المرتبط. هذا الإجراء لا رجعة فيه.',
+    'Supprimer définitivement le compte de {name} ({email}) et sa fiche employé ? Les dossiers patients restent. Cette action est irréversible.':
+      'حذف حساب {name} ({email}) وبطاقة الموظف نهائياً؟ تبقى ملفات المرضى. هذا الإجراء لا رجعة فيه.',
+    'Supprimer définitivement « {name} » ? Le compte application lié sera aussi supprimé. Les dossiers patients restent. Cette action est irréversible.':
+      'حذف « {name} » نهائياً؟ يُحذف حساب التطبيق المرتبط أيضاً. تبقى ملفات المرضى. هذا الإجراء لا رجعة فيه.',
     'Compte supprimé.': 'تم حذف الحساب.',
     'Vous ne pouvez pas supprimer ce compte.': 'لا يمكنك حذف هذا الحساب.',
     'Suppression impossible : ce compte a {n} {suffix}. Désactivez-le plutôt.':
@@ -2883,6 +2889,11 @@ export default {
     'Suivi hospitalier': 'المتابعة الاستشفائية',
     'Opérations en attente': 'عمليات قيد الانتظار',
     'Opérations effectuées': 'عمليات منجزة',
+    'Enregistrer une opération': 'تسجيل عملية',
+    'Même saisie qu’un patient externe : service, prix, médecin obligatoire et assistant.':
+      'نفس إدخال المريض الخارجي: الخدمة، السعر، الطبيب إلزامي والمساعد.',
+    'Opération enregistrée.': 'تم تسجيل العملية.',
+    'Opération enregistrée — {invoice}.': 'تم تسجيل العملية — {invoice}.',
     Hospitalisation: 'الاستشفاء',
     Comptabilité: 'المحاسبة',
     Dépenses: 'المصاريف',
@@ -3141,6 +3152,16 @@ export default {
       'لا توجد تسمية مرتبطة حالياً. أضف فحوصات (تسمية الطبيب) أو أنواع عمليات لهذه الخدمة.',
     'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.':
       'اختر الخدمة ثم الفحوصات أو العمليات. الطبيب اختياري.',
+    'Médecin et assistant': 'الطبيب والمساعد',
+    'Aucun assistant ou anesthésiste enregistré.': 'لا يوجد مساعد أو طبيب تخدير مسجّل.',
+    'Choisissez un assistant ou un anesthésiste enregistré.':
+      'اختر مساعداً أو طبيب تخدير مسجّلاً.',
+    'Choisissez le service de l’opération, puis saisissez le prix.':
+      'اختر خدمة العملية، ثم أدخل السعر.',
+    'Opération pour le service « {name} ». Saisissez le prix ci-dessous.':
+      'عملية لخدمة « {name} ». أدخل السعر أدناه.',
+    'Médecin obligatoire pour « {op} ». L’assistant est facultatif. Les % s’appliquent au montant.':
+      'الطبيب إلزامي لـ « {op} ». المساعد اختياري. تُطبَّق النسب على المبلغ.',
     'Médecin (optionnel)': 'الطبيب (اختياري)',
     'Sélectionner un médecin…': 'اختر طبيباً…',
     'Aucun médecin lié à ce service': 'لا يوجد طبيب مرتبط بهذه الخدمة',

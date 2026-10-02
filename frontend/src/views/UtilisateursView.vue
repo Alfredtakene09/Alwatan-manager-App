@@ -662,7 +662,9 @@ async function deleteUser(id: string) {
     type: 'DELETE',
     title: 'Supprimer le compte',
     message: translateTemplate(
-      'Supprimer définitivement le compte de {name} ({email}) ? L\'employé lié sera conservé. Cette action est irréversible.',
+      isAdmin.value
+        ? 'Supprimer définitivement le compte de {name} ({email}) et sa fiche employé ? Les dossiers patients restent. Cette action est irréversible.'
+        : 'Supprimer définitivement le compte de {name} ({email}) ? L\'employé lié sera conservé. Cette action est irréversible.',
       { name: label, email: user.email },
     ),
     confirmLabel: 'Supprimer',

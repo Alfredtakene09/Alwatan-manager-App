@@ -12,21 +12,13 @@ import {
 } from "./revenue-stats.js";
 import { comptabiliteInvoicePatientWhere } from "./patient-billing.js";
 
-/** Sections du ticket cumulé, dans l'ordre d'impression. */
+/** Famille de prestation (consultation, opération, examen…). Le ticket ne les imprime plus en sections. */
 export type DayClosureLineGroup =
   | "consultation"
   | "operation"
   | "exam"
   | "hospitalization"
   | "other";
-
-const DAY_CLOSURE_GROUP_ORDER: DayClosureLineGroup[] = [
-  "consultation",
-  "operation",
-  "exam",
-  "hospitalization",
-  "other",
-];
 
 export type DayClosureServiceLine = {
   label: string;
@@ -75,7 +67,7 @@ const DAY_CLOSURE_LABEL_ALIASES: Record<string, string> = {
   Consultations: "Consultations",
 };
 
-type DayClosureInvoice = {
+export type DayClosureInvoice = {
   id: string;
   patientId: string | null;
   type: InvoiceType;
@@ -134,7 +126,18 @@ function isDayClosureOperation(invoice: DayClosureInvoice): boolean {
   );
 }
 
+/**
+ * Consultation et opération partagent souvent le même service (Orthopédie).
+ * Le reçu des cumuls le dit dans le libellé, sans le nom du patient.
+ */
+function cumulServiceLabel(group: DayClosureLineGroup, serviceLabel: string): string {
+  if (group === "consultation") return `Consultation — ${serviceLabel}`;
+  if (group === "operation") return `Opération — ${serviceLabel}`;
+  return serviceLabel;
+}
+
 /** Service ayant réalisé l'opération : type d'intervention, sinon service de la visite. */
+
 function operationServiceLabel(invoice: DayClosureInvoice): string {
   const serviceName =
     invoice.surgeryCase?.interventionType?.clinicService?.name?.trim() ||
@@ -236,7 +239,8 @@ const dayClosureInvoiceSelect = {
 
 /**
  * Cumul ventes caissier pour le ticket de fin de journée (Produits × Qté × Total).
- * Qté = patients distincts du service (pas le nombre de factures) ;
+ * Une ligne par prestation, sans nom de patient :
+ * « Consultation — Orthopédie », « Opération — Orthopédie » (qté = nombre d'actes).
  * Total = sommes des versements du caissier sur la période.
  */
 export async function buildDayClosureSalesSummary(
@@ -257,8 +261,10 @@ export async function buildDayClosureSalesSummary(
         recordedById: cashierId,
         invoice: invoiceWhere,
       },
+      orderBy: { paidAt: "asc" },
       select: {
         amountFcfa: true,
+        paidAt: true,
         invoiceId: true,
         invoice: { select: dayClosureInvoiceSelect },
       },
@@ -269,24 +275,28 @@ export async function buildDayClosureSalesSummary(
         payments: { none: {} },
         issuedById: cashierId,
       },
-      select: dayClosureInvoiceSelect,
+      orderBy: { createdAt: "asc" },
+      select: { ...dayClosureInvoiceSelect, createdAt: true },
     }),
   ]);
 
   const byInvoice = new Map<
     string,
-    { invoice: DayClosureInvoice; collectedFcfa: number }
+    { invoice: DayClosureInvoice; collectedFcfa: number; sortAt: number }
   >();
 
   for (const payment of payments) {
+    const sortAt = payment.paidAt.getTime();
     const existing = byInvoice.get(payment.invoiceId);
     if (existing) {
       existing.collectedFcfa += Math.max(0, payment.amountFcfa);
+      existing.sortAt = Math.min(existing.sortAt, sortAt);
       continue;
     }
     byInvoice.set(payment.invoiceId, {
       invoice: payment.invoice,
       collectedFcfa: Math.max(0, payment.amountFcfa),
+      sortAt,
     });
   }
 
@@ -295,16 +305,24 @@ export async function buildDayClosureSalesSummary(
     byInvoice.set(invoice.id, {
       invoice,
       collectedFcfa: collectedAmountFcfa(invoice),
+      sortAt: invoice.createdAt.getTime(),
     });
   }
 
-  // Clé section + libellé : un même service peut apparaître en consultation et en opération.
-  const grouped = new Map<string, DayClosureServiceLine & { patientIds: Set<string> }>();
+  const entries = [...byInvoice.values()].sort((a, b) => a.sortAt - b.sortAt);
+  return assembleDayClosureReceiptLines(entries);
+}
+
+/** Lignes du reçu : cumul par prestation, sans nom de patient. */
+export function assembleDayClosureReceiptLines(
+  entries: { invoice: DayClosureInvoice; collectedFcfa: number }[],
+): DayClosureSalesSummary {
+  const grouped = new Map<string, DayClosureServiceLine>();
   let collectedFcfa = 0;
   let reductionFcfa = 0;
   const reductionVisitIds = new Set<string>();
 
-  for (const { invoice, collectedFcfa: paidGross } of byInvoice.values()) {
+  for (const { invoice, collectedFcfa: paidGross } of entries) {
     const paid = dayClosureCountedFcfa(invoice, paidGross);
     if (paid <= 0) continue;
     collectedFcfa += paid;
@@ -312,17 +330,12 @@ export async function buildDayClosureSalesSummary(
     const { label, group } = classifyInvoiceForDayClosure(invoice);
     const key = `${group}\u0000${label}`;
     const row = grouped.get(key) ?? {
-      label,
+      label: cumulServiceLabel(group, label),
       group,
       qty: 0,
       totalFcfa: 0,
-      patientIds: new Set<string>(),
     };
-    const patientKey = invoice.patientId ?? invoice.id;
-    if (!row.patientIds.has(patientKey)) {
-      row.patientIds.add(patientKey);
-      row.qty += 1;
-    }
+    row.qty += 1;
     row.totalFcfa += paid;
     grouped.set(key, row);
 
@@ -334,14 +347,7 @@ export async function buildDayClosureSalesSummary(
     }
   }
 
-  const serviceLines = [...grouped.values()]
-    .map(({ patientIds: _patientIds, ...line }) => line)
-    .sort((a, b) => {
-      const byGroup =
-        DAY_CLOSURE_GROUP_ORDER.indexOf(a.group) - DAY_CLOSURE_GROUP_ORDER.indexOf(b.group);
-      if (byGroup !== 0) return byGroup;
-      return a.label.localeCompare(b.label, "fr", { sensitivity: "base" });
-    });
+  const serviceLines = [...grouped.values()];
 
   return {
     serviceLines,
