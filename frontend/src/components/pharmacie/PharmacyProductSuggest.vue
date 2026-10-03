@@ -23,11 +23,14 @@ const props = withDefaults(
     excludeId?: string | null
     /** Entrée choisit la suggestion. Désactivé à la caisse pour garder le scan code-barres. */
     pickOnEnter?: boolean
+    /** Liste des noms enregistrés. Désactivée à la caisse : la grille suffit. */
+    suggestionsEnabled?: boolean
   }>(),
   {
     variant: 'search',
     excludeId: null,
     pickOnEnter: true,
+    suggestionsEnabled: true,
   },
 )
 
@@ -50,7 +53,7 @@ function foldText(value: string) {
 
 const suggestions = computed(() => {
   const query = foldText(props.modelValue.trim())
-  if (!open.value || query.length < 1) return []
+  if (!props.suggestionsEnabled || !open.value || query.length < 1) return []
   return props.items
     .filter((item) => {
       if (props.excludeId && item.id === props.excludeId) return false
@@ -118,6 +121,10 @@ watch(
 onUnmounted(unbindPlaceListeners)
 
 function showSuggestions() {
+  if (!props.suggestionsEnabled) {
+    open.value = false
+    return
+  }
   open.value = true
   placeList()
 }
@@ -179,9 +186,9 @@ defineExpose({
           class="product-suggest__input"
           type="text"
           autocomplete="off"
-          role="combobox"
-          aria-autocomplete="list"
-          :aria-expanded="suggestions.length > 0"
+          :role="suggestionsEnabled ? 'combobox' : undefined"
+          :aria-autocomplete="suggestionsEnabled ? 'list' : 'none'"
+          :aria-expanded="suggestionsEnabled ? suggestions.length > 0 : undefined"
           :aria-label="ariaLabelText"
           :value="modelValue"
           :placeholder="placeholderText"
@@ -197,11 +204,15 @@ defineExpose({
       <input
         ref="inputRef"
         class="product-suggest__input"
-        type="search"
+        :type="suggestionsEnabled ? 'search' : 'text'"
         autocomplete="off"
-        role="combobox"
-        aria-autocomplete="list"
-        :aria-expanded="suggestions.length > 0"
+        autocorrect="off"
+        autocapitalize="off"
+        spellcheck="false"
+        :name="suggestionsEnabled ? undefined : 'pharmacy-catalog-filter'"
+        :role="suggestionsEnabled ? 'combobox' : 'searchbox'"
+        :aria-autocomplete="suggestionsEnabled ? 'list' : 'none'"
+        :aria-expanded="suggestionsEnabled ? suggestions.length > 0 : undefined"
         :aria-label="ariaLabelText"
         :value="modelValue"
         :placeholder="placeholderText"
@@ -214,7 +225,7 @@ defineExpose({
 
     <Teleport to="body">
       <ul
-        v-if="suggestions.length"
+        v-if="suggestionsEnabled && suggestions.length"
         class="product-suggest__list"
         role="listbox"
         :style="listStyle"

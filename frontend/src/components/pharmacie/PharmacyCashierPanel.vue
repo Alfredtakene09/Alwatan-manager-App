@@ -25,8 +25,6 @@ import PharmacyProductSuggest from '@/components/pharmacie/PharmacyProductSugges
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import { usePharmacyDayClosure } from '@/composables/usePharmacyDayClosure'
-import UiSelect from '@/components/ui/UiSelect.vue'
-import UiTextarea from '@/components/ui/UiTextarea.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
@@ -137,7 +135,6 @@ const messageType = ref<'success' | 'error'>('success')
 const submitting = ref(false)
 const REDUCTION_PERCENT_OPTIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50] as const
 
-const checkoutModalOpen = ref(false)
 const adjustmentMode = ref<CheckoutAdjustmentMode>('none')
 const reductionPercent = ref<string>('5')
 const coveredByName = ref('')
@@ -213,6 +210,11 @@ const selectedReductionPercent = computed(() => {
 const selectedReductionFcfa = computed(() =>
   Math.round((cartTotalFcfa.value * selectedReductionPercent.value) / 100),
 )
+
+const cartNetFcfa = computed(() => {
+  if (adjustmentMode.value !== 'reduction') return cartTotalFcfa.value
+  return Math.max(0, cartTotalFcfa.value - selectedReductionFcfa.value)
+})
 
 const reductionPercentLabel = computed(() => {
   if (cartTotalFcfa.value <= 0 || selectedReductionPercent.value <= 0) return uiText('Réduction (%)')
@@ -678,7 +680,6 @@ function applyOrdonnanceToCart() {
       )
   messageType.value = 'success'
   closeOrdonnancesModal()
-  checkoutModalOpen.value = true
 }
 
 function doctorLabel(doctor: PendingOrdonnance['doctor']) {
@@ -846,7 +847,6 @@ async function submitSale() {
     }
 
     clearCart()
-    checkoutModalOpen.value = false
     resetBuyerFields()
     emit('changed')
     void loadPendingOrdonnances('')
@@ -871,16 +871,6 @@ async function submitSale() {
       void printReceipt(ticket)
     }, 50)
   }
-}
-
-function openCheckoutModal() {
-  if (!cart.value.length) {
-    message.value = 'Le panier est vide.'
-    messageType.value = 'error'
-    return
-  }
-  message.value = ''
-  checkoutModalOpen.value = true
 }
 
 async function enterNativeFullscreen() {
@@ -1008,10 +998,10 @@ watch(
             variant="catalog"
             :items="products"
             :pick-on-enter="false"
+            :suggestions-enabled="false"
             placeholder="Rechercher ou scanner un code-barres…"
             aria-label="Rechercher dans le catalogue"
             @keydown="onSearchKeydown"
-            @pick="catalogSearch = $event.dosage ? `${$event.name} ${$event.dosage}` : $event.name"
           />
         </div>
         <p class="catalog-hint">{{ uiText('Saisie : filtre la grille · Lecteur USB : scan + Entrée ajoute au panier') }}</p>
@@ -1107,46 +1097,136 @@ watch(
         </div>
 
         <footer class="cart-panel__footer">
-          <div v-if="selectedCartRow" class="cart-controls">
-            <UiButton
-              type="button"
-              variant="secondary"
-              :icon="Minus"
-              @click="changeCartQuantity(selectedCartRow.index, -1)"
-            />
-            <UiButton
-              type="button"
-              variant="secondary"
-              :icon="Plus"
-              @click="changeCartQuantity(selectedCartRow.index, 1)"
-            />
-            <UiButton
-              type="button"
-              variant="danger"
-              :icon="Trash2"
-              @click="removeFromCart(selectedCartRow.index)"
+          <div class="cart-checkout">
+            <div class="buyer-type buyer-type--inline">
+              <label class="buyer-type__option" :class="{ 'buyer-type__option--locked': Boolean(linkedVisitId) }">
+                <input v-model="buyerType" type="radio" value="external" :disabled="Boolean(linkedVisitId)" />
+                <UserRound :size="13" />
+                <span>{{ uiText('Client externe') }}</span>
+              </label>
+              <label class="buyer-type__option" :class="{ 'buyer-type__option--locked': Boolean(linkedVisitId) }">
+                <input v-model="buyerType" type="radio" value="patient" :disabled="Boolean(linkedVisitId)" />
+                <FileText :size="13" />
+                <span>{{ uiText('Patient clinique') }}</span>
+              </label>
+            </div>
+
+            <template v-if="buyerType === 'external'">
+              <input
+                v-model="externalClientName"
+                class="cart-inline-field"
+                type="text"
+                autocomplete="off"
+                :placeholder="uiText('Nom du client (optionnel)')"
+                :aria-label="uiText('Nom du client (optionnel)')"
+              />
+              <input
+                v-model="externalClientPhone"
+                class="cart-inline-field cart-inline-field--phone"
+                type="text"
+                autocomplete="off"
+                :placeholder="uiText('Téléphone (optionnel)')"
+                :aria-label="uiText('Téléphone (optionnel)')"
+              />
+            </template>
+            <p v-else-if="linkedVisitId && linkedPatient" class="cart-linked-patient">
+              {{ fullName(linkedPatient.firstName, linkedPatient.lastName) }}
+              <span>{{ linkedPatient.code }}</span>
+            </p>
+            <template v-else>
+              <select v-model="patientId" class="cart-inline-field" :aria-label="uiText('Patient')">
+                <option value="">{{ uiText('Sélectionner un patient') }}</option>
+                <option v-for="p in patientsForSelect" :key="p.id" :value="p.id">
+                  {{ p.code }} — {{ fullName(p.firstName, p.lastName) }}
+                </option>
+              </select>
+              <input
+                v-model="notes"
+                class="cart-inline-field"
+                type="text"
+                autocomplete="off"
+                :placeholder="uiText('Notes ordonnance')"
+                :aria-label="uiText('Notes ordonnance')"
+              />
+            </template>
+
+            <select v-model="adjustmentMode" class="cart-inline-field" :aria-label="uiText('Mode de règlement')">
+              <option value="none">{{ uiText('Paiement normal') }}</option>
+              <option value="reduction">{{ uiText('Réduction') }}</option>
+              <option value="free">{{ uiText('Prise en charge gratuite') }}</option>
+            </select>
+            <select
+              v-if="adjustmentMode === 'reduction'"
+              v-model="reductionPercent"
+              class="cart-inline-field cart-inline-field--short"
+              :aria-label="reductionPercentLabel"
             >
-              {{ uiText('Retirer') }}
-            </UiButton>
+              <option v-for="pct in REDUCTION_PERCENT_OPTIONS" :key="pct" :value="String(pct)">
+                {{ pct }} %
+              </option>
+            </select>
+            <input
+              v-if="adjustmentMode === 'free'"
+              v-model="coveredByName"
+              class="cart-inline-field"
+              type="text"
+              autocomplete="off"
+              :placeholder="uiText('Nom de la personne responsable')"
+              :aria-label="uiText('Nom de la personne responsable')"
+            />
           </div>
 
           <div class="cart-summary">
+            <div v-if="selectedCartRow" class="cart-controls">
+              <UiButton
+                type="button"
+                size="sm"
+                variant="secondary"
+                :icon="Minus"
+                @click="changeCartQuantity(selectedCartRow.index, -1)"
+              />
+              <UiButton
+                type="button"
+                size="sm"
+                variant="secondary"
+                :icon="Plus"
+                @click="changeCartQuantity(selectedCartRow.index, 1)"
+              />
+              <UiButton
+                type="button"
+                size="sm"
+                variant="danger"
+                :icon="Trash2"
+                @click="removeFromCart(selectedCartRow.index)"
+              >
+                {{ uiText('Retirer') }}
+              </UiButton>
+            </div>
+
             <div class="cart-total">
-              <span class="cart-total__label">{{ uiText('Total à payer') }}</span>
-              <strong class="cart-total__value">{{ formatFcfa(cartTotalFcfa) }}</strong>
-              <span class="cart-total__meta">{{ translateTemplate('{n} article(s)', { n: cartArticlesCount }) }}</span>
+              <span class="cart-total__label">
+                {{ adjustmentMode === 'reduction' ? uiText('Net à payer') : uiText('Total à payer') }}
+              </span>
+              <strong class="cart-total__value">{{ formatFcfa(cartNetFcfa) }}</strong>
+              <span class="cart-total__meta">
+                {{ translateTemplate('{n} article(s)', { n: cartArticlesCount }) }}
+                <template v-if="adjustmentMode === 'reduction' && cartTotalFcfa > 0">
+                  · −{{ selectedReductionPercent }} %
+                </template>
+              </span>
             </div>
 
             <div class="cart-actions">
-              <UiButton type="button" variant="secondary" :disabled="!cart.length || submitting" @click="clearCart">
+              <UiButton type="button" size="sm" variant="secondary" :disabled="!cart.length || submitting" @click="clearCart">
                 {{ uiText('Vider le panier') }}
               </UiButton>
               <UiButton
                 type="button"
+                size="sm"
                 variant="primary"
                 :icon="PillBottle"
                 :disabled="!cart.length || submitting"
-                @click="openCheckoutModal"
+                @click="submitSale"
               >
                 {{
                   submitting
@@ -1161,100 +1241,6 @@ watch(
         </footer>
       </section>
     </div>
-
-    <UiFormModal
-      v-if="checkoutModalOpen"
-      title="Finaliser la vente"
-      subtitle="Choisissez le type d'acheteur et complétez les informations avant validation."
-      size="wide"
-      @close="checkoutModalOpen = false"
-    >
-      <div class="buyer-type">
-        <label class="buyer-type__option" :class="{ 'buyer-type__option--locked': Boolean(linkedVisitId) }">
-          <input v-model="buyerType" type="radio" value="external" :disabled="Boolean(linkedVisitId)" />
-          <UserRound :size="14" />
-          <span>{{ uiText('Client externe') }}</span>
-        </label>
-        <label class="buyer-type__option" :class="{ 'buyer-type__option--locked': Boolean(linkedVisitId) }">
-          <input v-model="buyerType" type="radio" value="patient" :disabled="Boolean(linkedVisitId)" />
-          <FileText :size="14" />
-          <span>{{ uiText('Patient clinique') }}</span>
-        </label>
-      </div>
-
-      <template v-if="buyerType === 'external'">
-        <div class="checkout-form-grid">
-          <UiInput
-            v-model="externalClientName"
-            label="Nom du client (optionnel)"
-            placeholder="Ex. Mahamat Ali"
-          />
-          <UiInput
-            v-model="externalClientPhone"
-            label="Téléphone (optionnel)"
-            placeholder="Ex. 66 00 00 00"
-          />
-        </div>
-      </template>
-      <template v-else>
-        <div v-if="linkedVisitId && linkedPatient" class="checkout-linked-patient">
-          <p class="checkout-linked-patient__name">
-            {{ fullName(linkedPatient.firstName, linkedPatient.lastName) }}
-            <span class="checkout-linked-patient__code">{{ linkedPatient.code }}</span>
-          </p>
-          <p class="checkout-ordonnance-hint">
-            {{ uiText('Ordonnance médecin — patient déjà identifié, aucune resélection nécessaire.') }}
-          </p>
-        </div>
-        <div v-else class="checkout-form-grid">
-          <UiSelect v-model="patientId" label="Patient">
-            <option value="">{{ uiText('Sélectionner un patient') }}</option>
-            <option v-for="p in patientsForSelect" :key="p.id" :value="p.id">
-              {{ p.code }} — {{ fullName(p.firstName, p.lastName) }}
-            </option>
-          </UiSelect>
-          <UiTextarea v-model="notes" :label="uiText('Notes ordonnance')" :rows="3" />
-        </div>
-      </template>
-
-      <div class="checkout-form-grid">
-        <UiSelect v-model="adjustmentMode" label="Mode de règlement">
-          <option value="none">{{ uiText('Paiement normal') }}</option>
-          <option value="reduction">{{ uiText('Réduction') }}</option>
-          <option value="free">{{ uiText('Prise en charge gratuite') }}</option>
-        </UiSelect>
-        <UiSelect
-          v-if="adjustmentMode === 'reduction'"
-          v-model="reductionPercent"
-          :label="reductionPercentLabel"
-        >
-          <option v-for="pct in REDUCTION_PERCENT_OPTIONS" :key="pct" :value="String(pct)">
-            {{ pct }} %
-          </option>
-        </UiSelect>
-        <UiInput
-          v-if="adjustmentMode === 'free'"
-          v-model="coveredByName"
-          label="Nom de la personne responsable"
-          placeholder="Ex. Dr Mahamat / ONG Al Watan"
-        />
-      </div>
-
-      <template #footer>
-        <UiButton type="button" variant="secondary" :disabled="submitting" @click="checkoutModalOpen = false">
-          {{ uiText('Annuler') }}
-        </UiButton>
-        <UiButton type="button" variant="primary" :icon="PillBottle" :disabled="submitting" @click="submitSale">
-          {{
-            submitting
-              ? uiText('Validation…')
-              : buyerType === 'external'
-                ? uiText('Valider la vente')
-                : uiText('Valider la dispensation')
-          }}
-        </UiButton>
-      </template>
-    </UiFormModal>
 
     <UiFormModal
       v-if="ordonnancesModalOpen"
@@ -1678,8 +1664,12 @@ watch(
 .buyer-type {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
-  margin-bottom: 0.85rem;
+  gap: 0.65rem;
+  margin: 0;
+}
+
+.buyer-type--inline {
+  flex: 0 0 auto;
 }
 
 .buyer-type__option {
@@ -2039,11 +2029,51 @@ watch(
   background: #dbeafe;
 }
 
+.cart-checkout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.45rem;
+  padding: 0.35rem 0.55rem 0;
+  flex-shrink: 0;
+}
+
+.cart-inline-field {
+  height: 1.7rem;
+  min-width: 0;
+  max-width: 11rem;
+  padding: 0 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.75rem;
+}
+
+.cart-inline-field--phone,
+.cart-inline-field--short {
+  max-width: 7.5rem;
+}
+
+.cart-linked-patient {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.cart-linked-patient span {
+  margin-left: 0.35rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
 .cart-controls {
   display: flex;
-  gap: 0.5rem;
-  padding: 0.55rem 0.8rem 0;
-  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0;
+  flex-wrap: nowrap;
   flex-shrink: 0;
 }
 
@@ -2051,16 +2081,17 @@ watch(
 .cart-summary {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0.55rem 0.8rem 0.7rem;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.35rem 0.55rem 0.4rem;
   flex-shrink: 0;
 }
 
 .cart-total {
   flex: 0 1 auto;
   min-width: 0;
-  padding: 0.35rem 0.7rem;
-  border-radius: 10px;
+  padding: 0.15rem 0.5rem;
+  border-radius: 8px;
   background: linear-gradient(135deg, #ecfdf5, #d1fae5);
   border: 1px solid #86efac;
   text-align: start;
@@ -2068,7 +2099,7 @@ watch(
 
 .cart-total__label {
   display: block;
-  font-size: 0.68rem;
+  font-size: 0.6rem;
   font-weight: 700;
   color: #166534;
   text-transform: uppercase;
@@ -2077,34 +2108,36 @@ watch(
 
 .cart-total__value {
   display: block;
-  font-size: 1.4rem;
-  line-height: 1.15;
+  font-size: 1rem;
+  line-height: 1.1;
   color: #14532d;
   white-space: nowrap;
 }
 
 .cart-total__meta {
   display: block;
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   color: #166534;
+  white-space: nowrap;
 }
 
 .cart-actions {
-  flex: 1;
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
-  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: max-content;
+  display: flex;
+  gap: 0.35rem;
 }
 
 .cart-controls :deep(.ui-btn) {
-  font-size: 0.95rem;
+  font-size: 0.78rem;
 }
 
 .cart-actions :deep(.ui-btn) {
-  width: 100%;
-  font-size: 0.95rem;
-  padding-inline: 0.6rem;
+  width: auto;
+  flex: 1 1 auto;
+  font-size: 0.78rem;
+  padding-inline: 0.55rem;
+  white-space: nowrap;
 }
 
 .checkout-adjustment {
@@ -2169,11 +2202,11 @@ watch(
   }
 
   .cart-total__value {
-    font-size: 1.25rem;
+    font-size: 0.95rem;
   }
 
   .cart-actions :deep(.ui-btn) {
-    font-size: 0.88rem;
+    font-size: 0.75rem;
   }
 }
 
@@ -2214,11 +2247,13 @@ watch(
   }
 
   .cart-total__value {
-    font-size: 1.25rem;
+    font-size: 0.95rem;
   }
 
-  .cart-controls {
-    padding-top: 0.45rem;
+  .cart-checkout,
+  .cart-summary {
+    padding-top: 0.25rem;
+    padding-bottom: 0.3rem;
   }
 }
 
