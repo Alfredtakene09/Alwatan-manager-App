@@ -117,7 +117,7 @@ export async function refreshExamPriceCache() {
     ]);
     const simpleRoom =
       rooms.find((room) => room.type === RoomType.SIMPLE) ?? rooms[0];
-    const hospitalisationRateFcfa = simpleRoom?.dailyRateFcfa ?? 25_000;
+    const hospitalisationRateFcfa = simpleRoom?.dailyRateFcfa ?? 5_000;
     catalogPriceCache = new Map([
       ...items.map((item) => [item.label, item.priceFcfa] as const),
       ...interventions.map((item) => [item.label, item.totalCostFcfa] as const),

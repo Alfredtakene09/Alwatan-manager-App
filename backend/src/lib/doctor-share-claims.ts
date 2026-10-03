@@ -606,6 +606,74 @@ export async function requestPayrollForItems(
   return created;
 }
 
+/** Règlement espèces d'une part d'opération : la somme sort du solde de caisse. */
+export async function ensureSettledSurgeryCashClaim(
+  tx: DbClient,
+  input: {
+    surgeryCaseId: string;
+    kind: DoctorShareKind;
+    amountFcfa: number;
+    doctorUserId: string;
+    settledById: string;
+    businessDate: Date;
+  },
+) {
+  const amountFcfa = Math.round(input.amountFcfa);
+  if (amountFcfa <= 0 || !input.doctorUserId) return null;
+
+  const doctor = await tx.user.findUnique({
+    where: { id: input.doctorUserId },
+    select: { id: true, employeeId: true },
+  });
+  if (!doctor?.employeeId) return null;
+
+  const businessDate = new Date(
+    input.businessDate.getFullYear(),
+    input.businessDate.getMonth(),
+    input.businessDate.getDate(),
+  );
+  const now = new Date();
+  const existing = await tx.doctorShareClaim.findFirst({
+    where: { surgeryCaseId: input.surgeryCaseId, kind: input.kind },
+  });
+  if (
+    existing &&
+    (existing.status === DoctorShareClaimStatus.SETTLED_CASH ||
+      existing.status === DoctorShareClaimStatus.SETTLED_PAYROLL)
+  ) {
+    return existing;
+  }
+
+  if (existing) {
+    return tx.doctorShareClaim.update({
+      where: { id: existing.id },
+      data: {
+        status: DoctorShareClaimStatus.SETTLED_CASH,
+        amountFcfa,
+        businessDate,
+        settledAt: now,
+        settledById: input.settledById,
+        rejectionReason: null,
+      },
+    });
+  }
+
+  return tx.doctorShareClaim.create({
+    data: {
+      employeeId: doctor.employeeId,
+      doctorUserId: doctor.id,
+      kind: input.kind,
+      amountFcfa,
+      businessDate,
+      surgeryCaseId: input.surgeryCaseId,
+      status: DoctorShareClaimStatus.SETTLED_CASH,
+      requestedById: input.settledById,
+      settledById: input.settledById,
+      settledAt: now,
+    },
+  });
+}
+
 export async function settleConsultationCash(
   tx: DbClient,
   input: {

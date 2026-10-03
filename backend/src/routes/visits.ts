@@ -131,7 +131,8 @@ router.get("/doctors", async (req, res) => {
   const user = req.user!;
   if (
     !canAccessModule(user.role, "reception") &&
-    !canAccessModule(user.role, "consultation")
+    !canAccessModule(user.role, "consultation") &&
+    !canAccessModule(user.role, "bloc-salles")
   ) {
     return res.status(403).json({ error: "Accès refusé" });
   }
@@ -1030,6 +1031,8 @@ const externalLabOrderSchema = z
     operationAssistant: operationAssistantSchema,
     /** Service choisi pour l’opération (patient externe : prix saisi, pas le catalogue). */
     operationServiceId: z.string().min(1).optional(),
+    /** Enregistre le dossier sans encaisser : le paiement se fait ensuite (partiel ou total). */
+    deferCollection: z.boolean().optional(),
   })
   .refine((data) => data.patientId || (data.firstName && data.lastName), {
     message: "Patient requis",
@@ -1876,12 +1879,15 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
     const grossFcfa = Math.max(catalogGrossFcfa, netFcfa);
 
     let assignedDoctorId: string | null = null;
+    let assignedDoctor: { firstName: string; lastName: string } | null = null;
     if (requestedDoctorId) {
       const doctor = await prisma.user.findFirst({
         where: selectableDoctorByIdWhere(requestedDoctorId),
+        select: { id: true, firstName: true, lastName: true },
       });
       if (!doctor) return res.status(400).json({ error: "Médecin invalide" });
       assignedDoctorId = doctor.id;
+      assignedDoctor = { firstName: doctor.firstName, lastName: doctor.lastName };
     }
     const postedOperationLabels = (
       body.examsByKind?.operation ??
@@ -2041,15 +2047,21 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
         });
       }
 
-      const payment = await collectExternalLabOrderPayment(tx, {
-        visitId,
-        patientId,
-        recordedById: user.id,
-        clinicalNotes,
-        examReduction,
-        surgeryCaseId,
-        operationAmountFcfa: body.operationAmountFcfa,
-      });
+      const payment = body.deferCollection
+        ? {
+            invoice: null as { invoiceNumber: string; amountFcfa: number } | null,
+            notes: clinicalNotes,
+            sendToLab: false,
+          }
+        : await collectExternalLabOrderPayment(tx, {
+            visitId,
+            patientId,
+            recordedById: user.id,
+            clinicalNotes,
+            examReduction,
+            surgeryCaseId,
+            operationAmountFcfa: body.operationAmountFcfa,
+          });
       const paidAt = new Date();
       if (payment.notes !== clinicalNotes || payment.sendToLab) {
         consultation = await tx.consultation.update({
@@ -2070,7 +2082,15 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
           include: { patient: true },
         }));
 
-      return { visit, consultation, invoice: payment.invoice, grossFcfa, netFcfa };
+      return {
+        visit,
+        consultation,
+        invoice: payment.invoice,
+        doctor: assignedDoctor,
+        grossFcfa,
+        netFcfa,
+        deferred: Boolean(body.deferCollection),
+      };
     });
 
     return res.status(201).json(result);

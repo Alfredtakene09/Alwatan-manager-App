@@ -121,10 +121,10 @@ export async function seedReferenceData() {
   }
 
   const rooms = [
-    { name: "VIP 101", type: RoomType.VIP, description: "Chambre individuelle climatisée premium", dailyRateFcfa: 75000 },
-    { name: "VIP 102", type: RoomType.VIP, description: "Chambre individuelle climatisée premium", dailyRateFcfa: 75000 },
-    { name: "Simple A", type: RoomType.SIMPLE, description: "Salle commune tarifée de base", dailyRateFcfa: 25000 },
-    { name: "Simple B", type: RoomType.SIMPLE, description: "Salle commune tarifée de base", dailyRateFcfa: 25000 },
+    { name: "VIP 101", type: RoomType.VIP, description: "Chambre individuelle climatisée premium", dailyRateFcfa: 20000 },
+    { name: "VIP 102", type: RoomType.VIP, description: "Chambre individuelle climatisée premium", dailyRateFcfa: 20000 },
+    { name: "Simple A", type: RoomType.SIMPLE, description: "Salle commune tarifée de base", dailyRateFcfa: 5000 },
+    { name: "Simple B", type: RoomType.SIMPLE, description: "Salle commune tarifée de base", dailyRateFcfa: 5000 },
   ];
 
   for (const room of rooms) {

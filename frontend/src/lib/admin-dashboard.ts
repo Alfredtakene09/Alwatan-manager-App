@@ -7,6 +7,10 @@ export type FinancialKpis = {
   netChangePercent: number
   payrollMonthFcfa: number
   payrollChangePercent: number
+  doctorSharesReceivedFcfa?: number
+  doctorSharesChangePercent?: number
+  doctorSharesConsultationFcfa?: number
+  doctorSharesSurgeryFcfa?: number
 }
 
 export type MonthlyTrendPoint = {

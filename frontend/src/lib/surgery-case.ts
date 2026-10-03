@@ -53,6 +53,7 @@ export type SurgeryCaseRow = {
   }
   invoice?: {
     id?: string
+    invoiceNumber?: string
     status: string
     amountFcfa: number
     paidAmountFcfa: number

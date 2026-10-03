@@ -49,7 +49,8 @@ import { requireAuth, requireModule, requireUiAction } from "../middleware/auth.
 import { canAccessModule, isDirectionOrGestionnaire, type AppUserRole } from "../lib/roles.js";
 import { EXTERNAL_PATIENT_VISIT_NOTE } from "../lib/visit-external.js";
 import { patientsWhoReceivedExamsWhere } from "../lib/patient-exam-stats.js";
-import { receptionistOwnPatientsWhere } from "../lib/reception-scope.js";
+import { receptionistOwnPatientsWhere, patientsInDoctorScopeWhere } from "../lib/reception-scope.js";
+import { resolveDoctorClinicServices } from "../lib/clinic-service-exam.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -379,25 +380,29 @@ router.get("/", async (req, res) => {
     }
   }
 
+  const doctorPatientWhere = await patientsRegisteredForDoctorWhere(doctorId);
+  const andFilters: Prisma.PatientWhereInput[] = [];
+  if (doctorPatientWhere) andFilters.push(doctorPatientWhere);
+  if (terms.length > 0) {
+    andFilters.push(
+      ...terms.map((term) => ({
+        OR: [
+          { code: { contains: term, mode: "insensitive" as const } },
+          { firstName: { contains: term, mode: "insensitive" as const } },
+          { lastName: { contains: term, mode: "insensitive" as const } },
+          { phone: { contains: term, mode: "insensitive" as const } },
+        ],
+      })),
+    );
+  }
+
   const patients = await prisma.patient.findMany({
     where: {
       ...ownScope,
       ...(category ? { category: category as PatientCategory } : {}),
       ...(service ? { service } : {}),
       ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
-      ...patientsAssignedToDoctorWhere(doctorId, createdAtFilter),
-      ...(terms.length > 0
-        ? {
-            AND: terms.map((term) => ({
-              OR: [
-                { code: { contains: term, mode: "insensitive" } },
-                { firstName: { contains: term, mode: "insensitive" } },
-                { lastName: { contains: term, mode: "insensitive" } },
-                { phone: { contains: term, mode: "insensitive" } },
-              ],
-            })),
-          }
-        : {}),
+      ...(andFilters.length > 0 ? { AND: andFilters } : {}),
     },
     include: {
       treatingDoctor: { select: treatingDoctorSelect },
@@ -470,19 +475,18 @@ function parseDayStart(value: string): Date | null {
   return start;
 }
 
-function patientsAssignedToDoctorWhere(
+/** Patients du médecin : ses visites, ou tout dossier enregistré dans ses services. */
+async function patientsRegisteredForDoctorWhere(
   doctorId: string,
-  createdAt?: { gte?: Date; lt?: Date },
-): Prisma.PatientWhereInput {
-  if (!doctorId) return {};
-  return {
-    visits: {
-      some: {
-        assignedDoctorId: doctorId,
-        ...(createdAt ? { createdAt } : {}),
-      },
-    },
-  };
+): Promise<Prisma.PatientWhereInput | null> {
+  const id = doctorId.trim();
+  if (!id) return null;
+  const services = await resolveDoctorClinicServices(id);
+  return patientsInDoctorScopeWhere(
+    id,
+    services?.all.map((service) => service.name) ?? [],
+    services?.ids ?? [],
+  );
 }
 
 router.get("/reception-stats", requireModule("reception"), async (req, res) => {
@@ -501,11 +505,12 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   rangeEndExclusive.setDate(rangeEndExclusive.getDate() + 1);
   const createdAtRange = { gte: rangeStart, lt: rangeEndExclusive };
   const ownScope = receptionistOwnPatientsWhere(user, createdById);
+  const doctorPatientWhere = await patientsRegisteredForDoctorWhere(doctorId);
   const patientScope = {
     ...ownScope,
     active: true,
     ...(service ? { service } : {}),
-    ...patientsAssignedToDoctorWhere(doctorId, createdAtRange),
+    ...(doctorPatientWhere ? { AND: [doctorPatientWhere] } : {}),
   };
   const patientPeriodScope = { ...patientScope, createdAt: createdAtRange };
   const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
@@ -513,7 +518,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   const revenueOptions = {
     ...(service ? { patientService: service } : {}),
     ...(scopedReceptionistId ? { cashierId: scopedReceptionistId } : {}),
-    ...(doctorId ? { doctorId } : {}),
+    ...(doctorPatientWhere ? { patientMatch: doctorPatientWhere } : {}),
   };
   // L'admin voit tous les encaissements de la période, sauf s'il filtre un réceptionniste.
   const personalCashScope =
@@ -539,7 +544,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
       ? prisma.visit.count({
           where: {
             createdAt: createdAtRange,
-            ...(doctorId ? { assignedDoctorId: doctorId } : {}),
+            ...(doctorPatientWhere ? { patient: doctorPatientWhere } : {}),
             OR: [
               { patient: { createdById: scopedReceptionistId, ...(service ? { service } : {}) } },
               {
@@ -557,14 +562,21 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
       : prisma.visit.count({
           where: {
             createdAt: createdAtRange,
-            ...(doctorId ? { assignedDoctorId: doctorId } : {}),
-            ...(service ? { patient: { service } } : {}),
+            ...(doctorPatientWhere || service
+              ? {
+                  patient: {
+                    AND: [
+                      ...(service ? [{ service }] : []),
+                      ...(doctorPatientWhere ? [doctorPatientWhere] : []),
+                    ],
+                  },
+                }
+              : {}),
           },
         }),
     prisma.visit.count({
       where: {
         createdAt: createdAtRange,
-        ...(doctorId ? { assignedDoctorId: doctorId } : {}),
         notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE },
         patient: { ...patientScope },
       },
@@ -616,24 +628,27 @@ router.get("/registration-summary", requireModule("reception"), async (req, res)
     rangeEndExclusive.setDate(rangeEndExclusive.getDate() + 1);
 
     const terms = q.split(/\s+/).filter(Boolean);
+    const doctorPatientWhere = await patientsRegisteredForDoctorWhere(doctorId);
+    const andFilters: Prisma.PatientWhereInput[] = [];
+    if (doctorPatientWhere) andFilters.push(doctorPatientWhere);
+    if (terms.length > 0) {
+      andFilters.push(
+        ...terms.map((term) => ({
+          OR: [
+            { code: { contains: term, mode: "insensitive" as const } },
+            { firstName: { contains: term, mode: "insensitive" as const } },
+            { lastName: { contains: term, mode: "insensitive" as const } },
+            { phone: { contains: term, mode: "insensitive" as const } },
+          ],
+        })),
+      );
+    }
     const patientWhere: Prisma.PatientWhereInput = {
       ...receptionistOwnPatientsWhere(user, createdById),
       active: true,
       ...(service ? { service } : {}),
       createdAt: { gte: rangeStart, lt: rangeEndExclusive },
-      ...patientsAssignedToDoctorWhere(doctorId, { gte: rangeStart, lt: rangeEndExclusive }),
-      ...(terms.length > 0
-        ? {
-            AND: terms.map((term) => ({
-              OR: [
-                { code: { contains: term, mode: "insensitive" as const } },
-                { firstName: { contains: term, mode: "insensitive" as const } },
-                { lastName: { contains: term, mode: "insensitive" as const } },
-                { phone: { contains: term, mode: "insensitive" as const } },
-              ],
-            })),
-          }
-        : {}),
+      ...(andFilters.length > 0 ? { AND: andFilters } : {}),
     };
 
     const lines = await buildRegistrationSummary({ patientWhere });

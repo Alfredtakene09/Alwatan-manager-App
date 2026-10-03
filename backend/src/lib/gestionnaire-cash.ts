@@ -25,6 +25,11 @@ import {
   invoiceCollectedAt,
   startOfDay,
 } from "./revenue-stats.js";
+import {
+  applyDoctorShareCash,
+  deductSharesFromCashBalances,
+  outstandingDoctorShareCashFcfa,
+} from "./doctor-share-cash.js";
 
 export { COMPTABLE_DISBURSEMENT_WORKFLOW_HINT };
 
@@ -172,10 +177,23 @@ export async function getCashRegistersOverview() {
   }
 
   const now = Date.now();
+  const doctorSharesFcfa = await outstandingDoctorShareCashFcfa();
+  const receptionNetFcfa = enriched
+    .filter((batch) => isReceptionRegister(batch.cashierRole))
+    .reduce((sum, batch) => sum + batch.netTotalFcfa, 0);
+  const comptableNetFcfa = enriched
+    .filter((batch) => !isReceptionRegister(batch.cashierRole))
+    .reduce((sum, batch) => sum + batch.netTotalFcfa, 0);
+  const cashAfterShares = deductSharesFromCashBalances(
+    receptionNetFcfa,
+    comptableNetFcfa,
+    doctorSharesFcfa,
+  );
   return GESTIONNAIRE_MANAGED_REGISTERS.map((id) => {
     const filter = registerRoleFilter(id);
     const registerBatches = enriched.filter((batch) => filter(batch.cashierRole));
-    const balanceFcfa = registerBatches.reduce((sum, row) => sum + row.netTotalFcfa, 0);
+    const balanceFcfa =
+      id === "comptabilite" ? cashAfterShares.comptableFcfa : cashAfterShares.receptionFcfa;
     const transactionCount = registerBatches.reduce((sum, row) => sum + row.transactionCount, 0);
     const oldestPendingBusinessDate =
       registerBatches.length > 0
@@ -213,9 +231,12 @@ export async function getCashRegisterDetail(registerId: CashRegisterId) {
     throw new Error("REGISTER_FORBIDDEN");
   }
   const filter = registerRoleFilter(registerId);
-  const unsettled = (await fetchAllUnsettledInvoices()).filter((row) =>
-    filter(row.issuedBy.role),
-  );
+  const allUnsettled = await fetchAllUnsettledInvoices();
+  const unsettled = allUnsettled.filter((row) => filter(row.issuedBy.role));
+  const sumRole = (reception: boolean) =>
+    allUnsettled
+      .filter((row) => isReceptionRegister(row.issuedBy.role) === reception)
+      .reduce((sum, row) => sum + row.amountFcfa, 0);
   const batches = await Promise.all(
     groupInvoicesForSettlement(unsettled).map(enrichBatchNet),
   );
@@ -236,7 +257,18 @@ export async function getCashRegisterDetail(registerId: CashRegisterId) {
     };
   });
 
-  const balanceFcfa = batches.reduce((sum, row) => sum + row.netTotalFcfa, 0);
+  const registerNetFcfa = batches.reduce((sum, row) => sum + row.netTotalFcfa, 0);
+  const doctorSharesFcfa = await outstandingDoctorShareCashFcfa();
+  const cashAfterShares = deductSharesFromCashBalances(
+    sumRole(true),
+    sumRole(false),
+    doctorSharesFcfa,
+  );
+  const shownDoctorSharesFcfa =
+    registerId === "comptabilite"
+      ? cashAfterShares.comptableShareFcfa
+      : cashAfterShares.receptionShareFcfa;
+  const balanceFcfa = registerNetFcfa - shownDoctorSharesFcfa;
   const grossFcfa = batches.reduce((sum, row) => sum + row.systemTotalFcfa, 0);
   const expensesFcfa = batches.reduce((sum, row) => sum + row.expensesTotalFcfa, 0);
 
@@ -246,6 +278,7 @@ export async function getCashRegisterDetail(registerId: CashRegisterId) {
     balanceFcfa,
     grossFcfa,
     expensesFcfa,
+    doctorSharesFcfa: shownDoctorSharesFcfa,
     transactionCount: transactions.length,
     transactions,
     batches: batches.map((batch) => ({
@@ -288,14 +321,31 @@ export async function disburseCashRegister(params: {
 
   const results: string[] = [];
   let remaining = params.disbursementFcfa;
+  const openInvoices = await fetchAllUnsettledInvoices();
+  const sumOpen = (reception: boolean) =>
+    openInvoices
+      .filter((row) => isReceptionRegister(row.issuedBy.role) === reception)
+      .reduce((sum, row) => sum + row.amountFcfa, 0);
+  const shareSplit = deductSharesFromCashBalances(
+    sumOpen(true),
+    sumOpen(false),
+    await outstandingDoctorShareCashFcfa(),
+  );
+  let shareLeft =
+    params.registerId === "comptabilite"
+      ? shareSplit.comptableShareFcfa
+      : shareSplit.receptionShareFcfa;
 
   for (const batch of batches.sort((a, b) => {
     const ta = a.businessDate.getTime();
     const tb = b.businessDate.getTime();
     return ta - tb;
   })) {
-    if (remaining <= 0) break;
+    if (remaining <= 0 && shareLeft <= 0) break;
     if (batch.netTotalFcfa <= 0) continue;
+
+    const shareHit = Math.min(shareLeft, batch.netTotalFcfa);
+    const cashDue = batch.netTotalFcfa - shareHit;
 
     const existing = await prisma.receptionCashSettlement.findUnique({
       where: {
@@ -327,8 +377,11 @@ export async function disburseCashRegister(params: {
         batch.expensesTotalFcfa - expensesAlreadyApplied,
       );
       const supplementNetFcfa = netAfterExpenses(supplementGrossFcfa, incrementalExpenses);
-      const disburseAmount = Math.min(remaining, supplementNetFcfa);
-      if (disburseAmount <= 0) continue;
+      const supplementShareHit = Math.min(shareLeft, supplementNetFcfa);
+      const supplementCashDue = supplementNetFcfa - supplementShareHit;
+      const disburseAmount = Math.min(remaining, supplementCashDue);
+      const sharesUsed = disburseAmount === supplementCashDue ? supplementShareHit : 0;
+      if (disburseAmount <= 0 && sharesUsed <= 0) continue;
 
       const supplementNote = `Collecte gestionnaire +${disburseAmount.toLocaleString("fr-FR")} FCFA (${batch.invoices.length} facture(s))`;
       const updatedComment = [existing.comment, supplementNote, mergedComment]
@@ -368,6 +421,8 @@ export async function disburseCashRegister(params: {
           })),
         });
 
+        if (sharesUsed > 0) await applyDoctorShareCash(tx, sharesUsed);
+
         await tx.auditLog.create({
           data: {
             userId: params.gestionnaireId,
@@ -378,6 +433,7 @@ export async function disburseCashRegister(params: {
               registerId: params.registerId,
               cashierId: batch.cashierId,
               disbursementFcfa: disburseAmount,
+              doctorSharesFcfa: sharesUsed,
               supplemented: true,
             },
           },
@@ -387,10 +443,13 @@ export async function disburseCashRegister(params: {
       });
 
       remaining -= disburseAmount;
+      shareLeft -= sharesUsed;
       continue;
     }
 
-    const disburseAmount = Math.min(remaining, batch.netTotalFcfa);
+    const disburseAmount = Math.min(remaining, cashDue);
+    const sharesUsed = disburseAmount === cashDue ? shareHit : 0;
+    if (disburseAmount <= 0 && sharesUsed <= 0) continue;
 
     await prisma.$transaction(async (tx) => {
       const freshInvoices = await tx.invoice.findMany({
@@ -413,8 +472,19 @@ export async function disburseCashRegister(params: {
           physicalCashFcfa: disburseAmount,
           disbursementFcfa: disburseAmount,
           varianceFcfa: disburseAmount - batch.systemTotalFcfa,
-          isCoherent: batch.expensesTotalFcfa === 0 && disburseAmount === batch.systemTotalFcfa,
-          comment: mergedComment || null,
+          isCoherent:
+            batch.expensesTotalFcfa === 0 &&
+            sharesUsed === 0 &&
+            disburseAmount === batch.systemTotalFcfa,
+          comment:
+            [
+              mergedComment,
+              sharesUsed > 0
+                ? `Parts médecins déduites : ${sharesUsed.toLocaleString("fr-FR")} FCFA`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || null,
         },
       });
 
@@ -424,6 +494,8 @@ export async function disburseCashRegister(params: {
           invoiceId: invoice.id,
         })),
       });
+
+      if (sharesUsed > 0) await applyDoctorShareCash(tx, sharesUsed);
 
       await tx.auditLog.create({
         data: {
@@ -435,6 +507,7 @@ export async function disburseCashRegister(params: {
             registerId: params.registerId,
             cashierId: batch.cashierId,
             disbursementFcfa: disburseAmount,
+            doctorSharesFcfa: sharesUsed,
           },
         },
       });
@@ -443,6 +516,7 @@ export async function disburseCashRegister(params: {
     });
 
     remaining -= disburseAmount;
+    shareLeft -= sharesUsed;
   }
 
   if (!results.length) throw new Error("NOTHING_DISBURSED");
@@ -502,11 +576,16 @@ export async function disburseFromDayClosure(params: {
     unsettled.length > 0
       ? unsettled.reduce((sum, row) => sum + row.amountFcfa, 0)
       : params.closure.collectedFcfa;
-  const disbursementFcfa = Math.max(0, params.closure.netFcfa);
+  const closureNetFcfa = Math.max(0, params.closure.netFcfa);
+  const withheldFcfa = Math.min(closureNetFcfa, await outstandingDoctorShareCashFcfa());
+  const disbursementFcfa = closureNetFcfa - withheldFcfa;
   const physicalCashFcfa = disbursementFcfa;
 
   const comment = [
     `Clôture de journée validée — ${formatBusinessDate(params.closure.businessDate)}`,
+    withheldFcfa > 0
+      ? `Parts médecins déduites : ${withheldFcfa.toLocaleString("fr-FR")} FCFA`
+      : null,
     params.closure.comment?.trim(),
     params.validationComment?.trim(),
   ]
@@ -588,6 +667,8 @@ export async function disburseFromDayClosure(params: {
         });
       }
     }
+
+    if (withheldFcfa > 0) await applyDoctorShareCash(tx, withheldFcfa);
 
     await tx.receptionDayClosure.update({
       where: { id: params.closure.id },

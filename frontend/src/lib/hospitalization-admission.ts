@@ -123,6 +123,35 @@ export function hospitalizationStayEnded(hosp: {
   return end <= todayLocalIsoDate()
 }
 
+/** Temps restant jusqu'à la libération automatique (date de sortie). */
+export function formatStayRemaining(endDate?: string | Date | null, now = new Date()): string {
+  if (!endDate) return '—'
+  const end = endDate instanceof Date ? endDate : new Date(endDate)
+  if (Number.isNaN(end.getTime())) return '—'
+  const ms = end.getTime() - now.getTime()
+  if (ms <= 0) return '0 min'
+  const totalMinutes = Math.floor(ms / 60_000)
+  const days = Math.floor(totalMinutes / (60 * 24))
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60)
+  const minutes = totalMinutes % 60
+  if (days > 0) return hours > 0 ? `${days} j ${hours} h` : `${days} j`
+  if (hours > 0) return minutes > 0 ? `${hours} h ${minutes} min` : `${hours} h`
+  return `${Math.max(1, minutes)} min`
+}
+
+export function stayAmountLabel(
+  totalDueFcfa: number,
+  paidFcfa: number,
+): { kind: 'paid' | 'due'; amount: number } {
+  const total = Math.max(0, totalDueFcfa || 0)
+  const paid = Math.max(0, paidFcfa || 0)
+  const remaining = Math.max(0, total - paid)
+  if (remaining <= 0 && (paid > 0 || total > 0)) {
+    return { kind: 'paid', amount: paid || total }
+  }
+  return { kind: 'due', amount: remaining }
+}
+
 export function defaultAdmissionForm(partial: {
   patientFirstName: string
   patientLastName: string

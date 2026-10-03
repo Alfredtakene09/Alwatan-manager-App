@@ -62,7 +62,9 @@ const rows = computed<TableRow[]>(() => {
       createdAt: isPaidMode.value ? (item.paidAt ?? item.updatedAt) : item.updatedAt,
     })),
   ).map((item) => {
-    const prescribedAt = new Date(item.prescribedAt)
+    const prescribedAt = new Date(
+      isPaidMode.value ? (item.paidAt ?? item.updatedAt) : item.prescribedAt,
+    )
     const netFcfa = item.grossFcfa - (item.labExamReductionFcfa ?? 0)
     const examNames = examLinesSectionOrNameList(item.examLines ?? [])
     const examCount = examNames.length
@@ -185,11 +187,11 @@ function onPrint(row: TableRow) {
             <tr>
               <th class="simple-table__num">#</th>
               <th>{{ uiText('Matricule') }}</th>
-              <th>{{ uiText('Patient') }}</th>
-              <th>{{ uiText('Médecin') }}</th>
+              <th class="simple-table__patient">{{ uiText('Patient') }}</th>
+              <th class="simple-table__doctor">{{ uiText('Médecin') }}</th>
               <th class="simple-table__exam">{{ uiText('Examens') }}</th>
               <th>{{ uiText(isPaidMode ? 'Net payé' : 'Montant') }}</th>
-              <th>{{ uiText('Prescrit le') }}</th>
+              <th>{{ uiText(isPaidMode ? 'Payé le' : 'Prescrit le') }}</th>
               <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
             </tr>
           </thead>
@@ -199,11 +201,11 @@ function onPrint(row: TableRow) {
               <td>
                 <span class="st-badge">{{ row.code }}</span>
               </td>
-              <td>
+              <td class="simple-table__patient">
                 <span class="st-name">{{ row.patientName }}</span>
                 <span v-if="row.patientPhone" class="st-sub">{{ row.patientPhone }}</span>
               </td>
-              <td>
+              <td class="simple-table__doctor">
                 <span class="st-sub">{{ row.doctorName }}</span>
               </td>
               <td class="simple-table__exam">

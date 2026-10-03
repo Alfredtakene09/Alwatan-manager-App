@@ -13,6 +13,7 @@ import {
   Banknote,
   Layers,
   Pencil,
+  Printer,
   Trash2,
   X,
   Plus,
@@ -23,9 +24,9 @@ import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import { confirmAppModal, showApiErrorModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
-import { emptyExamReductionsByKind } from '@/lib/exam-billing'
+import { emptyExamReductionsByKind, examsByKindFromLines } from '@/lib/exam-billing'
 import { type LabExamPendingItem } from '@/lib/lab-exam-pending'
-import { printLabExamPaymentReceipts } from '@/lib/lab-exam-invoice'
+import { printLabExamPaymentReceipts, type ExamKindInvoiceMeta } from '@/lib/lab-exam-invoice'
 import { cancelPrintWindow, reservePrintWindow } from '@/lib/print-document'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
@@ -69,8 +70,16 @@ type SourceFilter = 'all' | OperationSource
 type OperationSource = 'bloc' | 'other'
 type PeriodMode = DateFilterMode | 'all'
 
+type OperationPayment = {
+  id: string
+  amountFcfa: number
+  paidAt: string
+  recordedByName: string
+}
+
 type OtherOperationInvoice = {
   id: string
+  invoiceNumber?: string
   status: string
   amountFcfa: number
   paidAmountFcfa: number
@@ -99,7 +108,11 @@ type OperationRow = {
   patientCode: string
   intervention: string
   interventionTypeId: string
+  surgeonId: string
   surgeonName: string
+  doctor: { firstName: string; lastName: string } | null
+  invoiceNumber: string
+  payments: OperationPayment[]
   assistantName: string
   completed: boolean
   timestamp: number
@@ -178,9 +191,11 @@ const actionId = ref<string | null>(null)
 const payTarget = ref<{ row: OperationRow; item: LabExamPendingItem } | null>(null)
 const payAmount = ref('')
 const submittingPayment = ref(false)
+const receiptRow = ref<OperationRow | null>(null)
 const searchQuery = ref('')
 const paymentFilter = ref<PaymentFilter>('all')
 const receptionistFilter = ref('')
+const doctorFilter = ref('')
 const sourceFilter = ref<SourceFilter>('all')
 
 const showRegisterModal = ref(false)
@@ -241,34 +256,40 @@ async function submitRegisterOperation() {
   registeringOperation.value = true
   message.value = ''
   try {
-    const { data } = await api.post<{ invoice?: { invoiceNumber?: string } | null }>(
-      '/visits/external-lab-order',
-      {
-        firstName,
-        lastName,
-        age: age ?? undefined,
-        ageUnit: patientForm.value.ageUnit,
-        phone: patientForm.value.phone.trim() || undefined,
-        gender: patientForm.value.gender,
-        service: operationLabel,
-        examsByKind: registerExams.value,
-        reductionFcfa: 0,
-        operationAmountFcfa: price,
-        amountFcfa: price,
-        doctorId: selectedDoctorId.value,
-        ...(operationAssistant.value ? { operationAssistant: operationAssistant.value } : {}),
-        ...(operationServiceId.value ? { operationServiceId: operationServiceId.value } : {}),
-      },
-    )
-    message.value = data.invoice?.invoiceNumber
-      ? translateTemplate('Opération enregistrée — {invoice}.', {
-          invoice: data.invoice.invoiceNumber,
-        })
-      : uiText('Opération enregistrée.')
-    messageType.value = 'success'
+    const { data } = await api.post<{
+      visit?: { id: string } | null
+      doctor?: { firstName: string; lastName: string } | null
+    }>('/visits/external-lab-order', {
+      firstName,
+      lastName,
+      age: age ?? undefined,
+      ageUnit: patientForm.value.ageUnit,
+      phone: patientForm.value.phone.trim() || undefined,
+      gender: patientForm.value.gender,
+      service: operationLabel,
+      examsByKind: registerExams.value,
+      reductionFcfa: 0,
+      operationAmountFcfa: price,
+      amountFcfa: price,
+      doctorId: selectedDoctorId.value,
+      deferCollection: true,
+      ...(operationAssistant.value ? { operationAssistant: operationAssistant.value } : {}),
+      ...(operationServiceId.value ? { operationServiceId: operationServiceId.value } : {}),
+    })
+    const doctor = data.doctor ?? null
+    const visitId = data.visit?.id
     showRegisterModal.value = false
     resetRegisterForm()
     await load()
+    const row = visitId ? findOperationRow(visitId) : null
+    if (row && row.remainingFcfa > 0 && row.consultationId) {
+      message.value = uiText('Patient enregistré. Encaissez l’opération puis imprimez le reçu.')
+      messageType.value = 'success'
+      await openEncaisser(row, doctor)
+      return
+    }
+    message.value = uiText('Opération enregistrée.')
+    messageType.value = 'success'
   } catch (error: unknown) {
     const shown = await showDuplicateModalFromError(error)
     if (shown) return
@@ -299,6 +320,17 @@ const filterTo = ref('')
 
 function userName(user?: SurgeryUserRef | null) {
   return user ? fullName(user.firstName, user.lastName) : ''
+}
+
+function mapPayments(
+  invoice?: { payments?: { id: string; amountFcfa: number; paidAt: string; recordedBy?: SurgeryUserRef | null }[] } | null,
+): OperationPayment[] {
+  return (invoice?.payments ?? []).map((payment) => ({
+    id: payment.id,
+    amountFcfa: payment.amountFcfa,
+    paidAt: payment.paidAt,
+    recordedByName: userName(payment.recordedBy),
+  }))
 }
 
 function paymentInfo(
@@ -336,7 +368,11 @@ function toOtherRow(op: OtherOperationInvoice): OperationRow {
     patientCode: op.visit.patient.code,
     intervention: op.interventionLabel,
     interventionTypeId: '',
+    surgeonId: op.doctor?.id ?? '',
     surgeonName: doctor ? `Dr ${doctor.replace(/^dr\.?\s+/i, '')}` : '—',
+    doctor: op.doctor ? { firstName: op.doctor.firstName, lastName: op.doctor.lastName } : null,
+    invoiceNumber: op.invoiceNumber ?? '',
+    payments: mapPayments(op),
     assistantName: op.assistantName?.trim() || '—',
     completed: false,
     timestamp: date.getTime(),
@@ -361,7 +397,11 @@ function toRow(surgery: SurgeryCaseRow): OperationRow {
     patientCode: surgery.visit.patient.code,
     intervention: surgery.interventionType.label,
     interventionTypeId: surgery.interventionType.id,
+    surgeonId: surgery.surgeon.id,
     surgeonName: `Dr ${fullName(surgery.surgeon.firstName, surgery.surgeon.lastName).replace(/^dr\.?\s+/i, '')}`,
+    doctor: { firstName: surgery.surgeon.firstName, lastName: surgery.surgeon.lastName },
+    invoiceNumber: surgery.invoice?.invoiceNumber ?? '',
+    payments: mapPayments(surgery.invoice),
     assistantName: formatAssistantLabel(surgery) || '—',
     completed: surgery.status === 'COMPLETED',
     timestamp: date.getTime(),
@@ -416,15 +456,32 @@ const receptionistSummaries = computed((): ReceptionistSummary[] => {
   return [...map.values()].sort((a, b) => b.billedFcfa - a.billedFcfa)
 })
 
+const doctorOptions = computed(() => {
+  const map = new Map<string, string>()
+  for (const row of periodRows.value) {
+    if (!row.surgeonId) continue
+    map.set(row.surgeonId, row.surgeonName)
+  }
+  return [...map.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+})
+
 const receptionistRows = computed(() =>
   receptionistFilter.value
     ? periodRows.value.filter((row) => row.registeredById === receptionistFilter.value)
     : periodRows.value,
 )
 
+const scopedRows = computed(() =>
+  doctorFilter.value
+    ? receptionistRows.value.filter((row) => row.surgeonId === doctorFilter.value)
+    : receptionistRows.value,
+)
+
 const displayedRows = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  return receptionistRows.value.filter((row) => {
+  return scopedRows.value.filter((row) => {
     if (paymentFilter.value !== 'all' && row.paymentState !== paymentFilter.value) return false
     if (!q) return true
     return (
@@ -440,7 +497,7 @@ const displayedRows = computed(() => {
 })
 
 const stats = computed(() => {
-  const rows = receptionistRows.value
+  const rows = scopedRows.value
   return {
     count: rows.length,
     billedFcfa: rows.reduce((sum, row) => sum + row.billedFcfa, 0),
@@ -495,7 +552,46 @@ function apiErrorText(error: unknown) {
     : undefined
 }
 
-async function openEncaisser(row: OperationRow) {
+function findOperationRow(visitId: string) {
+  const surgery = surgeries.value.find((item) => item.visit.id === visitId)
+  if (surgery) return toRow(surgery)
+  const other = otherOperations.value.find((item) => item.visit.id === visitId)
+  if (other) return toOtherRow(other)
+  return null
+}
+
+function operationPaymentItem(
+  row: OperationRow,
+  doctor?: { firstName: string; lastName: string } | null,
+): LabExamPendingItem | null {
+  if (!row.consultationId) return null
+  const { firstName, lastName } = splitPatientFullName(row.patientName)
+  const examLines = [
+    { label: row.intervention, unitPriceFcfa: row.billedFcfa, kind: 'operation' as const },
+  ]
+  return {
+    id: row.consultationId,
+    visitId: row.visitId,
+    updatedAt: new Date().toISOString(),
+    examLines,
+    examsByKind: examsByKindFromLines(examLines),
+    grossFcfa: row.billedFcfa,
+    unpaidKinds: ['operation'],
+    visit: {
+      patient: {
+        code: row.patientCode,
+        firstName,
+        lastName,
+      },
+    },
+    doctor: doctor ?? null,
+  }
+}
+
+async function openEncaisser(
+  row: OperationRow,
+  doctor?: { firstName: string; lastName: string } | null,
+) {
   actionId.value = row.id
   message.value = ''
   try {
@@ -504,8 +600,8 @@ async function openEncaisser(row: OperationRow) {
     const item =
       pending.find((p) => p.visitId === row.visitId) ??
       (row.consultationId ? pending.find((p) => p.id === row.consultationId) : undefined) ??
-      null
-    if (!item) {
+      operationPaymentItem(row, doctor)
+    if (!item || row.remainingFcfa <= 0) {
       message.value = 'Aucun solde à encaisser pour cette opération.'
       messageType.value = 'error'
       return
@@ -662,13 +758,26 @@ async function confirmEncaisser() {
       installmentAmountFcfa: amountFcfa,
       installmentsByKind: { operation: amountFcfa },
     })
+    const operationInvoice = res.invoicesByKind?.operation
+    const remaining = operationInvoice?.remainingFcfa ?? remainingAfterPayment.value
+    const invoicesByKind = {
+      operation: {
+        invoiceNumber: operationInvoice?.invoiceNumber,
+        grossFcfa: operationInvoice?.grossFcfa ?? target.row.billedFcfa,
+        reductionFcfa: operationInvoice?.reductionFcfa ?? 0,
+        netFcfa: operationInvoice?.netFcfa ?? target.row.billedFcfa,
+        paidFcfa: operationInvoice?.paidFcfa ?? target.row.paidFcfa + amountFcfa,
+        remainingFcfa: remaining,
+        isFullyPaid: remaining <= 0,
+        installmentFcfa: amountFcfa,
+      } satisfies ExamKindInvoiceMeta,
+    }
     const printed = printLabExamPaymentReceipts(
       target.item,
       { kinds: ['operation'], reductionsByKind },
-      res.invoicesByKind,
+      invoicesByKind,
     )
     if (!printed) cancelPrintWindow()
-    const remaining = res.invoicesByKind?.operation?.remainingFcfa ?? remainingAfterPayment.value
     message.value =
       remaining > 0
         ? translateTemplate('{amount} encaissé — reste à payer : {rest}.', {
@@ -690,6 +799,93 @@ async function confirmEncaisser() {
   } finally {
     submittingPayment.value = false
   }
+}
+
+function receiptPayments(row: OperationRow): OperationPayment[] {
+  if (row.payments.length) return row.payments
+  if (row.paidFcfa <= 0) return []
+  return [
+    {
+      id: `paid-${row.id}`,
+      amountFcfa: row.paidFcfa,
+      paidAt: new Date(row.timestamp).toISOString(),
+      recordedByName: row.collectedBy,
+    },
+  ]
+}
+
+function printOperationPaymentReceipt(row: OperationRow, payment: OperationPayment) {
+  const item = operationPaymentItem(row, row.doctor)
+  if (!item) {
+    message.value = uiText('Impossible d’imprimer ce reçu.')
+    messageType.value = 'error'
+    return
+  }
+  const payments = receiptPayments(row)
+  const index = Math.max(0, payments.findIndex((entry) => entry.id === payment.id))
+  const paidThrough = payments.slice(0, index + 1).reduce((sum, entry) => sum + entry.amountFcfa, 0)
+  const remaining = Math.max(0, row.billedFcfa - paidThrough)
+  item.updatedAt = payment.paidAt
+  item.paidAt = payment.paidAt
+  item.cashierName = payment.recordedByName || null
+  reservePrintWindow('80mm')
+  const printed = printLabExamPaymentReceipts(
+    item,
+    { kinds: ['operation'], reductionsByKind: emptyExamReductionsByKind() },
+    {
+      operation: {
+        invoiceNumber: row.invoiceNumber || undefined,
+        grossFcfa: row.billedFcfa,
+        reductionFcfa: 0,
+        netFcfa: row.billedFcfa,
+        paidFcfa: paidThrough,
+        remainingFcfa: remaining,
+        isFullyPaid: remaining <= 0,
+        installmentFcfa: payment.amountFcfa,
+      },
+    },
+  )
+  if (!printed) {
+    cancelPrintWindow()
+    message.value = uiText("Impossible d'imprimer le reçu.")
+    messageType.value = 'error'
+  }
+}
+
+const listedReceipts = computed(() =>
+  receiptRow.value ? receiptPayments(receiptRow.value) : [],
+)
+
+function reprintReceipts(row: OperationRow) {
+  const payments = receiptPayments(row)
+  if (!payments.length) {
+    message.value = uiText('Aucun reçu à réimprimer pour cette opération.')
+    messageType.value = 'error'
+    return
+  }
+  if (payments.length === 1) {
+    printOperationPaymentReceipt(row, payments[0]!)
+    return
+  }
+  receiptRow.value = row
+}
+
+function printListedReceipt(payment: OperationPayment) {
+  const row = receiptRow.value
+  if (!row) return
+  printOperationPaymentReceipt(row, payment)
+}
+
+function formatReceiptWhen(iso: string) {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function canDelete(row: OperationRow) {
@@ -757,10 +953,12 @@ const exportColumns: ExportColumn<OperationRow>[] = [
 
 function exportShared() {
   const receptionist = receptionistSummaries.value.find((r) => r.id === receptionistFilter.value)
+  const doctor = doctorOptions.value.find((item) => item.id === doctorFilter.value)
   return {
     captionRows: [
       { label: 'Période', value: periodLabel.value },
       ...(receptionist ? [{ label: 'Réceptionniste', value: receptionist.name }] : []),
+      ...(doctor ? [{ label: 'Médecin', value: doctor.name }] : []),
     ],
     totalsRows: [
       { label: 'Nombre d’opérations', value: String(displayedRows.value.length) },
@@ -977,7 +1175,18 @@ onMounted(load)
                     <th>{{ uiText('Date') }}</th>
                     <th>{{ uiText('Patient') }}</th>
                     <th>{{ uiText('Intervention') }}</th>
-                    <th>{{ uiText('Médecin') }}</th>
+                    <th class="ops-doctor-col">
+                      <select
+                        v-model="doctorFilter"
+                        class="ops-doctor-filter"
+                        :aria-label="uiText('Filtrer par médecin')"
+                      >
+                        <option value="">{{ uiText('Tous les médecins') }}</option>
+                        <option v-for="doctor in doctorOptions" :key="doctor.id" :value="doctor.id">
+                          {{ doctor.name }}
+                        </option>
+                      </select>
+                    </th>
                     <th>{{ uiText('Assistant') }}</th>
                     <th>{{ uiText('Enregistrement') }}</th>
                     <th>{{ uiText('Montant') }}</th>
@@ -1054,6 +1263,17 @@ onMounted(load)
                           {{ uiText(actionId === row.id ? 'Ouverture…' : 'Encaisser') }}
                         </button>
                         <button
+                          v-if="row.paidFcfa > 0"
+                          type="button"
+                          class="st-btn st-btn--print st-btn--labeled"
+                          :title="uiText('Réimprimer le reçu')"
+                          :disabled="!!actionId || submittingPayment"
+                          @click="reprintReceipts(row)"
+                        >
+                          <Printer :size="15" />
+                          {{ uiText('Reçu') }}
+                        </button>
+                        <button
                           v-if="canEditOperations"
                           type="button"
                           class="st-btn st-btn--edit"
@@ -1075,7 +1295,7 @@ onMounted(load)
                           <Trash2 :size="15" />
                         </button>
                         <span
-                          v-if="row.remainingFcfa <= 0 && !canDelete(row) && !canEditOperations"
+                          v-if="row.remainingFcfa <= 0 && row.paidFcfa <= 0 && !canDelete(row) && !canEditOperations"
                           class="st-muted"
                         >—</span>
                       </div>
@@ -1253,10 +1473,12 @@ onMounted(load)
           <p v-else class="ops-pay__after">
             {{
               remainingAfterPayment > 0
-                ? translateTemplate('Reste après ce paiement : {amount}', {
+                ? translateTemplate('Reste après ce paiement : {amount}. Le reçu imprimera ce versement.', {
                     amount: formatFcfa(remainingAfterPayment),
                   })
-                : uiText('L’opération sera entièrement soldée.')
+                : translateTemplate('L’opération sera entièrement soldée. Le reçu imprimera {amount}.', {
+                    amount: formatFcfa(parsedPayAmount),
+                  })
             }}
           </p>
 
@@ -1278,6 +1500,51 @@ onMounted(load)
             </UiButton>
           </footer>
         </form>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="receiptRow" class="ops-pay-overlay" @click.self="receiptRow = null">
+        <div class="ops-pay" role="dialog" aria-modal="true" aria-labelledby="ops-receipt-title">
+          <header class="ops-pay__head">
+            <div>
+              <p id="ops-receipt-title" class="ops-pay__title">{{ uiText('Anciens reçus') }}</p>
+              <p class="ops-pay__subtitle">
+                {{ receiptRow.patientName }} · {{ receiptRow.intervention }}
+              </p>
+            </div>
+            <button
+              type="button"
+              class="ops-pay__close"
+              :aria-label="uiText('Fermer')"
+              @click="receiptRow = null"
+            >
+              <X :size="18" />
+            </button>
+          </header>
+          <ul class="ops-receipts">
+            <li v-for="payment in listedReceipts" :key="payment.id">
+              <div>
+                <strong>{{ formatFcfa(payment.amountFcfa) }}</strong>
+                <span>{{ formatReceiptWhen(payment.paidAt) }}</span>
+                <span v-if="payment.recordedByName">{{ payment.recordedByName }}</span>
+              </div>
+              <button
+                type="button"
+                class="st-btn st-btn--print st-btn--labeled"
+                @click="printListedReceipt(payment)"
+              >
+                <Printer :size="15" />
+                {{ uiText('Imprimer') }}
+              </button>
+            </li>
+          </ul>
+          <footer class="ops-pay__foot">
+            <UiButton variant="ghost" type="button" @click="receiptRow = null">
+              {{ uiText('Fermer') }}
+            </UiButton>
+          </footer>
+        </div>
       </div>
     </Teleport>
   </div>
@@ -1374,6 +1641,25 @@ onMounted(load)
   background: #fff;
   font-size: 0.875rem;
   min-width: 10.5rem;
+}
+
+.ops-doctor-col {
+  min-width: 11rem;
+}
+
+.ops-doctor-filter {
+  width: 100%;
+  max-width: 14rem;
+  height: 1.85rem;
+  padding: 0 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .filter-bar__quick {
@@ -1486,6 +1772,41 @@ onMounted(load)
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+}
+
+.st-btn--print {
+  color: #0f766e;
+}
+
+.ops-receipts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ops-receipts li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.ops-receipts li div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.ops-receipts li span {
+  color: var(--text-muted);
+  font-size: 0.78rem;
 }
 
 .ops-pay-overlay {

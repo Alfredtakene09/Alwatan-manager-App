@@ -7,6 +7,7 @@ import {
   TrendingDown,
   TrendingUp,
   Users,
+  Stethoscope,
   FlaskConical,
   BedDouble,
   Wallet,
@@ -168,6 +169,22 @@ const summaryStats = computed((): SummaryStat[] => {
       icon: Users,
       variant: 'violet',
       trend: formatTrendPercentLocalized(k.payrollChangePercent, !isFullMonthRange.value),
+    },
+    {
+      id: 'doctor-shares',
+      label: translateDashboardLabel('Parts médecins reçues'),
+      value: formatFcfa(k.doctorSharesReceivedFcfa ?? 0),
+      icon: Stethoscope,
+      variant: 'amber',
+      trend: [
+        translateTemplate('Consult. {amount}', {
+          amount: formatFcfa(k.doctorSharesConsultationFcfa ?? 0),
+        }),
+        translateTemplate('Opér. {amount}', {
+          amount: formatFcfa(k.doctorSharesSurgeryFcfa ?? 0),
+        }),
+        formatTrendPercentLocalized(k.doctorSharesChangePercent ?? 0, !isFullMonthRange.value),
+      ].join(' · '),
     },
     {
       id: 'balance',

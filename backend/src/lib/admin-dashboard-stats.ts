@@ -25,6 +25,7 @@ import {
   payrollCountedWhere,
   payrollPeriodBounds,
 } from "./admin-payroll.js";
+import { sumSettledDoctorSharesBetween } from "./doctor-share-cash.js";
 
 export type MonthPeriod = { year: number; month: number };
 
@@ -430,6 +431,10 @@ export type FinancialKpis = {
   netChangePercent: number;
   payrollMonthFcfa: number;
   payrollChangePercent: number;
+  doctorSharesReceivedFcfa: number;
+  doctorSharesChangePercent: number;
+  doctorSharesConsultationFcfa: number;
+  doctorSharesSurgeryFcfa: number;
 };
 
 export async function buildFinancialKpis(
@@ -472,6 +477,8 @@ export async function buildFinancialKpis(
     prevPayrollPaid,
     currentPayrollGross,
     prevPayrollGross,
+    currentDoctorShares,
+    prevDoctorShares,
   ] = await Promise.all([
     aggregateCollectedBetween(currentBounds.start, currentBounds.end),
     aggregateCollectedBetween(prevBounds.start, prevBounds.end),
@@ -485,6 +492,8 @@ export async function buildFinancialKpis(
     useMonthGross
       ? sumPayrollMonthGross(prevMonth.year, prevMonth.month)
       : Promise.resolve(0),
+    sumSettledDoctorSharesBetween(currentBounds.start, currentBounds.end),
+    sumSettledDoctorSharesBetween(prevBounds.start, prevBounds.end),
   ]);
 
   const currentPayrollKpi = useMonthGross ? currentPayrollGross : currentPayrollPaid;
@@ -504,6 +513,13 @@ export async function buildFinancialKpis(
     netChangePercent: percentChange(currentNet, prevNet),
     payrollMonthFcfa: currentPayrollKpi,
     payrollChangePercent: percentChange(currentPayrollKpi, prevPayrollKpi),
+    doctorSharesReceivedFcfa: currentDoctorShares.totalFcfa,
+    doctorSharesChangePercent: percentChange(
+      currentDoctorShares.totalFcfa,
+      prevDoctorShares.totalFcfa,
+    ),
+    doctorSharesConsultationFcfa: currentDoctorShares.consultationFcfa,
+    doctorSharesSurgeryFcfa: currentDoctorShares.surgeryFcfa,
   };
 }
 
@@ -535,6 +551,8 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
     prevPayrollPaid,
     currentPayrollGross,
     prevPayrollGross,
+    currentDoctorShares,
+    prevDoctorShares,
     pharmacyMonth,
     recentExpenses,
     employees,
@@ -559,6 +577,8 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
     useMonthGross
       ? sumPayrollMonthGross(prevKpiMonth.year, prevKpiMonth.month)
       : Promise.resolve(0),
+    sumSettledDoctorSharesBetween(currentBounds.start, currentBounds.end),
+    sumSettledDoctorSharesBetween(prevBounds.start, prevBounds.end),
     aggregatePharmacyBetween(currentBounds.start, currentBounds.end),
     prisma.clinicExpense.findMany({
       orderBy: { createdAt: "desc" },
@@ -701,6 +721,13 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
       netChangePercent: percentChange(currentNet, prevNet),
       payrollMonthFcfa: currentPayrollKpi,
       payrollChangePercent: percentChange(currentPayrollKpi, prevPayrollKpi),
+      doctorSharesReceivedFcfa: currentDoctorShares.totalFcfa,
+      doctorSharesChangePercent: percentChange(
+        currentDoctorShares.totalFcfa,
+        prevDoctorShares.totalFcfa,
+      ),
+      doctorSharesConsultationFcfa: currentDoctorShares.consultationFcfa,
+      doctorSharesSurgeryFcfa: currentDoctorShares.surgeryFcfa,
     },
     period: {
       from: resolved.fromIso,

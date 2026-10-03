@@ -1246,6 +1246,8 @@ model DoctorShareClaim {
   requestedById   String
   settledById     String?
   settledAt       DateTime?
+  /// Part déjà retenue sur un décaissement de caisse (le reste sort encore du solde).
+  cashAppliedFcfa Int                    @default(0)
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
 

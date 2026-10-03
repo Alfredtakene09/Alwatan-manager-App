@@ -271,13 +271,23 @@ export type CollectedSlice = CollectedInvoiceFields & {
 export async function loadCollectedSlicesBetween(
   from: Date,
   to: Date,
-  options?: { cashierId?: string; patientService?: string; doctorId?: string },
+  options?: {
+    cashierId?: string;
+    patientService?: string;
+    doctorId?: string;
+    patientMatch?: Prisma.PatientWhereInput;
+  },
 ): Promise<CollectedSlice[]> {
   const service = options?.patientService?.trim();
   const doctorId = options?.doctorId?.trim();
-  const patientServiceWhere = service
-    ? { patient: countedPatientWhere({ service }) }
-    : undefined;
+  const patientParts: Prisma.PatientWhereInput[] = [];
+  if (service || options?.patientMatch) {
+    patientParts.push(countedPatientWhere(service ? { service } : undefined));
+  }
+  if (options?.patientMatch) patientParts.push(options.patientMatch);
+  const patientClause: Prisma.PatientWhereInput | undefined =
+    patientParts.length > 1 ? { AND: patientParts } : patientParts[0];
+  const patientServiceWhere = patientClause ? { patient: patientClause } : undefined;
   const doctorWhere: Prisma.InvoiceWhereInput | undefined = doctorId
     ? {
         OR: [
@@ -381,7 +391,12 @@ export async function loadCollectedSlicesBetween(
 export async function aggregateCollectedBetween(
   from: Date,
   to: Date,
-  options?: { patientService?: string; cashierId?: string; doctorId?: string },
+  options?: {
+    patientService?: string;
+    cashierId?: string;
+    doctorId?: string;
+    patientMatch?: Prisma.PatientWhereInput;
+  },
 ) {
   const slices = await loadCollectedSlicesBetween(from, to, options);
   return sumCollectedBreakdown(slices);

@@ -15,6 +15,7 @@ export type CashRegisterDetail = {
   balanceFcfa: number
   grossFcfa: number
   expensesFcfa: number
+  doctorSharesFcfa?: number
   transactionCount: number
   transactions: Array<{
     id: string
@@ -117,6 +118,9 @@ function submit() {
             <span>{{ detail.transactionCount }} transaction(s)</span>
             <span v-if="detail.expensesFcfa > 0">
               Dépenses caisse : {{ formatFcfa(detail.expensesFcfa) }}
+            </span>
+            <span v-if="(detail.doctorSharesFcfa ?? 0) > 0">
+              Parts médecins : {{ formatFcfa(detail.doctorSharesFcfa ?? 0) }}
             </span>
           </div>
         </div>

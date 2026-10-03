@@ -61,6 +61,7 @@ export default {
     'Somme globale': 'المجموع الإجمالي',
     'Tous (somme globale)': 'الكل (المجموع الإجمالي)',
     'À percevoir (parts %)': 'مستحق (حصص %)',
+    'Parts médecins reçues': 'حصص الأطباء المستلمة',
     'Consult. {amount}': 'استشارة {amount}',
     'Opér. {amount}': 'عملية {amount}',
     'Paie {amount}': 'راتب {amount}',
@@ -200,6 +201,7 @@ export default {
     'Aucun paiement enregistré pour ce patient.': 'لا يوجد دفع مسجّل لهذا المريض.',
     'Total facturé': 'إجمالي الفوترة',
     Encaissé: 'المحصّل',
+    'Ce versement': 'هذه الدفعة',
     'Déjà encaissé': 'تم تحصيله',
     'Total dû': 'المبلغ المستحق',
     'Reste à payer': 'المتبقي للدفع',
@@ -417,6 +419,7 @@ export default {
     'Uniquement vos encaissements': 'مقبوضاتك فقط',
     'Consultations, examens, opérations, hospitalisation (hors associés)':
       'الاستشارات والفحوصات والعمليات والاستشفاء (باستثناء الشركاء)',
+    'Consultations encaissées (hors associés)': 'الاستشارات المحصّلة (باستثناء الشركاء)',
     "À l'instant": 'الآن',
     '{n} min': '{n} د',
     '{h} h {m} min': '{h} س {m} د',
@@ -451,6 +454,8 @@ export default {
     Auteur: 'المُنشئ',
     'Enregistrement existant': 'سجل موجود',
     'Aucun examen payé pour le moment': 'لا توجد فحوصات مدفوعة حالياً',
+    'Aucun examen payé pour cette période': 'لا توجد فحوصات مدفوعة في هذه الفترة',
+    "Type d'examen": 'نوع الفحص',
     'Laboratoire, radiologie, échographie et odontologie':
       'مختبر، أشعة، موجات فوق صوتية وطب أسنان',
     'Patients ayant réglé leurs examens — réimpression des factures par type (laboratoire, radio, écho, odonto)':
@@ -1078,6 +1083,13 @@ export default {
     'Imprimer le reçu': 'طباعة الإيصال',
     'Imprimer le reçu de consultation': 'طباعة إيصال الاستشارة',
     'Réimprimer le reçu': 'إعادة طباعة الإيصال',
+    'Anciens reçus': 'الإيصالات السابقة',
+    'Aucun reçu à réimprimer pour cette opération.': 'لا يوجد إيصال لإعادة طباعته لهذه العملية.',
+    'Impossible d’imprimer ce reçu.': 'تعذر طباعة هذا الإيصال.',
+    'Reste après ce paiement : {amount}. Le reçu imprimera ce versement.':
+      'المتبقي بعد هذا الدفع: {amount}. سيظهر الإيصال هذا المبلغ.',
+    'L’opération sera entièrement soldée. Le reçu imprimera {amount}.':
+      'ستُسدَّد العملية بالكامل. سيظهر الإيصال {amount}.',
     'Réimprimer le reçu de consultation': 'إعادة طباعة إيصال الاستشارة',
     'Aucun examen à imprimer': 'لا يوجد فحص للطباعة',
     'Total payé': 'المجموع المدفوع',

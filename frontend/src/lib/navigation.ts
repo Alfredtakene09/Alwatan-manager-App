@@ -521,12 +521,6 @@ const directionOperationalNav: NavSection[] = [
             description: 'Patients consultés par les médecins',
           },
           {
-            to: '/reception/operations-attente',
-            label: 'Opérations en attente',
-            icon: Clock,
-            module: 'reception',
-          },
-          {
             to: '/reception/operations-effectuees',
             label: 'Opérations effectuées',
             icon: CheckCircle2,
@@ -544,7 +538,7 @@ const directionOperationalNav: NavSection[] = [
             label: 'Bloc & salles',
             icon: Scissors,
             module: 'bloc-salles',
-            description: 'Ajouter ou modifier les chambres',
+            description: 'Salles occupées — VIP 20 000 et simple 5 000',
             uiAction: 'hospitalisation.rooms',
           },
         ],

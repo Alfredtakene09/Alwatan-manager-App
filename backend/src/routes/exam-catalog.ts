@@ -58,7 +58,7 @@ function defaultHospitalisationCatalogItem(
     code: "HOSP",
     label: HOSPITALISATION_PRESCRIPTION_LABEL,
     category: "Orientation — salle choisie à la réception",
-    priceFcfa: simpleRoom?.dailyRateFcfa ?? 25_000,
+    priceFcfa: simpleRoom?.dailyRateFcfa ?? 5_000,
     clinicServiceId: null,
     clinicServiceName: "Hospitalisation",
   };

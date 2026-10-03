@@ -27,6 +27,8 @@ export type LabExamPendingItem = {
   grossFcfa: number
   examsSummary?: string
   paidAt?: string | null
+  /** Date d'encaissement par type (laboratoire, radio, écho…). */
+  paidAtByKind?: Partial<Record<ExamKindSlug, string>>
   labExamReductionFcfa?: number
   invoicesByKind?: Partial<
     Record<

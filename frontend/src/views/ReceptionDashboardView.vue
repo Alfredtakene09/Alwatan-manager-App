@@ -856,7 +856,11 @@ const dashboardStats = computed(() => {
   {
     id: 'revenue',
     label: revenueLabel,
-    value: formatFcfaCompact(stats.value.netTodayFcfa ?? stats.value.revenueTodayFcfa),
+    value: formatFcfaCompact(
+      stats.value.isPersonalScope
+        ? (stats.value.netTodayFcfa ?? stats.value.revenueTodayFcfa)
+        : (stats.value.consultationsTodayFcfa ?? 0),
+    ),
     hint: stats.value.isPersonalScope
       ? stats.value.expensesTodayFcfa
         ? translateTemplate('Brut {gross} − dépenses {expenses}', {
@@ -864,7 +868,7 @@ const dashboardStats = computed(() => {
             expenses: formatFcfaCompact(stats.value.expensesTodayFcfa ?? 0),
           })
         : 'Uniquement vos encaissements'
-      : 'Consultations, examens, opérations, hospitalisation (hors associés)',
+      : 'Consultations encaissées (hors associés)',
     icon: Banknote,
     variant: 'violet' as const,
   },

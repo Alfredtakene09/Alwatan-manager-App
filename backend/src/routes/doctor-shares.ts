@@ -13,6 +13,7 @@ import {
   listDoctorsWithPercentShares,
   periodBounds,
   requestPayrollForItems,
+  ensureSettledSurgeryCashClaim,
   settleConsultationCash,
 } from "../lib/doctor-share-claims.js";
 import { buildSharePaymentUpdate } from "../lib/surgery-share-payments.js";
@@ -228,21 +229,26 @@ router.post(
           where: { id: surgery.id },
           data,
         });
-        const kinds: DoctorShareKind[] = [];
-        if (body.shares.includes("surgeon")) kinds.push(DoctorShareKind.OPERATION_SURGEON);
-        if (body.shares.includes("assistant")) kinds.push(DoctorShareKind.OPERATION_ASSISTANT);
-        if (kinds.length) {
-          await tx.doctorShareClaim.updateMany({
-            where: {
-              surgeryCaseId: surgery.id,
-              kind: { in: kinds },
-              status: DoctorShareClaimStatus.PENDING_PAYROLL,
-            },
-            data: {
-              status: DoctorShareClaimStatus.CANCELLED,
-              settledAt: now,
-              settledById: req.user!.id,
-            },
+        const businessDate = surgery.completedAt ?? now;
+        if (body.shares.includes("surgeon")) {
+          await ensureSettledSurgeryCashClaim(tx, {
+            surgeryCaseId: surgery.id,
+            kind: DoctorShareKind.OPERATION_SURGEON,
+            amountFcfa: surgery.surgeonShareFcfa,
+            doctorUserId: surgery.surgeonId,
+            settledById: req.user!.id,
+            businessDate,
+          });
+        }
+        if (body.shares.includes("assistant") && surgery.interventionType.anesthesiologistId) {
+          const percent = surgery.interventionType.anesthesiologistPercent ?? 0;
+          await ensureSettledSurgeryCashClaim(tx, {
+            surgeryCaseId: surgery.id,
+            kind: DoctorShareKind.OPERATION_ASSISTANT,
+            amountFcfa: Math.round((surgery.totalCostFcfa * percent) / 100),
+            doctorUserId: surgery.interventionType.anesthesiologistId,
+            settledById: req.user!.id,
+            businessDate,
           });
         }
         return row;

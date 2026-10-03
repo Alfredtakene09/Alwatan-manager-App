@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { CircleDollarSign, Wallet } from '@lucide/vue'
+import { CircleDollarSign, Scissors, Stethoscope, Wallet } from '@lucide/vue'
 import api from '@/api/client'
 import { fullName, formatFcfa } from '@/lib/roles'
 import {
@@ -58,24 +58,21 @@ const settleSharesType = ref<'success' | 'error'>('success')
 const loading = ref(false)
 const loadError = ref('')
 
-const doctorSharesCardValue = computed(() => {
+const shareTotals = computed(() => {
   const totals = doctorShares.value?.totals
-  if (!totals) return formatFcfa(0)
-  return formatFcfa(totals.totalShareFcfa)
+  return {
+    consultationShareFcfa: totals?.consultationShareFcfa ?? 0,
+    surgeryShareFcfa: totals?.surgeryShareFcfa ?? 0,
+    totalShareFcfa: totals?.totalShareFcfa ?? 0,
+    pendingPayrollFcfa: totals?.pendingPayrollFcfa ?? 0,
+  }
 })
 
-const doctorSharesTrend = computed(() => {
+const payrollTrend = computed(() => {
   void localeCode.value
-  const totals = doctorShares.value?.totals
-  if (!totals) return translateDashboardLabel('Parts médecins non réglées')
-  const parts = [
-    translateTemplate('Consult. {amount}', { amount: formatFcfa(totals.consultationShareFcfa) }),
-    translateTemplate('Opér. {amount}', { amount: formatFcfa(totals.surgeryShareFcfa) }),
-  ]
-  if (totals.pendingPayrollFcfa > 0) {
-    parts.push(translateTemplate('Paie {amount}', { amount: formatFcfa(totals.pendingPayrollFcfa) }))
-  }
-  return parts.join(' · ')
+  const pending = shareTotals.value.pendingPayrollFcfa
+  if (pending <= 0) return ''
+  return translateTemplate('Paie {amount}', { amount: formatFcfa(pending) })
 })
 
 const selectedDoctorLabel = computed(() => {
@@ -264,14 +261,30 @@ defineExpose({ reload: loadDoctorShares })
       </div>
     </div>
 
-    <UiStatCard
-      :label="translateDashboardLabel('À percevoir (parts %)')"
-      :value="doctorSharesCardValue"
-      :trend="doctorSharesTrend"
-      :icon="CircleDollarSign"
-      variant="rose"
-      compact
-    />
+    <div class="doctor-shares-cards" :class="{ 'doctor-shares-cards--loading': loading }">
+      <UiStatCard
+        label="Consultations"
+        :value="formatFcfa(shareTotals.consultationShareFcfa)"
+        :icon="Stethoscope"
+        variant="blue"
+        compact
+      />
+      <UiStatCard
+        label="Opérations"
+        :value="formatFcfa(shareTotals.surgeryShareFcfa)"
+        :icon="Scissors"
+        variant="amber"
+        compact
+      />
+      <UiStatCard
+        label="Somme globale"
+        :value="formatFcfa(shareTotals.totalShareFcfa)"
+        :trend="payrollTrend"
+        :icon="CircleDollarSign"
+        variant="rose"
+        compact
+      />
+    </div>
 
     <p
       v-if="settleSharesMessage"
@@ -317,6 +330,16 @@ defineExpose({ reload: loadDoctorShares })
   align-items: end;
 }
 
+.doctor-shares-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.doctor-shares-cards--loading {
+  opacity: 0.55;
+}
+
 .doctor-shares-section__actions {
   grid-column: 1 / -1;
   display: flex;
@@ -345,7 +368,8 @@ defineExpose({ reload: loadDoctorShares })
 }
 
 @media (max-width: 1100px) {
-  .doctor-shares-section__filters {
+  .doctor-shares-section__filters,
+  .doctor-shares-cards {
     grid-template-columns: 1fr;
   }
 }

@@ -27,6 +27,10 @@ import {
   startOfDay,
 } from "./revenue-stats.js";
 import { countPendingDoctorOvertime } from "./doctor-overtime.js";
+import {
+  deductSharesFromCashBalances,
+  outstandingDoctorShareCashFcfa,
+} from "./doctor-share-cash.js";
 
 const CASH_REGISTER_ROLES: UserRole[] = [UserRole.RECEPTIONNISTE, UserRole.COMPTABLE];
 
@@ -479,10 +483,10 @@ async function computeGlobalCashBalance() {
     }),
   );
 
+  const doctorSharesFcfa = await outstandingDoctorShareCashFcfa();
   return {
-    totalFcfa: receptionFcfa + comptableFcfa,
-    receptionFcfa,
-    comptableFcfa,
+    ...deductSharesFromCashBalances(receptionFcfa, comptableFcfa, doctorSharesFcfa),
+    doctorSharesFcfa,
   };
 }
 

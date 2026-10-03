@@ -289,6 +289,7 @@ function mapLabExamPaid(consultation: {
       status?: InvoiceStatus;
       type: InvoiceType;
       createdAt: Date;
+      paidAt?: Date | null;
       issuedBy?: { firstName: string; lastName: string } | null;
     }>;
   };
@@ -395,8 +396,17 @@ function mapLabExamPaid(consultation: {
     });
   }
 
-  const paidAtByKind = parsePaidExamKindsByKind(consultation.clinicalNotes);
-  const markerDates = Object.values(paidAtByKind);
+  const markerByKind = parsePaidExamKindsByKind(consultation.clinicalNotes);
+  const paidAtByKind: Partial<Record<ExamKindSlug, string>> = {};
+  for (const [kind, date] of Object.entries(markerByKind)) {
+    if (date) paidAtByKind[kind as ExamKindSlug] = date.toISOString();
+  }
+  for (const invoice of labInvoices) {
+    const kind = (invoice.billingExamKind ?? null) as ExamKindSlug | null;
+    if (!kind || paidAtByKind[kind]) continue;
+    paidAtByKind[kind] = (invoice.paidAt ?? invoice.createdAt).toISOString();
+  }
+  const markerDates = Object.values(markerByKind);
   const paidAt =
     consultation.labSentToLabAt ??
     (markerDates.length
@@ -406,6 +416,7 @@ function mapLabExamPaid(consultation: {
   return {
     ...base,
     paidAt,
+    paidAtByKind,
     labExamReductionFcfa: consultation.labExamReductionFcfa,
     invoicesByKind,
     reductionsByKind,
@@ -719,6 +730,7 @@ router.get("/paid-exams", cashierAccess, async (req, res) => {
               status: true,
               type: true,
               createdAt: true,
+              paidAt: true,
               issuedBy: { select: { firstName: true, lastName: true } },
             },
             orderBy: { createdAt: "asc" },

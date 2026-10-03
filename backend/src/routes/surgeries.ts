@@ -47,6 +47,7 @@ const surgeryInclude = {
   invoice: {
     select: {
       id: true,
+      invoiceNumber: true,
       status: true,
       amountFcfa: true,
       paidAmountFcfa: true,
@@ -362,6 +363,7 @@ router.get("/other-operations", async (_req, res) => {
       },
       select: {
         id: true,
+        invoiceNumber: true,
         status: true,
         amountFcfa: true,
         paidAmountFcfa: true,

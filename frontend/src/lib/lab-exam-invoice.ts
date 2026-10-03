@@ -241,6 +241,8 @@ export type ExamKindInvoiceMeta = {
   paidFcfa?: number
   remainingFcfa?: number
   isFullyPaid?: boolean
+  /** Montant de ce versement (distinct du cumul déjà encaissé). */
+  installmentFcfa?: number
 }
 
 function buildPatientContext(item: LabExamPendingItem) {
@@ -313,6 +315,7 @@ function buildKindInvoiceSection(
     totalFcfa,
     paidFcfa: meta?.paidFcfa,
     remainingFcfa: meta?.remainingFcfa,
+    installmentFcfa: meta?.installmentFcfa,
     status,
     invoiceNumber: meta?.invoiceNumber,
     kindComment: kindComment || undefined,

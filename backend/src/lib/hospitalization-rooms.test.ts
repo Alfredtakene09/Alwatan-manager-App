@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { HospitalizationStatus, RoomType } from "@prisma/client";
-import { computeRoomTypeAvailability } from "./hospitalization-rooms.js";
+import { computeRoomTypeAvailability, dailyRateForRoomType, stayEndedOn } from "./hospitalization-rooms.js";
 
 describe("disponibilité des salles à l'admission", () => {
   it("liste chaque salle libre, y compris une salle sans lits", () => {
@@ -70,5 +70,18 @@ describe("disponibilité des salles à l'admission", () => {
     assert.equal(availability.VIP.availableRooms.length, 1);
     assert.equal(availability.VIP.availableRooms[0]?.id, "vip-2");
     assert.equal(availability.VIP.blockedReason, null);
+    assert.equal(availability.VIP.dailyRateFcfa, 20_000);
+    assert.equal(availability.SIMPLE.dailyRateFcfa, 5_000);
+  });
+
+  it("libère une salle dont la date de sortie est atteinte", () => {
+    const today = new Date();
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    assert.equal(stayEndedOn(start, today), true);
+    const tomorrow = new Date(start);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    assert.equal(stayEndedOn(tomorrow, today), false);
+    assert.equal(dailyRateForRoomType(RoomType.VIP), 20_000);
+    assert.equal(dailyRateForRoomType(RoomType.SIMPLE), 5_000);
   });
 });

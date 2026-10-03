@@ -1,15 +1,96 @@
 import {
   HospitalizationStatus,
+  PrismaClient,
   RoomType,
   type Prisma,
 } from "@prisma/client";
 
 type Tx = Prisma.TransactionClient;
 
+/** Tarif nuitée fixe : la salle n'est plus créée à la main. */
+export const ROOM_DAILY_RATES_FCFA = {
+  VIP: 20_000,
+  SIMPLE: 5_000,
+} as const;
+
+export function dailyRateForRoomType(type: RoomType): number {
+  return type === RoomType.VIP ? ROOM_DAILY_RATES_FCFA.VIP : ROOM_DAILY_RATES_FCFA.SIMPLE;
+}
+
+export function startOfLocalDay(date = new Date()): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+/** La sortie prévue est atteinte : la salle se libère sans action manuelle. */
+export function stayEndedOn(endDate: Date | string | null | undefined, now = new Date()): boolean {
+  if (!endDate) return false;
+  const end = endDate instanceof Date ? endDate : new Date(endDate);
+  if (Number.isNaN(end.getTime())) return false;
+  return end.getTime() <= startOfLocalDay(now).getTime();
+}
+
 const BLOCKING_HOSP_STATUSES = [
   HospitalizationStatus.ACTIVE,
   HospitalizationStatus.RESERVED,
 ] as const;
+
+function openStayWhere() {
+  return {
+    status: { in: [...BLOCKING_HOSP_STATUSES] },
+    OR: [{ endDate: null }, { endDate: { gt: startOfLocalDay() } }],
+  };
+}
+
+function isBlockingOccupancy(stay: { status: HospitalizationStatus; endDate?: Date | string | null }): boolean {
+  if (!BLOCKING_HOSP_STATUSES.includes(stay.status as (typeof BLOCKING_HOSP_STATUSES)[number])) {
+    return false;
+  }
+  return !stayEndedOn(stay.endDate);
+}
+
+/**
+ * Aligne les tarifs, crée une salle VIP et une salle simple si aucune n'existe,
+ * et clôture les séjours dont la date de sortie est atteinte.
+ */
+export async function prepareHospitalizationRooms(db: PrismaClient) {
+  await db.room.updateMany({
+    where: { type: RoomType.VIP, dailyRateFcfa: { not: ROOM_DAILY_RATES_FCFA.VIP } },
+    data: { dailyRateFcfa: ROOM_DAILY_RATES_FCFA.VIP },
+  });
+  await db.room.updateMany({
+    where: { type: RoomType.SIMPLE, dailyRateFcfa: { not: ROOM_DAILY_RATES_FCFA.SIMPLE } },
+    data: { dailyRateFcfa: ROOM_DAILY_RATES_FCFA.SIMPLE },
+  });
+
+  await db.hospitalization.updateMany({
+    where: {
+      status: { in: [...BLOCKING_HOSP_STATUSES] },
+      endDate: { lte: startOfLocalDay() },
+      roomId: { not: null },
+    },
+    data: {
+      status: HospitalizationStatus.DISCHARGED,
+      dischargedAt: new Date(),
+    },
+  });
+
+  for (const type of [RoomType.VIP, RoomType.SIMPLE] as const) {
+    const existing = await db.room.count({ where: { type, active: true } });
+    if (existing > 0) continue;
+    await db.$transaction(async (tx) => {
+      const created = await tx.room.create({
+        data: {
+          name: type === RoomType.VIP ? "VIP" : "Simple",
+          type,
+          dailyRateFcfa: dailyRateForRoomType(type),
+          active: true,
+          description: type === RoomType.VIP ? "Chambre VIP" : "Chambre simple",
+        },
+      });
+      await ensureDefaultBedsForRoom(tx, created);
+    });
+  }
+}
 
 type OccupancyRow = {
   id: string;
@@ -17,6 +98,7 @@ type OccupancyRow = {
   bedId: string | null;
   status: HospitalizationStatus;
   roomType: RoomType;
+  endDate?: Date | string | null;
   room?: { type: RoomType } | null;
   visit?: { patient: { firstName: string; lastName: string } };
 };
@@ -69,8 +151,8 @@ export async function assertBedAvailableForAdmission(
   const conflictOnBed = await tx.hospitalization.findFirst({
     where: {
       bedId,
-      status: { in: [...BLOCKING_HOSP_STATUSES] },
       id: { not: hospitalizationId },
+      ...openStayWhere(),
     },
   });
   if (conflictOnBed) {
@@ -109,8 +191,8 @@ export async function assertRoomAvailableForAdmission(
         await tx.hospitalization.findMany({
           where: {
             bedId: { in: room.beds.map((b) => b.id) },
-            status: { in: [...BLOCKING_HOSP_STATUSES] },
             id: { not: hospitalizationId },
+            ...openStayWhere(),
           },
           select: { bedId: true },
         })
@@ -131,8 +213,8 @@ export async function assertRoomAvailableForAdmission(
   const conflictOnRoom = await tx.hospitalization.findFirst({
     where: {
       roomId,
-      status: { in: [...BLOCKING_HOSP_STATUSES] },
       id: { not: hospitalizationId },
+      ...openStayWhere(),
     },
   });
   if (conflictOnRoom) {
@@ -144,18 +226,19 @@ export async function assertRoomAvailableForAdmission(
 
 export function isBedOccupied(
   bedId: string,
-  hospitalizations: Array<{ bedId?: string | null; status: HospitalizationStatus }>,
+  hospitalizations: Array<{ bedId?: string | null; status: HospitalizationStatus; endDate?: Date | string | null }>,
 ) {
-  return hospitalizations.some(
-    (h) =>
-      h.bedId === bedId &&
-      BLOCKING_HOSP_STATUSES.includes(h.status as (typeof BLOCKING_HOSP_STATUSES)[number]),
-  );
+  return hospitalizations.some((h) => h.bedId === bedId && isBlockingOccupancy(h));
 }
 
 export function isRoomOccupied(
   roomId: string,
-  hospitalizations: Array<{ roomId: string | null; status: HospitalizationStatus; bedId?: string | null }>,
+  hospitalizations: Array<{
+    roomId: string | null;
+    status: HospitalizationStatus;
+    bedId?: string | null;
+    endDate?: Date | string | null;
+  }>,
   roomBeds?: Array<{ id: string; active: boolean }>,
 ) {
   if (roomBeds && roomBeds.length > 0) {
@@ -164,11 +247,7 @@ export function isRoomOccupied(
     return activeBeds.every((bed) => isBedOccupied(bed.id, hospitalizations));
   }
 
-  return hospitalizations.some(
-    (h) =>
-      h.roomId === roomId &&
-      BLOCKING_HOSP_STATUSES.includes(h.status as (typeof BLOCKING_HOSP_STATUSES)[number]),
-  );
+  return hospitalizations.some((h) => h.roomId === roomId && isBlockingOccupancy(h));
 }
 
 export function isRoomAssignableForAdmission(
@@ -195,18 +274,10 @@ export function enrichRoomsWithStatus<
   return rooms.map((room) => {
     const beds = room.beds ?? [];
     const occupied = isRoomOccupied(room.id, hospitalizations, beds);
-    const activeHosp = hospitalizations.find(
-      (h) =>
-        h.roomId === room.id &&
-        BLOCKING_HOSP_STATUSES.includes(h.status as (typeof BLOCKING_HOSP_STATUSES)[number]),
-    );
+    const activeHosp = hospitalizations.find((h) => h.roomId === room.id && isBlockingOccupancy(h));
 
     const bedsWithStatus = beds.map((bed) => {
-      const bedHosp = hospitalizations.find(
-        (h) =>
-          h.bedId === bed.id &&
-          BLOCKING_HOSP_STATUSES.includes(h.status as (typeof BLOCKING_HOSP_STATUSES)[number]),
-      );
+      const bedHosp = hospitalizations.find((h) => h.bedId === bed.id && isBlockingOccupancy(h));
       return {
         ...bed,
         status: !bed.active
@@ -276,7 +347,7 @@ export function enrichRoomTypeAvailabilityWithBeds(
           label: bed.label,
           roomId: room.id,
           roomName: room.name,
-          dailyRateFcfa: room.dailyRateFcfa,
+          dailyRateFcfa: dailyRateForRoomType(type),
         }));
 
       if (beds.length > 0 && freeBeds.length === 0) continue;
@@ -285,7 +356,7 @@ export function enrichRoomTypeAvailabilityWithBeds(
       availableRooms.push({
         id: room.id,
         name: room.name,
-        dailyRateFcfa: room.dailyRateFcfa,
+        dailyRateFcfa: dailyRateForRoomType(type),
         autoBedId: freeBeds[0]?.id ?? null,
         availableBeds: freeBeds,
       });
@@ -302,7 +373,7 @@ export function enrichRoomTypeAvailabilityWithBeds(
       autoRoomId: firstBed?.roomId ?? firstRoom?.id ?? null,
       autoBedId: firstBed?.id ?? firstRoom?.autoBedId ?? null,
       roomName: firstRoom?.name ?? (type === RoomType.VIP ? "Salle VIP" : "Salle simple"),
-      dailyRateFcfa: firstRoom?.dailyRateFcfa ?? 0,
+      dailyRateFcfa: dailyRateForRoomType(type),
       availableBeds,
       availableRooms,
       blockedReason:

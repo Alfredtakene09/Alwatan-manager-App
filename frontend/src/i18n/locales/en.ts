@@ -61,6 +61,7 @@ export default {
     'Somme globale': 'Overall total',
     'Tous (somme globale)': 'All (overall total)',
     'À percevoir (parts %)': 'Receivable (% shares)',
+    'Parts médecins reçues': 'Doctor shares received',
     'Consult. {amount}': 'Consult. {amount}',
     'Opér. {amount}': 'Surg. {amount}',
     'Paie {amount}': 'Payroll {amount}',
@@ -200,6 +201,7 @@ export default {
     'Aucun paiement enregistré pour ce patient.': 'No payment recorded for this patient.',
     'Total facturé': 'Total billed',
     Encaissé: 'Collected',
+    'Ce versement': 'This payment',
     'Déjà encaissé': 'Already collected',
     'Total dû': 'Amount due',
     'Reste à payer': 'Remaining',
@@ -417,6 +419,7 @@ export default {
     'Uniquement vos encaissements': 'Your receipts only',
     'Consultations, examens, opérations, hospitalisation (hors associés)':
       'Consultations, exams, surgeries, hospitalization (excl. associates)',
+    'Consultations encaissées (hors associés)': 'Consultations collected (excl. associates)',
     "À l'instant": 'Just now',
     '{n} min': '{n} min',
     '{h} h {m} min': '{h} h {m} min',
@@ -451,6 +454,8 @@ export default {
     Auteur: 'Author',
     'Enregistrement existant': 'Existing record',
     'Aucun examen payé pour le moment': 'No paid exams yet',
+    'Aucun examen payé pour cette période': 'No paid exams for this period',
+    "Type d'examen": 'Exam type',
     'Laboratoire, radiologie, échographie et odontologie':
       'Laboratory, radiology, ultrasound and dental',
     'Patients ayant réglé leurs examens — réimpression des factures par type (laboratoire, radio, écho, odonto)':
@@ -1077,6 +1082,13 @@ export default {
     'Imprimer le reçu': 'Print receipt',
     'Imprimer le reçu de consultation': 'Print consultation receipt',
     'Réimprimer le reçu': 'Reprint receipt',
+    'Anciens reçus': 'Previous receipts',
+    'Aucun reçu à réimprimer pour cette opération.': 'No receipt to reprint for this operation.',
+    'Impossible d’imprimer ce reçu.': 'Unable to print this receipt.',
+    'Reste après ce paiement : {amount}. Le reçu imprimera ce versement.':
+      'Balance after this payment: {amount}. The receipt will show this payment.',
+    'L’opération sera entièrement soldée. Le reçu imprimera {amount}.':
+      'The operation will be fully paid. The receipt will show {amount}.',
     'Réimprimer le reçu de consultation': 'Reprint consultation receipt',
     'Aucun examen à imprimer': 'No exam to print',
     'Total payé': 'Total paid',

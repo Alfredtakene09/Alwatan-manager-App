@@ -2459,6 +2459,8 @@ export type LabExamInvoiceData = {
   totalFcfa: number
   /** Montant cumulé déjà encaissé (paiements par tranche). */
   paidFcfa?: number
+  /** Montant de ce versement, s’il est distinct du cumul. */
+  installmentFcfa?: number
   /** Solde restant après encaissement. */
   remainingFcfa?: number
   invoiceNumber?: string
@@ -2495,8 +2497,12 @@ export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string
   const headerNumber = invoiceNo && invoiceNo !== '—' ? invoiceNo : (data.patientCode || '')
   const paidFcfa = Math.max(0, Number(data.paidFcfa) || 0)
   const remainingFcfa = Math.max(0, Number(data.remainingFcfa) || 0)
+  const installmentFcfa = Math.max(0, Number(data.installmentFcfa) || 0)
   const hasPartialPayment =
     data.paidFcfa != null && (remainingFcfa > 0 || (paidFcfa > 0 && paidFcfa < data.totalFcfa))
+  const showInstallment =
+    installmentFcfa > 0 && (hasPartialPayment || installmentFcfa !== data.totalFcfa)
+  const showCumulative = hasPartialPayment && (!showInstallment || paidFcfa !== installmentFcfa)
   const status = data.status ?? (hasPartialPayment ? 'Payé partiellement' : 'Payé')
   const totalLabel = hasPartialPayment
     ? t('Total dû')
@@ -2530,11 +2536,14 @@ export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string
         ]
       : []),
     thermalLocaleAmountRow(totalLabel, formatFcfaPrint(data.totalFcfa), { total: true }),
+    ...(showInstallment
+      ? [thermalLocaleAmountRow(t('Ce versement'), formatFcfaPrint(installmentFcfa))]
+      : []),
+    ...(showCumulative
+      ? [thermalLocaleAmountRow(t('Encaissé'), formatFcfaPrint(paidFcfa))]
+      : []),
     ...(hasPartialPayment
-      ? [
-          thermalLocaleAmountRow(t('Encaissé'), formatFcfaPrint(paidFcfa)),
-          thermalLocaleAmountRow(t('Reste'), formatFcfaPrint(remainingFcfa)),
-        ]
+      ? [thermalLocaleAmountRow(t('Reste'), formatFcfaPrint(remainingFcfa))]
       : []),
   ].join('')
 

@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { BedDouble, Plus, RefreshCw, Search, ShieldCheck } from '@lucide/vue'
+import { BedDouble, Plus, RefreshCw, Search } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import {
   admissionFormFromHospitalization,
   HOSPITALIZATION_STATUS_LABELS,
   hospitalizationStayDays,
+  hospitalizationStayEnded,
   printHospitalizationAdmission,
   type HospitalizationAdmissionForm,
 } from '@/lib/hospitalization-admission'
@@ -18,12 +19,14 @@ import HospitalizationAdmissionModal, {
 } from '@/components/hospitalisation/HospitalizationAdmissionModal.vue'
 import HospitalizationDischargeModal from '@/components/hospitalisation/HospitalizationDischargeModal.vue'
 import HospitalizationDirectAdmitModal from '@/components/hospitalisation/HospitalizationDirectAdmitModal.vue'
+import OccupiedStayCards, {
+  type OccupiedStayCard,
+} from '@/components/hospitalisation/OccupiedStayCards.vue'
 import HospitalizationsQueueDataTable from '@/components/ui/HospitalizationsQueueDataTable.vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
-import UiBadge from '@/components/ui/UiBadge.vue'
 import { useSilentRefresh } from '@/composables/useSilentRefresh'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { useAuthStore } from '@/stores/auth'
@@ -37,6 +40,7 @@ type HospRow = {
   roomType: string
   reductionFcfa?: number
   totalDueFcfa?: number
+  paidFcfa?: number
   nightsCount?: number
   endDate?: string | null
   dailyRateFcfa?: number
@@ -223,6 +227,25 @@ const admissionRoomTypeOptions = computed((): AdmissionRoomTypeOption[] => {
 
 const hospitalizedPatients = computed(() =>
   (data.value?.hospitalizations ?? []).filter((h) => h.status !== 'CANCELLED'),
+)
+
+const occupiedStays = computed((): OccupiedStayCard[] =>
+  (data.value?.hospitalizations ?? [])
+    .filter(
+      (row) =>
+        (row.status === 'ACTIVE' || row.status === 'RESERVED') &&
+        Boolean(row.room) &&
+        !hospitalizationStayEnded(row),
+    )
+    .map((row) => ({
+      id: row.id,
+      patientName: fullName(row.visit.patient.firstName, row.visit.patient.lastName),
+      roomName: row.room?.name ?? '',
+      roomType: row.room?.type ?? row.roomType,
+      endDate: row.endDate,
+      totalDueFcfa: row.totalDueFcfa ?? 0,
+      paidFcfa: row.paidFcfa ?? (row.paidAt ? (row.totalDueFcfa ?? 0) : 0),
+    })),
 )
 
 type RoomFilter = 'ALL' | 'VIP' | 'SIMPLE'
@@ -714,8 +737,8 @@ watch([dateFrom, dateTo], () => {
 
     <template v-if="tab === 'plan'">
       <UiCard
-        title="Plan des salles"
-        description="Suivi en temps réel — [LIBRE] / [OCCUPÉ]"
+        title="Salles occupées"
+        description="Libération automatique à la date de sortie — VIP 20 000 FCFA / nuit, simple 5 000 FCFA / nuit"
         :icon="BedDouble"
         icon-variant="blue"
         class="compta-section"
@@ -723,25 +746,7 @@ watch([dateFrom, dateTo], () => {
         <template #actions>
           <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="refreshData()">{{ labels.refresh }}</UiButton>
         </template>
-        <div class="rooms-grid">
-          <div
-            v-for="room in data.rooms"
-            :key="room.id"
-            class="room-card"
-            :class="`room-card--${room.status.toLowerCase()}`"
-          >
-            <div class="room-card__head">
-              <strong>{{ room.name }}</strong>
-              <UiBadge :variant="room.status === 'LIBRE' ? 'success' : 'danger'">[{{ room.status }}]</UiBadge>
-            </div>
-            <UiBadge variant="info">{{ room.type === 'SIMPLE' ? uiText('Simple') : room.type }}</UiBadge>
-            <p v-if="room.currentPatient" class="room-patient">
-              <ShieldCheck :size="14" />
-              {{ fullName(room.currentPatient.firstName, room.currentPatient.lastName) }}
-            </p>
-            <p v-else class="room-empty">{{ labels.available }}</p>
-          </div>
-        </div>
+        <OccupiedStayCards :occupants="occupiedStays" />
       </UiCard>
     </template>
 

@@ -180,6 +180,7 @@ export default {
     'Aucun paiement enregistré pour ce patient.': 'Aucun paiement enregistré pour ce patient.',
     'Total facturé': 'Total facturé',
     Encaissé: 'Encaissé',
+    'Ce versement': 'Ce versement',
     'Déjà encaissé': 'Déjà encaissé',
     'Total dû': 'Total dû',
     'Reste à payer': 'Reste à payer',
@@ -273,6 +274,14 @@ export default {
     'Imprimer le reçu': 'Imprimer le reçu',
     'Imprimer le reçu de consultation': 'Imprimer le reçu de consultation',
     'Réimprimer le reçu': 'Réimprimer le reçu',
+    'Anciens reçus': 'Anciens reçus',
+    'Aucun reçu à réimprimer pour cette opération.':
+      'Aucun reçu à réimprimer pour cette opération.',
+    'Impossible d’imprimer ce reçu.': 'Impossible d’imprimer ce reçu.',
+    'Reste après ce paiement : {amount}. Le reçu imprimera ce versement.':
+      'Reste après ce paiement : {amount}. Le reçu imprimera ce versement.',
+    'L’opération sera entièrement soldée. Le reçu imprimera {amount}.':
+      'L’opération sera entièrement soldée. Le reçu imprimera {amount}.',
     'Réimprimer le reçu de consultation': 'Réimprimer le reçu de consultation',
     'Aucun examen à imprimer': 'Aucun examen à imprimer',
     'Reçu {code}': 'Reçu {code}',
@@ -418,6 +427,7 @@ export default {
     'Uniquement vos encaissements': 'Uniquement vos encaissements',
     'Consultations, examens, opérations, hospitalisation (hors associés)':
       'Consultations, examens, opérations, hospitalisation (hors associés)',
+    'Consultations encaissées (hors associés)': 'Consultations encaissées (hors associés)',
     "À l'instant": "À l'instant",
     '{n} min': '{n} min',
     '{h} h {m} min': '{h} h {m} min',
@@ -452,6 +462,9 @@ export default {
     Auteur: 'Auteur',
     'Enregistrement existant': 'Enregistrement existant',
     'Aucun examen payé pour le moment': 'Aucun examen payé pour le moment',
+    'Aucun examen payé pour cette période': 'Aucun examen payé pour cette période',
+    'Toutes les dates': 'Toutes les dates',
+    "Type d'examen": "Type d'examen",
     'Laboratoire, radiologie, échographie et odontologie':
       'Laboratoire, radiologie, échographie et odontologie',
     'Patients ayant réglé leurs examens — réimpression des factures par type (laboratoire, radio, écho, odonto)':
@@ -638,6 +651,7 @@ export default {
     'Ouvrir le détail': 'Ouvrir le détail',
     'Détail des parts': 'Détail des parts',
     'Impossible de charger le tableau de bord.': 'Impossible de charger le tableau de bord.',
+    'Parts médecins reçues': 'Parts médecins reçues',
     'Solde comptable en attente': 'Solde comptable en attente',
     'Récupérer la tirelire': 'Récupérer la tirelire',
     'Voir la caisse comptable': 'Voir la caisse comptable',

@@ -16,6 +16,32 @@ export function isReceptionistRole(role: string) {
   return role === UserRole.RECEPTIONNISTE;
 }
 
+/**
+ * Dossiers du médecin à la réception : visites qui lui sont assignées,
+ * consultations qu’il a faites, ou patients enregistrés dans un de ses services.
+ */
+export function patientsInDoctorScopeWhere(
+  doctorId: string,
+  serviceNames: string[],
+  clinicServiceIds: string[] = [],
+): Prisma.PatientWhereInput {
+  const or: Prisma.PatientWhereInput[] = [
+    { visits: { some: { assignedDoctorId: doctorId } } },
+    { visits: { some: { consultation: { is: { doctorId } } } } },
+  ];
+  const names = [...new Set(serviceNames.map((name) => name.trim()).filter(Boolean))];
+  if (names.length > 0) {
+    or.push({ service: { in: names } });
+  }
+  const serviceIds = [...new Set(clinicServiceIds.filter(Boolean))];
+  if (serviceIds.length > 0) {
+    or.push({
+      visits: { some: { assignedClinicServiceId: { in: serviceIds } } },
+    });
+  }
+  return { OR: or };
+}
+
 /** Réceptionniste : uniquement ses dossiers. Direction / gestionnaire / admin : tout, ou un réceptionniste choisi. */
 export function receptionistOwnPatientsWhere(
   user: ReceptionScopeUser,

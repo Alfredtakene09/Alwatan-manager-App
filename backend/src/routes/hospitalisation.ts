@@ -22,9 +22,11 @@ import { immediatePaidInvoiceData } from "../lib/invoice-paid.js";
 import {
   assertRoomAvailableForAdmission,
   computeRoomTypeAvailability,
+  dailyRateForRoomType,
   enrichRoomsWithStatus,
   ensureDefaultBedsForRoom,
   ensureDefaultBedsForRooms,
+  prepareHospitalizationRooms,
 } from "../lib/hospitalization-rooms.js";
 import { findDuplicateRoomByName } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
@@ -32,10 +34,35 @@ import { selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
 import { ageUnitSchema, refinePatientAge } from "../lib/patient-age.js";
 import { deleteHospitalizationAndRefund } from "../lib/delete-hospitalization.js";
 import { requireAuth, requireModule, requireManageAccess, requireUiAction } from "../middleware/auth.js";
+import { canAccessModule, type AppUserRole } from "../lib/roles.js";
 
 const router = Router();
-router.use(requireAuth, requireModule("hospitalisation"));
+router.use(requireAuth, (req, res, next) => {
+  const role = req.user!.role as AppUserRole;
+  if (canAccessModule(role, "hospitalisation")) return next();
+  const admitFromBloc =
+    req.method === "POST" &&
+    req.path === "/actions" &&
+    req.body?.action === "admit_direct" &&
+    canAccessModule(role, "bloc-salles");
+  if (admitFromBloc) return next();
+  return requireModule("hospitalisation")(req, res, next);
+});
 const roomsWriteAccess = [requireManageAccess, requireUiAction("hospitalisation.rooms")] as const;
+
+async function paidHospitalizationAmounts(ids: string[]) {
+  if (!ids.length) return new Map<string, number>();
+  const rows = await prisma.invoice.groupBy({
+    by: ["hospitalizationId"],
+    where: { hospitalizationId: { in: ids }, status: InvoiceStatus.PAID },
+    _sum: { paidAmountFcfa: true },
+  });
+  return new Map(
+    rows
+      .filter((row) => row.hospitalizationId)
+      .map((row) => [row.hospitalizationId as string, row._sum.paidAmountFcfa ?? 0]),
+  );
+}
 
 async function sumPaidHospitalizationFcfa(tx: Prisma.TransactionClient, hospitalizationId: string) {
   const paid = await tx.invoice.aggregate({
@@ -211,6 +238,8 @@ router.get("/", async (req, res) => {
     await syncMissingHospitalizationReferrals(prisma, patientWhere);
     await syncHospitalizationReferralsFromPaymentQueue(prisma, patientWhere);
 
+    await prepareHospitalizationRooms(prisma);
+
     const visitId =
       typeof req.query.visitId === "string" && req.query.visitId.trim()
         ? req.query.visitId.trim()
@@ -261,14 +290,24 @@ router.get("/", async (req, res) => {
         orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     });
 
-    const roomsWithStatus = enrichRoomsWithStatus(rooms, hospitalizations);
+    const paidByHospitalization = await paidHospitalizationAmounts(
+      hospitalizations.map((row) => row.id),
+    );
+    const hospitalizationsWithPaid = hospitalizations.map((row) => ({
+      ...row,
+      paidFcfa: row.paidAt
+        ? Math.max(paidByHospitalization.get(row.id) ?? 0, row.totalDueFcfa)
+        : (paidByHospitalization.get(row.id) ?? 0),
+    }));
+
+    const roomsWithStatus = enrichRoomsWithStatus(rooms, hospitalizationsWithPaid);
     const freeRooms = roomsWithStatus.filter((room) => room.status === "LIBRE").length;
     const occupiedRooms = roomsWithStatus.filter((room) => room.status === "OCCUPE").length;
-    const roomAvailability = computeRoomTypeAvailability(rooms, hospitalizations);
+    const roomAvailability = computeRoomTypeAvailability(rooms, hospitalizationsWithPaid);
 
     return res.json({
       rooms: roomsWithStatus,
-      hospitalizations,
+      hospitalizations: hospitalizationsWithPaid,
       roomAvailability,
       stats: {
         roomCount: rooms.length,
@@ -506,6 +545,7 @@ router.post("/actions", async (req, res) => {
     if (action === "admit_direct") {
       const body = admitDirectSchema.parse(req.body);
       const attending = await resolveAttendingDoctorFields(body);
+      await prepareHospitalizationRooms(prisma);
 
       const result = await prisma.$transaction(async (tx) => {
         let patientId = body.patientId?.trim() || null;
@@ -579,7 +619,8 @@ router.post("/actions", async (req, res) => {
         const startDate = parseIsoDate(body.startDate);
         const endDate = parseIsoDate(body.endDate);
         const nights = computeStayNights(body.startDate, body.endDate);
-        const grossFcfa = nights * room.dailyRateFcfa;
+        const dailyRateFcfa = dailyRateForRoomType(room.type);
+        const grossFcfa = nights * dailyRateFcfa;
         const reductionFcfa = Math.min(Math.max(0, body.reductionFcfa), grossFcfa);
         const totalDueFcfa = Math.max(0, grossFcfa - reductionFcfa);
 
@@ -592,7 +633,7 @@ router.post("/actions", async (req, res) => {
             bedId: bed?.id ?? null,
             accountantId: user.id,
             roomType: room.type,
-            dailyRateFcfa: room.dailyRateFcfa,
+            dailyRateFcfa,
             depositFcfa: 0,
             reductionFcfa,
             nightsCount: nights,
@@ -699,6 +740,7 @@ router.post("/actions", async (req, res) => {
     if (action === "reserve_room" || action === "reserve_bed") {
       const data = hospitalizationSchema.parse(req.body);
       const attending = await resolveAttendingDoctorFields(data);
+      await prepareHospitalizationRooms(prisma);
       const result = await prisma.$transaction(async (tx) => {
         const { room, bed } = await assertRoomAvailableForAdmission(
           tx,
@@ -710,7 +752,8 @@ router.post("/actions", async (req, res) => {
         const startDate = parseIsoDate(data.startDate);
         const endDate = parseIsoDate(data.endDate);
         const nights = computeStayNights(data.startDate, data.endDate);
-        const grossFcfa = nights * room.dailyRateFcfa;
+        const dailyRateFcfa = dailyRateForRoomType(room.type);
+        const grossFcfa = nights * dailyRateFcfa;
         const reductionFcfa = Math.min(Math.max(0, data.reductionFcfa), grossFcfa);
         const totalDueFcfa = Math.max(0, grossFcfa - reductionFcfa);
 
@@ -721,7 +764,7 @@ router.post("/actions", async (req, res) => {
             bedId: bed?.id ?? null,
             accountantId: user.id,
             roomType: room.type,
-            dailyRateFcfa: room.dailyRateFcfa,
+            dailyRateFcfa,
             depositFcfa: 0,
             reductionFcfa,
             nightsCount: nights,
