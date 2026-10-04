@@ -11,6 +11,7 @@ import {
 } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorWhere } from "../lib/doctor-compensation.js";
+import { recalculateSurgeriesForIntervention } from "../lib/recalculate-employee-compensation.js";
 import {
   authorizedSurgeonsInclude,
   resolveAuthorizedSurgeonIds,
@@ -854,6 +855,10 @@ router.put("/operations/:id", async (req, res) => {
         { alwaysInclude: nextPrimary },
       );
       await syncInterventionAuthorizedSurgeons(item.id, surgeonIds);
+    }
+
+    if (body.surgeonPercent !== undefined || body.anesthesiologistPercent !== undefined) {
+      await recalculateSurgeriesForIntervention(item.id);
     }
 
     const refreshed = await prisma.interventionType.findUniqueOrThrow({

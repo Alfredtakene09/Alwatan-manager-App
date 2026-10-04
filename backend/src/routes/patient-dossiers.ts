@@ -20,6 +20,7 @@ import {
   sanitizeFileName,
 } from "../lib/patient-dossier.js";
 import {
+  getAdminDoctorActivity,
   getDirectionDossierPatients,
   getMedecinDossierPatients,
   getPatientMedicalHistory,
@@ -117,6 +118,15 @@ router.get("/direction/patients", requireAnyModule(...DOSSIER_MODULES), async (r
 
   const patients = await getDirectionDossierPatients();
   return res.json(patients);
+});
+
+router.get("/admin/activity", requireAnyModule(...DOSSIER_MODULES), async (req, res) => {
+  if (req.user!.role !== "ADMIN") {
+    return res.status(403).json({ error: "Réservé à l'administrateur" });
+  }
+
+  const activity = await getAdminDoctorActivity();
+  return res.json(activity);
 });
 
 router.get("/:patientId/payment-history", requireAnyModule(...PAYMENT_HISTORY_MODULES), async (req, res) => {

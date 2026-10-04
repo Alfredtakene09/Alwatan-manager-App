@@ -10,6 +10,7 @@ import { clinicPercentFromSplits, validateInterventionPercents } from "../lib/in
 import { findDuplicateIntervention } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere, selectableDoctorWhere } from "../lib/doctor-compensation.js";
+import { recalculateSurgeriesForIntervention } from "../lib/recalculate-employee-compensation.js";
 import {
   authorizedSurgeonsInclude,
   resolveAuthorizedSurgeonIds,
@@ -419,6 +420,10 @@ router.put("/:id", async (req, res) => {
         surgeonId: existing.surgeonId ?? ctx.userId,
       },
     });
+
+    if (body.surgeonPercent !== undefined || body.anesthesiologistPercent !== undefined) {
+      await recalculateSurgeriesForIntervention(existing.id);
+    }
 
     if (body.surgeonIds !== undefined) {
       const surgeonIds = await resolveAuthorizedSurgeonIds(body.surgeonIds, {

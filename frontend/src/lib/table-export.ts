@@ -66,7 +66,7 @@ export function exportBasename(title: string): string {
   return `${slug || 'export'}-${stamp()}`
 }
 
-/** Date de génération + filtres appliqués (en-tête du PDF / Word). */
+/** Date de génération + filtres (en-tête Word). Les PDF gardent seulement les filtres. */
 export function defaultReportCaptionRows(
   extra: ExportCaptionRow[] = [],
   generatedAt = new Date(),
@@ -75,6 +75,11 @@ export function defaultReportCaptionRows(
     { label: translateUi('Date de génération'), value: formatAppDateTime(generatedAt) },
     ...extra,
   ]
+}
+
+/** Libellé de pied de page des PDF d’export. */
+export function reportPdfFooterLabel(generatedAt = new Date()): string {
+  return `${translateUi('Date de génération')} : ${formatAppDateTime(generatedAt)}`
 }
 
 function clinicHeaderLines(): string[] {
@@ -158,12 +163,13 @@ export function exportTablePdf<T>(
   rows: T[],
   options?: TableExportOptions,
 ): void {
-  const captionRows = defaultReportCaptionRows(options?.captionRows, options?.generatedAt)
+  const generatedAt = options?.generatedAt ?? new Date()
   const exportRows = exportableRows(rows)
   const sections = exportableSections(options?.sections)
   void import('@/lib/table-export-pdf').then(({ saveReportPdfFile }) =>
     saveReportPdfFile(title, columns, exportRows, {
-      captionRows,
+      captionRows: options?.captionRows,
+      footerLabel: reportPdfFooterLabel(generatedAt),
       totalsRows: options?.totalsRows,
       sections,
       filename: options?.filename ?? exportBasename(title),

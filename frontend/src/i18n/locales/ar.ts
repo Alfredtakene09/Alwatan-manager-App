@@ -132,6 +132,11 @@ export default {
     'Patients consultés par les médecins': 'المرضى الذين استشارهم الأطباء',
     'Patients consultés par les médecins — historique clinique complet':
       'المرضى الذين استشارهم الأطباء — السجل السريري الكامل',
+    'Patients, date et action (consultation ou opération)':
+      'المرضى، التاريخ والإجراء (استشارة أو عملية)',
+    'Activité des médecins': 'نشاط الأطباء',
+    'Filtrer un médecin pour voir ses patients': 'صفِّ طبيباً لعرض مرضاه',
+    'Aucune activité pour ce médecin.': 'لا نشاط لهذا الطبيب.',
     'Enregistré par {name}': 'سجّله {name}',
     'Aucun patient trouvé. Utilisez la recherche ci-contre.':
       'لم يُعثر على مريض. استخدم البحث المجاور.',

@@ -25,6 +25,7 @@ import { ensureKinesitherapieCatalogItems } from "./lib/kinesitherapie-catalog.j
 import { ensurePetiteChirurgieCatalogItems } from "./lib/petite-chirurgie-catalog.js";
 import { ensurePrintedTariffCatalogItems } from "./lib/printed-tariff-catalog.js";
 import { backfillLegacyConsultationInvoices } from "./lib/revenue-stats.js";
+import { syncAllRecordedTariffs } from "./lib/recalculate-employee-compensation.js";
 import { backfillLabReceptionistApprovals } from "./lib/lab-receptionist-backfill.js";
 import examCatalogRoutes from "./routes/exam-catalog.js";
 import examTypesRoutes from "./routes/exam-types.js";
@@ -279,6 +280,21 @@ void (async () => {
         }
       } catch (error) {
         console.error("Synchronisation factures consultation:", error);
+      }
+
+      try {
+        const tariffs = await syncAllRecordedTariffs();
+        const touched =
+          tariffs.pendingConsultationInvoices +
+          tariffs.unpaidSurgeryShares +
+          tariffs.pendingShareClaims;
+        if (touched > 0) {
+          console.log(
+            `Tarifs appliqués aux enregistrements : ${tariffs.pendingConsultationInvoices} consultation(s), ${tariffs.unpaidSurgeryShares} opération(s), ${tariffs.pendingShareClaims} part(s) médecin.`,
+          );
+        }
+      } catch (error) {
+        console.error("Synchronisation des prix de consultation et % opération:", error);
       }
 
       try {

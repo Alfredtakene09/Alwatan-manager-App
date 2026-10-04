@@ -232,6 +232,7 @@ export async function buildDoctorReceivable(
       interventionType: {
         select: {
           label: true,
+          surgeonPercent: true,
           anesthesiologistId: true,
           anesthesiologistPercent: true,
         },
@@ -245,7 +246,11 @@ export async function buildDoctorReceivable(
       surgery.surgeonId === doctorUserId &&
       !claimedSurgery.has(`${surgery.id}:${DoctorShareKind.OPERATION_SURGEON}`)
     ) {
-      const amount = surgery.surgeonShareFcfa;
+      const amount = computeSurgeryShares(
+        surgery.totalCostFcfa,
+        surgery.interventionType.surgeonPercent,
+        profile,
+      ).surgeonShareFcfa;
       if (amount > 0) {
         items.push({
           key: `op-surgeon-${surgery.id}`,
@@ -355,18 +360,11 @@ export async function buildDoctorReceivable(
         !claimedSurgery.has(`${surgery.id}:${DoctorShareKind.OPERATION_SURGEON}`)
       ) {
         const surgeonProfile = doctorProfileFromUser(surgery.surgeon);
-        let amount = 0;
-        if (doctorUsesQuota(surgeonProfile)) {
-          amount = computeSurgeryShares(
-            collected,
-            surgery.interventionType.surgeonPercent,
-            surgeonProfile,
-          ).surgeonShareFcfa;
-        } else if ((surgery.interventionType.surgeonPercent ?? 0) > 0) {
-          amount = Math.round(
-            (collected * surgery.interventionType.surgeonPercent) / 100,
-          );
-        }
+        const amount = computeSurgeryShares(
+          collected,
+          surgery.interventionType.surgeonPercent,
+          surgeonProfile,
+        ).surgeonShareFcfa;
         if (amount > 0) {
           items.push({
             key: `op-surgeon-partial-${surgery.id}`,

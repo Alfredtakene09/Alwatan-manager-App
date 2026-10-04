@@ -519,6 +519,7 @@ const directionOperationalNav: NavSection[] = [
             icon: FolderOpen,
             module: 'dossier-patient',
             description: 'Patients consultés par les médecins',
+            roles: ['ADMIN'],
           },
           {
             to: '/reception/operations-effectuees',
@@ -593,6 +594,7 @@ const directionAdminNav: NavSection[] = [
             label: 'Dossiers patients',
             icon: FolderOpen,
             module: 'dossier-patient',
+            roles: ['ADMIN'],
           },
           {
             to: '/hospitalisation?tab=hospitalized',

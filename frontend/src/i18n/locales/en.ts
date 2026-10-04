@@ -132,6 +132,11 @@ export default {
     'Patients consultés par les médecins': 'Patients seen by doctors',
     'Patients consultés par les médecins — historique clinique complet':
       'Patients seen by doctors — full clinical history',
+    'Patients, date et action (consultation ou opération)':
+      'Patients, date and action (consultation or operation)',
+    'Activité des médecins': 'Doctors’ activity',
+    'Filtrer un médecin pour voir ses patients': 'Filter a doctor to see their patients',
+    'Aucune activité pour ce médecin.': 'No activity for this doctor.',
     'Enregistré par {name}': 'Registered by {name}',
     'Aucun patient trouvé. Utilisez la recherche ci-contre.':
       'No patient found. Use the search on the side.',

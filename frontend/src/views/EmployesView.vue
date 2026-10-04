@@ -1005,7 +1005,7 @@ async function saveEmployee() {
         : 0
       message.value =
         recalcCount > 0
-          ? 'Employé mis à jour. Les montants non réglés (parts médecin, factures en attente, paie, heures sup) ont été recalculés.'
+          ? 'Employé mis à jour. Le prix de consultation et le % opération ont été appliqués à tous les enregistrements.'
           : 'Employé mis à jour.'
     } else {
       const { data } = await api.post<Employee>(`${apiBase.value}/employees`, payload)

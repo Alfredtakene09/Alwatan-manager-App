@@ -30,7 +30,10 @@ import {
 import { USER_ROLES, canAssignUserRole, canViewEmployeeCompensation, type AppUserRole } from "../lib/roles.js";
 import { newPasswordSchema } from "../lib/password-policy.js";
 import { employeeCompensationData } from "../lib/doctor-compensation.js";
-import { recalculateAfterEmployeeFicheChangeSafe } from "../lib/recalculate-employee-compensation.js";
+import {
+  recalculateAfterEmployeeFicheChangeSafe,
+  recalculateSurgeriesForIntervention,
+} from "../lib/recalculate-employee-compensation.js";
 import {
   deleteOrDeactivateEmployee,
   doctorAvailabilitySlotsSchema,
@@ -1218,6 +1221,9 @@ router.put("/interventions/:id", async (req, res) => {
       where: { id: req.params.id },
       data: body,
     });
+    if (body.surgeonPercent !== undefined) {
+      await recalculateSurgeriesForIntervention(item.id);
+    }
     return res.json(item);
   } catch {
     return res.status(400).json({ error: "Mise à jour impossible" });

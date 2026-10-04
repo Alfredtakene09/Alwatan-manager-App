@@ -7,6 +7,7 @@ import {
   InvoiceStatus,
   InvoiceType,
   PayrollStatus,
+  Prisma,
   SurgeryStatus,
   UserRole,
 } from "@prisma/client";
@@ -20,6 +21,7 @@ import {
   type DoctorProfile,
 } from "./doctor-compensation.js";
 import { computeOvertimeAmountFcfa } from "./doctor-overtime.js";
+import { nextConsultationInvoiceState, scaledPaymentAmounts } from "./recorded-tariff.js";
 
 export type CompensationRecalcSummary = {
   pendingConsultationInvoices: number;
@@ -121,10 +123,16 @@ function doctorProfileFromEmployee(employee: {
   };
 }
 
+const OPEN_CLAIM_STATUSES = [
+  DoctorShareClaimStatus.PENDING_PAYROLL,
+  DoctorShareClaimStatus.SETTLED_CASH,
+  DoctorShareClaimStatus.SETTLED_PAYROLL,
+];
+
 /**
- * Recalcule les montants encore ouverts après modification de la fiche employé.
- * Ne touche pas aux encaissements, parts déjà réglées, ni paie déjà versée
- * (la recette générale déjà collectée reste inchangée).
+ * Recalcule toutes les consultations et opérations déjà enregistrées
+ * après un changement de prix de consultation ou de % chirurgie.
+ * La paie déjà versée et les heures sup. déjà réglées restent en l'état.
  */
 export async function recalculateAfterEmployeeFicheChange(
   employeeId: string,
@@ -143,19 +151,31 @@ export async function recalculateAfterEmployeeFicheChange(
   return prisma.$transaction(
     async (tx) => {
       const summary = emptySummary();
-      if (doctorUserId) {
-        const openVisits = await tx.visit.findMany({
+      if (doctorUserId && newConsultationFee > 0) {
+        const visits = await tx.visit.findMany({
           where: {
-            OR: [
-              { assignedDoctorId: doctorUserId },
-              { consultation: { is: { doctorId: doctorUserId } } },
-            ],
-            invoices: {
-              none: {
-                type: InvoiceType.CONSULTATION,
-                status: { in: [InvoiceStatus.PAID, InvoiceStatus.PARTIALLY_PAID] },
+            AND: [
+              {
+                OR: [
+                  { assignedDoctorId: doctorUserId },
+                  { consultation: { is: { doctorId: doctorUserId } } },
+                ],
               },
-            },
+              {
+                OR: [
+                  { consultationFeeFcfa: { gt: 0 } },
+                  {
+                    invoices: {
+                      some: {
+                        type: InvoiceType.CONSULTATION,
+                        status: { not: InvoiceStatus.CANCELLED },
+                        amountFcfa: { gt: 0 },
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
           },
           select: {
             id: true,
@@ -164,42 +184,56 @@ export async function recalculateAfterEmployeeFicheChange(
             invoices: {
               where: {
                 type: InvoiceType.CONSULTATION,
-                status: { in: [InvoiceStatus.PENDING, InvoiceStatus.DRAFT] },
-                paidAmountFcfa: 0,
+                status: { not: InvoiceStatus.CANCELLED },
               },
-              select: { id: true, amountFcfa: true },
+              select: { id: true, amountFcfa: true, paidAmountFcfa: true, status: true },
             },
           },
         });
 
-        for (const visit of openVisits) {
+        for (const visit of visits) {
           const amounts = computeConsultationAmounts(newConsultationFee, visit.reductionFcfa);
           const feeChanged = (visit.consultationFeeFcfa ?? 0) !== amounts.consultationFeeFcfa;
-          const pendingInvoice = visit.invoices[0];
-          const invoiceChanged = pendingInvoice
-            ? pendingInvoice.amountFcfa !== amounts.totalFcfa
-            : false;
+          let invoiceChanged = false;
+
+          for (const invoice of visit.invoices) {
+            const next = nextConsultationInvoiceState(invoice, amounts.totalFcfa);
+            const changed =
+              next.amountFcfa !== invoice.amountFcfa ||
+              next.paidAmountFcfa !== invoice.paidAmountFcfa ||
+              next.status !== invoice.status;
+            if (!changed) continue;
+            invoiceChanged = true;
+            await tx.invoice.update({
+              where: { id: invoice.id },
+              data: {
+                amountFcfa: next.amountFcfa,
+                paidAmountFcfa: next.paidAmountFcfa,
+                status: next.status,
+              },
+            });
+            if (next.alignPayments) {
+              await alignInvoicePayments(tx, invoice.id, next.paidAmountFcfa);
+            }
+          }
+
           if (!feeChanged && !invoiceChanged) continue;
 
-          await tx.visit.update({
-            where: { id: visit.id },
-            data: { consultationFeeFcfa: amounts.consultationFeeFcfa || null },
-          });
-          if (pendingInvoice && invoiceChanged) {
-            await tx.invoice.update({
-              where: { id: pendingInvoice.id },
-              data: { amountFcfa: amounts.totalFcfa },
+          if (feeChanged) {
+            await tx.visit.update({
+              where: { id: visit.id },
+              data: { consultationFeeFcfa: amounts.consultationFeeFcfa || null },
             });
           }
           summary.pendingConsultationInvoices += 1;
         }
+      }
 
+      if (doctorUserId) {
         const unpaidSurgeries = await tx.surgeryCase.findMany({
           where: {
             surgeonId: doctorUserId,
             status: { not: SurgeryStatus.CANCELLED },
-            surgeonPaidAt: null,
-            clinicPaidAt: null,
           },
           select: {
             id: true,
@@ -236,11 +270,12 @@ export async function recalculateAfterEmployeeFicheChange(
       const pendingClaims = await tx.doctorShareClaim.findMany({
         where: {
           employeeId,
-          status: DoctorShareClaimStatus.PENDING_PAYROLL,
+          status: { in: OPEN_CLAIM_STATUSES },
         },
         select: {
           id: true,
           kind: true,
+          status: true,
           amountFcfa: true,
           invoiceId: true,
           surgeryCaseId: true,
@@ -278,7 +313,11 @@ export async function recalculateAfterEmployeeFicheChange(
           });
           if (surgery) {
             if (surgery.status === SurgeryStatus.COMPLETED) {
-              nextAmount = surgery.surgeonShareFcfa;
+              nextAmount = computeSurgeryShares(
+                surgery.totalCostFcfa,
+                surgery.interventionType.surgeonPercent,
+                profile,
+              ).surgeonShareFcfa;
             } else {
               const collected = surgery.invoice?.paidAmountFcfa ?? 0;
               nextAmount =
@@ -320,9 +359,9 @@ export async function recalculateAfterEmployeeFicheChange(
         await tx.doctorShareClaim.update({
           where: { id: claim.id },
           data:
-            nextAmount <= 0
+            nextAmount <= 0 && claim.status === DoctorShareClaimStatus.PENDING_PAYROLL
               ? { amountFcfa: 0, status: DoctorShareClaimStatus.CANCELLED }
-              : { amountFcfa: nextAmount },
+              : { amountFcfa: Math.max(0, nextAmount) },
         });
         summary.pendingShareClaims += 1;
       }
@@ -399,8 +438,168 @@ export async function recalculateAfterEmployeeFicheChange(
 
       return summary;
     },
-    { timeout: 30_000 },
+    { timeout: 120_000 },
   );
+}
+
+async function alignInvoicePayments(
+  tx: Prisma.TransactionClient,
+  invoiceId: string,
+  targetFcfa: number,
+) {
+  const payments = await tx.invoicePayment.findMany({
+    where: { invoiceId },
+    orderBy: { paidAt: "asc" },
+    select: { id: true, amountFcfa: true },
+  });
+  const nextAmounts = scaledPaymentAmounts(
+    payments.map((payment) => payment.amountFcfa),
+    targetFcfa,
+  );
+  for (let index = 0; index < payments.length; index += 1) {
+    if (payments[index].amountFcfa === nextAmounts[index]) continue;
+    await tx.invoicePayment.update({
+      where: { id: payments[index].id },
+      data: { amountFcfa: nextAmounts[index] },
+    });
+  }
+}
+
+const surgeonTariffSelect = {
+  role: true,
+  employee: {
+    select: {
+      isMedecin: true,
+      doctorCompensationType: true,
+      consultationTotalFcfa: true,
+      consultationQuotaMode: true,
+      consultationQuotaPercent: true,
+      consultationQuotaFcfa: true,
+      surgeryQuotaPercent: true,
+    },
+  },
+} as const;
+
+/**
+ * Après un changement de % sur un type d'opération : toutes les interventions
+ * de ce type reprennent le % actuel (le % de la fiche chirurgien prime).
+ */
+export async function recalculateSurgeriesForIntervention(interventionTypeId: string) {
+  const cases = await prisma.surgeryCase.findMany({
+    where: {
+      interventionTypeId,
+      status: { not: SurgeryStatus.CANCELLED },
+    },
+    select: {
+      id: true,
+      totalCostFcfa: true,
+      surgeonShareFcfa: true,
+      clinicShareFcfa: true,
+      status: true,
+      interventionType: {
+        select: { surgeonPercent: true, anesthesiologistPercent: true },
+      },
+      invoice: { select: { paidAmountFcfa: true } },
+      surgeon: { select: surgeonTariffSelect },
+    },
+  });
+  if (cases.length === 0) return 0;
+
+  let updated = 0;
+  await prisma.$transaction(
+    async (tx) => {
+      for (const surgery of cases) {
+        const profile: DoctorProfile = {
+          role: surgery.surgeon.role,
+          employee: surgery.surgeon.employee,
+        };
+        const shares = computeSurgeryShares(
+          surgery.totalCostFcfa,
+          surgery.interventionType.surgeonPercent,
+          profile,
+        );
+        if (
+          shares.surgeonShareFcfa !== surgery.surgeonShareFcfa ||
+          shares.clinicShareFcfa !== surgery.clinicShareFcfa
+        ) {
+          await tx.surgeryCase.update({
+            where: { id: surgery.id },
+            data: {
+              surgeonShareFcfa: shares.surgeonShareFcfa,
+              clinicShareFcfa: shares.clinicShareFcfa,
+            },
+          });
+          updated += 1;
+        }
+
+        const collected = surgery.invoice?.paidAmountFcfa ?? 0;
+        const base =
+          surgery.status === SurgeryStatus.COMPLETED
+            ? surgery.totalCostFcfa
+            : collected > 0
+              ? collected
+              : surgery.totalCostFcfa;
+        const surgeonAmount = computeSurgeryShares(
+          base,
+          surgery.interventionType.surgeonPercent,
+          profile,
+        ).surgeonShareFcfa;
+        const assistantAmount = Math.round(
+          (base * (surgery.interventionType.anesthesiologistPercent ?? 0)) / 100,
+        );
+
+        const claims = await tx.doctorShareClaim.findMany({
+          where: {
+            surgeryCaseId: surgery.id,
+            status: { in: OPEN_CLAIM_STATUSES },
+            kind: {
+              in: [DoctorShareKind.OPERATION_SURGEON, DoctorShareKind.OPERATION_ASSISTANT],
+            },
+          },
+          select: { id: true, kind: true, status: true, amountFcfa: true },
+        });
+        for (const claim of claims) {
+          const nextAmount =
+            claim.kind === DoctorShareKind.OPERATION_ASSISTANT ? assistantAmount : surgeonAmount;
+          if (nextAmount === claim.amountFcfa) continue;
+          await tx.doctorShareClaim.update({
+            where: { id: claim.id },
+            data:
+              nextAmount <= 0 && claim.status === DoctorShareClaimStatus.PENDING_PAYROLL
+                ? { amountFcfa: 0, status: DoctorShareClaimStatus.CANCELLED }
+                : { amountFcfa: Math.max(0, nextAmount) },
+          });
+          updated += 1;
+        }
+      }
+    },
+    { timeout: 120_000 },
+  );
+  return updated;
+}
+
+/** Aligne tous les dossiers sur les prix et % actuellement enregistrés sur les fiches. */
+export async function syncAllRecordedTariffs() {
+  const employees = await prisma.employee.findMany({
+    where: {
+      user: { isNot: null },
+      OR: [
+        { consultationTotalFcfa: { gt: 0 } },
+        { surgeryQuotaPercent: { gt: 0 } },
+        { isMedecin: true },
+      ],
+    },
+    select: { id: true },
+  });
+
+  const totals = emptySummary();
+  for (const employee of employees) {
+    const summary = await recalculateAfterEmployeeFicheChange(employee.id);
+    totals.pendingConsultationInvoices += summary.pendingConsultationInvoices;
+    totals.unpaidSurgeryShares += summary.unpaidSurgeryShares;
+    totals.pendingShareClaims += summary.pendingShareClaims;
+  }
+  return totals;
 }
 
 export async function recalculateAfterEmployeeFicheChangeSafe(employeeId: string) {

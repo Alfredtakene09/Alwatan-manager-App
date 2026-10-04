@@ -1,4 +1,4 @@
-import { ConsultationQuotaMode, InvoiceStatus, Prisma } from "@prisma/client";
+import { ConsultationQuotaMode, InvoiceStatus, InvoiceType, Prisma } from "@prisma/client";
 import { prisma } from "./db.js";
 import {
   classifyInvoiceForDayClosure,
@@ -6,6 +6,7 @@ import {
 } from "./day-closure-sales.js";
 import {
   computeConsultationShares,
+  doctorSurgeryQuotaPercent,
   doctorUsesQuota,
   type DoctorProfile,
 } from "./doctor-compensation.js";
@@ -80,6 +81,18 @@ function summaryAmountFcfa(invoice: SummaryInvoice): number {
   return paid > 0 ? paid : Math.max(0, invoice.amountFcfa);
 }
 
+/**
+ * Consultation : le prix actuel de la fiche, pour tous les enregistrements
+ * déjà facturés. Une réduction saisie sur la visite est conservée.
+ */
+export function consultationTariffAmount(invoice: SummaryInvoice, collectedFcfa: number): number {
+  if (collectedFcfa <= 0 || invoice.type !== InvoiceType.CONSULTATION) return collectedFcfa;
+  const price = invoiceDoctor(invoice)?.employee?.consultationTotalFcfa ?? 0;
+  if (price <= 0) return collectedFcfa;
+  const reduction = Math.max(0, invoice.visit?.reductionFcfa ?? 0);
+  return Math.max(0, price - reduction);
+}
+
 function invoiceDoctor(invoice: SummaryInvoice): DoctorProfile | null {
   return invoice.visit?.consultation?.doctor ?? invoice.visit?.assignedDoctor ?? null;
 }
@@ -88,13 +101,21 @@ type ShareResult = { shareFcfa: number; percent: number | null };
 
 const NO_SHARE: ShareResult = { shareFcfa: 0, percent: null };
 
-/** Part consultation : % du médecin sur les consultations (ex. 50 %), appliqué au montant. */
+/** Part consultation : le % actuel de la fiche (ex. 50 %), pas celui figé à l'encaissement. */
 export function consultationShare(invoice: SummaryInvoice, amountFcfa: number): ShareResult {
   const doctor = invoiceDoctor(invoice);
-  if (!doctor || !doctorUsesQuota(doctor)) return NO_SHARE;
+  if (!doctor || amountFcfa <= 0) return NO_SHARE;
 
   const quotaMode = doctor.employee?.consultationQuotaMode ?? ConsultationQuotaMode.PERCENT;
   const quotaPercent = doctor.employee?.consultationQuotaPercent ?? 0;
+  if (quotaMode === ConsultationQuotaMode.PERCENT && quotaPercent > 0) {
+    return {
+      shareFcfa: Math.round((amountFcfa * quotaPercent) / 100),
+      percent: quotaPercent,
+    };
+  }
+  if (!doctorUsesQuota(doctor)) return NO_SHARE;
+
   const { doctorShareFcfa } = computeConsultationShares(
     amountFcfa,
     quotaPercent,
@@ -102,9 +123,7 @@ export function consultationShare(invoice: SummaryInvoice, amountFcfa: number): 
     quotaMode,
     doctor,
   );
-  // Montant fixe : le taux affiché n'a pas de sens, seul le montant compte.
-  const percent = quotaMode === ConsultationQuotaMode.PERCENT ? quotaPercent : null;
-  return { shareFcfa: doctorShareFcfa, percent };
+  return { shareFcfa: doctorShareFcfa, percent: null };
 }
 
 function operationSurgeon(invoice: SummaryInvoice): DoctorProfile | null {
@@ -117,11 +136,12 @@ function operationSurgeon(invoice: SummaryInvoice): DoctorProfile | null {
  */
 export function operationShare(invoice: SummaryInvoice, amountFcfa: number): ShareResult {
   const surgeon = operationSurgeon(invoice);
-  if (surgeon && doctorUsesQuota(surgeon)) {
-    const percent = surgeon.employee?.surgeryQuotaPercent ?? 0;
-    if (percent > 0) {
-      return { shareFcfa: Math.round((amountFcfa * percent) / 100), percent };
-    }
+  const fichePercent = doctorSurgeryQuotaPercent(surgeon);
+  if (fichePercent != null && amountFcfa > 0) {
+    return {
+      shareFcfa: Math.round((amountFcfa * fichePercent) / 100),
+      percent: fichePercent,
+    };
   }
 
   const stored = invoice.surgeryCase?.surgeonShareFcfa ?? 0;
@@ -189,7 +209,8 @@ export async function buildRegistrationSummary(
   const grouped = new Map<string, Accumulator>();
 
   for (const invoice of invoices) {
-    const amountFcfa = summaryAmountFcfa(invoice);
+    const collectedFcfa = summaryAmountFcfa(invoice);
+    const amountFcfa = consultationTariffAmount(invoice, collectedFcfa);
     if (amountFcfa <= 0) continue;
 
     const { label, group } = classifyInvoiceForDayClosure(invoice);

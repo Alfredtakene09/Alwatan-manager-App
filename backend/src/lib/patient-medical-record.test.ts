@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { VisitStatus } from "@prisma/client";
-import { buildMedicalHistoryEntry } from "./patient-medical-record.js";
+import { buildMedicalHistoryEntry, classifyVisitAction } from "./patient-medical-record.js";
 
 const otherDoctorVisit = {
   id: "visit-1",
@@ -18,6 +18,26 @@ const otherDoctorVisit = {
     doctor: { firstName: "Amadou", lastName: "Diallo" },
   },
 };
+
+describe("classifyVisitAction", () => {
+  it("classe une visite sans acte chirurgical en consultation", () => {
+    assert.deepEqual(classifyVisitAction({ prescribedOperations: [] }), {
+      action: "consultation",
+      detail: null,
+    });
+  });
+
+  it("classe une opération du bloc ou prescrite", () => {
+    assert.deepEqual(classifyVisitAction({ surgeryLabel: "Appendicectomie" }), {
+      action: "operation",
+      detail: "Appendicectomie",
+    });
+    assert.deepEqual(
+      classifyVisitAction({ prescribedOperations: ["Petite chirurgie"] }),
+      { action: "operation", detail: "Petite chirurgie" },
+    );
+  });
+});
 
 describe("buildMedicalHistoryEntry — dossier partagé", () => {
   it("masque le diagnostic d’un autre médecin sans droit élargi", () => {

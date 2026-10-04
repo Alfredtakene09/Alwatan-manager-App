@@ -126,15 +126,25 @@ export function computeConsultationShares(
   };
 }
 
+/** % chirurgie saisi sur la fiche : il prime sur le catalogue, même après une mise à jour. */
+export function doctorSurgeryQuotaPercent(surgeon: DoctorProfile | null | undefined): number | null {
+  const percent = surgeon?.employee?.surgeryQuotaPercent;
+  if (percent == null || percent <= 0) return null;
+  return percent;
+}
+
 export function computeSurgeryShares(
   totalCostFcfa: number,
   surgeonPercent: number,
   surgeon: DoctorProfile,
 ) {
-  if (!doctorUsesQuota(surgeon)) {
+  const fichePercent = doctorSurgeryQuotaPercent(surgeon);
+  const percent =
+    fichePercent ??
+    (doctorUsesQuota(surgeon) ? surgeonPercent : 0);
+  if (percent <= 0 || totalCostFcfa <= 0) {
     return { surgeonShareFcfa: 0, clinicShareFcfa: totalCostFcfa };
   }
-  const percent = surgeon.employee?.surgeryQuotaPercent ?? surgeonPercent;
   const surgeonShareFcfa = Math.round((totalCostFcfa * percent) / 100);
   return {
     surgeonShareFcfa,
@@ -146,8 +156,10 @@ export function resolveSurgeonPercent(
   interventionSurgeonPercent: number,
   surgeon: DoctorProfile,
 ) {
+  const fichePercent = doctorSurgeryQuotaPercent(surgeon);
+  if (fichePercent != null) return fichePercent;
   if (!doctorUsesQuota(surgeon)) return 0;
-  return surgeon.employee?.surgeryQuotaPercent ?? interventionSurgeonPercent;
+  return interventionSurgeonPercent;
 }
 
 export const DOCTOR_COMPENSATION_LABELS: Record<DoctorCompensationType, string> = {

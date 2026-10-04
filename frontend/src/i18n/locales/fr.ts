@@ -111,6 +111,11 @@ export default {
     'Aucun dossier médical pour le moment.': 'Aucun dossier médical pour le moment.',
     'Patients consultés par les médecins — historique clinique complet':
       'Patients consultés par les médecins — historique clinique complet',
+    'Patients, date et action (consultation ou opération)':
+      'Patients, date et action (consultation ou opération)',
+    'Activité des médecins': 'Activité des médecins',
+    'Filtrer un médecin pour voir ses patients': 'Filtrer un médecin pour voir ses patients',
+    'Aucune activité pour ce médecin.': 'Aucune activité pour ce médecin.',
     'Enregistré par {name}': 'Enregistré par {name}',
     'Aucun patient trouvé. Utilisez la recherche ci-contre.':
       'Aucun patient trouvé. Utilisez la recherche ci-contre.',

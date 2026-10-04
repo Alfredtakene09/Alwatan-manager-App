@@ -674,17 +674,9 @@ type RegistrationSummaryLine = {
   operationPercent: number | null
 }
 
-function doctorSharePercent(row: RegistrationSummaryLine): number | null {
-  if (row.group === 'operation') return row.operationPercent
-  return row.doctorPercent
-}
-
 function doctorShareLabel(row: RegistrationSummaryLine): string {
   if (row.doctorShareFcfa <= 0) return '—'
-  const amount = formatFcfa(row.doctorShareFcfa)
-  const percent = doctorSharePercent(row)
-  if (percent == null || percent <= 0) return amount
-  return `${percent} % · ${amount}`
+  return formatFcfa(row.doctorShareFcfa)
 }
 
 function clinicShareLabel(row: RegistrationSummaryLine): string {

@@ -85,13 +85,15 @@ type MedecinPatientRow = {
   hasComment: boolean
 }
 
-type DirectionPatientRow = {
-  patient: PatientSummary
-  lastVisitAt: string
-  doctorName: string | null
-  visitCount: number
-  labResultsCount: number
-  hasComment: boolean
+type AdminDoctorAct = {
+  id: string
+  visitId: string
+  patient: { id: string; code: string; firstName: string; lastName: string }
+  doctorId: string
+  doctorName: string
+  actedAt: string
+  action: 'consultation' | 'operation'
+  detail: string | null
 }
 
 type DossierResponse = {
@@ -124,10 +126,11 @@ const canDeleteDocuments = computed(
 )
 
 const isMedecin = computed(() => auth.user?.role === 'MEDECIN')
+const isAdmin = computed(() => auth.user?.role === 'ADMIN')
 const isManagementDossier = computed(() =>
   auth.user ? isDirectionOrGestionnaire(auth.user.role) : false,
 )
-const showPatientSidebar = computed(() => isMedecin.value || isManagementDossier.value)
+const showPatientSidebar = computed(() => isMedecin.value || isAdmin.value)
 
 const searchQuery = ref('')
 const searchResults = ref<PatientSummary[]>([])
@@ -141,9 +144,11 @@ const activeTab = ref<'history' | 'payments' | 'files'>('history')
 const activeKind = ref<PatientDocumentKind | 'ALL'>('ALL')
 
 const medecinPatients = ref<MedecinPatientRow[]>([])
-const managementPatients = ref<DirectionPatientRow[]>([])
+const adminActs = ref<AdminDoctorAct[]>([])
+const adminDoctorId = ref('')
+const selectedActId = ref<string | null>(null)
 const loadingMedecinPatients = ref(false)
-const loadingManagementPatients = ref(false)
+const loadingAdminActs = ref(false)
 const sidebarQuery = ref('')
 
 const showUpload = ref(false)
@@ -196,24 +201,44 @@ const filteredMedecinPatients = computed(() => {
   )
 })
 
-const filteredManagementPatients = computed(() => {
-  const q = sidebarQuery.value.trim()
-  if (!q) return managementPatients.value
-  return managementPatients.value.filter((row) =>
-    matchesPatientSearch(
-      {
-        code: row.patient.code,
-        firstName: row.patient.firstName,
-        lastName: row.patient.lastName,
-        phone: row.patient.phone,
-      },
-      q,
-    ),
-  )
+const adminDoctors = computed(() => {
+  const names = new Map<string, string>()
+  for (const act of adminActs.value) names.set(act.doctorId, act.doctorName)
+  return [...names.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+})
+
+const filteredAdminActs = computed(() => {
+  const q = sidebarQuery.value.trim().toLowerCase()
+  return adminActs.value.filter((act) => {
+    if (adminDoctorId.value && act.doctorId !== adminDoctorId.value) return false
+    if (!q) return true
+    return (
+      matchesPatientSearch(
+        {
+          code: act.patient.code,
+          firstName: act.patient.firstName,
+          lastName: act.patient.lastName,
+        },
+        q,
+      ) || act.doctorName.toLowerCase().includes(q)
+    )
+  })
+})
+
+const adminActGroups = computed(() => {
+  const groups = new Map<string, { doctorId: string; doctorName: string; acts: AdminDoctorAct[] }>()
+  for (const act of filteredAdminActs.value) {
+    const group = groups.get(act.doctorId)
+    if (group) group.acts.push(act)
+    else groups.set(act.doctorId, { doctorId: act.doctorId, doctorName: act.doctorName, acts: [act] })
+  }
+  return [...groups.values()]
 })
 
 const loadingSidebarPatients = computed(() =>
-  isMedecin.value ? loadingMedecinPatients.value : loadingManagementPatients.value,
+  isMedecin.value ? loadingMedecinPatients.value : loadingAdminActs.value,
 )
 
 const historyCount = computed(() => dossier.value?.medicalHistory.length ?? 0)
@@ -313,17 +338,22 @@ async function loadMedecinPatients() {
   }
 }
 
-async function loadManagementPatients() {
-  if (!isManagementDossier.value) return
-  loadingManagementPatients.value = true
+async function loadAdminActivity() {
+  if (!isAdmin.value) return
+  loadingAdminActs.value = true
   try {
-    const { data } = await api.get<DirectionPatientRow[]>('/patient-dossiers/direction/patients')
-    managementPatients.value = data
+    const { data } = await api.get<AdminDoctorAct[]>('/patient-dossiers/admin/activity')
+    adminActs.value = data
   } catch {
-    managementPatients.value = []
+    adminActs.value = []
   } finally {
-    loadingManagementPatients.value = false
+    loadingAdminActs.value = false
   }
+}
+
+function selectAdminAct(act: AdminDoctorAct) {
+  selectedActId.value = act.id
+  selectPatient(act.patient)
 }
 
 async function loadDossier(patientId: string) {
@@ -347,7 +377,16 @@ async function loadDossier(patientId: string) {
   }
 }
 
-function selectPatient(patient: PatientSummary) {
+function actActionLabel(act: AdminDoctorAct) {
+  void localeCode.value
+  return act.action === 'operation' ? uiText('Opération') : uiText('Consultation')
+}
+
+function actShortDate(iso: string) {
+  return dateText(iso, { day: '2-digit', month: '2-digit', year: '2-digit' })
+}
+
+function selectPatient(patient: Pick<PatientSummary, 'id' | 'code' | 'firstName' | 'lastName'>) {
   searchQuery.value = `${patient.code} — ${fullName(patient.firstName, patient.lastName)}`
   searchResults.value = []
   activeKind.value = 'ALL'
@@ -497,7 +536,7 @@ async function deletePatientDossier() {
     searchQuery.value = ''
     searchResults.value = []
     await router.replace({ query: {} })
-    await Promise.all([loadMedecinPatients(), loadManagementPatients()])
+    await Promise.all([loadMedecinPatients(), loadAdminActivity()])
   } catch (error: unknown) {
     await showApiErrorModal(error, 'Impossible de supprimer ce patient.')
   } finally {
@@ -533,7 +572,7 @@ watch(activeKind, () => {
 })
 
 onMounted(async () => {
-  await Promise.all([loadMedecinPatients(), loadManagementPatients()])
+  await Promise.all([loadMedecinPatients(), loadAdminActivity()])
   const patientId = route.query.patient as string | undefined
   if (patientId) {
     await loadDossier(patientId)
@@ -542,8 +581,6 @@ onMounted(async () => {
     }
   } else if (isMedecin.value && medecinPatients.value[0]) {
     selectPatient(medecinPatients.value[0].patient)
-  } else if (isManagementDossier.value && managementPatients.value[0]) {
-    selectPatient(managementPatients.value[0].patient)
   }
 })
 </script>
@@ -553,8 +590,8 @@ onMounted(async () => {
     <UiPageHeader
       title="Dossier patient"
       :subtitle="
-        isManagementDossier
-          ? uiText('Patients consultés par les médecins — historique clinique complet')
+        isAdmin
+          ? uiText('Patients, date et action (consultation ou opération)')
           : uiText('Parcours, résultats, opérations et fichiers')
       "
       :icon="FolderOpen"
@@ -597,40 +634,49 @@ onMounted(async () => {
         </UiCard>
       </aside>
 
-      <aside v-else-if="isManagementDossier" class="dossier-sidebar">
-        <UiCard
-          :title="uiText('Patients consultés')"
-          :description="uiText('Dossiers enregistrés par les médecins')"
-          :icon="UserRound"
-          icon-variant="teal"
-        >
+      <aside v-else-if="isAdmin" class="dossier-sidebar">
+        <UiCard title="Activité des médecins" :icon="UserRound" icon-variant="teal" direct>
+          <UiSelect v-model="adminDoctorId" label="Médecin">
+            <option value="">{{ uiText('Tous les médecins') }}</option>
+            <option v-for="doctor in adminDoctors" :key="doctor.id" :value="doctor.id">
+              {{ doctor.name }}
+            </option>
+          </UiSelect>
           <label class="sidebar-search">
             <Search :size="14" />
-            <input v-model="sidebarQuery" type="search" :placeholder="uiText('Filtrer la liste…')" />
+            <input v-model="sidebarQuery" type="search" :placeholder="uiText('Filtrer…')" />
           </label>
 
-          <p v-if="loadingManagementPatients" class="hint">{{ uiText('Chargement…') }}</p>
-          <p v-else-if="!filteredManagementPatients.length" class="hint">
-            {{ uiText('Aucun dossier médical pour le moment.') }}
+          <p v-if="loadingAdminActs" class="hint">{{ uiText('Chargement…') }}</p>
+          <p v-else-if="!filteredAdminActs.length" class="hint">
+            {{ uiText('Aucune activité pour ce médecin.') }}
           </p>
 
-          <ul v-else class="patient-list">
-            <li v-for="row in filteredManagementPatients" :key="row.patient.id">
-              <button
-                type="button"
-                class="patient-list__item"
-                :class="{ 'patient-list__item--active': selectedPatientId === row.patient.id }"
-                @click="selectPatient(row.patient)"
-              >
-                <strong>{{ row.patient.code }}</strong>
-                <span>{{ fullName(row.patient.firstName, row.patient.lastName) }}</span>
-                <span class="patient-list__meta">
-                  {{ row.doctorName || uiText('Médecin') }}
-                  · {{ formatValidatedMeta(row.lastVisitAt, row.labResultsCount, row.hasComment) }}
-                </span>
-              </button>
-            </li>
-          </ul>
+          <div v-else class="act-groups">
+            <section v-for="group in adminActGroups" :key="group.doctorId">
+              <p v-if="!adminDoctorId" class="act-group">{{ group.doctorName }}</p>
+              <ul class="patient-list">
+                <li v-for="act in group.acts" :key="act.id">
+                  <button
+                    type="button"
+                    class="act-row"
+                    :class="{ 'act-row--active': selectedActId === act.id }"
+                    :title="`${act.patient.code} — ${fullName(act.patient.firstName, act.patient.lastName)}`"
+                    @click="selectAdminAct(act)"
+                  >
+                    <span class="act-row__name">{{ fullName(act.patient.firstName, act.patient.lastName) }}</span>
+                    <span class="act-row__date">{{ actShortDate(act.actedAt) }}</span>
+                    <span
+                      class="act-badge"
+                      :class="act.action === 'operation' ? 'act-badge--operation' : 'act-badge--consultation'"
+                    >
+                      {{ actActionLabel(act) }}
+                    </span>
+                  </button>
+                </li>
+              </ul>
+            </section>
+          </div>
         </UiCard>
       </aside>
 
@@ -980,7 +1026,7 @@ onMounted(async () => {
 
 .dossier-layout--with-sidebar {
   display: grid;
-  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
   gap: 1rem;
   align-items: start;
 }
@@ -1045,6 +1091,78 @@ onMounted(async () => {
 .patient-list__meta {
   font-size: 0.6875rem;
   color: var(--text-muted);
+}
+
+.act-groups {
+  max-height: 32rem;
+  overflow: auto;
+}
+
+.act-group {
+  margin: 0.65rem 0 0.15rem;
+  padding: 0 0.15rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--primary-800, #115e59);
+}
+
+.act-groups .patient-list {
+  max-height: none;
+  overflow: visible;
+}
+
+.act-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.35rem;
+  align-items: center;
+  width: 100%;
+  padding: 0.4rem 0.35rem;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.act-row:hover,
+.act-row--active {
+  background: var(--primary-50);
+}
+
+.act-row__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.act-row__date {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.act-badge {
+  display: inline-flex;
+  padding: 0.08rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.act-badge--consultation {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.act-badge--operation {
+  background: #fff7ed;
+  color: #c2410c;
 }
 
 .tab-bar {

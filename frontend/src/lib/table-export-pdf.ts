@@ -215,7 +215,7 @@ function drawTable<T>(
     headStyles: { fillColor: [15, 118, 110], textColor: 255, fontStyle: 'bold' },
     footStyles: { fillColor: [226, 232, 240], textColor: [15, 23, 42], fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [248, 250, 252] },
-    margin: { left: 14, right: 14 },
+    margin: { left: 14, right: 14, bottom: 16 },
     didParseCell: applyCellFont,
   })
   const tableY = lastTableY(doc, y)
@@ -226,7 +226,7 @@ function drawTable<T>(
     theme: 'plain',
     styles: { font: 'helvetica', fontSize: 10.5, fontStyle: 'bold', cellPadding: 1.8 },
     columnStyles: { 0: { cellWidth: 120 }, 1: { halign: 'right' } },
-    margin: { left: 14, right: 14 },
+    margin: { left: 14, right: 14, bottom: 16 },
     didParseCell: applyCellFont,
   })
   return lastTableY(doc, tableY)
@@ -237,31 +237,37 @@ function lastTableY(doc: jsPDF, fallback: number): number {
   return ext.lastAutoTable?.finalY ?? fallback
 }
 
-export async function saveReportPdfFile(
+export async function createReportPdf(
   title: string,
   columns: ExportColumn<any>[],
   rows: any[],
   options?: {
     captionRows?: ExportCaptionRow[]
+    /** Date de génération, affichée en pied de page (les filtres restent en en-tête). */
+    footerLabel?: string
     totalsRows?: ExportCaptionRow[]
     sections?: ExportSection[]
-    filename?: string
     orientation?: 'portrait' | 'landscape'
     gridLines?: boolean
   },
-): Promise<void> {
+): Promise<jsPDF> {
   const doc = new jsPDF({ orientation: options?.orientation ?? 'portrait', unit: 'mm', format: 'a4' })
   const [fontReady, logo] = await Promise.all([registerArabicFont(doc), loadClinicLogo()])
   arabicFontReady = fontReady
   const pageHeight = doc.internal.pageSize.getHeight()
   const pageCount = () => doc.getNumberOfPages()
+  const footerLabel = pdfText(options?.footerLabel ?? '')
   const drawFooter = () => {
     const total = pageCount()
     for (let i = 1; i <= total; i++) {
       doc.setPage(i)
-      doc.setFont('helvetica', 'normal')
       doc.setFontSize(8)
       doc.setTextColor(100, 116, 139)
+      if (footerLabel) {
+        doc.setFont(fontFor(footerLabel), 'normal')
+        doc.text(footerLabel, 14, pageHeight - 8)
+      }
+      doc.setFont('helvetica', 'normal')
       doc.text(`${i} / ${total}`, doc.internal.pageSize.getWidth() - 14, pageHeight - 8, { align: 'right' })
     }
   }
@@ -302,6 +308,24 @@ export async function saveReportPdfFile(
   }
 
   drawFooter()
+  return doc
+}
+
+export async function saveReportPdfFile(
+  title: string,
+  columns: ExportColumn<any>[],
+  rows: any[],
+  options?: {
+    captionRows?: ExportCaptionRow[]
+    footerLabel?: string
+    totalsRows?: ExportCaptionRow[]
+    sections?: ExportSection[]
+    filename?: string
+    orientation?: 'portrait' | 'landscape'
+    gridLines?: boolean
+  },
+): Promise<void> {
+  const doc = await createReportPdf(title, columns, rows, options)
   const blob = doc.output('blob')
   downloadBlob(blob, `${options?.filename ?? 'export'}.pdf`)
 }
