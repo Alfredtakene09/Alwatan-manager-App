@@ -270,14 +270,15 @@ function formatDateFr(iso: string, compact = false) {
   const [year, month, day] = iso.split('-').map(Number)
   const date = new Date(year, month - 1, day)
   if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleDateString('fr-FR', compact
-    ? { day: '2-digit', month: '2-digit', year: 'numeric' }
-    : {
-        weekday: 'short',
-        day: '2-digit',
-        month: 'long',
-        year: 'numeric',
-      })
+  if (compact) {
+    return `${String(day).padStart(2, '0')}-${String(month).padStart(2, '0')}-${year}`
+  }
+  return date.toLocaleDateString('fr-FR', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  })
 }
 
 function roomTypeLabel(roomType: string) {

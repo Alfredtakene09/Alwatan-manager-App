@@ -7,7 +7,7 @@ import {
   shouldPrintPendingPaymentThanks,
 } from './external-ticket-copy'
 import { getAppLocale, translateUi, translateUiLocale } from '@/i18n/translate'
-import { formatAppDate, formatAppTime, intlLocaleFor } from '@/i18n/locale-format'
+import { formatReceiptDateFr, formatReceiptTimeFr } from '@/i18n/locale-format'
 import {
   extractBasePanelLabel,
   normalizeLabLabelKey,
@@ -2085,36 +2085,27 @@ function parseReceiptDateTime(dateStr: string, shortDate = false) {
       )
     : new Date(dateStr)
   const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed
-  const locale = intlLocaleFor()
+  const receiptDate = formatReceiptDateFr(date)
+  const receiptTime = formatReceiptTimeFr(date)
+  const receiptTimeFull = formatReceiptTimeFr(date, true)
 
   return {
     date: shortDate
-      ? formatAppDate(date)
-      : date.toLocaleDateString(locale, {
+      ? receiptDate
+      : date.toLocaleDateString('fr-FR', {
           weekday: 'long',
           day: 'numeric',
           month: 'long',
           year: 'numeric',
         }),
-    shortDate: formatAppDate(date),
-    time: formatAppTime(date, {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    }),
-    timeShort: formatAppTime(date, {
-      hour: '2-digit',
-      minute: '2-digit',
-    }),
-    /** Chiffres latins (tickets thermiques) : les chiffres arabes-indiens sont peu lisibles en 203 dpi. */
-    latinShortDate: `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)}/${date.getFullYear()}`,
-    latinTime: `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`,
-    latinTimeShort: `${pad2(date.getHours())}:${pad2(date.getMinutes())}`,
+    shortDate: receiptDate,
+    time: receiptTimeFull,
+    timeShort: receiptTime,
+    /** Chiffres latins jj-mm-AAAA (tickets thermiques), même en session arabe. */
+    latinShortDate: receiptDate,
+    latinTime: receiptTimeFull,
+    latinTimeShort: receiptTime,
   }
-}
-
-function pad2(value: number) {
-  return String(value).padStart(2, '0')
 }
 
 function labExamDensityClass(examCount: number) {
@@ -2220,13 +2211,10 @@ export type DayClosureReceiptData = {
 
 function formatDayClosureShortDate(isoDate: string): string {
   const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (match) return `${match[3]}/${match[2]}/${match[1].slice(-2)}`
+  if (match) return `${match[3]}-${match[2]}-${match[1]}`
   const d = new Date(`${isoDate}T12:00:00`)
   if (Number.isNaN(d.getTime())) return isoDate
-  const dd = String(d.getDate()).padStart(2, '0')
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const yy = String(d.getFullYear()).slice(-2)
-  return `${dd}/${mm}/${yy}`
+  return formatReceiptDateFr(d)
 }
 
 function formatDayClosureAmount(amount: number): string {
@@ -2282,7 +2270,7 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
   const dateShortTo = data.businessDateTo
     ? formatDayClosureShortDate(data.businessDateTo)
     : dateShort
-  const dateFull = formatAppDate(new Date(`${data.businessDate}T12:00:00`))
+  const dateFull = formatReceiptDateFr(new Date(`${data.businessDate}T12:00:00`))
   const username =
     (data.receptionistUsername || '').trim() ||
     (data.receptionistName || '').trim() ||

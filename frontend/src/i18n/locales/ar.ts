@@ -434,8 +434,16 @@ export default {
     Spécialité: 'التخصص',
     Disponibilités: 'التوفر',
     'Spécialité & disponibilités': 'التخصص والتوفر',
+    'Spécialité & services': 'التخصص والخدمات',
     'Spécialité affichée à la réception et créneaux hebdomadaires du médecin.':
       'التخصص المعروض في الاستقبال والفترات الأسبوعية للطبيب.',
+    'Spécialité affichée à la réception et pourcentage appliqué si ce médecin est choisi pour une opération.':
+      'التخصص المعروض في الاستقبال والنسبة المطبقة عند اختيار هذا الطبيب لعملية.',
+    '% Chirurgie': '% الجراحة',
+    'Pourcentage appliqué quand ce médecin est sélectionné comme chirurgien pour une opération.':
+      'النسبة المطبقة عندما يُختار هذا الطبيب جراحاً لعملية.',
+    'Le pourcentage chirurgie doit être un entier entre 1 et 99.':
+      'يجب أن تكون نسبة الجراحة عدداً صحيحاً بين 1 و 99.',
     'Désactiver le médecin': 'تعطيل الطبيب',
     Photo: 'صورة',
     Matricule: 'الرقم',

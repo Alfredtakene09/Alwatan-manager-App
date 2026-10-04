@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import JSZip from 'jszip'
 import { Packer } from 'docx'
-import { rowsToHtmlTable, rowsToMatrix, sectionsToHtml, sectionsToMatrix, uniqueExcelSheetNames, type ExportColumn } from './table-export-html.ts'
+import { exportableRows, isExportableRow, rowsToHtmlTable, rowsToMatrix, sectionsToHtml, sectionsToMatrix, uniqueExcelSheetNames, type ExportColumn } from './table-export-html.ts'
 import { buildWordDocument } from './table-export-word.ts'
 import { isUiActionAllowed } from './ui-actions.ts'
 
@@ -260,6 +260,33 @@ describe('export table Word', () => {
     )
     assert.ok(xml)
     assert.match(xml, /w:pageBreakBefore/)
+  })
+})
+
+describe('lignes désactivées ou supprimées', () => {
+  it('les retire des matrices PDF/Excel', () => {
+    const rows = [
+      { name: 'Actif', price: '100', isActive: true },
+      { name: 'Inactif', price: '200', active: false },
+      { name: 'Supprimé', price: '300', deletedAt: '2026-01-01' },
+      { name: 'Sans statut', price: '400' },
+    ]
+    assert.equal(isExportableRow(rows[0]), true)
+    assert.equal(isExportableRow(rows[1]), false)
+    assert.equal(isExportableRow({ deleted: true }), false)
+    assert.deepEqual(
+      exportableRows(rows).map((row) => row.name),
+      ['Actif', 'Sans statut'],
+    )
+    const matrix = rowsToMatrix(columns, rows)
+    assert.deepEqual(
+      matrix.map((line) => line[0]),
+      ['Médicament', 'Actif', 'Sans statut'],
+    )
+    const html = rowsToHtmlTable(columns, rows)
+    assert.match(html, /Actif/)
+    assert.doesNotMatch(html, /Inactif/)
+    assert.doesNotMatch(html, /Supprimé/)
   })
 })
 

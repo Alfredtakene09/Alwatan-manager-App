@@ -442,8 +442,16 @@ export default {
     Spécialité: 'Spécialité',
     Disponibilités: 'Disponibilités',
     'Spécialité & disponibilités': 'Spécialité & disponibilités',
+    'Spécialité & services': 'Spécialité & services',
     'Spécialité affichée à la réception et créneaux hebdomadaires du médecin.':
       'Spécialité affichée à la réception et créneaux hebdomadaires du médecin.',
+    'Spécialité affichée à la réception et pourcentage appliqué si ce médecin est choisi pour une opération.':
+      'Spécialité affichée à la réception et pourcentage appliqué si ce médecin est choisi pour une opération.',
+    '% Chirurgie': '% Chirurgie',
+    'Pourcentage appliqué quand ce médecin est sélectionné comme chirurgien pour une opération.':
+      'Pourcentage appliqué quand ce médecin est sélectionné comme chirurgien pour une opération.',
+    'Le pourcentage chirurgie doit être un entier entre 1 et 99.':
+      'Le pourcentage chirurgie doit être un entier entre 1 et 99.',
     'Désactiver le médecin': 'Désactiver le médecin',
     Photo: 'Photo',
     Matricule: 'Matricule',

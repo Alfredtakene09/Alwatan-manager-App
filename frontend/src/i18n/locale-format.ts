@@ -66,3 +66,26 @@ export function formatAppNumber(
   if (value == null || !Number.isFinite(value)) return '—'
   return new Intl.NumberFormat(intlLocaleFor(locale), options).format(value)
 }
+
+function pad2(value: number) {
+  return String(value).padStart(2, '0')
+}
+
+/** Date de reçu : toujours jj-mm-AAAA, chiffres latins, quelle que soit la langue de session. */
+export function formatReceiptDateFr(value: Date): string {
+  return `${pad2(value.getDate())}-${pad2(value.getMonth() + 1)}-${value.getFullYear()}`
+}
+
+/** Heure de reçu : toujours HH:MM (ou HH:MM:SS), chiffres latins. */
+export function formatReceiptTimeFr(value: Date, withSeconds = false): string {
+  const hm = `${pad2(value.getHours())}:${pad2(value.getMinutes())}`
+  return withSeconds ? `${hm}:${pad2(value.getSeconds())}` : hm
+}
+
+/** Date et heure de reçu : `jj-mm-AAAA HH:MM`. */
+export function formatReceiptDateTimeFr(value: string | number | Date | null | undefined): string {
+  if (value == null || value === '') return '—'
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return `${formatReceiptDateFr(date)} ${formatReceiptTimeFr(date)}`
+}

@@ -27,6 +27,20 @@ export function cellText(value: ExportCell): string {
   return stripBidiMarks(String(value))
 }
 
+/** Patient, examen ou autre ligne désactivée / supprimée : hors exports. */
+export function isExportableRow(row: unknown): boolean {
+  if (row == null || typeof row !== 'object') return true
+  const record = row as Record<string, unknown>
+  if (record.active === false || record.isActive === false) return false
+  if (record.deleted === true) return false
+  if (record.deletedAt != null && record.deletedAt !== '') return false
+  return true
+}
+
+export function exportableRows<T>(rows: T[]): T[] {
+  return rows.filter(isExportableRow)
+}
+
 export function escapeHtml(value: ExportCell): string {
   return cellText(value)
     .replace(/&/g, '&amp;')
@@ -47,7 +61,7 @@ export function rowsToMatrix<T>(
   extras?: { totalsRows?: ExportCaptionRow[] },
 ): string[][] {
   const header = columns.map((c) => c.header)
-  const body = rows.map((row) => columns.map((c) => cellText(c.value(row))))
+  const body = exportableRows(rows).map((row) => columns.map((c) => cellText(c.value(row))))
   return [header, ...body, ...totalsToMatrix(extras?.totalsRows)]
 }
 
@@ -84,7 +98,7 @@ export function rowsToHtmlTable<T>(
   },
 ): string {
   const head = columns.map((c) => `<th>${escapeHtml(c.header)}</th>`).join('')
-  const body = rows
+  const body = exportableRows(rows)
     .map((row, index) => {
       const cells = columns.map((c) => `<td>${escapeHtml(c.value(row))}</td>`).join('')
       return `<tr><td>${index + 1}</td>${cells}</tr>`

@@ -21,6 +21,7 @@ import api from '@/api/client'
 import { CLINIC } from '@/lib/clinic'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, cancelPrintWindow, openPrintDocument, reservePrintWindow, thermalIsRtl, thermalLocaleMetaRow, thermalThanksHtml, thermalTicketDirAttrs, thermalTicketRootClass } from '@/lib/print-document'
+import { formatReceiptDateTimeFr } from '@/i18n/locale-format'
 import PharmacyProductSuggest from '@/components/pharmacie/PharmacyProductSuggest.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -852,7 +853,7 @@ async function submitSale() {
         reductionPercent: adjustment.hasReduction ? selectedReductionPercent.value : undefined,
         coveredByName: data.coveredByName,
         isFree: data.isFree,
-        date: new Date().toLocaleString('fr-FR'),
+        date: formatReceiptDateTimeFr(new Date()),
         isExternal,
       }
     } else {

@@ -167,7 +167,7 @@ function toProductExportRow(item: PharmacyProductRecord) {
 
 const catalogExportRows = computed(() => {
   void localeCode.value
-  return filteredItems.value.map(toProductExportRow)
+  return filteredItems.value.filter((item) => item.active).map(toProductExportRow)
 })
 
 const hasActiveFilters = computed(

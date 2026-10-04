@@ -4,6 +4,7 @@ import { translateUi } from '@/i18n/translate'
 import { CLINIC, clinicTaxLine } from '@/lib/clinic'
 import {
   escapeHtml,
+  exportableRows,
   rowsToHtmlTable,
   rowsToMatrix,
   sectionsToHtml,
@@ -21,7 +22,7 @@ import {
   type WordSheetDef,
 } from '@/lib/table-export-word'
 
-export { escapeHtml, rowsToHtmlTable, rowsToMatrix, sectionsToHtml, sectionsToMatrix, uniqueExcelSheetNames }
+export { escapeHtml, exportableRows, rowsToHtmlTable, rowsToMatrix, sectionsToHtml, sectionsToMatrix, uniqueExcelSheetNames }
 export type { ExportCaptionRow, ExportCell, ExportColumn, ExportSection }
 
 export type TableExportOptions = {
@@ -129,6 +130,11 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
+function exportableSections(sections: ExportSection[] | undefined): ExportSection[] | undefined {
+  if (!sections?.length) return sections
+  return sections.map((section) => ({ ...section, rows: exportableRows(section.rows) }))
+}
+
 function excelColWidths<T>(columns: ExportColumn<T>[], rows: T[]) {
   return columns.map((col) => {
     const headerLen = col.header.length
@@ -153,11 +159,13 @@ export function exportTablePdf<T>(
   options?: TableExportOptions,
 ): void {
   const captionRows = defaultReportCaptionRows(options?.captionRows, options?.generatedAt)
+  const exportRows = exportableRows(rows)
+  const sections = exportableSections(options?.sections)
   void import('@/lib/table-export-pdf').then(({ saveReportPdfFile }) =>
-    saveReportPdfFile(title, columns, rows, {
+    saveReportPdfFile(title, columns, exportRows, {
       captionRows,
       totalsRows: options?.totalsRows,
-      sections: options?.sections,
+      sections,
       filename: options?.filename ?? exportBasename(title),
       orientation: options?.orientation,
       gridLines: options?.gridLines,
@@ -212,16 +220,17 @@ export async function exportTableWord<T>(
   const captionRows = defaultReportCaptionRows(options?.captionRows, options?.generatedAt)
   const logo = await fetchClinicLogo()
   const emptyLabel = translateUi('Aucune donnée')
-  const sheets: WordSheetDef[] = options?.sections?.length
-    ? options.sections.map((section, index) => {
-        const previous = index > 0 ? options.sections![index - 1] : undefined
+  const sections = exportableSections(options?.sections)
+  const sheets: WordSheetDef[] = sections?.length
+    ? sections.map((section, index) => {
+        const previous = index > 0 ? sections[index - 1] : undefined
         return {
           name: section.title || options?.sheetName || title,
           columns: section.columns,
           rows: section.rows,
           captionRows: index === 0 ? captionRows : undefined,
           totalsRows:
-            index === options.sections!.length - 1
+            index === sections.length - 1
               ? [...(section.totalsRows ?? []), ...(options?.totalsRows ?? [])]
               : section.totalsRows,
           emptyLabel,
@@ -232,7 +241,7 @@ export async function exportTableWord<T>(
         {
           name: options?.sheetName ?? title,
           columns,
-          rows,
+          rows: exportableRows(rows),
           captionRows,
           totalsRows: options?.totalsRows,
           emptyLabel,
@@ -256,7 +265,7 @@ export async function exportWorkbookWord(filename: string, sheets: WorkbookSheet
       (sheet): WordSheetDef => ({
         name: sheet.name,
         columns: sheet.columns ?? [],
-        rows: sheet.rows ?? [],
+        rows: exportableRows(sheet.rows ?? []),
         totalsRows: sheet.totalsRows,
         emptyLabel: translateUi('Aucune donnée'),
       }),

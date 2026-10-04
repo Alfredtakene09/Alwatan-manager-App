@@ -286,10 +286,10 @@ export function employeeCompensationData(
         existing?.consultationRenewalPolicy ??
         ConsultationRenewalPolicy.FULL
       : ConsultationRenewalPolicy.FULL,
-    surgeryQuotaPercent:
-      usesQuota || isSurgeryAssistantJobTitle(body.jobTitle)
-        ? pickCompensationField(body.surgeryQuotaPercent, existing?.surgeryQuotaPercent)
-        : null,
+    surgeryQuotaPercent: pickCompensationField(
+      body.surgeryQuotaPercent,
+      existing?.surgeryQuotaPercent,
+    ),
     fixedSalaryFcfa: usesSalary
       ? pickCompensationField(body.fixedSalaryFcfa, existing?.fixedSalaryFcfa)
       : null,

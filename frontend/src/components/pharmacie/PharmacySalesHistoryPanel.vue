@@ -8,7 +8,7 @@ import { CLINIC } from '@/lib/clinic'
 import { formatPatientTableDate } from '@/lib/patient-datatable-columns'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, openPrintDocument, reservePrintWindow, thermalIsRtl, thermalLocaleMetaRow, thermalThanksHtml, thermalTicketDirAttrs, thermalTicketRootClass } from '@/lib/print-document'
-import { formatAppDateTime } from '@/i18n/locale-format'
+import { formatReceiptDateTimeFr } from '@/i18n/locale-format'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import { confirmAppModal } from '@/lib/api-modal-helper'
@@ -181,7 +181,7 @@ async function loadItems() {
 
 async function printSale(sale: SaleRecord) {
   const invoiceNumber = sale.invoiceNumber ?? sale.id.slice(0, 8).toUpperCase()
-  const date = formatAppDateTime(sale.createdAt)
+  const date = formatReceiptDateTimeFr(sale.createdAt)
   const isInternal = sale.buyerType === 'patient' || Boolean(sale.patient)
 
   reservePrintWindow('80mm')

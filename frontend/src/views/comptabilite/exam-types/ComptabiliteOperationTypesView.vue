@@ -219,7 +219,7 @@ const operationExportColumns = computed<ExportColumn<OperationExportRow>[]>(() =
 })
 
 const operationExportRows = computed<OperationExportRow[]>(() =>
-  tableRows.value.map((row) => ({
+  tableRows.value.filter((row) => row.isActive).map((row) => ({
     label: row.label,
     medecins: row.medecins,
     service: row.service,

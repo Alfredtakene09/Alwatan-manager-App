@@ -23,10 +23,7 @@ import {
 } from '@/lib/doctor-compensation'
 import {
   DOCTOR_SPECIALTY_SUGGESTIONS,
-  DOCTOR_WEEKDAY_OPTIONS,
   parseDoctorAvailabilitySlots,
-  toggleDayAvailability,
-  updateDayTimes,
   type DoctorAvailabilitySlot,
 } from '@/lib/doctor-availability'
 import {
@@ -709,12 +706,15 @@ function closeModal() {
   resetForm()
 }
 
+function surgeryQuotaFromForm(): number | null | undefined {
+  if (!isMedecinProfile.value && !isSurgeryAssistantProfile.value) return null
+  const raw = form.value.surgeryQuotaPercent.trim()
+  if (!raw) return null
+  return Number(raw)
+}
+
 function compensationPayload() {
-  const surgeryQuotaPercent = isSurgeryAssistantProfile.value
-    ? form.value.surgeryQuotaPercent.trim()
-      ? Number(form.value.surgeryQuotaPercent)
-      : null
-    : undefined
+  const surgeryQuotaPercent = surgeryQuotaFromForm()
   if (!isMedecinProfile.value) {
     return { isMedecin: false as const, surgeryQuotaPercent }
   }
@@ -872,7 +872,11 @@ watch(
     if (inferIsMedecinFromJobTitle(title) && form.value.profile !== 'MEDECIN') {
       onProfileChange('MEDECIN')
     }
-    if (!isSurgeryAssistantJobTitle(title)) {
+    if (
+      !isSurgeryAssistantJobTitle(title) &&
+      form.value.profile !== 'MEDECIN' &&
+      !inferIsMedecinFromJobTitle(title)
+    ) {
       form.value.surgeryQuotaPercent = ''
     }
   },
@@ -898,28 +902,6 @@ function onPhotoSelected(event: Event) {
   photoFile.value = file
   photoPreviewUrl.value = URL.createObjectURL(file)
   form.value.hasPhoto = true
-}
-
-function daySlot(dayOfWeek: number) {
-  return form.value.availabilitySlots.find((slot) => slot.dayOfWeek === dayOfWeek) ?? null
-}
-
-function onToggleAvailabilityDay(dayOfWeek: number, enabled: boolean) {
-  form.value.availabilitySlots = toggleDayAvailability(
-    form.value.availabilitySlots,
-    dayOfWeek,
-    enabled,
-  )
-}
-
-function onAvailabilityTimeChange(
-  dayOfWeek: number,
-  field: 'startTime' | 'endTime',
-  value: string,
-) {
-  form.value.availabilitySlots = updateDayTimes(form.value.availabilitySlots, dayOfWeek, {
-    [field]: value,
-  })
 }
 
 const employeePhotoDisplayUrl = computed(() => {
@@ -957,10 +939,17 @@ async function saveEmployee() {
     messageType.value = 'error'
     return
   }
-  if (isSurgeryAssistantProfile.value && form.value.surgeryQuotaPercent.trim()) {
+  if (
+    (isMedecinProfile.value || isSurgeryAssistantProfile.value) &&
+    form.value.surgeryQuotaPercent.trim()
+  ) {
     const percent = Number(form.value.surgeryQuotaPercent)
     if (!Number.isInteger(percent) || percent < 1 || percent > 99) {
-      message.value = 'Le pourcentage assistant chirurgie doit être un entier entre 1 et 99.'
+      message.value = uiText(
+        isSurgeryAssistantProfile.value
+          ? 'Le pourcentage assistant chirurgie doit être un entier entre 1 et 99.'
+          : 'Le pourcentage chirurgie doit être un entier entre 1 et 99.',
+      )
       messageType.value = 'error'
       return
     }
@@ -979,17 +968,6 @@ async function saveEmployee() {
       messageType.value = 'error'
       return
     }
-    for (const slot of form.value.availabilitySlots) {
-      if (
-        !/^\d{2}:\d{2}$/.test(slot.startTime) ||
-        !/^\d{2}:\d{2}$/.test(slot.endTime) ||
-        slot.startTime >= slot.endTime
-      ) {
-        message.value = 'Renseignez les horaires de chaque jour coché (fin après début).'
-        messageType.value = 'error'
-        return
-      }
-    }
   }
 
   saving.value = true
@@ -1002,7 +980,7 @@ async function saveEmployee() {
       jobTitle: form.value.jobTitle.trim() || undefined,
       active: form.value.active,
       specialty: isMedecinProfile.value ? form.value.specialty.trim() || null : null,
-      availabilitySlots: isMedecinProfile.value ? form.value.availabilitySlots : null,
+      availabilitySlots: isMedecinProfile.value ? [] : null,
       ...compensationPayload(),
       ...payrollPayload(),
     }
@@ -1424,10 +1402,10 @@ onMounted(async () => {
         <h3 class="form-panel__title">
           <span class="form-panel__step">3</span>
           <Stethoscope :size="15" />
-          Spécialité &amp; disponibilités
+          Spécialité &amp; services
         </h3>
         <p class="form-panel__intro">
-          {{ uiText('Spécialité affichée à la réception et créneaux hebdomadaires du médecin.') }}
+          {{ uiText('Spécialité affichée à la réception et pourcentage appliqué si ce médecin est choisi pour une opération.') }}
         </p>
         <UiAlert
           type="info"
@@ -1495,40 +1473,17 @@ onMounted(async () => {
           </p>
         </div>
 
-        <div class="availability-grid" role="group" :aria-label="uiText('Disponibilités')">
-          <div
-            v-for="day in DOCTOR_WEEKDAY_OPTIONS"
-            :key="day.value"
-            class="availability-day"
-            :class="{ 'availability-day--on': Boolean(daySlot(day.value)) }"
-          >
-            <label class="availability-day__toggle">
-              <input
-                type="checkbox"
-                :checked="Boolean(daySlot(day.value))"
-                @change="onToggleAvailabilityDay(day.value, ($event.target as HTMLInputElement).checked)"
-              />
-              <span>{{ day.label }}</span>
-            </label>
-            <div v-if="daySlot(day.value)" class="availability-day__times">
-              <input
-                type="time"
-                class="availability-day__time"
-                :value="daySlot(day.value)?.startTime || ''"
-                @change="onAvailabilityTimeChange(day.value, 'startTime', ($event.target as HTMLInputElement).value)"
-              />
-              <span aria-hidden="true">–</span>
-              <input
-                type="time"
-                class="availability-day__time"
-                :value="daySlot(day.value)?.endTime || ''"
-                @change="onAvailabilityTimeChange(day.value, 'endTime', ($event.target as HTMLInputElement).value)"
-              />
-            </div>
-          </div>
-        </div>
-        <p class="form-panel__hint">
-          Aucun horaire n’est prérempli : cochez les jours puis saisissez début et fin.
+        <UiInput
+          v-if="!isSurgeryAssistantProfile"
+          v-model="form.surgeryQuotaPercent"
+          :label="uiText('% Chirurgie')"
+          type="number"
+          min="1"
+          max="99"
+          placeholder="Ex. 30"
+        />
+        <p v-if="!isSurgeryAssistantProfile" class="form-panel__hint">
+          {{ uiText('Pourcentage appliqué quand ce médecin est sélectionné comme chirurgien pour une opération.') }}
         </p>
       </section>
 

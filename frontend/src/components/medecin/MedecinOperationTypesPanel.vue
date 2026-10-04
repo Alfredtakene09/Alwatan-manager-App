@@ -185,7 +185,7 @@ const medecinOpExportColumns = computed<ExportColumn<MedecinOpExportRow>[]>(() =
 })
 
 const medecinOpExportRows = computed<MedecinOpExportRow[]>(() =>
-  tableRows.value.map((row) => ({
+  tableRows.value.filter((row) => row.isActive).map((row) => ({
     label: row.label,
     code: row.code,
     category: row.category,

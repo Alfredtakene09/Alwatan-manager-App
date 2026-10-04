@@ -61,7 +61,13 @@ const summaryInvoiceSelect = {
     select: {
       surgeonShareFcfa: true,
       totalCostFcfa: true,
-      interventionType: { select: { clinicService: { select: { name: true } } } },
+      surgeon: doctorSelect,
+      interventionType: {
+        select: {
+          surgeonPercent: true,
+          clinicService: { select: { name: true } },
+        },
+      },
     },
   },
 } satisfies Prisma.InvoiceSelect;
@@ -82,7 +88,8 @@ type ShareResult = { shareFcfa: number; percent: number | null };
 
 const NO_SHARE: ShareResult = { shareFcfa: 0, percent: null };
 
-function consultationShare(invoice: SummaryInvoice, amountFcfa: number): ShareResult {
+/** Part consultation : % du médecin sur les consultations (ex. 50 %), appliqué au montant. */
+export function consultationShare(invoice: SummaryInvoice, amountFcfa: number): ShareResult {
   const doctor = invoiceDoctor(invoice);
   if (!doctor || !doctorUsesQuota(doctor)) return NO_SHARE;
 
@@ -100,21 +107,41 @@ function consultationShare(invoice: SummaryInvoice, amountFcfa: number): ShareRe
   return { shareFcfa: doctorShareFcfa, percent };
 }
 
-function operationShare(invoice: SummaryInvoice, amountFcfa: number): ShareResult {
-  const stored = invoice.surgeryCase?.surgeonShareFcfa;
-  if (stored != null && stored > 0) {
-    const total = invoice.surgeryCase?.totalCostFcfa ?? 0;
+function operationSurgeon(invoice: SummaryInvoice): DoctorProfile | null {
+  return invoice.surgeryCase?.surgeon ?? invoiceDoctor(invoice);
+}
+
+/**
+ * Part du chirurgien sur le montant exporté.
+ * Le % du médecin (ex. 30 % opérations) prime sur le % du catalogue et sur la part déjà stockée.
+ */
+export function operationShare(invoice: SummaryInvoice, amountFcfa: number): ShareResult {
+  const surgeon = operationSurgeon(invoice);
+  if (surgeon && doctorUsesQuota(surgeon)) {
+    const percent = surgeon.employee?.surgeryQuotaPercent ?? 0;
+    if (percent > 0) {
+      return { shareFcfa: Math.round((amountFcfa * percent) / 100), percent };
+    }
+  }
+
+  const stored = invoice.surgeryCase?.surgeonShareFcfa ?? 0;
+  const total = invoice.surgeryCase?.totalCostFcfa ?? 0;
+  if (stored > 0 && total > 0 && amountFcfa > 0) {
+    const percent = Math.round((stored * 100) / total);
     return {
-      shareFcfa: stored,
-      percent: total > 0 ? Math.round((stored * 100) / total) : null,
+      shareFcfa: Math.round((amountFcfa * stored) / total),
+      percent,
     };
   }
-  // Opération hors bloc : pas de part enregistrée, on applique le quota du chirurgien.
-  const doctor = invoiceDoctor(invoice);
-  if (!doctor || !doctorUsesQuota(doctor)) return NO_SHARE;
-  const percent = doctor.employee?.surgeryQuotaPercent ?? 0;
-  if (percent <= 0) return NO_SHARE;
-  return { shareFcfa: Math.round((amountFcfa * percent) / 100), percent };
+
+  const catalogPercent = invoice.surgeryCase?.interventionType?.surgeonPercent ?? 0;
+  if (catalogPercent > 0 && amountFcfa > 0) {
+    return {
+      shareFcfa: Math.round((amountFcfa * catalogPercent) / 100),
+      percent: catalogPercent,
+    };
+  }
+  return NO_SHARE;
 }
 
 function invoiceShare(

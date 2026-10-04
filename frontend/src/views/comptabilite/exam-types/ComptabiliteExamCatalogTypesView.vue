@@ -226,7 +226,7 @@ const catalogExportColumns = computed<ExportColumn<CatalogExportRow>[]>(() => {
 })
 
 const catalogExportRows = computed<CatalogExportRow[]>(() =>
-  tableRows.value.map((row) => ({
+  tableRows.value.filter((row) => row.isActive).map((row) => ({
     label: row.label,
     code: row.code || '—',
     category: row.category,

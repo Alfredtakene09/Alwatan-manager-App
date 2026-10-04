@@ -27,6 +27,12 @@ const TYPE_LABELS: Record<string, string> = {
 
 const ARABIC_FONT_PATH = process.env.PDF_ARABIC_FONT_PATH?.trim() || null;
 
+function formatInvoiceDateFr(value: Date): string {
+  const dd = String(value.getDate()).padStart(2, "0");
+  const mm = String(value.getMonth() + 1).padStart(2, "0");
+  return `${dd}-${mm}-${value.getFullYear()}`;
+}
+
 function clinicLogoPath() {
   return resolveClinicLogoAbsolutePath(CLINIC.logo);
 }
@@ -115,7 +121,7 @@ export async function generateInvoicePdf(invoice: InvoiceWithRelations): Promise
     const leftX = 50;
     doc.fillColor("#0f172a").fontSize(10).font("Helvetica");
     doc.text(`N° Facture : ${invoice.invoiceNumber}`, leftX);
-    doc.text(`Date : ${new Date(invoice.createdAt).toLocaleDateString("fr-FR")}`);
+    doc.text(`Date : ${formatInvoiceDateFr(new Date(invoice.createdAt))}`);
     doc.text(`Type : ${TYPE_LABELS[invoice.type] ?? invoice.type}`);
     doc.text(`Statut : ${invoice.status === "PAID" ? "PAYÉE" : invoice.status}`);
     doc.moveDown(1);
@@ -163,7 +169,7 @@ export async function generateInvoicePdf(invoice: InvoiceWithRelations): Promise
       leftX,
     );
     if (invoice.paidAt) {
-      doc.text(`Payé le : ${new Date(invoice.paidAt).toLocaleDateString("fr-FR")}`);
+      doc.text(`Payé le : ${formatInvoiceDateFr(new Date(invoice.paidAt))}`);
     }
 
     doc.moveDown(2);

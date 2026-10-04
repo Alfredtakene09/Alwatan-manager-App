@@ -195,7 +195,7 @@ const serviceExportColumns = computed<ExportColumn<ServiceExportRow>[]>(() => {
 })
 
 function serviceExportRows(): ServiceExportRow[] {
-  return sortedRows.value.map((row) => ({
+  return sortedRows.value.filter((row) => row.active).map((row) => ({
     name: clinicServiceText(row.name),
     doctors: doctorsLabel(row),
     doctorCount: row.doctors.length,
@@ -205,7 +205,9 @@ function serviceExportRows(): ServiceExportRow[] {
 
 function serviceExportOptions() {
   const rows = serviceExportRows()
-  const uniqueDoctors = new Set(sortedRows.value.flatMap((row) => row.doctors.map((d) => d.id)))
+  const uniqueDoctors = new Set(
+    sortedRows.value.filter((row) => row.active).flatMap((row) => row.doctors.map((d) => d.id)),
+  )
   return {
     rows,
     options: {
