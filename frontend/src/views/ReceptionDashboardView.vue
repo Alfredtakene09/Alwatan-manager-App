@@ -419,6 +419,11 @@ const editBillingExempt = computed(() => isExemptCategory(editForm.value.categor
 
 const formDoctor = computed(() => findDoctor(form.value.doctorId))
 const editDoctor = computed(() => findDoctor(editForm.value.doctorId))
+const editHasConsultation = computed(() => {
+  const visit = selectedPatient.value?.waitingVisit
+  if (!visit) return false
+  return Boolean(visit.doctorId || (visit.consultationAmountFcfa ?? 0) > 0 || visit.invoiceNumber)
+})
 const reconsultDoctor = computed(() => findDoctor(reconsultForm.value.doctorId))
 
 const formDoctorQuotaHint = computed(() => doctorQuotaHint(formDoctor.value, formEffectiveAmount.value))
@@ -536,15 +541,16 @@ function collectEditPatientValidationErrors(): string[] {
     issues.push('Indiquez un âge valide.')
   }
 
-  if (!editForm.value.service) {
+  if (editHasConsultation.value && !editForm.value.service) {
     issues.push('Sélectionnez un service.')
   }
 
-  if (!editForm.value.doctorId) {
+  if (editHasConsultation.value && !editForm.value.doctorId) {
     issues.push('Sélectionnez un médecin.')
   }
 
   if (
+    editHasConsultation.value &&
     !editBillingExempt.value &&
     showDoctorConsultationBilling(editDoctor.value)
   ) {
@@ -1056,9 +1062,7 @@ async function loadServices() {
     const { data } = await api.get<ServiceOption[]>('/visits/external-services')
     services.value = Array.isArray(data) ? data : []
     if (!form.value.service) form.value.service = services.value[0]?.name ?? ''
-    if (!editForm.value.service) editForm.value.service = services.value[0]?.name ?? ''
     syncDoctorForService('form')
-    syncDoctorForService('edit')
   } catch {
     services.value = []
   }
@@ -1125,12 +1129,12 @@ function syncDoctorForService(target: 'form' | 'edit') {
   const state = target === 'form' ? form.value : editForm.value
   const allowed = target === 'form' ? formServiceDoctors.value : editServiceDoctors.value
   if (!allowed.length) {
-    state.doctorId = ''
+    if (target === 'form') state.doctorId = ''
     if (state.treatingDoctorId && !findDoctor(state.treatingDoctorId)) state.treatingDoctorId = ''
     return
   }
   if (!allowed.some((doctor) => doctor.id === state.doctorId)) {
-    state.doctorId = allowed[0]?.id ?? ''
+    if (target === 'form') state.doctorId = allowed[0]?.id ?? ''
   }
   if (state.treatingDoctorId && !allowed.some((doctor) => doctor.id === state.treatingDoctorId)) {
     state.treatingDoctorId = ''
@@ -1431,10 +1435,10 @@ async function openEditModal(patient: Patient) {
       age: detail.age != null ? String(detail.age) : '',
       ageUnit: normalizePatientAgeUnit(detail.ageUnit),
       phone: detail.phone ?? '',
-      service: detail.service || services.value[0]?.name || '',
+      service: detail.service || '',
       gender: detail.gender ?? 'F',
       category: detail.category === 'ONG' ? 'STANDARD' : (detail.category ?? 'STANDARD'),
-      doctorId: detail.waitingVisit?.doctorId ?? doctors.value[0]?.id ?? '',
+      doctorId: detail.waitingVisit?.doctorId ?? '',
       treatingDoctorId: detail.treatingDoctorId ?? '',
       consultationAmount: detail.waitingVisit?.consultationAmountFcfa
         ? String(detail.waitingVisit.consultationAmountFcfa)
@@ -1467,7 +1471,7 @@ function resetEditForm() {
       selectedPatient.value.category === 'ONG'
         ? 'STANDARD'
         : (selectedPatient.value.category ?? 'STANDARD'),
-    doctorId: selectedPatient.value.waitingVisit?.doctorId ?? doctors.value[0]?.id ?? '',
+    doctorId: selectedPatient.value.waitingVisit?.doctorId ?? '',
     treatingDoctorId: selectedPatient.value.treatingDoctorId ?? '',
     consultationAmount: selectedPatient.value.waitingVisit?.consultationAmountFcfa
       ? String(selectedPatient.value.waitingVisit.consultationAmountFcfa)
@@ -1615,10 +1619,14 @@ async function saveEdit() {
       service: editForm.value.service || undefined,
       gender: editForm.value.gender,
       category: 'STANDARD',
-      doctorId: editForm.value.doctorId,
       treatingDoctorId: editForm.value.treatingDoctorId || null,
-      consultationAmountFcfa: amount || undefined,
-      reductionFcfa: reduction,
+      ...(editHasConsultation.value
+        ? {
+            doctorId: editForm.value.doctorId,
+            consultationAmountFcfa: amount || undefined,
+            reductionFcfa: reduction,
+          }
+        : {}),
     })
     showAlert(translateTemplate('Dossier {code} mis à jour.', { code: data.code }))
     closeEditModal()
@@ -2048,7 +2056,6 @@ onUnmounted(clearAlert)
           <UiSelect
             v-model="editForm.service"
             label="Service"
-            required
           >
             <option value="" disabled>
               {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
@@ -2063,10 +2070,16 @@ onUnmounted(clearAlert)
               {{ clinicServiceText(service.name) }}
             </option>
           </UiSelect>
-          <UiSelect v-model="editForm.doctorId" label="Médecin" required>
-            <option value="" disabled>{{
+          <UiSelect v-model="editForm.doctorId" label="Médecin">
+            <option value="">{{
               editServiceDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin sur ce service')
             }}</option>
+            <option
+              v-if="editForm.doctorId && !editServiceDoctors.some((doctor) => doctor.id === editForm.doctorId)"
+              :value="editForm.doctorId"
+            >
+              Dr {{ editDoctor ? fullName(editDoctor.firstName, editDoctor.lastName) : uiText('Médecin du dossier') }}
+            </option>
             <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
               Dr {{ fullName(doctor.firstName, doctor.lastName) }}
             </option>

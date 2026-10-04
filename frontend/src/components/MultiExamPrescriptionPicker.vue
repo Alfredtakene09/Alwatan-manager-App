@@ -660,9 +660,16 @@ function syncSurgeonPercentFromDoctor() {
     return
   }
   if (surgeonPercentDoctorId.value === id && surgeonPercentDraft.value !== '') return
+  if (props.operationSurgeonPercent != null && surgeonPercentDraft.value !== '') return
   const doctor = surgeonDoctors.value.find((item) => item.id === id)
   if (!doctor && surgeonDoctors.value.length === 0) return
   const quota = doctor?.surgeryQuotaPercent
+  if ((quota == null || quota <= 0) && props.operationSurgeonPercent != null) {
+    surgeonPercentDraft.value = String(props.operationSurgeonPercent)
+    surgeonPercentDoctorId.value = id
+    emitSurgeonPercent()
+    return
+  }
   surgeonPercentDraft.value = quota != null && quota > 0 ? String(quota) : ''
   surgeonPercentDoctorId.value = id
   emitSurgeonPercent()
@@ -1033,6 +1040,18 @@ watch(
 watch([activeSurgeonId, surgeonDoctors], () => {
   syncSurgeonPercentFromDoctor()
 })
+
+watch(
+  () => props.operationSurgeonPercent,
+  (value) => {
+    if (value == null || value < 1 || value > 99) return
+    const next = String(value)
+    if (surgeonPercentDraft.value === next) return
+    surgeonPercentDraft.value = next
+    surgeonPercentDoctorId.value = activeSurgeonId.value
+  },
+  { immediate: true },
+)
 
 watch(
   () => props.operationAmountFcfa,
@@ -1421,10 +1440,11 @@ watch(
           type="number"
           min="1"
           max="99"
+          required
           @update:model-value="onSurgeonPercentInput"
         />
         <p v-if="activeSurgeonId" class="multi-exam-picker__assistant-current">
-          {{ uiText('Pourcentage de la fiche, modifiable pour cette opération.') }}
+          {{ uiText('Pourcentage obligatoire pour cette opération (1 à 99).') }}
         </p>
 
         <p v-if="cartOperationExam.hasAssistant" class="multi-exam-picker__assistant-current">

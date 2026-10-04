@@ -271,6 +271,11 @@ async function syncWaitingVisit(
 
   if (!visit) {
     if (!doctorId && consultationAmountFcfa === undefined) return;
+    const alreadyInCare = await tx.visit.findFirst({
+      where: { patientId, status: { not: VisitStatus.CANCELLED } },
+      select: { id: true },
+    });
+    if (alreadyInCare) return;
     visit = await tx.visit.create({
       data: {
         patientId,
@@ -329,10 +334,16 @@ async function syncWaitingVisit(
     const existingInvoice = await tx.invoice.findFirst({
       where: { visitId: visit.id, type: InvoiceType.CONSULTATION },
     });
-    if (existingInvoice) {
-      if (existingInvoice.status === InvoiceStatus.PAID) {
-        throw new Error(PATIENT_HAS_PAYMENTS_CODE);
+    if (existingInvoice?.status === InvoiceStatus.PAID) {
+      if (doctorId) {
+        await tx.visit.update({
+          where: { id: visit.id },
+          data: { assignedDoctorId: doctorId },
+        });
       }
+      return;
+    }
+    if (existingInvoice) {
       await tx.invoice.delete({ where: { id: existingInvoice.id } });
     }
   }
@@ -1123,6 +1134,12 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
           "Impossible de modifier la facturation : la consultation a déjà été encaissée.",
       });
     }
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        error: error.issues[0]?.message ?? "Données invalides",
+      });
+    }
+    console.error("PATCH /patients/:id failed:", error);
     return res.status(400).json({ error: "Données invalides" });
   }
 });

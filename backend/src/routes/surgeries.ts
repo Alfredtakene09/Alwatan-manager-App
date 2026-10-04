@@ -3,6 +3,7 @@ import { z } from "zod";
 import { InvoiceStatus, InvoiceType, Prisma, SurgeryStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { computeSurgeryShares, resolveSurgeonPercent } from "../lib/doctor-compensation.js";
+import { syncPaidOperationSurgeonCashShare } from "../lib/doctor-share-claims.js";
 import {
   buildPrescribedExamsNotesByKind,
   parsePrescribedExamCommentsByKind,
@@ -600,6 +601,7 @@ router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
             status: invoiceStatusFor(amountFcfa, surgery.invoice.paidAmountFcfa),
           },
         });
+        await syncPaidOperationSurgeonCashShare(tx, surgery.invoice.id, req.user!.id);
       }
     });
 

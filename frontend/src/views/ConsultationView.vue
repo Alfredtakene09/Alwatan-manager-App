@@ -148,7 +148,13 @@ const pharmacyExternalCount = computed(
 const hospitalisationPrescribed = computed(
   () => (selectedExamsByKind.value.hospitalisation?.length ?? 0) > 0,
 )
+const operationPercentReady = computed(() => {
+  if (isLabLockedVisit.value || !hasOperationSelected.value) return true
+  const percent = operationSurgeonPercent.value
+  return percent != null && percent >= 1 && percent <= 99
+})
 const canSubmitConsultation = computed(() => {
+  if (!operationPercentReady.value) return false
   if (doctorComment.value.trim().length >= 2) return true
   if (pharmacyOrdonnance.value.length > 0) return true
   if (selectedExamsCount.value <= 0) return false
@@ -350,6 +356,11 @@ async function submitTransfer(payload: { clinicServiceId: string; doctorId: stri
 
 async function submitExams() {
   if (!modalVisitId.value) return
+  if (!operationPercentReady.value) {
+    message.value = uiText('Indiquez le % du médecin pour cette opération (1 à 99).')
+    messageType.value = 'error'
+    return
+  }
   if (!canSubmitConsultation.value) {
     message.value = uiText(
       'Sélectionnez au moins un examen ou saisissez un commentaire (2 caractères min.).',

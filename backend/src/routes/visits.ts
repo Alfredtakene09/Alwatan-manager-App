@@ -1048,7 +1048,16 @@ const externalLabOrderSchema = z
     },
     { message: "Au moins un examen est requis." },
   )
-  .superRefine(refinePatientAge);
+  .superRefine(refinePatientAge)
+  .superRefine((data, ctx) => {
+    const hasOperation = (data.examsByKind?.operation?.length ?? 0) > 0;
+    if (!hasOperation || data.operationSurgeonPercent != null) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["operationSurgeonPercent"],
+      message: "Indiquez le % du médecin pour cette opération (1 à 99).",
+    });
+  });
 
 const externalPatientSchema = z
   .object({
@@ -1084,6 +1093,7 @@ router.get("/external-queue", requireModule("reception"), async (req, res) => {
         include: {
           patient: true,
           assignedDoctor: { select: { id: true, firstName: true, lastName: true } },
+          surgeryCase: { select: { surgeonPercent: true } },
           invoices: { where: { type: InvoiceType.LAB_EXAM }, take: 1 },
         },
       },
@@ -1115,6 +1125,7 @@ router.get("/external-queue", requireModule("reception"), async (req, res) => {
       invoiceNumber: invoice?.invoiceNumber ?? null,
       doctorId: row.doctor?.id ?? row.visit.assignedDoctor?.id ?? null,
       doctor: row.doctor ?? row.visit.assignedDoctor ?? null,
+      operationSurgeonPercent: row.visit.surgeryCase?.surgeonPercent ?? null,
     };
   });
 
@@ -1543,6 +1554,22 @@ router.patch(
       ) {
         return res.status(400).json({ error: "Indiquez le prix de l’opération." });
       }
+      let operationSurgeonPercent = body.operationSurgeonPercent ?? null;
+      if ((examsByKind?.operation?.filter(Boolean).length ?? 0) > 0 && operationSurgeonPercent == null) {
+        const storedCase = await prisma.surgeryCase.findUnique({
+          where: { visitId: existing.visitId },
+          select: { surgeonPercent: true },
+        });
+        operationSurgeonPercent =
+          storedCase?.surgeonPercent != null && storedCase.surgeonPercent > 0
+            ? storedCase.surgeonPercent
+            : null;
+      }
+      if ((examsByKind?.operation?.filter(Boolean).length ?? 0) > 0 && operationSurgeonPercent == null) {
+        return res.status(400).json({
+          error: "Indiquez le % du médecin pour cette opération (1 à 99).",
+        });
+      }
 
       let catalogGrossFcfa = 0;
       let examReduction = 0;
@@ -1657,7 +1684,7 @@ router.patch(
             assignedDoctorId,
             totalCostFcfa,
             operationAssistant: body.operationAssistant,
-            surgeonPercent: body.operationSurgeonPercent,
+            surgeonPercent: operationSurgeonPercent,
             clinicServiceId: body.operationServiceId,
           });
         }

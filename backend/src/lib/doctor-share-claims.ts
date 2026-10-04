@@ -604,6 +604,102 @@ export async function requestPayrollForItems(
   return created;
 }
 
+/**
+ * Part chirurgien déjà encaissée : proportionnelle au montant payé,
+ * plafonnée à la part prévue sur le dossier.
+ */
+export function paidSurgeonShareFcfa(input: {
+  surgeonShareFcfa: number;
+  totalCostFcfa: number;
+  invoiceAmountFcfa: number;
+  paidAmountFcfa: number;
+}) {
+  const share = Math.max(0, Math.round(input.surgeonShareFcfa));
+  const paid = Math.max(0, Math.round(input.paidAmountFcfa));
+  if (share <= 0 || paid <= 0) return 0;
+  const base =
+    input.totalCostFcfa > 0
+      ? input.totalCostFcfa
+      : Math.max(0, Math.round(input.invoiceAmountFcfa));
+  if (base <= 0) return 0;
+  const ratio = Math.min(1, paid / base);
+  return Math.min(share, Math.round(share * ratio));
+}
+
+/**
+ * Dès qu'une opération est encaissée, la part du médecin sort du solde de caisse.
+ * Une part déjà mise en paie n'est pas reconvertie en espèces.
+ */
+export async function syncPaidOperationSurgeonCashShare(
+  tx: DbClient,
+  invoiceId: string,
+  settledById: string,
+) {
+  const invoice = await tx.invoice.findUnique({
+    where: { id: invoiceId },
+    select: {
+      type: true,
+      billingExamKind: true,
+      amountFcfa: true,
+      paidAmountFcfa: true,
+      status: true,
+      paidAt: true,
+      createdAt: true,
+      surgeryCase: {
+        select: {
+          id: true,
+          surgeonId: true,
+          surgeonShareFcfa: true,
+          totalCostFcfa: true,
+          surgeonPaidMethod: true,
+        },
+      },
+    },
+  });
+  const surgery = invoice?.surgeryCase;
+  if (!invoice || !surgery) return null;
+  const isOperation =
+    invoice.billingExamKind === "operation" || invoice.type === InvoiceType.SURGERY;
+  if (!isOperation || invoice.status === InvoiceStatus.CANCELLED) return null;
+  if (surgery.surgeonPaidMethod === SharePaymentMethod.PAYROLL) return null;
+
+  const amountFcfa = paidSurgeonShareFcfa({
+    surgeonShareFcfa: surgery.surgeonShareFcfa,
+    totalCostFcfa: surgery.totalCostFcfa,
+    invoiceAmountFcfa: invoice.amountFcfa,
+    paidAmountFcfa: invoice.paidAmountFcfa,
+  });
+  if (amountFcfa <= 0) return null;
+
+  const existing = await tx.doctorShareClaim.findFirst({
+    where: { surgeryCaseId: surgery.id, kind: DoctorShareKind.OPERATION_SURGEON },
+  });
+  if (
+    existing &&
+    (existing.status === DoctorShareClaimStatus.SETTLED_PAYROLL ||
+      existing.status === DoctorShareClaimStatus.PENDING_PAYROLL)
+  ) {
+    return existing;
+  }
+  if (existing?.status === DoctorShareClaimStatus.SETTLED_CASH) {
+    const nextAmount = Math.max(existing.cashAppliedFcfa, amountFcfa);
+    if (existing.amountFcfa === nextAmount) return existing;
+    return tx.doctorShareClaim.update({
+      where: { id: existing.id },
+      data: { amountFcfa: nextAmount },
+    });
+  }
+
+  return ensureSettledSurgeryCashClaim(tx, {
+    surgeryCaseId: surgery.id,
+    kind: DoctorShareKind.OPERATION_SURGEON,
+    amountFcfa,
+    doctorUserId: surgery.surgeonId,
+    settledById,
+    businessDate: invoice.paidAt ?? invoice.createdAt,
+  });
+}
+
 /** Règlement espèces d'une part d'opération : la somme sort du solde de caisse. */
 export async function ensureSettledSurgeryCashClaim(
   tx: DbClient,

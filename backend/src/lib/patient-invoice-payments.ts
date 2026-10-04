@@ -1,5 +1,6 @@
 import { InvoiceStatus, InvoiceType, Prisma } from "@prisma/client";
 import { prisma } from "./db.js";
+import { syncPaidOperationSurgeonCashShare } from "./doctor-share-claims.js";
 import { EXAM_KIND_SECTION_LABELS, type ExamKindSlug } from "./lab-notes.js";
 
 const EXAM_KIND_LABELS: Record<string, string> = {
@@ -82,6 +83,8 @@ export async function recordInvoiceInstallment(
     },
   });
 
+  await syncPaidOperationSurgeonCashShare(tx, updated.id, params.recordedById);
+
   return { payment, invoice: updated, isFullyPaid, remainingFcfa: Math.max(0, invoice.amountFcfa - paidAmountFcfa) };
 }
 
@@ -156,6 +159,8 @@ export async function applyExamKindPayment(
       },
     },
   });
+
+  await syncPaidOperationSurgeonCashShare(tx, invoice.id, params.recordedById);
 
   return { invoice, isFullyPaid, paymentAmountFcfa };
 }

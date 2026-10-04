@@ -163,7 +163,16 @@ const prescribeExamsSchema = z
       return hasExams || hasComment || hasOrdonnance;
     },
     { message: "Sélectionnez au moins un examen, un commentaire ou une ordonnance." },
-  );
+  )
+  .superRefine((data, ctx) => {
+    const hasOperation = (data.examsByKind?.operation?.length ?? 0) > 0;
+    if (!hasOperation || data.operationSurgeonPercent != null) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["operationSurgeonPercent"],
+      message: "Indiquez le % du médecin pour cette opération (1 à 99).",
+    });
+  });
 
 async function syncPrescribedProcedures(
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],

@@ -169,7 +169,14 @@ const addsNewHospitalisation = computed(() => {
   return addsHosp && !hadHosp
 })
 
+const operationPercentReady = computed(() => {
+  const hasOperation = (selectedExamsByKind.value.operation?.length ?? 0) > 0
+  if (!hasOperation || (workingMode.value === 'edit' && isLabLocked.value)) return true
+  const percent = operationSurgeonPercent.value
+  return percent != null && percent >= 1 && percent <= 99
+})
 const canSubmit = computed(() => {
+  if (!operationPercentReady.value) return false
   if (workingMode.value === 'append') {
     if (newExamsCount.value > 0) return true
     return addsNewHospitalisation.value && (hospitalisationDays.value ?? 0) >= 1
@@ -367,7 +374,12 @@ watch(
 )
 
 async function submit() {
-  if (!sessionVisit.value || !canSubmit.value) return
+  if (!sessionVisit.value) return
+  if (!operationPercentReady.value) {
+    errorMessage.value = uiText('Indiquez le % du médecin pour cette opération (1 à 99).')
+    return
+  }
+  if (!canSubmit.value) return
 
   if (workingMode.value === 'append' && newExamsCount.value === 0 && !addsNewHospitalisation.value) {
     errorMessage.value = 'Sélectionnez au moins un nouvel examen à ajouter.'

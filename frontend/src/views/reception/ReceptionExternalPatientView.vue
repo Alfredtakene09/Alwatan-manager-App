@@ -91,6 +91,7 @@ type ExternalQueueRow = {
   clinicalNotes?: string | null
   doctorId?: string | null
   doctor?: { firstName: string; lastName: string } | null
+  operationSurgeonPercent?: number | null
   patient: QueuePatient
 }
 
@@ -187,6 +188,15 @@ const editParsedAge = computed(() => parsePatientAge(editForm.value.age, editFor
 const newPatientExamCount = computed(() => countExamsByKind(examsByKind.value))
 const hasOperationExam = computed(() => (examsByKind.value.operation?.length ?? 0) > 0)
 const operationDoctorReady = computed(() => !hasOperationExam.value || !!selectedDoctorId.value)
+const storedOperationPercent = computed(() => {
+  const stored = activeRow.value?.operationSurgeonPercent
+  return stored != null && stored >= 1 && stored <= 99 ? stored : null
+})
+const operationPercentReady = computed(() => {
+  if (!hasOperationExam.value) return true
+  const percent = operationSurgeonPercent.value ?? storedOperationPercent.value
+  return percent != null && percent >= 1 && percent <= 99
+})
 
 const canConfirmNewPatient = computed(() => {
   const { firstName, lastName } = parsedName.value
@@ -199,7 +209,8 @@ const canConfirmNewPatientWithExams = computed(
     canConfirmNewPatient.value &&
     newPatientExamCount.value > 0 &&
     examNetFcfa.value > 0 &&
-    operationDoctorReady.value,
+    operationDoctorReady.value &&
+    operationPercentReady.value,
 )
 
 const editExamsLocked = computed(() =>
@@ -210,7 +221,7 @@ const canSaveEdit = computed(() => {
   const { firstName, lastName } = editParsedName.value
   if (firstName.length < 2 || lastName.length < 2 || editParsedAge.value === null) return false
   if (editExamsLocked.value) return true
-  if (!operationDoctorReady.value) return false
+  if (!operationDoctorReady.value || !operationPercentReady.value) return false
   if (activeRow.value?.hasExams) return newPatientExamCount.value > 0 && examNetFcfa.value > 0
   if (newPatientExamCount.value > 0) return examNetFcfa.value > 0
   return true
@@ -221,7 +232,8 @@ const canSubmitExams = computed(
     !!activeRow.value &&
     countExamsByKind(examsByKind.value) > 0 &&
     examNetFcfa.value > 0 &&
-    operationDoctorReady.value,
+    operationDoctorReady.value &&
+    operationPercentReady.value,
 )
 
 const externalExamKinds = EXTERNAL_PATIENT_EXAM_KINDS
@@ -338,8 +350,8 @@ function examsPayload() {
         : {}
     ),
     ...(
-      hasOperationExam.value && operationSurgeonPercent.value != null
-        ? { operationSurgeonPercent: operationSurgeonPercent.value }
+      hasOperationExam.value && (operationSurgeonPercent.value ?? storedOperationPercent.value) != null
+        ? { operationSurgeonPercent: operationSurgeonPercent.value ?? storedOperationPercent.value }
         : {}
     ),
     ...(hasOperationExam.value && operationAssistant.value
@@ -570,6 +582,9 @@ async function openEditModal(row: ExternalQueueRow) {
   }
   resetExamsForm()
   selectedDoctorId.value = row.doctorId ?? ''
+  if (row.operationSurgeonPercent != null && row.operationSurgeonPercent > 0) {
+    operationSurgeonPercent.value = row.operationSurgeonPercent
+  }
   try {
     await loadExamCatalog()
   } catch {
