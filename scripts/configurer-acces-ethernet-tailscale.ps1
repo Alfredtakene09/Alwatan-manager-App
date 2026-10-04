@@ -71,4 +71,4 @@ if ($RestartServer) {
     & (Join-Path $PSScriptRoot 'lancer-serveur.ps1') -Production
 }
 
-Write-Host 'Configuration enregistree (scripts\alwatan-server.txt + backend\.env).' -ForegroundColor Green
+Write-Host 'Configuration enregistree (scripts\alwatan-server.txt + backend\.env.lan).' -ForegroundColor Green

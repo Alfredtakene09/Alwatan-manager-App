@@ -428,6 +428,8 @@ export default {
     'Consultations, examens, opérations, hospitalisation (hors associés)':
       'Consultations, examens, opérations, hospitalisation (hors associés)',
     'Consultations encaissées (hors associés)': 'Consultations encaissées (hors associés)',
+    'Consultations des patients inscrits (hors associés)':
+      'Consultations des patients inscrits (hors associés)',
     "À l'instant": "À l'instant",
     '{n} min': '{n} min',
     '{h} h {m} min': '{h} h {m} min',
@@ -534,6 +536,7 @@ export default {
     Genre: 'Genre',
     Sexe: 'Sexe',
     Date: 'Date',
+    Hier: 'Hier',
     'Date de la dépense': 'Date de la dépense',
     "Date d'inscription": "Date d'inscription",
     Féminin: 'Féminin',
@@ -767,8 +770,8 @@ export default {
       'Tout est à jour — aucun paiement, clôture, dépense, paie ni hospitalisation en attente.',
     'Tout est à jour — aucun paiement examens ni hospitalisation en attente.':
       'Tout est à jour — aucun paiement examens ni hospitalisation en attente.',
-    'Tout est à jour — aucune hospitalisation en attente ni salle à libérer.':
-      'Tout est à jour — aucune hospitalisation en attente ni salle à libérer.',
+    'Tout est à jour — aucune hospitalisation en attente.':
+      'Tout est à jour — aucune hospitalisation en attente.',
     'Tout est à jour — aucune clôture, dépense, paie ni hospitalisation en attente.':
       'Tout est à jour — aucune clôture, dépense, paie ni hospitalisation en attente.',
     'Tout est à jour — aucune action urgente sur la caisse comptable, les dépenses ni la paie.':
@@ -3135,5 +3138,47 @@ export default {
     'Radio simple (émiraties)': 'Radio simple (émiraties)',
     'Consultation de kinésithérapie': 'Consultation de kinésithérapie',
     'Consultation de kinésithérapie (émiraties)': 'Consultation de kinésithérapie (émiraties)',
+    '— Sélectionner —': '— Sélectionner —',
+    'Inclure un assistant chirurgie pour cette opération':
+      'Inclure un assistant chirurgie pour cette opération',
+    'Encaisser l’opération': 'Encaisser l’opération',
+    'Encaisser {amount}': 'Encaisser {amount}',
+    'Filtrer par médecin': 'Filtrer par médecin',
+    'Le montant ne peut pas dépasser le reste ({amount}).':
+      'Le montant ne peut pas dépasser le reste ({amount}).',
+    'Moitié': 'Moitié',
+    'Montant à encaisser (FCFA)': 'Montant à encaisser (FCFA)',
+    'Opération « {intervention} » supprimée.': 'Opération « {intervention} » supprimée.',
+    'Patient enregistré. Encaissez l’opération puis imprimez le reçu.':
+      'Patient enregistré. Encaissez l’opération puis imprimez le reçu.',
+    'Saisissez un montant supérieur à 0.': 'Saisissez un montant supérieur à 0.',
+    'Supprimer « {intervention} » pour {patient} ? Cette action est définitive.':
+      'Supprimer « {intervention} » pour {patient} ? Cette action est définitive.',
+    'Tout le reste': 'Tout le reste',
+    '{amount} encaissé — opération soldée.': '{amount} encaissé — opération soldée.',
+    '{amount} encaissé — reste à payer : {rest}.':
+      '{amount} encaissé — reste à payer : {rest}.',
+    'Actuel : assistant ({pct} %)': 'Actuel : assistant ({pct} %)',
+    'Actuel : {name} ({pct} %)': 'Actuel : {name} ({pct} %)',
+    'Assistant lié à cette opération.': 'Assistant lié à cette opération.',
+    'Assistant retiré de cette opération.': 'Assistant retiré de cette opération.',
+    'Consultation clinique': 'Consultation clinique',
+    'Déjà lié à « {op} » — vous pouvez modifier.':
+      'Déjà lié à « {op} » — vous pouvez modifier.',
+    'Déjà prescrite': 'Déjà prescrite',
+    'Enregistrer l’assistant sur cette opération':
+      'Enregistrer l’assistant sur cette opération',
+    'Impossible de lier l’assistant.': 'Impossible de lier l’assistant.',
+    'Impossible de mettre à jour l’assistant.': 'Impossible de mettre à jour l’assistant.',
+    'Le % assistant doit être entre 1 et 99.': 'Le % assistant doit être entre 1 et 99.',
+    'Retirer la consultation': 'Retirer la consultation',
+    'Retirer l’assistant': 'Retirer l’assistant',
+    'Une consultation est déjà enregistrée sur ce dossier.':
+      'Une consultation est déjà enregistrée sur ce dossier.',
+    'Impossible de supprimer l’opération.': 'Impossible de supprimer l’opération.',
+    'Montant total du retour': 'Montant total du retour',
+    'Montant total des produits': 'Montant total des produits',
+    'Retour enregistré — {amount}. Stock mis à jour.':
+      'Retour enregistré — {amount}. Stock mis à jour.',
   },
 }

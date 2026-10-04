@@ -420,6 +420,8 @@ export default {
     'Consultations, examens, opérations, hospitalisation (hors associés)':
       'Consultations, exams, surgeries, hospitalization (excl. associates)',
     'Consultations encaissées (hors associés)': 'Consultations collected (excl. associates)',
+    'Consultations des patients inscrits (hors associés)':
+      'Consultations of registered patients (excl. associates)',
     "À l'instant": 'Just now',
     '{n} min': '{n} min',
     '{h} h {m} min': '{h} h {m} min',
@@ -750,8 +752,8 @@ export default {
       'Everything is up to date — no pending payments, closures, expenses, payroll or hospitalizations.',
     'Tout est à jour — aucun paiement examens ni hospitalisation en attente.':
       'Everything is up to date — no pending exam payments or hospitalizations.',
-    'Tout est à jour — aucune hospitalisation en attente ni salle à libérer.':
-      'Everything is up to date — no pending hospitalizations or rooms to free.',
+    'Tout est à jour — aucune hospitalisation en attente.':
+      'All clear — no hospitalization waiting.',
     'Tout est à jour — aucune clôture, dépense, paie ni hospitalisation en attente.':
       'Everything is up to date — no pending closures, expenses, payroll or hospitalizations.',
     'Tout est à jour — aucune action urgente sur la caisse comptable, les dépenses ni la paie.':
@@ -3284,5 +3286,46 @@ export default {
     'Radio simple (émiraties)': 'Plain X-ray (Emirates)',
     'Consultation de kinésithérapie': 'Physiotherapy consultation',
     'Consultation de kinésithérapie (émiraties)': 'Physiotherapy consultation (Emirates)',
+    '— Sélectionner —': '— Select —',
+    'Inclure un assistant chirurgie pour cette opération':
+      'Include a surgical assistant for this operation',
+    'Encaisser l’opération': 'Collect operation payment',
+    'Encaisser {amount}': 'Collect {amount}',
+    'Filtrer par médecin': 'Filter by doctor',
+    'Le montant ne peut pas dépasser le reste ({amount}).':
+      'The amount cannot exceed the balance ({amount}).',
+    'Moitié': 'Half',
+    'Montant à encaisser (FCFA)': 'Amount to collect (FCFA)',
+    'Opération « {intervention} » supprimée.': 'Operation “{intervention}” deleted.',
+    'Patient enregistré. Encaissez l’opération puis imprimez le reçu.':
+      'Patient registered. Collect the operation payment, then print the receipt.',
+    'Saisissez un montant supérieur à 0.': 'Enter an amount greater than 0.',
+    'Supprimer « {intervention} » pour {patient} ? Cette action est définitive.':
+      'Delete “{intervention}” for {patient}? This cannot be undone.',
+    'Tout le reste': 'Full balance',
+    '{amount} encaissé — opération soldée.': '{amount} collected — operation paid in full.',
+    '{amount} encaissé — reste à payer : {rest}.':
+      '{amount} collected — balance due: {rest}.',
+    'Actuel : assistant ({pct} %)': 'Current: assistant ({pct} %)',
+    'Actuel : {name} ({pct} %)': 'Current: {name} ({pct} %)',
+    'Assistant lié à cette opération.': 'Assistant linked to this operation.',
+    'Assistant retiré de cette opération.': 'Assistant removed from this operation.',
+    'Consultation clinique': 'Clinical consultation',
+    'Déjà lié à « {op} » — vous pouvez modifier.':
+      'Already linked to “{op}” — you can change it.',
+    'Déjà prescrite': 'Already prescribed',
+    'Enregistrer l’assistant sur cette opération': 'Save the assistant on this operation',
+    'Impossible de lier l’assistant.': 'Unable to link the assistant.',
+    'Impossible de mettre à jour l’assistant.': 'Unable to update the assistant.',
+    'Le % assistant doit être entre 1 et 99.': 'The assistant percentage must be between 1 and 99.',
+    'Retirer la consultation': 'Remove consultation',
+    'Retirer l’assistant': 'Remove assistant',
+    'Une consultation est déjà enregistrée sur ce dossier.':
+      'A consultation is already recorded on this file.',
+    'Impossible de supprimer l’opération.': 'Unable to delete the operation.',
+    'Montant total du retour': 'Total return amount',
+    'Montant total des produits': 'Total product amount',
+    'Retour enregistré — {amount}. Stock mis à jour.':
+      'Return recorded — {amount}. Stock updated.',
   },
 }

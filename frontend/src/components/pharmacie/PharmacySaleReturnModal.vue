@@ -4,6 +4,7 @@ import { RotateCcw } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -37,7 +38,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:open': [value: boolean]
-  success: [saleId: string]
+  success: [sale: PharmacySaleForReturn]
 }>()
 
 const { uiText } = useAppI18n()
@@ -84,12 +85,21 @@ function maxReturnable(line: PharmacySaleLineForReturn) {
   return line.quantityReturnable ?? Math.max(0, line.quantity - (line.quantityReturned ?? 0))
 }
 
-const hasSelection = computed(() =>
-  returnableLines.value.some((line) => {
-    const qty = Math.floor(quantities.value[line.id] ?? 0)
-    return qty > 0
-  }),
+function selectedReturnQty(line: PharmacySaleLineForReturn) {
+  const qty = Math.floor(Number(quantities.value[line.id] ?? 0))
+  if (!Number.isFinite(qty) || qty <= 0) return 0
+  return Math.min(qty, maxReturnable(line))
+}
+
+function lineReturnAmount(line: PharmacySaleLineForReturn) {
+  return selectedReturnQty(line) * line.unitPriceFcfa
+}
+
+const returnTotalFcfa = computed(() =>
+  returnableLines.value.reduce((sum, line) => sum + lineReturnAmount(line), 0),
 )
+
+const hasSelection = computed(() => returnTotalFcfa.value > 0)
 
 async function submitReturn() {
   if (!props.sale) return
@@ -119,11 +129,21 @@ async function submitReturn() {
   saving.value = true
   message.value = ''
   try {
-    await api.post(`/pharmacie/sales/${props.sale.id}/returns`, { items })
+    const refundFcfa = returnTotalFcfa.value
+    const { data } = await api.post<{
+      totalGrossRefundFcfa: number
+      sale: PharmacySaleForReturn | null
+    }>(`/pharmacie/sales/${props.sale.id}/returns`, { items })
+    const updated = data.sale ?? props.sale
+    for (const line of updated.lines) {
+      quantities.value[line.id] = 0
+      reasons.value[line.id] = ''
+    }
     messageType.value = 'success'
-    message.value = uiText('Retour enregistré — stock mis à jour.')
-    emit('success', props.sale.id)
-    close()
+    message.value = translateTemplate('Retour enregistré — {amount}. Stock mis à jour.', {
+      amount: formatFcfa(data.totalGrossRefundFcfa ?? refundFcfa),
+    })
+    emit('success', updated)
   } catch (error: unknown) {
     const apiMessage =
       error && typeof error === 'object' && 'response' in error
@@ -165,6 +185,10 @@ async function submitReturn() {
           </template>
           · {{ uiText('Reste') }} : {{ maxReturnable(line) }}
           · {{ formatFcfa(line.unitPriceFcfa) }}
+          <template v-if="selectedReturnQty(line) > 0">
+            · {{ uiText('Montant') }} :
+            <strong dir="ltr">{{ formatFcfa(lineReturnAmount(line)) }}</strong>
+          </template>
         </p>
         <div class="return-line__fields">
           <UiInput
@@ -183,6 +207,11 @@ async function submitReturn() {
         </div>
       </div>
     </div>
+
+    <p v-if="sale && returnableLines.length" class="return-total">
+      <span>{{ uiText('Montant total du retour') }}</span>
+      <strong dir="ltr">{{ formatFcfa(returnTotalFcfa) }}</strong>
+    </p>
 
     <template #footer>
       <UiButton variant="ghost" @click="close">{{ uiText('Annuler') }}</UiButton>
@@ -224,6 +253,20 @@ async function submitReturn() {
   display: grid;
   grid-template-columns: 120px 1fr;
   gap: 0.75rem;
+}
+.return-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  background: var(--surface-muted, #f8faf5);
+  font-size: 0.95rem;
+}
+.return-total strong {
+  font-size: 1.05rem;
 }
 @media (max-width: 640px) {
   .return-line__fields {

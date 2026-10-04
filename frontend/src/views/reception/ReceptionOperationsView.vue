@@ -174,7 +174,7 @@ const PAYMENT_VARIANTS: Record<PaymentState, 'success' | 'warning' | 'danger'> =
 }
 
 const auth = useAuthStore()
-const { uiText } = useAppI18n()
+const { uiText, clinicServiceText } = useAppI18n()
 const canSeeAllReceptionists = computed(() => auth.user?.role !== 'RECEPTIONNISTE')
 /** Correction montant / date : administrateur et gestionnaire uniquement. */
 const canEditOperations = computed(
@@ -488,6 +488,7 @@ const displayedRows = computed(() => {
       row.patientName.toLowerCase().includes(q) ||
       row.patientCode.toLowerCase().includes(q) ||
       row.intervention.toLowerCase().includes(q) ||
+      clinicServiceText(row.intervention).toLowerCase().includes(q) ||
       row.surgeonName.toLowerCase().includes(q) ||
       row.assistantName.toLowerCase().includes(q) ||
       row.registeredBy.toLowerCase().includes(q) ||
@@ -896,7 +897,7 @@ async function deleteRow(row: OperationRow) {
   const confirmed = await confirmAppModal({
     title: uiText('Supprimer l’opération'),
     message: translateTemplate('Supprimer « {intervention} » pour {patient} ? Cette action est définitive.', {
-      intervention: row.intervention,
+      intervention: clinicServiceText(row.intervention),
       patient: row.patientName,
     }),
     confirmLabel: uiText('Supprimer'),
@@ -911,14 +912,14 @@ async function deleteRow(row: OperationRow) {
         : `/surgeries/other-operations/${row.recordId}`
     await api.delete(url)
     message.value = translateTemplate('Opération « {intervention} » supprimée.', {
-      intervention: row.intervention,
+      intervention: clinicServiceText(row.intervention),
     })
     messageType.value = 'success'
     await load()
   } catch (error) {
-    const shown = await showApiErrorModal(error, 'Impossible de supprimer l’opération.')
+    const shown = await showApiErrorModal(error, uiText('Impossible de supprimer l’opération.'))
     if (!shown) {
-      message.value = apiErrorText(error) ?? 'Impossible de supprimer l’opération.'
+      message.value = apiErrorText(error) ?? uiText('Impossible de supprimer l’opération.')
       messageType.value = 'error'
     }
   } finally {
@@ -932,23 +933,23 @@ function resetCustomRange() {
 }
 
 const exportColumns: ExportColumn<OperationRow>[] = [
-  { header: 'Date', value: (r) => `${r.dateLabel} ${r.timeLabel}` },
-  { header: 'Patient', value: (r) => r.patientName },
-  { header: 'Code', value: (r) => r.patientCode },
-  { header: 'Type', value: (r) => SOURCE_LABELS[r.source] },
-  { header: 'Intervention', value: (r) => r.intervention },
-  { header: 'Médecin', value: (r) => r.surgeonName },
-  { header: 'Assistant', value: (r) => r.assistantName },
+  { header: uiText('Date'), value: (r) => `${r.dateLabel} ${r.timeLabel}` },
+  { header: uiText('Patient'), value: (r) => r.patientName },
+  { header: uiText('Code'), value: (r) => r.patientCode },
+  { header: uiText('Type'), value: (r) => uiText(SOURCE_LABELS[r.source]) },
+  { header: uiText('Intervention'), value: (r) => clinicServiceText(r.intervention) },
+  { header: uiText('Médecin'), value: (r) => r.surgeonName },
+  { header: uiText('Assistant'), value: (r) => r.assistantName },
   {
-    header: 'Opération',
-    value: (r) => (r.source === 'other' ? '—' : r.completed ? 'Effectuée' : 'En attente'),
+    header: uiText('Opération'),
+    value: (r) => (r.source === 'other' ? '—' : r.completed ? uiText('Effectuée') : uiText('En attente')),
   },
-  { header: 'Montant', value: (r) => formatFcfa(r.billedFcfa) },
-  { header: 'Payé', value: (r) => formatFcfa(r.paidFcfa) },
-  { header: 'Reste', value: (r) => formatFcfa(r.remainingFcfa) },
-  { header: 'Statut', value: (r) => PAYMENT_LABELS[r.paymentState] },
-  { header: 'Enregistré par', value: (r) => r.registeredBy },
-  { header: 'Encaissé par', value: (r) => r.collectedBy || '—' },
+  { header: uiText('Montant'), value: (r) => formatFcfa(r.billedFcfa) },
+  { header: uiText('Payé'), value: (r) => formatFcfa(r.paidFcfa) },
+  { header: uiText('Reste'), value: (r) => formatFcfa(r.remainingFcfa) },
+  { header: uiText('Statut'), value: (r) => uiText(PAYMENT_LABELS[r.paymentState]) },
+  { header: uiText('Enregistré par'), value: (r) => r.registeredBy },
+  { header: uiText('Encaissé par'), value: (r) => r.collectedBy || '—' },
 ]
 
 function exportShared() {
@@ -956,14 +957,14 @@ function exportShared() {
   const doctor = doctorOptions.value.find((item) => item.id === doctorFilter.value)
   return {
     captionRows: [
-      { label: 'Période', value: periodLabel.value },
-      ...(receptionist ? [{ label: 'Réceptionniste', value: receptionist.name }] : []),
-      ...(doctor ? [{ label: 'Médecin', value: doctor.name }] : []),
+      { label: uiText('Période'), value: periodLabel.value },
+      ...(receptionist ? [{ label: uiText('Réceptionniste'), value: receptionist.name }] : []),
+      ...(doctor ? [{ label: uiText('Médecin'), value: doctor.name }] : []),
     ],
     totalsRows: [
-      { label: 'Nombre d’opérations', value: String(displayedRows.value.length) },
+      { label: uiText('Nombre d’opérations'), value: String(displayedRows.value.length) },
       {
-        label: 'Reste à payer',
+        label: uiText('Reste à payer'),
         value: formatFcfa(displayedRows.value.reduce((sum, r) => sum + r.remainingFcfa, 0)),
       },
     ],
@@ -973,15 +974,15 @@ function exportShared() {
 const EXPORT_TITLE = 'Opérations (bloc et autres chirurgies)'
 
 function exportPdf() {
-  exportTablePdf(EXPORT_TITLE, exportColumns, displayedRows.value, exportShared())
+  exportTablePdf(uiText(EXPORT_TITLE), exportColumns, displayedRows.value, exportShared())
 }
 
 function exportExcel() {
-  exportTableExcel(EXPORT_TITLE, exportColumns, displayedRows.value, exportShared())
+  exportTableExcel(uiText(EXPORT_TITLE), exportColumns, displayedRows.value, exportShared())
 }
 
 function exportWord() {
-  void exportTableWord(EXPORT_TITLE, exportColumns, displayedRows.value, exportShared())
+  void exportTableWord(uiText(EXPORT_TITLE), exportColumns, displayedRows.value, exportShared())
 }
 
 onMounted(load)
@@ -1212,7 +1213,7 @@ onMounted(load)
                       <span class="st-sub">{{ row.patientCode }}</span>
                     </td>
                     <td>
-                      <span class="st-name">{{ row.intervention }}</span>
+                      <span class="st-name">{{ clinicServiceText(row.intervention) }}</span>
                       <span
                         class="st-badge"
                         :class="row.source === 'bloc' ? 'st-badge--info' : 'st-badge--warning'"
@@ -1359,7 +1360,7 @@ onMounted(load)
     <UiFormModal
       v-if="editRow"
       title="Modifier l'opération"
-      :subtitle="`${editRow.patientName} — ${editRow.intervention}`"
+      :subtitle="`${editRow.patientName} — ${clinicServiceText(editRow.intervention)}`"
       :icon="Pencil"
       @close="closeEdit"
     >
@@ -1369,9 +1370,9 @@ onMounted(load)
         :disabled="!operationCatalog.length"
         @update:model-value="onEditIntervention"
       >
-        <option v-if="editKeepsCustomName" value="">{{ editRow.intervention }}</option>
+        <option v-if="editKeepsCustomName" value="">{{ clinicServiceText(editRow.intervention) }}</option>
         <option v-for="item in operationCatalog" :key="item.id" :value="item.id">
-          {{ item.label }}
+          {{ clinicServiceText(item.label) }}
         </option>
       </UiSelect>
       <UiInput v-model="editAmount" label="Montant (FCFA)" type="number" required />
@@ -1423,7 +1424,7 @@ onMounted(load)
 
           <p class="ops-pay__intervention">
             <Scissors :size="14" />
-            <span>{{ payTarget.row.intervention }}</span>
+            <span>{{ clinicServiceText(payTarget.row.intervention) }}</span>
             <span class="ops-pay__muted">{{ payTarget.row.surgeonName }}</span>
           </p>
 

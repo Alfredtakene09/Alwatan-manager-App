@@ -117,7 +117,7 @@ const emit = defineEmits<{
   ]
 }>()
 
-const { uiText, examNameText, localeCode } = useAppI18n()
+const { uiText, examNameText, clinicServiceText, localeCode } = useAppI18n()
 const labPanelsStore = useLabPanelsStore()
 
 const activePanel = ref<ActivePanel>('examen')
@@ -1121,7 +1121,7 @@ watch(
           :is="specialtyTabUsesOperations(svc) ? Scissors : Stethoscope"
           :size="15"
         />
-        {{ uiText(svc.name) }}
+        {{ clinicServiceText(svc.name) }}
         <span v-if="specialtyServiceCount(svc.id)" class="multi-exam-picker__badge">
           {{ specialtyServiceCount(svc.id) }}
         </span>
@@ -1160,7 +1160,7 @@ watch(
         "
         class="multi-exam-picker__empty-service"
       >
-        <p class="multi-exam-picker__consultation-title">{{ uiText(activeSpecialtyTab()!.name) }}</p>
+        <p class="multi-exam-picker__consultation-title">{{ clinicServiceText(activeSpecialtyTab()!.name) }}</p>
         <p class="multi-exam-picker__consultation-hint">
           {{
             uiText(
@@ -1207,14 +1207,14 @@ watch(
               }"
               @click="selectOperationService(service)"
             >
-              {{ uiText(service.name) }}
+              {{ clinicServiceText(service.name) }}
             </button>
           </div>
         </template>
         <p v-else class="multi-exam-picker__consultation-hint">
           {{
             translateTemplate('Opération pour le service « {name} ». Saisissez le prix ci-dessous.', {
-              name: activeSpecialtyTab()?.name ?? '',
+              name: clinicServiceText(activeSpecialtyTab()?.name ?? ''),
             })
           }}
         </p>
@@ -1287,7 +1287,7 @@ watch(
           <p>
             {{
               translateTemplate('Prix modifiable pour « {op} » — les parts appliquent les % définis.', {
-                op: cartOperationExam.label,
+                op: clinicServiceText(cartOperationExam.label),
               })
             }}
           </p>
@@ -1338,14 +1338,14 @@ watch(
               showConsultation
                 ? cartOperationExam.hasAssistant
                   ? translateTemplate('Déjà lié à « {op} » — vous pouvez modifier.', {
-                      op: cartOperationExam.label,
+                      op: clinicServiceText(cartOperationExam.label),
                     })
                   : translateTemplate('Choisissez un assistant pour « {op} » (optionnel).', {
-                      op: cartOperationExam.label,
+                      op: clinicServiceText(cartOperationExam.label),
                     })
                 : translateTemplate(
                     'Médecin obligatoire pour « {op} ». L’assistant est facultatif. Les % s’appliquent au montant.',
-                    { op: cartOperationExam.label },
+                    { op: clinicServiceText(cartOperationExam.label) },
                   )
             }}
           </p>

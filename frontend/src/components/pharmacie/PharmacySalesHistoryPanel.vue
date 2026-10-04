@@ -154,9 +154,11 @@ function openReturnModal(sale: SaleRecord) {
   returnModalOpen.value = true
 }
 
-async function onReturnSuccess(saleId: string) {
+async function onReturnSuccess(sale: PharmacySaleForReturn) {
   await loadItems()
-  expandedId.value = saleId
+  const fresh = items.value.find((item) => item.id === sale.id)
+  returnSale.value = fresh ?? sale
+  expandedId.value = sale.id
 }
 
 async function loadItems() {

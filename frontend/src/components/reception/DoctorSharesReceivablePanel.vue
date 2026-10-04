@@ -8,7 +8,7 @@ import {
   translateTemplate,
 } from '@/lib/dashboard-i18n'
 import { useAppI18n } from '@/i18n/useAppI18n'
-import { currentMonthKey, todayDateKey } from '@/lib/date-filters'
+import { currentMonthKey, todayDateKey, yesterdayDateKey } from '@/lib/date-filters'
 import { showAppModal } from '@/composables/useAppModal'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -49,7 +49,9 @@ type DoctorSharesOverview = {
 const { localeCode } = useAppI18n()
 
 const doctorShares = ref<DoctorSharesOverview | null>(null)
-const doctorSharePeriod = ref<'day' | 'month'>('month')
+const doctorSharePeriod = ref<'day' | 'month'>('day')
+const doctorShareDay = ref(todayDateKey())
+const doctorShareMonth = ref(currentMonthKey())
 const doctorShareDoctorId = ref('')
 const doctorShareOptions = ref<Array<{ id: string; firstName: string; lastName: string }>>([])
 const settlingDoctorShares = ref(false)
@@ -80,6 +82,25 @@ const selectedDoctorLabel = computed(() => {
   const doc = doctorShareOptions.value.find((d) => d.id === doctorShareDoctorId.value)
   return doc ? fullName(doc.firstName, doc.lastName) : translateDashboardLabel('Médecin')
 })
+
+const periodCaption = computed(() => {
+  if (doctorSharePeriod.value === 'day') {
+    const [year, month, day] = doctorShareDay.value.split('-').map(Number)
+    if (!year || !month || !day) return ''
+    return new Date(year, month - 1, day).toLocaleDateString('fr-FR')
+  }
+  const [year, month] = doctorShareMonth.value.split('-').map(Number)
+  if (!year || !month) return ''
+  return new Date(year, month - 1, 1).toLocaleDateString('fr-FR', {
+    month: 'long',
+    year: 'numeric',
+  })
+})
+
+function selectShareDay(day: string) {
+  doctorSharePeriod.value = 'day'
+  doctorShareDay.value = day
+}
 
 const selectedDoctorShareRow = computed(() => {
   if (!doctorShareDoctorId.value || !doctorShares.value) return null
@@ -166,8 +187,8 @@ async function loadDoctorShares() {
     const params: Record<string, string> = {
       period: doctorSharePeriod.value,
     }
-    if (doctorSharePeriod.value === 'day') params.day = todayDateKey()
-    else params.month = currentMonthKey()
+    if (doctorSharePeriod.value === 'day') params.day = doctorShareDay.value || todayDateKey()
+    else params.month = doctorShareMonth.value || currentMonthKey()
     if (doctorShareDoctorId.value) params.doctorId = doctorShareDoctorId.value
 
     const [{ data: overviewData }, { data: doctors }] = await Promise.all([
@@ -194,7 +215,7 @@ onMounted(() => {
   void loadDoctorShares()
 })
 
-watch([doctorSharePeriod, doctorShareDoctorId], () => {
+watch([doctorSharePeriod, doctorShareDoctorId, doctorShareDay, doctorShareMonth], () => {
   settleSharesMessage.value = ''
   void loadDoctorShares()
 })
@@ -206,7 +227,7 @@ defineExpose({ reload: loadDoctorShares })
   <section class="doctor-shares-section">
     <div class="doctor-shares-section__header">
       <h3>{{ translateDashboardLabel('Parts médecins à percevoir') }}</h3>
-      <span>{{ selectedDoctorLabel }}</span>
+      <span>{{ periodCaption }} · {{ selectedDoctorLabel }}</span>
     </div>
 
     <p v-if="loadError" class="doctor-shares-section__message doctor-shares-section__message--error">
@@ -215,9 +236,27 @@ defineExpose({ reload: loadDoctorShares })
 
     <div class="doctor-shares-section__filters">
       <UiSelect v-model="doctorSharePeriod" :label="translateDashboardLabel('Période')">
-        <option value="day">{{ translateDashboardLabel("Aujourd'hui") }}</option>
+        <option value="day">{{ translateDashboardLabel('Jour') }}</option>
         <option value="month">{{ translateDashboardLabel('Mois') }}</option>
       </UiSelect>
+      <div v-if="doctorSharePeriod === 'day'" class="doctor-shares-date-wrap">
+        <label class="doctor-shares-date">
+          <span>{{ translateDashboardLabel('Date') }}</span>
+          <input v-model="doctorShareDay" type="date" />
+        </label>
+        <div class="doctor-shares-date__quick">
+          <button type="button" @click="selectShareDay(todayDateKey())">
+            {{ translateDashboardLabel("Aujourd'hui") }}
+          </button>
+          <button type="button" @click="selectShareDay(yesterdayDateKey())">
+            {{ translateDashboardLabel('Hier') }}
+          </button>
+        </div>
+      </div>
+      <label v-else class="doctor-shares-date">
+        <span>{{ translateDashboardLabel('Mois') }}</span>
+        <input v-model="doctorShareMonth" type="month" />
+      </label>
       <UiSelect v-model="doctorShareDoctorId" :label="translateDashboardLabel('Médecin')">
         <option value="">{{ translateDashboardLabel('Tous (somme globale)') }}</option>
         <option v-for="doc in doctorShareOptions" :key="doc.id" :value="doc.id">
@@ -325,9 +364,63 @@ defineExpose({ reload: loadDoctorShares })
 
 .doctor-shares-section__filters {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.75rem;
   align-items: end;
+}
+
+.doctor-shares-date-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: end;
+}
+
+.doctor-shares-date-wrap .doctor-shares-date {
+  flex: 1 1 9rem;
+}
+
+.doctor-shares-date span {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.doctor-shares-date input {
+  width: 100%;
+  min-height: var(--app-control-height);
+  padding: var(--density-control-pad-y) var(--density-control-pad-x);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.doctor-shares-date__quick {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.doctor-shares-date__quick button {
+  height: var(--app-control-height);
+  padding: 0 0.75rem;
+  border: 1px solid var(--primary-200, #99f6e4);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.doctor-shares-date__quick button:hover {
+  border-color: var(--primary, #0f766e);
+  color: var(--primary, #0f766e);
 }
 
 .doctor-shares-cards {

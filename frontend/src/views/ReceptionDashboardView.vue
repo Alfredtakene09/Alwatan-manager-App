@@ -868,7 +868,7 @@ const dashboardStats = computed(() => {
             expenses: formatFcfaCompact(stats.value.expensesTodayFcfa ?? 0),
           })
         : 'Uniquement vos encaissements'
-      : 'Consultations encaissées (hors associés)',
+      : 'Consultations des patients inscrits (hors associés)',
     icon: Banknote,
     variant: 'violet' as const,
   },

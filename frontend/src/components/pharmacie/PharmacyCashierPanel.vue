@@ -754,14 +754,27 @@ function openReturnPicker() {
   returnPickerOpen.value = true
 }
 
+function saleReturnableAmount(sale: PharmacySaleForReturn) {
+  return sale.lines.reduce((sum, line) => {
+    const qty = line.quantityReturnable ?? Math.max(0, line.quantity - (line.quantityReturned ?? 0))
+    return sum + Math.max(0, qty) * line.unitPriceFcfa
+  }, 0)
+}
+
+const todayReturnableTotalFcfa = computed(() =>
+  todayReturnableSales.value.reduce((sum, sale) => sum + saleReturnableAmount(sale), 0),
+)
+
 function pickSaleForReturn(sale: PharmacySaleForReturn) {
   returnSale.value = sale
-  returnPickerOpen.value = false
   returnModalOpen.value = true
 }
 
-async function onReturnSuccess() {
+async function onReturnSuccess(sale: PharmacySaleForReturn) {
+  returnSale.value = sale
   await loadTodayReturnableSales()
+  const fresh = todayReturnableSales.value.find((item) => item.id === sale.id)
+  if (fresh) returnSale.value = fresh
   emit('refresh')
 }
 
@@ -1373,15 +1386,22 @@ watch(
       <p v-else-if="!todayReturnableSales.length" class="text-muted">
         {{ uiText('Aucune vente du jour avec articles retournables.') }}
       </p>
-      <ul v-else class="return-picker">
-        <li v-for="sale in todayReturnableSales" :key="sale.id">
-          <button type="button" class="return-picker__btn" @click="pickSaleForReturn(sale)">
-            <strong>{{ sale.invoiceNumber ?? sale.id.slice(0, 8) }}</strong>
-            <span>{{ new Date(sale.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) }}</span>
-            <span>{{ sale.lines.length }} {{ uiText('ligne(s)') }}</span>
-          </button>
-        </li>
-      </ul>
+      <template v-else>
+        <p class="return-picker__total">
+          <span>{{ uiText('Montant total des produits') }}</span>
+          <strong dir="ltr">{{ formatFcfa(todayReturnableTotalFcfa) }}</strong>
+        </p>
+        <ul class="return-picker">
+          <li v-for="sale in todayReturnableSales" :key="sale.id">
+            <button type="button" class="return-picker__btn" @click="pickSaleForReturn(sale)">
+              <strong>{{ sale.invoiceNumber ?? sale.id.slice(0, 8) }}</strong>
+              <span>{{ new Date(sale.createdAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) }}</span>
+              <span>{{ sale.lines.length }} {{ uiText('ligne(s)') }}</span>
+              <span dir="ltr">{{ formatFcfa(saleReturnableAmount(sale)) }}</span>
+            </button>
+          </li>
+        </ul>
+      </template>
       <template #footer>
         <UiButton variant="ghost" @click="returnPickerOpen = false">{{ uiText('Fermer') }}</UiButton>
       </template>
@@ -2349,6 +2369,18 @@ watch(
   .detail-choice {
     grid-template-columns: 1fr;
   }
+}
+
+.return-picker__total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin: 0 0 0.85rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  background: var(--surface-muted, #f8faf5);
+  font-size: 0.95rem;
 }
 
 .return-picker__btn {

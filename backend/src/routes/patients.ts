@@ -6,7 +6,10 @@ import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
 import { ageUnitSchema, refinePatientAge } from "../lib/patient-age.js";
 import { resolveConsultationBilling, shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
-import { aggregateCollectedBetween } from "../lib/revenue-stats.js";
+import {
+  aggregateCollectedBetween,
+  sumRegisteredPatientsConsultationsFcfa,
+} from "../lib/revenue-stats.js";
 import { buildRegistrationSummary } from "../lib/registration-summary.js";
 import {
   applyOpenClosureAdjustments,
@@ -532,6 +535,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     visitsToday,
     externalPatientsToday,
     collectedToday,
+    registeredConsultationsFcfa,
     myExpensesToday,
   ] = await Promise.all([
     prisma.patient.count({
@@ -582,6 +586,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
       },
     }),
     aggregateCollectedBetween(rangeStart, rangeEndExclusive, revenueOptions),
+    sumRegisteredPatientsConsultationsFcfa(patientPeriodScope, rangeStart, rangeEndExclusive),
     personalCashScope && !service && !doctorId
       ? sumExpensesForCashierBetween(user.id, rangeStart, rangeEndExclusive)
       : Promise.resolve({ totalFcfa: 0, count: 0, rows: [] }),
@@ -600,7 +605,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     expensesTodayFcfa: myExpensesToday.totalFcfa,
     netTodayFcfa,
     isPersonalScope: personalCashScope,
-    consultationsTodayFcfa: collectedToday.consultationsFcfa,
+    consultationsTodayFcfa: registeredConsultationsFcfa,
     examsTodayFcfa: collectedToday.examsFcfa,
     surgeryTodayFcfa: collectedToday.surgeryFcfa,
     hospitalizationTodayFcfa: collectedToday.hospitalizationFcfa,

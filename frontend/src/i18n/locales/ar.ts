@@ -420,6 +420,8 @@ export default {
     'Consultations, examens, opérations, hospitalisation (hors associés)':
       'الاستشارات والفحوصات والعمليات والاستشفاء (باستثناء الشركاء)',
     'Consultations encaissées (hors associés)': 'الاستشارات المحصّلة (باستثناء الشركاء)',
+    'Consultations des patients inscrits (hors associés)':
+      'استشارات المرضى المسجّلين (باستثناء الشركاء)',
     "À l'instant": 'الآن',
     '{n} min': '{n} د',
     '{h} h {m} min': '{h} س {m} د',
@@ -750,8 +752,8 @@ export default {
       'كل شيء محدّث — لا دفعات ولا إغلاق ولا مصاريف ولا رواتب ولا استشفاء قيد الانتظار.',
     'Tout est à jour — aucun paiement examens ni hospitalisation en attente.':
       'كل شيء محدّث — لا دفع فحوصات ولا استشفاء قيد الانتظار.',
-    'Tout est à jour — aucune hospitalisation en attente ni salle à libérer.':
-      'كل شيء محدّث — لا استشفاء قيد الانتظار ولا قاعة يجب تحريرها.',
+    'Tout est à jour — aucune hospitalisation en attente.':
+      'كل شيء محدّث — لا توجد إقامة بانتظار القبول.',
     'Tout est à jour — aucune clôture, dépense, paie ni hospitalisation en attente.':
       'كل شيء محدّث — لا إغلاق ولا مصاريف ولا رواتب ولا استشفاء قيد الانتظار.',
     'Tout est à jour — aucune action urgente sur la caisse comptable, les dépenses ni la paie.':
@@ -3282,5 +3284,45 @@ export default {
     'Radio simple (émiraties)': 'أشعة بسيطة (الإمارات)',
     'Consultation de kinésithérapie': 'استشارة علاج طبيعي',
     'Consultation de kinésithérapie (émiraties)': 'استشارة علاج طبيعي (الإمارات)',
+    '— Sélectionner —': '— اختر —',
+    'Inclure un assistant chirurgie pour cette opération': 'إضافة مساعد جراحة لهذه العملية',
+    'Encaisser l’opération': 'تحصيل العملية',
+    'Encaisser {amount}': 'تحصيل {amount}',
+    'Filtrer par médecin': 'تصفية حسب الطبيب',
+    'Le montant ne peut pas dépasser le reste ({amount}).':
+      'لا يمكن أن يتجاوز المبلغ المتبقي ({amount}).',
+    'Moitié': 'النصف',
+    'Montant à encaisser (FCFA)': 'المبلغ المراد تحصيله (فرنك)',
+    'Opération « {intervention} » supprimée.': 'تم حذف العملية « {intervention} ».',
+    'Patient enregistré. Encaissez l’opération puis imprimez le reçu.':
+      'تم تسجيل المريض. حصّل العملية ثم اطبع الإيصال.',
+    'Saisissez un montant supérieur à 0.': 'أدخل مبلغاً أكبر من 0.',
+    'Supprimer « {intervention} » pour {patient} ? Cette action est définitive.':
+      'حذف « {intervention} » للمريض {patient}؟ هذا الإجراء نهائي.',
+    'Tout le reste': 'كل المتبقي',
+    '{amount} encaissé — opération soldée.': 'تم تحصيل {amount} — العملية مسددة.',
+    '{amount} encaissé — reste à payer : {rest}.':
+      'تم تحصيل {amount} — المتبقي للدفع: {rest}.',
+    'Actuel : assistant ({pct} %)': 'الحالي: مساعد ({pct} %)',
+    'Actuel : {name} ({pct} %)': 'الحالي: {name} ({pct} %)',
+    'Assistant lié à cette opération.': 'تم ربط المساعد بهذه العملية.',
+    'Assistant retiré de cette opération.': 'تمت إزالة المساعد من هذه العملية.',
+    'Consultation clinique': 'استشارة سريرية',
+    'Déjà lié à « {op} » — vous pouvez modifier.':
+      'مرتبط مسبقاً بـ « {op} » — يمكنك التعديل.',
+    'Déjà prescrite': 'موصوفة مسبقاً',
+    'Enregistrer l’assistant sur cette opération': 'تسجيل المساعد على هذه العملية',
+    'Impossible de lier l’assistant.': 'تعذر ربط المساعد.',
+    'Impossible de mettre à jour l’assistant.': 'تعذر تحديث المساعد.',
+    'Le % assistant doit être entre 1 et 99.': 'يجب أن تكون نسبة المساعد بين 1 و 99.',
+    'Retirer la consultation': 'إزالة الاستشارة',
+    'Retirer l’assistant': 'إزالة المساعد',
+    'Une consultation est déjà enregistrée sur ce dossier.':
+      'توجد استشارة مسجّلة مسبقاً في هذا الملف.',
+    'Impossible de supprimer l’opération.': 'تعذر حذف العملية.',
+    'Montant total du retour': 'المبلغ الإجمالي للإرجاع',
+    'Montant total des produits': 'المبلغ الإجمالي للمنتجات',
+    'Retour enregistré — {amount}. Stock mis à jour.':
+      'تم تسجيل الإرجاع — {amount}. تم تحديث المخزون.',
   },
 }

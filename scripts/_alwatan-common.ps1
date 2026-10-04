@@ -1434,10 +1434,71 @@ function Ensure-AlwatanLanFirewall {
     return $ok
 }
 
+function Get-AlwatanLanEnvPath {
+    param([string]$Root)
+    return (Join-Path $Root 'backend\.env.lan')
+}
+
+function Protect-AlwatanEnvSecrets {
+    param([string]$Root)
+    $envFile = Join-Path $Root 'backend\.env'
+    $backup = Join-Path $Root 'backend\.env.backup'
+    if (-not (Test-Path -LiteralPath $envFile)) { return }
+    $sourceLength = (Get-Item -LiteralPath $envFile).Length
+    if ($sourceLength -lt 80) { return }
+    if (Test-Path -LiteralPath $backup) {
+        $backupLength = (Get-Item -LiteralPath $backup).Length
+        if ($backupLength -ge $sourceLength) { return }
+    }
+    [System.IO.File]::Copy($envFile, $backup, $true)
+}
+
+function Read-AlwatanLanSetting {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$Key
+    )
+    $lanFile = Get-AlwatanLanEnvPath -Root $Root
+    $envFile = Join-Path $Root 'backend\.env'
+    foreach ($path in @($lanFile, $envFile)) {
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        foreach ($line in Get-Content -LiteralPath $path -ErrorAction SilentlyContinue) {
+            if ($line -match ('^\s*' + [regex]::Escape($Key) + '\s*=\s*"?([^"#\r\n]+)"?\s*$')) {
+                return $Matches[1].Trim()
+            }
+        }
+    }
+    return ''
+}
+
+function Write-AlwatanLanEnvFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$CorsOrigin,
+        [string]$AccessMode = ''
+    )
+    if (-not $AccessMode) {
+        $AccessMode = Read-AlwatanLanSetting -Root $Root -Key 'ALWATAN_ACCESS_MODE'
+    }
+    $lines = @(
+        '# Reglages reseau seulement. Ne jamais y mettre DATABASE_URL ni JWT_SECRET.',
+        'HOST=0.0.0.0',
+        "CORS_ORIGIN=`"$CorsOrigin`"",
+        'SERVE_FRONTEND=1'
+    )
+    if ($AccessMode) {
+        $lines += "ALWATAN_ACCESS_MODE=$AccessMode"
+    }
+    $path = Get-AlwatanLanEnvPath -Root $Root
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllLines($path, $lines, $utf8)
+}
+
 function Ensure-AlwatanEnvFile {
     param([string]$Root)
 
     $envFile = Join-Path $Root 'backend\.env'
+    Protect-AlwatanEnvSecrets -Root $Root
     $example = Join-Path $Root 'backend\.env.example'
     if (-not (Test-Path $envFile) -and (Test-Path $example)) {
         Copy-Item $example $envFile
@@ -1497,40 +1558,11 @@ function Sync-AlwatanLanConfig {
     $ts = Get-TailscaleIpv4
     if ($ts -and -not $corsIps.Contains($ts)) { [void]$corsIps.Add($ts) }
 
-    $envFile = Join-Path $Root 'backend\.env'
-    if (-not (Test-Path $envFile)) { return }
-
+    # Ne jamais réécrire backend\.env : une relecture incomplète effaçait
+    # DATABASE_URL et JWT_SECRET. Le réseau vit dans backend\.env.lan.
+    Protect-AlwatanEnvSecrets -Root $Root
     $corsOrigin = Build-AlwatanCorsOrigin -LanIps $corsIps.ToArray()
-    $lines = Get-Content $envFile -ErrorAction SilentlyContinue
-    $out = [System.Collections.Generic.List[string]]::new()
-    $seenHost = $false
-    $seenCors = $false
-    $seenServe = $false
-
-    foreach ($line in $lines) {
-        if ($line -match '^\s*HOST\s*=') {
-            [void]$out.Add('HOST=0.0.0.0')
-            $seenHost = $true
-            continue
-        }
-        if ($line -match '^\s*CORS_ORIGIN\s*=') {
-            [void]$out.Add("CORS_ORIGIN=`"$corsOrigin`"")
-            $seenCors = $true
-            continue
-        }
-        if ($line -match '^\s*SERVE_FRONTEND\s*=') {
-            [void]$out.Add('SERVE_FRONTEND=1')
-            $seenServe = $true
-            continue
-        }
-        [void]$out.Add($line)
-    }
-
-    if (-not $seenHost) { [void]$out.Add('HOST=0.0.0.0') }
-    if (-not $seenCors) { [void]$out.Add("CORS_ORIGIN=`"$corsOrigin`"") }
-    if (-not $seenServe) { [void]$out.Add('SERVE_FRONTEND=1') }
-
-    Set-Content -Path $envFile -Value $out -Encoding UTF8
+    Write-AlwatanLanEnvFile -Root $Root -CorsOrigin $corsOrigin
 }
 
 function Show-AlwatanNetworkUrls {

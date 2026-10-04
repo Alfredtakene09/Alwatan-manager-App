@@ -16,6 +16,8 @@ acces-client/
 *.sql.gz
 .env
 backend/.env
+backend/.env.lan
+backend/.env.backup
 frontend/.env
 backend/uploads/
 dev-data/

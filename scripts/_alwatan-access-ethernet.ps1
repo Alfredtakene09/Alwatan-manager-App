@@ -55,14 +55,7 @@ function Get-AlwatanWifiIpv4List {
 
 function Read-AlwatanAccessMode {
     param([string]$Root = (Get-AlwatanRoot))
-    $envFile = Join-Path $Root 'backend\.env'
-    if (-not (Test-Path $envFile)) { return '' }
-    $line = Get-Content $envFile -ErrorAction SilentlyContinue |
-        Where-Object { $_ -match '^\s*ALWATAN_ACCESS_MODE\s*=' } |
-        Select-Object -First 1
-    if (-not $line) { return '' }
-    if ($line -match '=\s*"?([^"#\r\n]+)"?') { return $Matches[1].Trim() }
-    return ''
+    return (Read-AlwatanLanSetting -Root $Root -Key 'ALWATAN_ACCESS_MODE')
 }
 
 function Set-AlwatanAccessMode {
@@ -70,22 +63,11 @@ function Set-AlwatanAccessMode {
         [Parameter(Mandatory = $true)][string]$Root,
         [Parameter(Mandatory = $true)][string]$Mode
     )
-    $envFile = Join-Path $Root 'backend\.env'
-    if (-not (Test-Path $envFile)) { return }
-    $lines = Get-Content $envFile -ErrorAction SilentlyContinue
-    $out = [System.Collections.Generic.List[string]]::new()
-    $seen = $false
-    foreach ($line in $lines) {
-        if ($line -match '^\s*ALWATAN_ACCESS_MODE\s*=') {
-            [void]$out.Add("ALWATAN_ACCESS_MODE=$Mode")
-            $seen = $true
-            continue
-        }
-        [void]$out.Add($line)
+    $cors = Read-AlwatanLanSetting -Root $Root -Key 'CORS_ORIGIN'
+    if (-not $cors) {
+        $cors = Build-AlwatanCorsOrigin
     }
-    if (-not $seen) { [void]$out.Add("ALWATAN_ACCESS_MODE=$Mode") }
-    $utf8 = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllLines((Resolve-Path $envFile), $out.ToArray(), $utf8)
+    Write-AlwatanLanEnvFile -Root $Root -CorsOrigin $cors -AccessMode $Mode
 }
 
 function Ensure-AlwatanEthernetTailscaleFirewall {
