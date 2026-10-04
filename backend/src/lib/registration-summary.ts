@@ -10,9 +10,13 @@ import {
   doctorUsesQuota,
   type DoctorProfile,
 } from "./doctor-compensation.js";
+import { parsePrescribedExamsByKind } from "./lab-notes.js";
 import { COLLECTED_INVOICE_TYPES } from "./revenue-stats.js";
 
-/** Une ligne du PDF des enregistrements : un service dans une section. */
+/** Orthopédie et traumatologie (y compris la graphie « Tromatologie ») sont un seul service. */
+export const ORTHO_TRAUMA_SERVICE = "Traumatologie & Orthopédie";
+
+/** Une ligne du PDF des enregistrements : un service, ou une opération. */
 export type RegistrationSummaryLine = {
   group: DayClosureLineGroup;
   service: string;
@@ -61,10 +65,12 @@ const summaryInvoiceSelect = {
   surgeryCase: {
     select: {
       surgeonShareFcfa: true,
+      surgeonPercent: true,
       totalCostFcfa: true,
       surgeon: doctorSelect,
       interventionType: {
         select: {
+          label: true,
           surgeonPercent: true,
           clinicService: { select: { name: true } },
         },
@@ -132,12 +138,21 @@ function operationSurgeon(invoice: SummaryInvoice): DoctorProfile | null {
 
 /**
  * Part du chirurgien sur le montant exporté.
- * Le % du médecin (ex. 30 % opérations) prime sur le % du catalogue et sur la part déjà stockée.
+ * Le % associé à l'opération prime, puis le % de la fiche du médecin.
  */
 export function operationShare(invoice: SummaryInvoice, amountFcfa: number): ShareResult {
-  const surgeon = operationSurgeon(invoice);
-  const fichePercent = doctorSurgeryQuotaPercent(surgeon);
-  if (fichePercent != null && amountFcfa > 0) {
+  if (amountFcfa <= 0) return NO_SHARE;
+
+  const associated = invoice.surgeryCase?.surgeonPercent ?? 0;
+  if (associated > 0) {
+    return {
+      shareFcfa: Math.round((amountFcfa * associated) / 100),
+      percent: associated,
+    };
+  }
+
+  const fichePercent = doctorSurgeryQuotaPercent(operationSurgeon(invoice));
+  if (fichePercent != null) {
     return {
       shareFcfa: Math.round((amountFcfa * fichePercent) / 100),
       percent: fichePercent,
@@ -146,7 +161,7 @@ export function operationShare(invoice: SummaryInvoice, amountFcfa: number): Sha
 
   const stored = invoice.surgeryCase?.surgeonShareFcfa ?? 0;
   const total = invoice.surgeryCase?.totalCostFcfa ?? 0;
-  if (stored > 0 && total > 0 && amountFcfa > 0) {
+  if (stored > 0 && total > 0) {
     const percent = Math.round((stored * 100) / total);
     return {
       shareFcfa: Math.round((amountFcfa * stored) / total),
@@ -155,7 +170,7 @@ export function operationShare(invoice: SummaryInvoice, amountFcfa: number): Sha
   }
 
   const catalogPercent = invoice.surgeryCase?.interventionType?.surgeonPercent ?? 0;
-  if (catalogPercent > 0 && amountFcfa > 0) {
+  if (catalogPercent > 0) {
     return {
       shareFcfa: Math.round((amountFcfa * catalogPercent) / 100),
       percent: catalogPercent,
@@ -190,9 +205,67 @@ export type RegistrationSummaryOptions = {
   patientWhere: Prisma.PatientWhereInput;
 };
 
+function foldServiceKey(label: string): string {
+  return label
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+export function isOrthoTraumaService(label: string): boolean {
+  const key = foldServiceKey(label);
+  return key === "orthopedie" || key === "traumatologie" || key === "tromatologie";
+}
+
+/** Nom de l'acte (catalogue ou prescription), pas le service clinique. */
+export function operationActName(invoice: SummaryInvoice): string | null {
+  const named = invoice.surgeryCase?.interventionType?.label?.trim();
+  if (named) return named;
+  const prescribed = parsePrescribedExamsByKind(invoice.visit?.consultation?.clinicalNotes)
+    .operation.map((item) => item.trim())
+    .filter(Boolean);
+  return prescribed.length > 0 ? prescribed.join(", ") : null;
+}
+
+function displayServiceName(serviceLabel: string): string {
+  return isOrthoTraumaService(serviceLabel) ? ORTHO_TRAUMA_SERVICE : serviceLabel;
+}
+
+/** « Gynécologie (Césarienne) » : le service, puis l'acte entre parenthèses. */
+export function operationLineLabel(serviceLabel: string, operationName: string | null): string {
+  const service = displayServiceName(serviceLabel);
+  const name = operationName?.trim();
+  return name ? `${service} (${name})` : service;
+}
+
 /**
- * Cumul des prestations des patients enregistrés sur la période, par section
- * puis par service — même découpage que le ticket de clôture.
+ * Consultations, examens et hospitalisations restent cumulés par service.
+ * Chaque opération est une ligne « Service (acte) ». Orthopédie et traumatologie
+ * partagent le libellé « Traumatologie & Orthopédie », y compris pour les consultations.
+ */
+export function registrationLineIdentity(input: {
+  group: DayClosureLineGroup;
+  serviceLabel: string;
+  operationName: string | null;
+  invoiceId: string;
+}): { key: string; service: string } {
+  const service = displayServiceName(input.serviceLabel);
+  if (input.group !== "operation") {
+    return { key: `${input.group}\u0000${service}`, service };
+  }
+  const label = operationLineLabel(input.serviceLabel, input.operationName);
+  if (isOrthoTraumaService(input.serviceLabel)) {
+    const act = foldServiceKey(input.operationName?.trim() || service);
+    return { key: `${input.group}\u0000${ORTHO_TRAUMA_SERVICE}\u0000${act}`, service: label };
+  }
+  return { key: `${input.group}\u0000${input.invoiceId}`, service: label };
+}
+
+/**
+ * Cumul des prestations des patients enregistrés sur la période.
+ * Les opérations sont listées « Service (acte) ». Orthopédie et traumatologie
+ * portent le même nom, consultations comprises. Le reste suit le ticket de clôture.
  */
 export async function buildRegistrationSummary(
   options: RegistrationSummaryOptions,
@@ -214,10 +287,16 @@ export async function buildRegistrationSummary(
     if (amountFcfa <= 0) continue;
 
     const { label, group } = classifyInvoiceForDayClosure(invoice);
-    const key = `${group}\u0000${label}`;
+    const identity = registrationLineIdentity({
+      group,
+      serviceLabel: label,
+      operationName: group === "operation" ? operationActName(invoice) : null,
+      invoiceId: invoice.id,
+    });
+    const key = identity.key;
     const row: Accumulator = grouped.get(key) ?? {
       group,
-      service: label,
+      service: identity.service,
       qty: 0,
       amountFcfa: 0,
       doctorShareFcfa: 0,
@@ -228,7 +307,7 @@ export async function buildRegistrationSummary(
       operationPercents: new Set<number>(),
     };
 
-    const patientKey = invoice.patientId ?? invoice.id;
+    const patientKey = group === "operation" ? invoice.id : (invoice.patientId ?? invoice.id);
     if (!row.patientIds.has(patientKey)) {
       row.patientIds.add(patientKey);
       row.qty += 1;

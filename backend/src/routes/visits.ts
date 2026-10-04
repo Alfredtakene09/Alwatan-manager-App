@@ -1028,6 +1028,8 @@ const externalLabOrderSchema = z
     amountFcfa: z.number().int().min(0).optional(),
     /** Montant dédié à l’opération (parts % appliquées sur le SurgeryCase). */
     operationAmountFcfa: z.number().int().min(0).optional(),
+    /** % médecin saisi à la sélection (prérempli depuis la fiche). */
+    operationSurgeonPercent: z.number().int().min(1).max(99).optional(),
     operationAssistant: operationAssistantSchema,
     /** Service choisi pour l’opération (patient externe : prix saisi, pas le catalogue). */
     operationServiceId: z.string().min(1).optional(),
@@ -1215,6 +1217,7 @@ const externalQueueUpdateSchema = z
     examsByKind: examsByKindSchema.optional(),
     reductionFcfa: z.coerce.number().int().min(0).default(0),
     operationAmountFcfa: z.number().int().min(0).optional(),
+    operationSurgeonPercent: z.number().int().min(1).max(99).optional(),
     operationAssistant: operationAssistantSchema,
     operationServiceId: z.string().min(1).optional(),
     ...patientAgeShape,
@@ -1286,6 +1289,7 @@ async function syncReceptionOperationCase(
     assignedDoctorId: string;
     totalCostFcfa: number;
     operationAssistant?: ReceptionOperationAssistant | null;
+    surgeonPercent?: number | null;
     clinicServiceId?: string | null;
   },
 ): Promise<string> {
@@ -1328,11 +1332,16 @@ async function syncReceptionOperationCase(
       where: { id: params.assignedDoctorId },
       select: { employee: { select: { surgeryQuotaPercent: true } } },
     });
+    const requestedPercent =
+      params.surgeonPercent != null && params.surgeonPercent > 0
+        ? Math.min(99, Math.round(params.surgeonPercent))
+        : null;
     const createPercent =
-      surgeonUserForCreate?.employee?.surgeryQuotaPercent != null &&
+      requestedPercent ??
+      (surgeonUserForCreate?.employee?.surgeryQuotaPercent != null &&
       surgeonUserForCreate.employee.surgeryQuotaPercent > 0
         ? surgeonUserForCreate.employee.surgeryQuotaPercent
-        : 70;
+        : 70);
     intervention = await tx.interventionType.create({
       data: {
         code: generateReceptionInterventionCode(params.operationLabel),
@@ -1353,8 +1362,13 @@ async function syncReceptionOperationCase(
     select: { employee: { select: { surgeryQuotaPercent: true } } },
   });
   const quota = surgeonUser?.employee?.surgeryQuotaPercent;
+  const requested = params.surgeonPercent;
   const surgeonPercent =
-    quota != null && quota > 0 ? quota : intervention.surgeonPercent;
+    requested != null && requested > 0
+      ? Math.min(99, Math.round(requested))
+      : quota != null && quota > 0
+        ? quota
+        : intervention.surgeonPercent;
 
   const assistant = params.operationAssistant;
   let assistantPercent = Math.min(
@@ -1401,6 +1415,7 @@ async function syncReceptionOperationCase(
       surgeonId: params.assignedDoctorId,
       totalCostFcfa: shares.totalCostFcfa,
       surgeonShareFcfa: shares.surgeonShareFcfa,
+      surgeonPercent,
       clinicShareFcfa: shares.clinicShareFcfa,
       status: SurgeryStatus.NOTIFIED,
     },
@@ -1410,6 +1425,7 @@ async function syncReceptionOperationCase(
       surgeonId: params.assignedDoctorId,
       totalCostFcfa: shares.totalCostFcfa,
       surgeonShareFcfa: shares.surgeonShareFcfa,
+      surgeonPercent,
       clinicShareFcfa: shares.clinicShareFcfa,
       status: SurgeryStatus.NOTIFIED,
     },
@@ -1641,6 +1657,7 @@ router.patch(
             assignedDoctorId,
             totalCostFcfa,
             operationAssistant: body.operationAssistant,
+            surgeonPercent: body.operationSurgeonPercent,
             clinicServiceId: body.operationServiceId,
           });
         }
@@ -2043,6 +2060,7 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
           assignedDoctorId,
           totalCostFcfa,
           operationAssistant: body.operationAssistant,
+          surgeonPercent: body.operationSurgeonPercent,
           clinicServiceId: body.operationServiceId,
         });
       }

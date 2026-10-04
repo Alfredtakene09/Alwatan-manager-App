@@ -83,6 +83,8 @@ const props = withDefaults(
     operationAssistant?: OperationAssistantPayload | null
     /** Médecin de l’opération (réception : obligatoire dès qu’une opération est au panier). */
     operationDoctorId?: string | null
+    /** % médecin de cette opération, prérempli depuis la fiche à la sélection. */
+    operationSurgeonPercent?: number | null
     /** Service clinique choisi comme opération (patient externe). */
     operationServiceId?: string | null
   }>(),
@@ -96,6 +98,7 @@ const props = withDefaults(
     operationAmountFcfa: null,
     operationAssistant: null,
     operationDoctorId: null,
+    operationSurgeonPercent: null,
     operationServiceId: null,
   },
 )
@@ -107,6 +110,7 @@ const emit = defineEmits<{
   'update:operationAmountFcfa': [value: number | null]
   'update:operationAssistant': [value: OperationAssistantPayload | null]
   'update:operationDoctorId': [value: string]
+  'update:operationSurgeonPercent': [value: number | null]
   'update:operationServiceId': [value: string]
   'active-service-change': [
     payload: {
@@ -635,6 +639,41 @@ const operationDoctorIdModel = computed({
   set: (value: string) => emit('update:operationDoctorId', value),
 })
 
+const surgeonPercentDraft = ref('')
+const surgeonPercentDoctorId = ref('')
+
+const activeSurgeonId = computed(
+  () => props.operationDoctorId || (props.showConsultation ? props.doctorId : '') || '',
+)
+
+function emitSurgeonPercent() {
+  const n = Math.round(Number(surgeonPercentDraft.value))
+  emit('update:operationSurgeonPercent', Number.isFinite(n) && n >= 1 && n <= 99 ? n : null)
+}
+
+function syncSurgeonPercentFromDoctor() {
+  const id = activeSurgeonId.value
+  if (!id) {
+    surgeonPercentDraft.value = ''
+    surgeonPercentDoctorId.value = ''
+    emitSurgeonPercent()
+    return
+  }
+  if (surgeonPercentDoctorId.value === id && surgeonPercentDraft.value !== '') return
+  const doctor = surgeonDoctors.value.find((item) => item.id === id)
+  if (!doctor && surgeonDoctors.value.length === 0) return
+  const quota = doctor?.surgeryQuotaPercent
+  surgeonPercentDraft.value = quota != null && quota > 0 ? String(quota) : ''
+  surgeonPercentDoctorId.value = id
+  emitSurgeonPercent()
+}
+
+function onSurgeonPercentInput(value: string | number) {
+  surgeonPercentDraft.value = String(value ?? '')
+  surgeonPercentDoctorId.value = activeSurgeonId.value
+  emitSurgeonPercent()
+}
+
 const customOpName = ref('')
 const customOpMessage = ref('')
 const customOpMessageType = ref<'success' | 'error'>('success')
@@ -684,11 +723,19 @@ const operationSharePreview = computed(() => {
   const exam = cartOperationExam.value
   const total = Math.max(0, Math.round(Number(operationAmountDraft.value) || 0))
   if (!exam || total <= 0) return null
-  const selectedSurgeon = surgeonDoctors.value.find((doctor) => doctor.id === props.operationDoctorId)
+  const selectedSurgeon = surgeonDoctors.value.find((doctor) => doctor.id === activeSurgeonId.value)
+  const drafted = Math.round(Number(surgeonPercentDraft.value))
   const quota = selectedSurgeon?.surgeryQuotaPercent
   const surgeonPct = Math.min(
     100,
-    Math.max(0, Math.round(quota != null && quota > 0 ? quota : (exam.surgeonPercent ?? 70))),
+    Math.max(
+      0,
+      Number.isFinite(drafted) && drafted > 0
+        ? drafted
+        : quota != null && quota > 0
+          ? quota
+          : (exam.surgeonPercent ?? 70),
+    ),
   )
   const formAssistantPct = assistantForm.value.withAssistant
     ? Math.min(99, Math.max(0, Math.round(Number(assistantForm.value.percent) || 0)))
@@ -732,7 +779,7 @@ function surgeonOptionLabel(doctor: DoctorOption) {
 }
 
 async function loadSurgeonDoctors() {
-  if (props.showConsultation || surgeonDoctors.value.length) return
+  if (surgeonDoctors.value.length) return
   try {
     const { data } = await api.get<
       Array<{
@@ -982,6 +1029,10 @@ watch(
   },
   { immediate: true },
 )
+
+watch([activeSurgeonId, surgeonDoctors], () => {
+  syncSurgeonPercentFromDoctor()
+})
 
 watch(
   () => props.operationAmountFcfa,
@@ -1362,6 +1413,19 @@ watch(
             {{ surgeonOptionLabel(doctor) }}
           </option>
         </UiSelect>
+
+        <UiInput
+          v-if="activeSurgeonId"
+          :model-value="surgeonPercentDraft"
+          :label="uiText('% du médecin')"
+          type="number"
+          min="1"
+          max="99"
+          @update:model-value="onSurgeonPercentInput"
+        />
+        <p v-if="activeSurgeonId" class="multi-exam-picker__assistant-current">
+          {{ uiText('Pourcentage de la fiche, modifiable pour cette opération.') }}
+        </p>
 
         <p v-if="cartOperationExam.hasAssistant" class="multi-exam-picker__assistant-current">
           {{

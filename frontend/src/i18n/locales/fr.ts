@@ -116,6 +116,8 @@ export default {
     'Activité des médecins': 'Activité des médecins',
     'Filtrer un médecin pour voir ses patients': 'Filtrer un médecin pour voir ses patients',
     'Aucune activité pour ce médecin.': 'Aucune activité pour ce médecin.',
+    'Nom, code ou téléphone': 'Nom, code ou téléphone',
+    'Choisissez un patient dans la liste.': 'Choisissez un patient dans la liste.',
     'Enregistré par {name}': 'Enregistré par {name}',
     'Aucun patient trouvé. Utilisez la recherche ci-contre.':
       'Aucun patient trouvé. Utilisez la recherche ci-contre.',
@@ -453,6 +455,9 @@ export default {
     'Spécialité affichée à la réception et pourcentage appliqué si ce médecin est choisi pour une opération.':
       'Spécialité affichée à la réception et pourcentage appliqué si ce médecin est choisi pour une opération.',
     '% Chirurgie': '% Chirurgie',
+    '% du médecin': '% du médecin',
+    'Pourcentage de la fiche, modifiable pour cette opération.':
+      'Pourcentage de la fiche, modifiable pour cette opération.',
     'Pourcentage appliqué quand ce médecin est sélectionné comme chirurgien pour une opération.':
       'Pourcentage appliqué quand ce médecin est sélectionné comme chirurgien pour une opération.',
     'Le pourcentage chirurgie doit être un entier entre 1 et 99.':

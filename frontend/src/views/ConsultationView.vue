@@ -63,6 +63,7 @@ const transferring = ref(false)
 const selectedExamsByKind = ref<ExamsByKind>(emptyExamsByKind())
 const examCommentsByKind = ref<ExamCommentsByKind>(emptyExamCommentsByKind())
 const operationAmountFcfa = ref<number | null>(null)
+const operationSurgeonPercent = ref<number | null>(null)
 const operationAssistant = ref<{
   anesthesiologistId?: string | null
   anesthesiologistName?: string | null
@@ -224,6 +225,7 @@ function resetExamForm() {
   doctorComment.value = ''
   pharmacyOrdonnance.value = []
   operationAmountFcfa.value = null
+  operationSurgeonPercent.value = null
   operationAssistant.value = null
   consultModalTab.value = 'exams'
 }
@@ -379,6 +381,12 @@ async function submitExams() {
           operationAmountFcfa.value != null
         ) {
           payload.operationAmountFcfa = operationAmountFcfa.value
+        }
+        if (
+          (selectedExamsByKind.value.operation?.length ?? 0) > 0 &&
+          operationSurgeonPercent.value != null
+        ) {
+          payload.operationSurgeonPercent = operationSurgeonPercent.value
         }
         if (
           (selectedExamsByKind.value.operation?.length ?? 0) > 0 &&
@@ -645,6 +653,7 @@ onUnmounted(() => {
                 v-model:comments="examCommentsByKind"
                 v-model:hospitalisation-days="hospitalisationDays"
                 v-model:operation-amount-fcfa="operationAmountFcfa"
+                v-model:operation-surgeon-percent="operationSurgeonPercent"
                 v-model:operation-assistant="operationAssistant"
                 :doctor-id="auth.user?.id"
                 :hide-consultation-tab="true"

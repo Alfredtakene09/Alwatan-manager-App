@@ -717,9 +717,15 @@ function registrationExportSections(
   for (const group of DAY_CLOSURE_GROUPS) {
     const rows = lines.filter((line) => line.group === group.id)
     if (!rows.length) continue
+    const sectionColumns =
+      group.id === 'operation'
+        ? columns.map((column, index) =>
+            index === 0 ? { ...column, header: uiText('Opération') } : column,
+          )
+        : columns
     sections.push({
       title: uiText(group.label),
-      columns,
+      columns: sectionColumns,
       rows,
       footRow: registrationSectionFootRow(rows),
     })

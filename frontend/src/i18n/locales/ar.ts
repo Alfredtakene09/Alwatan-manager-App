@@ -137,6 +137,8 @@ export default {
     'Activité des médecins': 'نشاط الأطباء',
     'Filtrer un médecin pour voir ses patients': 'صفِّ طبيباً لعرض مرضاه',
     'Aucune activité pour ce médecin.': 'لا نشاط لهذا الطبيب.',
+    'Nom, code ou téléphone': 'الاسم أو الرمز أو الهاتف',
+    'Choisissez un patient dans la liste.': 'اختر مريضاً من القائمة.',
     'Enregistré par {name}': 'سجّله {name}',
     'Aucun patient trouvé. Utilisez la recherche ci-contre.':
       'لم يُعثر على مريض. استخدم البحث المجاور.',
@@ -445,6 +447,9 @@ export default {
     'Spécialité affichée à la réception et pourcentage appliqué si ce médecin est choisi pour une opération.':
       'التخصص المعروض في الاستقبال والنسبة المطبقة عند اختيار هذا الطبيب لعملية.',
     '% Chirurgie': '% الجراحة',
+    '% du médecin': 'نسبة الطبيب',
+    'Pourcentage de la fiche, modifiable pour cette opération.':
+      'النسبة من ملف الطبيب، ويمكن تعديلها لهذه العملية.',
     'Pourcentage appliqué quand ce médecin est sélectionné comme chirurgien pour une opération.':
       'النسبة المطبقة عندما يُختار هذا الطبيب جراحاً لعملية.',
     'Le pourcentage chirurgie doit être un entier entre 1 et 99.':

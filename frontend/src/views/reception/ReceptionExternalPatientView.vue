@@ -136,6 +136,7 @@ const editForm = ref({
 const examsByKind = ref<ExamsByKind>(emptyExamsByKind())
 /** Montant opération personnalisé (depuis le sélecteur). */
 const operationAmountFcfa = ref<number | null>(null)
+const operationSurgeonPercent = ref<number | null>(null)
 const operationAssistant = ref<OperationAssistantPayload | null>(null)
 const operationServiceId = ref('')
 const reductionFcfaInput = ref('')
@@ -320,6 +321,7 @@ function resetExamsForm() {
   examsByKind.value = emptyExamsByKind()
   selectedDoctorId.value = ''
   operationAmountFcfa.value = null
+  operationSurgeonPercent.value = null
   operationAssistant.value = null
   operationServiceId.value = ''
   reductionFcfaInput.value = ''
@@ -333,6 +335,11 @@ function examsPayload() {
     ...(
       (examsByKind.value.operation?.length ?? 0) > 0 && operationAmountFcfa.value != null
         ? { operationAmountFcfa: operationAmountFcfa.value }
+        : {}
+    ),
+    ...(
+      hasOperationExam.value && operationSurgeonPercent.value != null
+        ? { operationSurgeonPercent: operationSurgeonPercent.value }
         : {}
     ),
     ...(hasOperationExam.value && operationAssistant.value
@@ -1111,6 +1118,7 @@ onMounted(() => {
           <MultiExamPrescriptionPicker
             v-model="examsByKind"
             v-model:operation-amount-fcfa="operationAmountFcfa"
+            v-model:operation-surgeon-percent="operationSurgeonPercent"
             v-model:operation-doctor-id="selectedDoctorId"
             v-model:operation-assistant="operationAssistant"
             v-model:operation-service-id="operationServiceId"
@@ -1243,6 +1251,7 @@ onMounted(() => {
           <MultiExamPrescriptionPicker
             v-model="examsByKind"
             v-model:operation-amount-fcfa="operationAmountFcfa"
+            v-model:operation-surgeon-percent="operationSurgeonPercent"
             v-model:operation-doctor-id="selectedDoctorId"
             v-model:operation-assistant="operationAssistant"
             v-model:operation-service-id="operationServiceId"
@@ -1336,6 +1345,7 @@ onMounted(() => {
         <MultiExamPrescriptionPicker
           v-model="examsByKind"
           v-model:operation-amount-fcfa="operationAmountFcfa"
+            v-model:operation-surgeon-percent="operationSurgeonPercent"
           v-model:operation-doctor-id="selectedDoctorId"
           v-model:operation-assistant="operationAssistant"
           v-model:operation-service-id="operationServiceId"

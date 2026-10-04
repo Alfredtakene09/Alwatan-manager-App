@@ -209,6 +209,7 @@ const patientForm = ref({
 })
 const registerExams = ref<ExamsByKind>(emptyExamsByKind())
 const operationAmountFcfa = ref<number | null>(null)
+const operationSurgeonPercent = ref<number | null>(null)
 const operationAssistant = ref<OperationAssistantPayload | null>(null)
 const operationServiceId = ref('')
 const selectedDoctorId = ref('')
@@ -232,6 +233,7 @@ function resetRegisterForm() {
   patientForm.value = { fullName: '', age: '', ageUnit: 'YEARS', phone: '', gender: 'F' }
   registerExams.value = emptyExamsByKind()
   operationAmountFcfa.value = null
+  operationSurgeonPercent.value = null
   operationAssistant.value = null
   operationServiceId.value = ''
   selectedDoctorId.value = ''
@@ -273,6 +275,9 @@ async function submitRegisterOperation() {
       amountFcfa: price,
       doctorId: selectedDoctorId.value,
       deferCollection: true,
+      ...(operationSurgeonPercent.value != null
+        ? { operationSurgeonPercent: operationSurgeonPercent.value }
+        : {}),
       ...(operationAssistant.value ? { operationAssistant: operationAssistant.value } : {}),
       ...(operationServiceId.value ? { operationServiceId: operationServiceId.value } : {}),
     })
@@ -1334,6 +1339,7 @@ onMounted(load)
         <MultiExamPrescriptionPicker
           v-model="registerExams"
           v-model:operation-amount-fcfa="operationAmountFcfa"
+          v-model:operation-surgeon-percent="operationSurgeonPercent"
           v-model:operation-doctor-id="selectedDoctorId"
           v-model:operation-assistant="operationAssistant"
           v-model:operation-service-id="operationServiceId"

@@ -24,7 +24,6 @@ import { useAuthStore } from '@/stores/auth'
 import { fullName, canWriteDossierDocuments, isDirectionOrGestionnaire } from '@/lib/roles'
 import { matchesPatientSearch } from '@/lib/patient-search'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
-import { patientCategoryLabel, type PatientCategory } from '@/lib/patient-category'
 import {
   PATIENT_DOCUMENT_KIND_LABELS,
   PATIENT_DOCUMENT_KINDS,
@@ -179,12 +178,6 @@ const editVisitId = computed(
 
 const canEditDossier = computed(() => isMedecin.value && !!editVisitId.value)
 
-const latestClinicalSummary = computed(() => {
-  const entry = dossier.value?.medicalHistory[0]
-  if (!entry) return null
-  return entry.diagnosis?.trim() || entry.doctorComment?.trim() || null
-})
-
 const filteredMedecinPatients = computed(() => {
   const q = sidebarQuery.value.trim()
   if (!q) return medecinPatients.value
@@ -292,14 +285,12 @@ function patientAgeLabel(age: number, unit: PatientAgeUnit | null | undefined) {
 
 function patientCardDescription(patient: PatientSummary) {
   void localeCode.value
-  const parts = [translateTemplate('Matricule {code}', { code: patient.code })]
-  if (patient.phone) parts.push(patient.phone)
+  const parts = [patient.code]
+  if (patient.age != null) parts.push(patientAgeLabel(patient.age, patient.ageUnit))
   if (patient.gender === 'F') parts.push(uiText('Féminin'))
   else if (patient.gender === 'M') parts.push(uiText('Masculin'))
   else if (patient.gender) parts.push(patient.gender)
-  if (patient.category && patient.category !== 'STANDARD') {
-    parts.push(uiText(patientCategoryLabel(patient.category as PatientCategory)))
-  }
+  if (patient.phone) parts.push(patient.phone)
   return parts.join(' · ')
 }
 
@@ -681,14 +672,14 @@ onMounted(async () => {
       </aside>
 
       <div class="dossier-main">
-        <UiCard v-if="!isMedecin" title="Rechercher un patient" :icon="Search" icon-variant="blue">
+        <UiCard v-if="!isMedecin" class="search-card" direct>
           <div class="search-block">
             <label class="search-field">
               <Search :size="16" />
               <input
                 v-model="searchQuery"
                 type="search"
-                :placeholder="uiText('Matricule, nom, prénom ou téléphone…')"
+                :placeholder="uiText('Nom, code ou téléphone')"
                 autocomplete="off"
               />
             </label>
@@ -715,13 +706,7 @@ onMounted(async () => {
         <p v-if="dossierError" class="dossier-error">{{ dossierError }}</p>
 
         <template v-if="dossier">
-          <UiCard
-            class="patient-card"
-            :title="fullName(dossier.patient.firstName, dossier.patient.lastName)"
-            :description="patientCardDescription(dossier.patient)"
-            :icon="UserRound"
-            icon-variant="teal"
-          >
+          <UiCard class="patient-card" :icon="UserRound" icon-variant="teal" direct>
             <template #actions>
               <UiButton
                 v-if="canEditDossier"
@@ -731,7 +716,7 @@ onMounted(async () => {
                 :loading="loadingEditDossier"
                 @click="openEditDossier()"
               >
-                {{ uiText('Modifier le dossier') }}
+                {{ uiText('Modifier') }}
               </UiButton>
               <UiButton
                 v-if="canReconsult"
@@ -743,7 +728,7 @@ onMounted(async () => {
               >
                 {{
                   dossier.reconsult?.activeVisitId
-                    ? uiText('Continuer la consultation')
+                    ? uiText('Continuer')
                     : uiText('Reconsulter')
                 }}
               </UiButton>
@@ -762,82 +747,41 @@ onMounted(async () => {
                 size="sm"
                 :icon="FileDown"
                 ui-action="export.pdf"
+                :title="uiText('Exporter PDF')"
                 :disabled="!dossier.medicalHistory.length"
                 @click="exportDossier(false)"
-              >
-                {{ uiText('Exporter PDF') }}
-              </UiButton>
+              />
               <UiButton
                 v-if="canWriteDocuments"
                 variant="ghost"
                 size="sm"
                 :icon="Plus"
                 ui-action="dossier.attach"
+                :title="uiText('Joindre un fichier')"
                 @click="showUpload = true"
-              >
-                {{ uiText('Joindre un fichier') }}
-              </UiButton>
+              />
               <UiButton
                 v-if="isManagementDossier"
                 variant="danger"
                 size="sm"
                 :icon="Trash2"
+                :title="uiText('Supprimer le patient')"
                 :disabled="deletingPatient"
                 :loading="deletingPatient"
                 @click="deletePatientDossier"
-              >
-                {{ uiText('Supprimer le patient') }}
-              </UiButton>
+              />
               <UiButton
                 variant="ghost"
                 size="sm"
                 :icon="RefreshCw"
+                :title="uiText('Actualiser')"
                 :disabled="loadingDossier"
                 @click="preserveTabOnReload = true; loadDossier(selectedPatientId!)"
-              >
-                {{ uiText('Actualiser') }}
-              </UiButton>
+              />
             </template>
 
-            <div class="summary-row">
-              <span class="summary-chip">
-                <History :size="14" />
-                <strong>{{ historyCount }}</strong>
-                {{ uiText('visite(s)') }}
-              </span>
-              <span class="summary-chip">
-                <Paperclip :size="14" />
-                <strong>{{ filesCount }}</strong>
-                {{ uiText('fichier(s)') }}
-              </span>
-              <span v-if="dossier.patient.age != null" class="summary-chip">
-                {{ patientAgeLabel(dossier.patient.age, dossier.patient.ageUnit) }}
-              </span>
-              <span v-if="dossier.patient.address" class="summary-chip">
-                {{ dossier.patient.address }}
-              </span>
-              <span v-if="dossier.patient.treatingDoctor" class="summary-chip">
-                {{
-                  translateTemplate('Dr {name}', {
-                    name: fullName(
-                      dossier.patient.treatingDoctor.firstName,
-                      dossier.patient.treatingDoctor.lastName,
-                    ),
-                  })
-                }}
-              </span>
-              <span v-if="dossier.patient.createdBy" class="summary-chip">
-                {{
-                  translateTemplate('Enregistré par {name}', {
-                    name: fullName(dossier.patient.createdBy.firstName, dossier.patient.createdBy.lastName),
-                  })
-                }}
-              </span>
-            </div>
-            <p v-if="latestClinicalSummary" class="latest-clinical">
-              <strong>{{ uiText('Dernière note') }} :</strong>
-              {{ latestClinicalSummary }}
-            </p>
+            <p class="patient-identity__name">{{ fullName(dossier.patient.firstName, dossier.patient.lastName) }}</p>
+            <p class="patient-identity__meta">{{ patientCardDescription(dossier.patient) }}</p>
           </UiCard>
 
           <div class="tab-bar">
@@ -965,17 +909,7 @@ onMounted(async () => {
           title="Sélectionnez un patient"
           :icon="UserRound"
         >
-          <p class="hint">
-            {{
-              isMedecin
-                ? uiText(
-                    'Seuls les patients dont le laboratoire a enregistré et validé des résultats apparaissent ici.',
-                  )
-                : uiText(
-                    'Choisissez un patient dans la liste ou recherchez par matricule, nom ou téléphone.',
-                  )
-            }}
-          </p>
+          <p class="hint">{{ uiText('Choisissez un patient dans la liste.') }}</p>
         </UiCard>
       </div>
     </div>
@@ -1260,42 +1194,34 @@ onMounted(async () => {
   font-size: 0.875rem;
 }
 
-.patient-card { margin-top: 1rem; }
+.patient-card { margin-top: 0.75rem; }
 
-.latest-clinical {
-  margin: 0.85rem 0 0;
-  padding: 0.7rem 0.85rem;
-  border-radius: 10px;
-  background: rgba(124, 58, 237, 0.06);
-  border: 1px solid rgba(124, 58, 237, 0.12);
-  font-size: 0.875rem;
-  line-height: 1.45;
-  color: var(--text);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.latest-clinical strong {
-  color: #6d28d9;
-}
-
-.summary-row {
-  display: flex;
+.patient-card :deep(.ui-card__header) {
   flex-wrap: wrap;
-  gap: 0.5rem;
+  align-items: center;
 }
 
-.summary-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.35rem 0.7rem;
-  border-radius: 999px;
+.patient-card :deep(.ui-card__actions) {
+  width: 100%;
+  margin-left: 0;
+  justify-content: flex-end;
+}
+
+.patient-identity__name {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.patient-identity__meta {
+  margin: 0.15rem 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 0.8125rem;
-  background: var(--bg-muted, #f8fafc);
-  border: 1px solid var(--border);
   color: var(--text-muted);
 }
 

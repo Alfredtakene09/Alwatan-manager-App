@@ -122,6 +122,8 @@ const prescribeExamsSchema = z
     hospitalisationDays: z.number().int().min(1).max(365).optional(),
     /** Montant opération saisi (applique les % chirurgien / clinique du type). */
     operationAmountFcfa: z.number().int().min(0).optional(),
+    /** % médecin saisi à la sélection (prérempli depuis la fiche). */
+    operationSurgeonPercent: z.number().int().min(1).max(99).optional(),
     /** Assistant chirurgie choisi à l’envoi (appliqué au type / dossier). */
     operationAssistant: z
       .object({
@@ -174,6 +176,7 @@ async function syncPrescribedProcedures(
     anesthesiologistName?: string | null;
     anesthesiologistPercent?: number;
   } | null,
+  surgeonPercent?: number | null,
 ) {
   const operationLabel = examsByKind.operation?.find(Boolean)?.trim();
   if (operationLabel) {
@@ -206,7 +209,10 @@ async function syncPrescribedProcedures(
           label: operationLabel,
           category: InterventionCategory.MOYENNE_B,
           totalCostFcfa: resolvedAmount,
-          surgeonPercent: DEFAULT_SURGEON_PERCENT,
+          surgeonPercent:
+            surgeonPercent != null && surgeonPercent > 0
+              ? Math.min(99, Math.round(surgeonPercent))
+              : DEFAULT_SURGEON_PERCENT,
           anesthesiologistPercent: 0,
           clinicServiceId: primaryServiceId,
           surgeonId: doctorId,
@@ -268,7 +274,18 @@ async function syncPrescribedProcedures(
 
     const totalCostFcfa =
       resolvedAmount != null ? resolvedAmount : intervention.totalCostFcfa;
-    const shares = computeInterventionCostShares(totalCostFcfa, intervention.surgeonPercent);
+    const surgeonUser = await tx.user.findUnique({
+      where: { id: doctorId },
+      select: { employee: { select: { surgeryQuotaPercent: true } } },
+    });
+    const fichePercent = surgeonUser?.employee?.surgeryQuotaPercent;
+    const appliedSurgeonPercent =
+      surgeonPercent != null && surgeonPercent > 0
+        ? Math.min(99, Math.round(surgeonPercent))
+        : fichePercent != null && fichePercent > 0
+          ? fichePercent
+          : intervention.surgeonPercent;
+    const shares = computeInterventionCostShares(totalCostFcfa, appliedSurgeonPercent);
     const existing = await tx.surgeryCase.findUnique({ where: { visitId } });
     const keepPaidStatuses = new Set<SurgeryStatus>([
       SurgeryStatus.PAID,
@@ -287,6 +304,7 @@ async function syncPrescribedProcedures(
         surgeonId: doctorId,
         totalCostFcfa: shares.totalCostFcfa,
         surgeonShareFcfa: shares.surgeonShareFcfa,
+        surgeonPercent: appliedSurgeonPercent,
         clinicShareFcfa: shares.clinicShareFcfa,
         status: nextStatus,
       },
@@ -296,6 +314,7 @@ async function syncPrescribedProcedures(
         surgeonId: doctorId,
         totalCostFcfa: shares.totalCostFcfa,
         surgeonShareFcfa: shares.surgeonShareFcfa,
+        surgeonPercent: appliedSurgeonPercent,
         clinicShareFcfa: shares.clinicShareFcfa,
         status: SurgeryStatus.NOTIFIED,
       },
@@ -785,6 +804,7 @@ router.post("/prescribe-exams", async (req, res) => {
           user.id,
           body.operationAmountFcfa,
           body.operationAssistant,
+          body.operationSurgeonPercent,
         );
       }
 

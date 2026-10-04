@@ -597,6 +597,8 @@ model SurgeryCase {
   accountantId       String?
   totalCostFcfa      Int
   surgeonShareFcfa   Int
+  /// % médecin retenu pour cette opération (fiche, modifiable à la sélection).
+  surgeonPercent     Int?
   clinicShareFcfa    Int
   status             SurgeryStatus @default(NOTIFIED)
   paidAt             DateTime?
