@@ -18,7 +18,7 @@ import {
   buildRevenueLast7Days,
 } from "../lib/revenue-stats.js";
 import { aggregateCollectedForCashier } from "../lib/cashier-personal-stats.js";
-import { buildAdminDashboardOverview, buildAdminNavBadges, resolveDashboardDateRange } from "../lib/admin-dashboard-stats.js";
+import { buildAdminDashboardOverview, buildAdminNavBadges, resolveRequestedDashboardRange } from "../lib/admin-dashboard-stats.js";
 import {
   buildGestionnaireDashboardOverview,
   buildGestionnaireNavBadges,
@@ -37,7 +37,7 @@ const router = Router();
 router.use(requireAuth);
 
 router.get("/admin", requireModule("admin"), async (req, res) => {
-  const overview = await buildAdminDashboardOverview(resolveDashboardDateRange(req.query));
+  const overview = await buildAdminDashboardOverview(await resolveRequestedDashboardRange(req.query));
   return res.json(overview);
 });
 
@@ -47,7 +47,7 @@ router.get("/admin/nav-badges", requireModule("admin"), async (_req, res) => {
 });
 
 router.get("/gestionnaire", requireModule("gestionnaire"), async (req, res) => {
-  const overview = await buildGestionnaireDashboardOverview(resolveDashboardDateRange(req.query));
+  const overview = await buildGestionnaireDashboardOverview(await resolveRequestedDashboardRange(req.query));
   return res.json(overview);
 });
 

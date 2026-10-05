@@ -42,6 +42,26 @@ export function patientsInDoctorScopeWhere(
   return { OR: or };
 }
 
+/**
+ * Cumul d'une réception : chaque facture est comptée une seule fois.
+ * Elle va à qui l'a émise. Si l'émetteur n'est pas une réception, elle reste
+ * sur le réceptionniste qui a enregistré le patient.
+ * Ainsi la somme des cumuls séparés égale le cumul du jour.
+ */
+export function registrationSummaryReceptionistWhere(
+  receptionistId: string,
+): Prisma.InvoiceWhereInput {
+  return {
+    OR: [
+      { issuedById: receptionistId },
+      {
+        patient: { createdById: receptionistId },
+        issuedBy: { role: { not: UserRole.RECEPTIONNISTE } },
+      },
+    ],
+  };
+}
+
 /** Réceptionniste : uniquement ses dossiers. Direction / gestionnaire / admin : tout, ou un réceptionniste choisi. */
 export function receptionistOwnPatientsWhere(
   user: ReceptionScopeUser,

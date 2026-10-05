@@ -516,6 +516,7 @@ export default {
     'Filtrer par ce service': 'Filtrer par ce service',
     'Filtrer par date': 'Filtrer par date',
     "Aujourd'hui": "Aujourd'hui",
+    'Annuler les filtres': 'Annuler les filtres',
     'Rechercher par matricule, nom ou téléphone…':
       'Rechercher par matricule, nom ou téléphone…',
     'Effacer la recherche': 'Effacer la recherche',
@@ -625,6 +626,7 @@ export default {
     'Dépenses du mois': 'Dépenses du mois',
     'Bénéfice net': 'Bénéfice net',
     'Masse salariale': 'Masse salariale',
+    'Salaires à jour des fiches employés': 'Salaires à jour des fiches employés',
     Solde: 'Solde',
     Recettes: 'Recettes',
     Dépenses: 'Dépenses',
@@ -645,6 +647,7 @@ export default {
     'Examens en attente': 'Examens en attente',
     'Hospitalisations actives': 'Hospitalisations actives',
     'Évolution mensuelle': 'Évolution mensuelle',
+    Dates: 'Dates',
     'Recettes, dépenses et bénéfice net — 12 mois glissants':
       'Recettes, dépenses et bénéfice net — 12 mois glissants',
     'Répartition des recettes': 'Répartition des recettes',
@@ -722,6 +725,8 @@ export default {
     'Admission validée — {nights} nuitée(s).': 'Admission validée — {nights} nuitée(s).',
     'Admission enregistrée — {amount} ({nights} nuitée(s)) à encaisser via « Encaisser ».':
       'Admission enregistrée — {amount} ({nights} nuitée(s)) à encaisser via « Encaisser ».',
+    "Admission enregistrée — {amount} ({nights} nuitée(s)). L'acompte reste hors solde jusqu'à la validation finale.":
+      "Admission enregistrée — {amount} ({nights} nuitée(s)). L'acompte reste hors solde jusqu'à la validation finale.",
     'Le montant sera ajouté à la caisse après clic sur « Encaisser » dans la liste.':
       'Le montant sera ajouté à la caisse après clic sur « Encaisser » dans la liste.',
     'Sortie validée — {nights} nuitée(s), total {amount}':
@@ -738,6 +743,26 @@ export default {
     'Payer plus tard': 'Payer plus tard',
     'Patient externe, salle et paiement': 'Patient externe, salle et paiement',
     'Paiement encaissé.': 'Paiement encaissé.',
+    'Acompte (hors solde)': 'Acompte (hors solde)',
+    'Acompte hospitalisation': 'Acompte hospitalisation',
+    "Cet acompte n'est pas enregistré sur le solde. La validation finale passera le solde restant en caisse et sur le reçu.":
+      "Cet acompte n'est pas enregistré sur le solde. La validation finale passera le solde restant en caisse et sur le reçu.",
+    'Déjà reçu': 'Déjà reçu',
+    'Solde restant': 'Solde restant',
+    "Montant de l'acompte": "Montant de l'acompte",
+    "Enregistrer l'acompte": "Enregistrer l'acompte",
+    "Acompte enregistré — hors solde. Le solde sera encaissé à la validation finale.":
+      "Acompte enregistré — hors solde. Le solde sera encaissé à la validation finale.",
+    "Impossible d'enregistrer l'acompte.": "Impossible d'enregistrer l'acompte.",
+    'Solde passé en caisse': 'Solde passé en caisse',
+    'Solde non passé — validation finale': 'Solde non passé — validation finale',
+    'Solde encaissé': 'Solde encaissé',
+    'Acompte hors solde': 'Acompte hors solde',
+    Acompte: 'Acompte',
+    'Sortie validée — {nights} nuitée(s), solde {amount} passé en caisse.':
+      'Sortie validée — {nights} nuitée(s), solde {amount} passé en caisse.',
+    "L'acompte n'est pas ajouté au solde. La validation finale passe le solde restant en caisse et sur le reçu.":
+      "L'acompte n'est pas ajouté au solde. La validation finale passe le solde restant en caisse et sur le reçu.",
     "Impossible d'encaisser l'hospitalisation.": "Impossible d'encaisser l'hospitalisation.",
     'Chargement des hospitalisations…': 'Chargement des hospitalisations…',
     'Aucune hospitalisation à afficher': 'Aucune hospitalisation à afficher',
@@ -799,6 +824,8 @@ export default {
     'Aucune dépense ce mois': 'Aucune dépense ce mois',
     'Aucune alerte': 'Aucune alerte',
     '% vs mois précédent': '% vs mois précédent',
+    'Consultations : {amount}': 'Consultations : {amount}',
+    'Opérations : {amount}': 'Opérations : {amount}',
     Consultations: 'Consultations',
     Opérations: 'Opérations',
     'Autres prestations': 'Autres prestations',
@@ -815,6 +842,8 @@ export default {
     'Journée en cours': 'Journée en cours',
     'Clôturer la journée': 'Clôturer la journée',
     'Journée clôturée': 'Journée clôturée',
+    'Imprimer cumul': 'Imprimer cumul',
+    "Impossible d'imprimer le cumul.": "Impossible d'imprimer le cumul.",
     'Clôturer': 'Clôturer',
     'Dernier passage le {date}': 'Dernier passage le {date}',
     'Aucun décaissement enregistré': 'Aucun décaissement enregistré',
@@ -2431,6 +2460,7 @@ export default {
     'Employés par poste': 'Employés par poste',
     'Liste complète': 'Liste complète',
     'Total général': 'Total général',
+    'Total opérations': 'Total opérations',
     'Total général — employés': 'Total général — employés',
     'Total général — masse salariale': 'Total général — masse salariale',
     'Aucune donnée': 'Aucune donnée',

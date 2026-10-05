@@ -5,6 +5,7 @@ import {
   patientsInDoctorScopeWhere,
   receptionistOwnPatientsWhere,
   receptionistOwnVisitsWhere,
+  registrationSummaryReceptionistWhere,
 } from "./reception-scope.js";
 
 describe("périmètre réceptionniste", () => {
@@ -36,6 +37,19 @@ describe("périmètre réceptionniste", () => {
         { visits: { some: { consultation: { is: { doctorId: "doc-1" } } } } },
         { service: { in: ["Généraliste"] } },
         { visits: { some: { assignedClinicServiceId: { in: ["svc-1"] } } } },
+      ],
+    });
+  });
+
+  it("attribue chaque facture du cumul à une seule réception", () => {
+    const where = registrationSummaryReceptionistWhere("rec-1");
+    assert.deepEqual(where, {
+      OR: [
+        { issuedById: "rec-1" },
+        {
+          patient: { createdById: "rec-1" },
+          issuedBy: { role: { not: UserRole.RECEPTIONNISTE } },
+        },
       ],
     });
   });

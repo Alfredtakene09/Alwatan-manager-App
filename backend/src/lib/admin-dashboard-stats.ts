@@ -24,6 +24,7 @@ import {
   mapEmployeeService,
   payrollCountedWhere,
   payrollPeriodBounds,
+  sumCurrentFichePayrollMass,
 } from "./admin-payroll.js";
 import { sumSettledDoctorSharesBetween } from "./doctor-share-cash.js";
 
@@ -211,23 +212,20 @@ function percentChange(current: number, previous: number) {
   return Math.round(((current - previous) / previous) * 100);
 }
 
-function monthLabel(year: number, month: number) {
-  return new Date(year, month - 1, 1).toLocaleDateString("fr-FR", {
-    month: "short",
-    year: "numeric",
-  });
-}
-
 function shiftMonth(year: number, month: number, delta: number): MonthPeriod {
   const date = new Date(year, month - 1 + delta, 1);
   return { year: date.getFullYear(), month: date.getMonth() + 1 };
 }
 
-function lastNMonths(count: number, from = new Date()): MonthPeriod[] {
-  const { year, month } = currentPayrollPeriod(from);
+/** Du premier mois d'enregistrement jusqu'au mois courant (36 mois max). */
+function monthsFrom(start: MonthPeriod, end: MonthPeriod): MonthPeriod[] {
+  const startIndex = start.year * 12 + (start.month - 1);
+  const endIndex = end.year * 12 + (end.month - 1);
+  if (startIndex > endIndex) return [end];
+  const fromIndex = endIndex - startIndex + 1 > 36 ? endIndex - 35 : startIndex;
   const periods: MonthPeriod[] = [];
-  for (let i = count - 1; i >= 0; i -= 1) {
-    periods.push(shiftMonth(year, month, -i));
+  for (let index = fromIndex; index <= endIndex; index += 1) {
+    periods.push({ year: Math.floor(index / 12), month: (index % 12) + 1 });
   }
   return periods;
 }
@@ -282,17 +280,68 @@ export function resolveDashboardDateRange(query: {
   return { from, toExclusive, fromIso: toIsoDay(from), toIso: toIsoDay(toStart) };
 }
 
+/** Premier et dernier jour où un dossier a réellement été enregistré. */
+export async function registrationSpan(): Promise<DashboardDateRange | null> {
+  const [first, last] = await Promise.all([
+    prisma.patient.findFirst({
+      orderBy: { createdAt: "asc" },
+      select: { createdAt: true },
+    }),
+    prisma.patient.findFirst({
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    }),
+  ]);
+  if (!first || !last) return null;
+  const from = startOfDay(first.createdAt);
+  const toStart = startOfDay(last.createdAt);
+  const toExclusive = new Date(toStart);
+  toExclusive.setDate(toExclusive.getDate() + 1);
+  return { from, toExclusive, fromIso: toIsoDay(from), toIso: toIsoDay(toStart) };
+}
+
+/** Sans dates choisies, la période est celle des enregistrements, pas le mois calendaire. */
+export async function resolveRequestedDashboardRange(query: {
+  from?: unknown;
+  to?: unknown;
+} = {}): Promise<DashboardDateRange> {
+  const from = typeof query.from === "string" ? query.from.trim() : "";
+  const to = typeof query.to === "string" ? query.to.trim() : "";
+  if (from || to) return resolveDashboardDateRange(query);
+  return (await registrationSpan()) ?? resolveDashboardDateRange();
+}
+
+function formatFrDay(iso: string) {
+  const [year, month, day] = iso.split("-");
+  return `${day}-${month}-${year}`;
+}
+
+function registrationRangeLabel(fromIso: string, toIso: string) {
+  if (fromIso === toIso) return formatFrDay(fromIso);
+  return `${formatFrDay(fromIso)} – ${formatFrDay(toIso)}`;
+}
+
+function clipToRange(period: MonthPeriod, from: Date, toExclusive: Date) {
+  const month = payrollPeriodBounds(period.year, period.month);
+  const start = from > month.start ? from : month.start;
+  const end = toExclusive < month.end ? toExclusive : month.end;
+  if (start >= end) return null;
+  const inclusiveEnd = new Date(end);
+  inclusiveEnd.setDate(inclusiveEnd.getDate() - 1);
+  return {
+    start,
+    end,
+    fromIso: toIsoDay(start),
+    toIso: toIsoDay(startOfDay(inclusiveEnd)),
+  };
+}
+
 function previousEqualRange(from: Date, toExclusive: Date) {
   const durationMs = toExclusive.getTime() - from.getTime();
   return {
     from: new Date(from.getTime() - durationMs),
     toExclusive: from,
   };
-}
-
-function isFullCalendarMonth(from: Date, toExclusive: Date) {
-  const expectedEnd = new Date(from.getFullYear(), from.getMonth() + 1, 1);
-  return from.getDate() === 1 && toExclusive.getTime() === expectedEnd.getTime();
 }
 
 async function sumValidatedExpensesBetween(from: Date, to: Date) {
@@ -313,15 +362,6 @@ async function sumPayrollPaidBetween(from: Date, to: Date) {
       status: PayrollStatus.PAID,
       paidAt: { gte: from, lt: to },
     },
-    select: { grossFcfa: true },
-  });
-  return rows.reduce((sum, row) => sum + row.grossFcfa, 0);
-}
-
-/** Somme totale des salaires bruts du mois (tous statuts) — hors comptes désactivés. */
-async function sumPayrollMonthGross(year: number, month: number) {
-  const rows = await prisma.employeePayroll.findMany({
-    where: { year, month, ...payrollCountedWhere },
     select: { grossFcfa: true },
   });
   return rows.reduce((sum, row) => sum + row.grossFcfa, 0);
@@ -456,17 +496,6 @@ export async function buildFinancialKpis(
         return { from: bounds.start, toExclusive: bounds.end };
       })();
   const prevBounds = { start: prevRange.from, end: prevRange.toExclusive };
-  const useMonthGross = range
-    ? isFullCalendarMonth(range.from, range.toExclusive)
-    : true;
-  const currentMonth = {
-    year: currentBounds.start.getFullYear(),
-    month: currentBounds.start.getMonth() + 1,
-  };
-  const prevMonth = {
-    year: prevBounds.start.getFullYear(),
-    month: prevBounds.start.getMonth() + 1,
-  };
 
   const [
     currentRevenue,
@@ -475,8 +504,7 @@ export async function buildFinancialKpis(
     prevExpenses,
     currentPayrollPaid,
     prevPayrollPaid,
-    currentPayrollGross,
-    prevPayrollGross,
+    fichePayrollMass,
     currentDoctorShares,
     prevDoctorShares,
   ] = await Promise.all([
@@ -486,18 +514,10 @@ export async function buildFinancialKpis(
     sumValidatedExpensesBetween(prevBounds.start, prevBounds.end),
     sumPayrollPaidBetween(currentBounds.start, currentBounds.end),
     sumPayrollPaidBetween(prevBounds.start, prevBounds.end),
-    useMonthGross
-      ? sumPayrollMonthGross(currentMonth.year, currentMonth.month)
-      : Promise.resolve(0),
-    useMonthGross
-      ? sumPayrollMonthGross(prevMonth.year, prevMonth.month)
-      : Promise.resolve(0),
+    sumCurrentFichePayrollMass(),
     sumSettledDoctorSharesBetween(currentBounds.start, currentBounds.end),
     sumSettledDoctorSharesBetween(prevBounds.start, prevBounds.end),
   ]);
-
-  const currentPayrollKpi = useMonthGross ? currentPayrollGross : currentPayrollPaid;
-  const prevPayrollKpi = useMonthGross ? prevPayrollGross : prevPayrollPaid;
 
   const currentExpensesTotal = currentExpenses.totalFcfa + currentPayrollPaid;
   const prevExpensesTotal = prevExpenses.totalFcfa + prevPayrollPaid;
@@ -511,8 +531,8 @@ export async function buildFinancialKpis(
     expensesChangePercent: percentChange(currentExpensesTotal, prevExpensesTotal),
     netMonthFcfa: currentNet,
     netChangePercent: percentChange(currentNet, prevNet),
-    payrollMonthFcfa: currentPayrollKpi,
-    payrollChangePercent: percentChange(currentPayrollKpi, prevPayrollKpi),
+    payrollMonthFcfa: fichePayrollMass,
+    payrollChangePercent: 0,
     doctorSharesReceivedFcfa: currentDoctorShares.totalFcfa,
     doctorSharesChangePercent: percentChange(
       currentDoctorShares.totalFcfa,
@@ -530,15 +550,6 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
   const currentBounds = { start: resolved.from, end: resolved.toExclusive };
   const prevRange = previousEqualRange(resolved.from, resolved.toExclusive);
   const prevBounds = { start: prevRange.from, end: prevRange.toExclusive };
-  const useMonthGross = isFullCalendarMonth(resolved.from, resolved.toExclusive);
-  const kpiMonth = {
-    year: resolved.from.getFullYear(),
-    month: resolved.from.getMonth() + 1,
-  };
-  const prevKpiMonth = {
-    year: prevRange.from.getFullYear(),
-    month: prevRange.from.getMonth() + 1,
-  };
 
   await ensurePayrollForMonth(year, month);
 
@@ -549,8 +560,7 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
     prevExpenses,
     currentPayrollPaid,
     prevPayrollPaid,
-    currentPayrollGross,
-    prevPayrollGross,
+    fichePayrollMass,
     currentDoctorShares,
     prevDoctorShares,
     pharmacyMonth,
@@ -571,12 +581,7 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
     sumValidatedExpensesBetween(prevBounds.start, prevBounds.end),
     sumPayrollPaidBetween(currentBounds.start, currentBounds.end),
     sumPayrollPaidBetween(prevBounds.start, prevBounds.end),
-    useMonthGross
-      ? sumPayrollMonthGross(kpiMonth.year, kpiMonth.month)
-      : Promise.resolve(0),
-    useMonthGross
-      ? sumPayrollMonthGross(prevKpiMonth.year, prevKpiMonth.month)
-      : Promise.resolve(0),
+    sumCurrentFichePayrollMass(),
     sumSettledDoctorSharesBetween(currentBounds.start, currentBounds.end),
     sumSettledDoctorSharesBetween(prevBounds.start, prevBounds.end),
     aggregatePharmacyBetween(currentBounds.start, currentBounds.end),
@@ -648,8 +653,6 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
     }),
   ]);
 
-  const currentPayrollKpi = useMonthGross ? currentPayrollGross : currentPayrollPaid;
-  const prevPayrollKpi = useMonthGross ? prevPayrollGross : prevPayrollPaid;
   const currentExpensesTotal =
     currentExpenses.totalFcfa + currentPayrollPaid;
   const prevExpensesTotal = prevExpenses.totalFcfa + prevPayrollPaid;
@@ -662,25 +665,43 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
     currentBounds.end,
   );
 
-  const monthlyTrend = await Promise.all(
-    lastNMonths(12).map(async (period) => {
-      const bounds = payrollPeriodBounds(period.year, period.month);
-      const [revenue, expenses, payrollPaid] = await Promise.all([
-        aggregateCollectedBetween(bounds.start, bounds.end),
-        sumValidatedExpensesBetween(bounds.start, bounds.end),
-        sumPayrollPaidBetween(bounds.start, bounds.end),
-      ]);
-      const expensesTotal = expenses.totalFcfa + payrollPaid;
-      return {
-        year: period.year,
-        month: period.month,
-        label: monthLabel(period.year, period.month),
-        revenueFcfa: revenue.totalFcfa,
-        expensesFcfa: expensesTotal,
-        netFcfa: revenue.totalFcfa - expensesTotal,
-      };
-    }),
-  );
+  const span = await registrationSpan();
+  const trendFrom = span && resolved.from < span.from ? span.from : resolved.from;
+  const trendTo =
+    span && resolved.toExclusive > span.toExclusive ? span.toExclusive : resolved.toExclusive;
+  const trendEndDay = new Date(trendTo);
+  trendEndDay.setDate(trendEndDay.getDate() - 1);
+  const trendPeriods =
+    trendFrom < trendTo
+      ? monthsFrom(
+          { year: trendFrom.getFullYear(), month: trendFrom.getMonth() + 1 },
+          { year: trendEndDay.getFullYear(), month: trendEndDay.getMonth() + 1 },
+        )
+      : [];
+  const monthlyTrend = (
+    await Promise.all(
+      trendPeriods.map(async (period) => {
+        const bounds = clipToRange(period, trendFrom, trendTo);
+        if (!bounds) return null;
+        const [revenue, expenses, payrollPaid] = await Promise.all([
+          aggregateCollectedBetween(bounds.start, bounds.end),
+          sumValidatedExpensesBetween(bounds.start, bounds.end),
+          sumPayrollPaidBetween(bounds.start, bounds.end),
+        ]);
+        const expensesTotal = expenses.totalFcfa + payrollPaid;
+        return {
+          year: period.year,
+          month: period.month,
+          label: registrationRangeLabel(bounds.fromIso, bounds.toIso),
+          fromIso: bounds.fromIso,
+          toIso: bounds.toIso,
+          revenueFcfa: revenue.totalFcfa,
+          expensesFcfa: expensesTotal,
+          netFcfa: revenue.totalFcfa - expensesTotal,
+        };
+      }),
+    )
+  ).filter((row) => row != null);
 
   const serviceCounts: Record<string, number> = {};
   let newThisMonth = 0;
@@ -719,8 +740,8 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
       expensesChangePercent: percentChange(currentExpensesTotal, prevExpensesTotal),
       netMonthFcfa: currentNet,
       netChangePercent: percentChange(currentNet, prevNet),
-      payrollMonthFcfa: currentPayrollKpi,
-      payrollChangePercent: percentChange(currentPayrollKpi, prevPayrollKpi),
+      payrollMonthFcfa: fichePayrollMass,
+      payrollChangePercent: 0,
       doctorSharesReceivedFcfa: currentDoctorShares.totalFcfa,
       doctorSharesChangePercent: percentChange(
         currentDoctorShares.totalFcfa,

@@ -452,7 +452,18 @@ const operationBillingSchema = z.object({
   amountFcfa: z.coerce.number().int().min(0),
   operationDate: z.string().min(1),
   interventionTypeId: z.string().trim().min(1).optional(),
+  clinicServiceId: z.string().trim().min(1).optional(),
 });
+
+async function resolveClinicServiceId(clinicServiceId?: string | null) {
+  const id = clinicServiceId?.trim();
+  if (!id) return null;
+  const service = await prisma.clinicService.findFirst({
+    where: { id, active: true },
+    select: { id: true },
+  });
+  return service?.id ?? null;
+}
 
 /** Remplace le libellé d'opération dans la prescription, ou le laisse tel quel s'il n'y figure pas. */
 function notesWithRenamedOperation(
@@ -505,7 +516,8 @@ function invoiceStatusFor(amountFcfa: number, paidAmountFcfa: number): InvoiceSt
 /** Corriger le montant facturé et la date d'une opération du bloc opératoire. */
 router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
   try {
-    const { amountFcfa, operationDate, interventionTypeId } = operationBillingSchema.parse(req.body);
+    const { amountFcfa, operationDate, interventionTypeId, clinicServiceId } =
+      operationBillingSchema.parse(req.body);
     const surgeryId = String(req.params.id);
 
     const surgery = await prisma.surgeryCase.findUnique({
@@ -546,11 +558,19 @@ router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
       interventionTypeId && interventionTypeId !== surgery.interventionType.id
         ? await prisma.interventionType.findUnique({
             where: { id: interventionTypeId },
-            select: { id: true, label: true, surgeonPercent: true, active: true },
+            select: { id: true, label: true, surgeonPercent: true, active: true, clinicServiceId: true },
           })
         : null;
     if (interventionTypeId && interventionTypeId !== surgery.interventionType.id && !nextType?.active) {
       return res.status(400).json({ error: "Cette opération n'est pas dans le catalogue." });
+    }
+
+    const requestedServiceId = nextType?.clinicServiceId || clinicServiceId?.trim() || null;
+    const resolvedServiceId = requestedServiceId
+      ? await resolveClinicServiceId(requestedServiceId)
+      : null;
+    if (requestedServiceId && !resolvedServiceId) {
+      return res.status(400).json({ error: "Service introuvable." });
     }
 
     const surgeonPercent = resolveSurgeonPercent(
@@ -593,6 +613,13 @@ router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
         }
       }
 
+      if (resolvedServiceId) {
+        await tx.visit.update({
+          where: { id: surgery.visitId },
+          data: { assignedClinicServiceId: resolvedServiceId },
+        });
+      }
+
       if (surgery.invoice) {
         await tx.invoice.update({
           where: { id: surgery.invoice.id },
@@ -623,7 +650,8 @@ router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
 /** Corriger le montant facturé et la date d'une opération hors bloc opératoire. */
 router.patch("/other-operations/:id/billing", requireOperationEditor, async (req, res) => {
   try {
-    const { amountFcfa, operationDate, interventionTypeId } = operationBillingSchema.parse(req.body);
+    const { amountFcfa, operationDate, interventionTypeId, clinicServiceId } =
+      operationBillingSchema.parse(req.body);
     const invoiceId = String(req.params.id);
 
     const invoice = await prisma.invoice.findFirst({
@@ -661,11 +689,19 @@ router.patch("/other-operations/:id/billing", requireOperationEditor, async (req
     const nextType = interventionTypeId
       ? await prisma.interventionType.findUnique({
           where: { id: interventionTypeId },
-          select: { id: true, label: true, active: true },
+          select: { id: true, label: true, active: true, clinicServiceId: true },
         })
       : null;
     if (interventionTypeId && !nextType?.active) {
       return res.status(400).json({ error: "Cette opération n'est pas dans le catalogue." });
+    }
+
+    const requestedServiceId = nextType?.clinicServiceId || clinicServiceId?.trim() || null;
+    const resolvedServiceId = requestedServiceId
+      ? await resolveClinicServiceId(requestedServiceId)
+      : null;
+    if (requestedServiceId && !resolvedServiceId) {
+      return res.status(400).json({ error: "Service introuvable." });
     }
 
     const consultation = invoice.visit?.consultation ?? null;
@@ -692,6 +728,12 @@ router.patch("/other-operations/:id/billing", requireOperationEditor, async (req
         await tx.consultation.update({
           where: { id: consultation.id },
           data: { clinicalNotes: notes },
+        });
+      }
+      if (resolvedServiceId && invoice.visitId) {
+        await tx.visit.update({
+          where: { id: invoice.visitId },
+          data: { assignedClinicServiceId: resolvedServiceId },
         });
       }
     });

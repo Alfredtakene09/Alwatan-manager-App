@@ -5,8 +5,10 @@ import {
   consultationShare,
   consultationTariffAmount,
   operationActName,
+  registrationServiceLabel,
   operationShare,
   ORTHO_TRAUMA_SERVICE,
+  registrationExamQuantity,
   registrationLineIdentity,
 } from "./registration-summary.js";
 
@@ -151,6 +153,26 @@ describe("parts médecin à l'export", () => {
     const exam = { ...invoice, type: InvoiceType.LAB_EXAM } as ShareInvoice;
     assert.equal(consultationTariffAmount(exam, 5_000), 5_000);
   });
+
+  it("retient le montant modifié sur la ligne, pas l'ancien tarif de la fiche", () => {
+    const doctor = david();
+    doctor.employee.consultationTotalFcfa = 20_000;
+    const invoice = {
+      type: InvoiceType.CONSULTATION,
+      visit: {
+        consultationFeeFcfa: 8_000,
+        reductionFcfa: 0,
+        consultation: { doctor },
+        assignedDoctor: null,
+      },
+    } as ShareInvoice;
+    assert.equal(consultationTariffAmount(invoice, 20_000), 8_000);
+  });
+
+  it("place la consultation dans le service modifié du dossier", () => {
+    assert.equal(registrationServiceLabel("consultation", "Pédiatrie", "Gynécologie"), "Gynécologie");
+    assert.equal(registrationServiceLabel("operation", "Ophtalmologie", "Gynécologie"), "Ophtalmologie");
+  });
 });
 
 describe("lignes d'opérations à l'export", () => {
@@ -224,6 +246,22 @@ describe("lignes d'opérations à l'export", () => {
     assert.equal(ortho.service, ORTHO_TRAUMA_SERVICE);
     assert.equal(trauma.service, ORTHO_TRAUMA_SERVICE);
     assert.equal(ortho.key, trauma.key);
+  });
+
+  it("compte chaque examen de radiologie, pas la ligne", () => {
+    const qty = registrationExamQuantity({
+      billingExamKind: "radio",
+      visit: {
+        consultation: {
+          clinicalNotes: "Examens prescrits (Radio) : Cheville, Pied",
+        },
+      },
+    });
+    assert.equal(qty, 2);
+  });
+
+  it("laisse une consultation hors du décompte des examens", () => {
+    assert.equal(registrationExamQuantity({ billingExamKind: null, visit: null }), null);
   });
 
   it("prend le libellé du catalogue, puis la prescription", () => {

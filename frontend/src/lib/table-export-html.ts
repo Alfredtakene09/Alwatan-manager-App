@@ -19,6 +19,8 @@ export type ExportSection<T = any> = {
   footRow?: ExportCell[]
   /** Page / feuille dédiée (récapitulatif, etc.). */
   ownPage?: boolean
+  /** Largeurs PDF en mm, colonne # comprise. */
+  columnWidths?: number[]
 }
 
 export function cellText(value: ExportCell): string {

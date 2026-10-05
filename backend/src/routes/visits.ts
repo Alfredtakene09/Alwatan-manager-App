@@ -8,10 +8,15 @@ import {
   EXAMS_PRESCRIBED_PREFIX,
   hasExamsPrescribed,
   hasLabResults,
+  appendPaidExamKindMarker,
   buildPrescribedExamsNotes,
   buildPrescribedExamsNotesByKind,
   flattenPrescribedExams,
+  isExamKindPaid,
+  parsePaidExamKindsByKind,
+  parsePrescribedExamsByKind,
   summarizePrescribedExamFieldNames,
+  EXAM_KIND_ORDER,
   type ExamKindSlug,
 } from "../lib/lab-notes.js";
 import {
@@ -30,6 +35,7 @@ import { canAccessModule } from "../lib/roles.js";
 import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.js";
 import { collectExternalLabOrderPayment } from "../lib/external-lab-payment.js";
 import { computeGrossFcfaFromExamLabels, computeLabExamsGrossFcfa, buildLabExamLines } from "../lib/lab-exam-prices.js";
+import { buildExamSheetsByKind } from "../lib/exam-billing.js";
 import {
   EXTERNAL_PATIENT_VISIT_NOTE,
   EXTERNAL_EXAMS_PENDING_NOTE,
@@ -66,6 +72,7 @@ import {
 import { ageUnitSchema, patientAgeShape, refinePatientAge } from "../lib/patient-age.js";
 import { requireAuth, requireAdmin, requireModule, requireUiAction } from "../middleware/auth.js";
 import {
+  applyExamReclamationRefund,
   ReclamationRefundError,
   voidAllPaidLabExams,
 } from "../lib/exam-reclamation-refund.js";
@@ -1631,17 +1638,45 @@ router.patch(
           return { visit, consultation: existing, invoice: null as { invoiceNumber: string } | null, grossFcfa: 0, netFcfa: 0 };
         }
 
-        if (hasExamsPrescribed(existing.clinicalNotes) || existing.visit.invoices.length) {
-          await voidAllPaidLabExams({
-            tx,
-            consultation: {
-              id: existing.id,
-              visitId: existing.visitId,
-              clinicalNotes: existing.clinicalNotes,
-              labSentToLabAt: existing.labSentToLabAt,
-              visit: { invoices: existing.visit.invoices },
-            },
-          });
+        const originalNotes = existing.clinicalNotes ?? "";
+        const originalPaid = parsePaidExamKindsByKind(originalNotes);
+        const originalPrescribed = parsePrescribedExamsByKind(originalNotes);
+        const nextPrescribed = parsePrescribedExamsByKind(clinicalNotes);
+        const alreadyBilled =
+          hasExamsPrescribed(originalNotes) || existing.visit.invoices.length > 0;
+
+        if (alreadyBilled) {
+          const priceByKey = new Map<string, number>();
+          for (const sheet of buildExamSheetsByKind(originalNotes, { billableOnly: false })) {
+            for (const line of sheet.lines) {
+              priceByKey.set(`${sheet.kind}::${line.label.trim()}`, line.unitPriceFcfa);
+            }
+          }
+          const removed: { examKind: ExamKindSlug; examLabel: string; unitPriceFcfa: number }[] = [];
+          for (const kind of EXAM_KIND_ORDER) {
+            if (!isExamKindPaid(originalNotes, kind)) continue;
+            const kept = new Set((nextPrescribed[kind] ?? []).map((label) => label.trim()));
+            for (const label of originalPrescribed[kind] ?? []) {
+              const trimmed = label.trim();
+              if (!trimmed || kept.has(trimmed)) continue;
+              const unitPriceFcfa = priceByKey.get(`${kind}::${trimmed}`) ?? 0;
+              if (unitPriceFcfa <= 0) continue;
+              removed.push({ examKind: kind, examLabel: trimmed, unitPriceFcfa });
+            }
+          }
+          if (removed.length) {
+            await applyExamReclamationRefund({
+              tx,
+              consultation: {
+                id: existing.id,
+                visitId: existing.visitId,
+                clinicalNotes: originalNotes,
+                labSentToLabAt: existing.labSentToLabAt,
+                visit: { invoices: existing.visit.invoices },
+              },
+              examLines: removed,
+            });
+          }
         }
 
         await tx.visit.update({
@@ -1689,22 +1724,52 @@ router.patch(
           });
         }
 
-        const payment = await collectExternalLabOrderPayment(tx, {
-          visitId: existing.visitId,
-          patientId: existing.visit.patientId,
-          recordedById: user.id,
-          clinicalNotes,
-          examReduction,
-          surgeryCaseId,
-          operationAmountFcfa: body.operationAmountFcfa,
-        });
+        const addedByKind = {} as Record<ExamKindSlug, string[]>;
+        for (const kind of EXAM_KIND_ORDER) {
+          const previous = new Set((originalPrescribed[kind] ?? []).map((label) => label.trim()));
+          addedByKind[kind] = (nextPrescribed[kind] ?? [])
+            .map((label) => label.trim())
+            .filter((label) => label.length > 0 && !previous.has(label));
+        }
+        const addedLabels = EXAM_KIND_ORDER.flatMap((kind) => addedByKind[kind] ?? []);
+        const chargeNotes = alreadyBilled
+          ? buildPrescribedExamsNotesByKind(addedByKind)
+          : clinicalNotes;
+        const payment =
+          !alreadyBilled || addedLabels.length > 0
+            ? await collectExternalLabOrderPayment(tx, {
+                visitId: existing.visitId,
+                patientId: existing.visit.patientId,
+                recordedById: user.id,
+                clinicalNotes: chargeNotes,
+                examReduction: alreadyBilled ? 0 : examReduction,
+                surgeryCaseId,
+                operationAmountFcfa: body.operationAmountFcfa,
+              })
+            : null;
         const paidAt = new Date();
-        if (payment.notes !== clinicalNotes || payment.sendToLab) {
+        let finalNotes = clinicalNotes;
+        for (const kind of EXAM_KIND_ORDER) {
+          if ((nextPrescribed[kind] ?? []).filter((label) => label.trim()).length === 0) continue;
+          const keptOriginal = (originalPrescribed[kind] ?? []).some((label) =>
+            (nextPrescribed[kind] ?? []).some((next) => next.trim() === label.trim()),
+          );
+          if (alreadyBilled && keptOriginal && originalPaid[kind]) {
+            finalNotes = appendPaidExamKindMarker(finalNotes, kind, originalPaid[kind]);
+          }
+        }
+        for (const kind of payment?.paidKinds ?? []) {
+          if (originalPaid[kind] && (nextPrescribed[kind] ?? []).some((label) => label.trim())) {
+            continue;
+          }
+          finalNotes = appendPaidExamKindMarker(finalNotes, kind, paidAt);
+        }
+        if (finalNotes !== clinicalNotes || payment?.sendToLab) {
           consultation = await tx.consultation.update({
             where: { id: consultation.id },
             data: {
-              clinicalNotes: payment.notes,
-              ...(payment.sendToLab
+              clinicalNotes: finalNotes,
+              ...(payment?.sendToLab
                 ? { labSentToLabAt: paidAt, labApprovedById: user.id }
                 : {}),
             },
@@ -1715,7 +1780,7 @@ router.patch(
           where: { id: existing.visitId },
           include: { patient: true },
         });
-        return { visit, consultation, invoice: payment.invoice, grossFcfa, netFcfa };
+        return { visit, consultation, invoice: payment?.invoice ?? null, grossFcfa, netFcfa };
       });
 
       return res.json(result);
@@ -1997,24 +2062,60 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
         throw new Error("PATIENT_NOT_BILLABLE");
       }
 
-      const activeVisit = await tx.visit.findFirst({
+      const activeVisits = await tx.visit.findMany({
         where: {
           patientId,
           status: { notIn: [VisitStatus.COMPLETED, VisitStatus.CANCELLED] },
         },
         include: { consultation: true, patient: true },
+        orderBy: { createdAt: "desc" },
       });
 
-      if (activeVisit && !activeVisit.notes?.includes(EXTERNAL_PATIENT_VISIT_NOTE)) {
+      if (activeVisits.some((visit) => !visit.notes?.includes(EXTERNAL_PATIENT_VISIT_NOTE))) {
         throw new Error("ACTIVE_VISIT_EXISTS");
       }
 
       const pendingExternal =
-        activeVisit?.notes?.includes(EXTERNAL_PATIENT_VISIT_NOTE) &&
-        activeVisit.consultation &&
-        !activeVisit.consultation.clinicalNotes?.includes(EXAMS_PRESCRIBED_PREFIX)
-          ? activeVisit
-          : null;
+        activeVisits.find(
+          (visit) =>
+            visit.notes?.includes(EXTERNAL_PATIENT_VISIT_NOTE) &&
+            visit.consultation &&
+            !visit.consultation.clinicalNotes?.includes(EXAMS_PRESCRIBED_PREFIX),
+        ) ?? null;
+
+      // Même examens déjà encaissés aujourd'hui : ne pas recréer une deuxième facture.
+      const alreadyBilled = pendingExternal
+        ? null
+        : activeVisits.find((visit) => {
+            const notes = visit.consultation?.clinicalNotes ?? "";
+            return (
+              visit.notes?.includes(EXTERNAL_PATIENT_VISIT_NOTE) &&
+              clinicalNotes.trim().length > 0 &&
+              notes.includes(clinicalNotes.trim())
+            );
+          });
+      if (alreadyBilled?.consultation) {
+        const existingInvoice = await tx.invoice.findFirst({
+          where: {
+            visitId: alreadyBilled.id,
+            type: InvoiceType.LAB_EXAM,
+            status: { not: InvoiceStatus.CANCELLED },
+            amountFcfa: { gt: 0 },
+          },
+          orderBy: { createdAt: "desc" },
+        });
+        if (existingInvoice) {
+          return {
+            visit: alreadyBilled,
+            consultation: alreadyBilled.consultation,
+            invoice: existingInvoice,
+            doctor: assignedDoctor,
+            grossFcfa,
+            netFcfa: existingInvoice.amountFcfa,
+            deferred: false,
+          };
+        }
+      }
 
       let visitId: string;
       let consultation;

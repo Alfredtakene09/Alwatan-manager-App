@@ -119,6 +119,15 @@ export async function countEligiblePayrollEmployees() {
   return listEligiblePayrollEmployees(employees).length;
 }
 
+/** Masse salariale courante : salaires à jour des fiches, hors période et hors paie figée. */
+export async function sumCurrentFichePayrollMass() {
+  const employees = await prisma.employee.findMany({
+    where: payrollEligibleEmployeeWhere,
+    select: payrollEmployeeSelect,
+  });
+  return listEligiblePayrollEmployees(employees).reduce((sum, row) => sum + row.grossFcfa, 0);
+}
+
 export async function getPayrollPeriodSummaries() {
   const rows = await prisma.employeePayroll.groupBy({
     by: ["year", "month", "status"],

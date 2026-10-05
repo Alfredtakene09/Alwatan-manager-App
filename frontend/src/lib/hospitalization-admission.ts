@@ -12,6 +12,7 @@ import { formatFcfa, fullName } from '@/lib/roles'
 import { parsePrescribedHospitalisationDays } from '@/lib/lab-notes'
 import { translateUi, translateUiLocale } from '@/i18n/translate'
 import { translateTemplate } from '@/lib/dashboard-i18n'
+import { calendarDateKey } from '@/lib/date-filters'
 
 const t = translateUi
 
@@ -31,6 +32,12 @@ export type HospitalizationAdmissionForm = {
   reductionFcfa: number
   doctorInstructions: string
   paymentPaid?: boolean
+  /** Acompte reçu pendant le séjour — hors solde de caisse. */
+  depositFcfa?: number
+  /** Nom de l'utilisateur qui imprime ou encaisse. */
+  collectedBy?: string
+  /** Vrai après la validation finale, quand le solde est passé en caisse. */
+  balancePosted?: boolean
 }
 
 export function endDateFromStayDays(startDate: string, stayDays: number): string {
@@ -75,18 +82,7 @@ function addDaysIso(isoDate: string, days: number): string {
 }
 
 function isoFromDate(value?: string | Date | null): string {
-  if (!value) return ''
-  if (typeof value === 'string') {
-    const match = value.match(/^(\d{4}-\d{2}-\d{2})/)
-    if (match) return match[1]
-  }
-  const date = value instanceof Date ? value : new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0'),
-  ].join('-')
+  return calendarDateKey(value)
 }
 
 export function todayLocalIsoDate(): string {
@@ -170,8 +166,11 @@ export function defaultAdmissionForm(partial: {
   prescribedStayDays?: number | null
   reductionFcfa?: number
   paymentPaid?: boolean
+  depositFcfa?: number
+  collectedBy?: string
+  balancePosted?: boolean
 }): HospitalizationAdmissionForm {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayLocalIsoDate()
   const startDate = partial.startDate ?? today
   const stayDays = partial.stayDays ?? partial.prescribedStayDays ?? 1
   const normalizedStayDays = Math.max(1, Math.floor(stayDays))
@@ -191,6 +190,9 @@ export function defaultAdmissionForm(partial: {
     reductionFcfa: partial.reductionFcfa ?? 0,
     doctorInstructions: partial.doctorInstructions ?? '',
     paymentPaid: partial.paymentPaid !== false,
+    depositFcfa: Math.max(0, partial.depositFcfa ?? 0),
+    collectedBy: partial.collectedBy ?? '',
+    balancePosted: partial.balancePosted === true,
   }
 }
 
@@ -207,6 +209,9 @@ export function admissionFormFromHospitalization(hosp: {
   doctorInstructions?: string | null
   nightsCount?: number
   paidAt?: string | Date | null
+  depositFcfa?: number
+  status?: string
+  collectedBy?: string
   visit: {
     patient: { code: string; firstName: string; lastName: string }
     consultation?: {
@@ -262,6 +267,9 @@ export function admissionFormFromHospitalization(hosp: {
     prescribedStayDays,
     reductionFcfa: hosp.reductionFcfa ?? 0,
     paymentPaid: Boolean(hosp.paidAt),
+    depositFcfa: hosp.depositFcfa ?? 0,
+    collectedBy: hosp.collectedBy,
+    balancePosted: hosp.status === 'DISCHARGED' || Boolean(hosp.paidAt),
   })
 }
 
@@ -529,6 +537,51 @@ function escapeHtmlPrint(value: string) {
     .replace(/"/g, '&quot;')
 }
 
+function hospitalizationMoney(form: HospitalizationAdmissionForm, totalFcfa: number) {
+  const depositFcfa = Math.max(0, form.depositFcfa ?? 0)
+  const balanceFcfa = Math.max(0, totalFcfa - depositFcfa)
+  return { depositFcfa, balanceFcfa, posted: form.balancePosted === true }
+}
+
+function hospitalizationPaymentLabel(form: HospitalizationAdmissionForm) {
+  if (form.balancePosted) return 'Solde encaissé'
+  if ((form.depositFcfa ?? 0) > 0) return 'Acompte hors solde'
+  return 'En attente de paiement'
+}
+
+function hospitalizationBalanceThermalRows(form: HospitalizationAdmissionForm, totalFcfa: number) {
+  const { depositFcfa, balanceFcfa, posted } = hospitalizationMoney(form, totalFcfa)
+  const rows = [
+    ...(depositFcfa > 0 ? [thermalMetaRow('Acompte', formatFcfa(depositFcfa))] : []),
+    thermalMetaRow('Solde', formatFcfa(balanceFcfa)),
+    thermalMetaRow('Caisse', posted ? 'Solde passé en caisse' : 'Solde non passé — validation finale'),
+  ]
+  return rows
+}
+
+function hospitalizationBalanceHtml(form: HospitalizationAdmissionForm, totalFcfa: number) {
+  const { depositFcfa, balanceFcfa, posted } = hospitalizationMoney(form, totalFcfa)
+  const depositRow =
+    depositFcfa > 0
+      ? `<div class="receipt-invoice__total-bar receipt-invoice__total-bar--sub">
+          <span>${t('Acompte')}</span>
+          <strong>${formatFcfa(depositFcfa)}</strong>
+        </div>`
+      : ''
+  const cashier = form.collectedBy?.trim()
+    ? `<p class="receipt-invoice__field">${t('Encaissé par')} : ${escapeHtmlPrint(form.collectedBy.trim())}</p>`
+    : ''
+  return `
+    ${depositRow}
+    <div class="receipt-invoice__total-bar">
+      <span>${t('Solde')}</span>
+      <strong>${formatFcfa(balanceFcfa)}</strong>
+    </div>
+    <p class="receipt-invoice__field">${posted ? t('Solde passé en caisse') : t('Solde non passé — validation finale')}</p>
+    ${cashier}
+  `
+}
+
 function invoiceField(label: string, value: string) {
   return `<p class="receipt-invoice__field"><span class="receipt-invoice__label">${escapeHtmlPrint(label)} :</span> ${escapeHtmlPrint(value)}</p>`
 }
@@ -591,6 +644,7 @@ export function buildHospitalizationInvoiceHtml(form: HospitalizationAdmissionFo
       <span>${t('Total à payer')}</span>
       <strong>${formatFcfa(billing.netFcfa)}</strong>
     </div>
+    ${hospitalizationBalanceHtml(form, billing.netFcfa)}
 
     <p class="receipt-invoice__thanks">${t('Merci de votre confiance')}</p>
   </div>`
@@ -617,10 +671,8 @@ export function buildHospitalizationThermalReceiptHtml(form: HospitalizationAdmi
     thermalMetaRow("Date d'entrée", formatDateFr(form.startDate, true) || '—'),
     thermalMetaRow('Chambre', roomValue),
     thermalMetaRow('Nombre de jours', String(billing.nights)),
-    thermalMetaRow(
-      'Paiement',
-      form.paymentPaid === false ? 'En attente de paiement' : 'Payé',
-    ),
+    thermalMetaRow('Paiement', hospitalizationPaymentLabel(form)),
+    ...(form.collectedBy?.trim() ? [thermalMetaRow('Encaissé par', form.collectedBy.trim())] : []),
   ].join('')
 
   const amountRows = [
@@ -632,6 +684,7 @@ export function buildHospitalizationThermalReceiptHtml(form: HospitalizationAdmi
       'class="thermal-receipt__row"',
       'class="thermal-receipt__row thermal-receipt__row--total"',
     ),
+    ...hospitalizationBalanceThermalRows(form, billing.netFcfa),
   ].join('')
 
   return `

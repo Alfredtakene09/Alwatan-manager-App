@@ -19,6 +19,7 @@ import { canAccessModule, formatFcfa } from '@/lib/roles'
 import type { AdminDashboardOverview } from '@/lib/admin-dashboard'
 import {
   formatMonthLabel,
+  evolutionTextForExport,
   formatTrendPercentLocalized,
   translateDashboardLabel,
   translateTemplate,
@@ -28,7 +29,6 @@ import type { GestionnaireDashboardOverview } from '@/lib/gestionnaire-dashboard
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
-import UiInput from '@/components/ui/UiInput.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import {
   exportBasename,
@@ -55,22 +55,13 @@ function localIsoDate(date = new Date()) {
   return `${year}-${month}-${day}`
 }
 
-function currentMonthBounds() {
-  const now = new Date()
-  const from = new Date(now.getFullYear(), now.getMonth(), 1)
-  const to = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-  return { from: localIsoDate(from), to: localIsoDate(to) }
-}
-
-const monthBounds = currentMonthBounds()
-const dateFrom = ref(monthBounds.from)
-const dateTo = ref(monthBounds.to)
+const dateFrom = ref('')
+const dateTo = ref('')
 
 const overview = ref<AdminDashboardOverview | null>(null)
 const gestionnaireOverview = ref<GestionnaireDashboardOverview | null>(null)
 const loading = ref(false)
 const loadError = ref('')
-const selectedTrendMonth = ref('')
 
 const showAdminSection = computed(() =>
   auth.user ? canAccessModule(auth.user.role, 'admin') : false,
@@ -94,22 +85,30 @@ const periodQuery = computed(() => ({
   to: dateTo.value,
 }))
 
+function formatRegistrationDate(iso: string) {
+  const [year, month, day] = iso.split('-')
+  if (!year || !month || !day) return iso
+  return `${day.padStart(2, '0')}-${month.padStart(2, '0')}-${year}`
+}
+
+function formatRegistrationRange(fromIso: string, toIso: string) {
+  if (fromIso === toIso) return formatRegistrationDate(fromIso)
+  return `${formatRegistrationDate(fromIso)} – ${formatRegistrationDate(toIso)}`
+}
+
 const periodCaption = computed(() => {
   void localeCode.value
   const from = dateFrom.value
   const to = dateTo.value
   if (!from || !to) return uiText('Période')
-  const locale = isArabic.value ? 'ar-TD' : 'fr-FR'
-  const format = (iso: string) => {
-    const [y, m, d] = iso.split('-').map(Number)
-    return new Date(y, m - 1, d).toLocaleDateString(locale, {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    })
-  }
-  if (from === to) return format(from)
-  return `${format(from)} – ${format(to)}`
+  return formatRegistrationRange(from, to)
+})
+
+const boardSubtitle = computed(() => {
+  void localeCode.value
+  const base = uiText("Vue d'ensemble, finances, caisses et supervision de la clinique")
+  if (!dateFrom.value || !dateTo.value) return base
+  return `${base} — ${periodCaption.value}`
 })
 
 
@@ -168,7 +167,7 @@ const summaryStats = computed((): SummaryStat[] => {
       value: formatFcfa(k.payrollMonthFcfa),
       icon: Users,
       variant: 'violet',
-      trend: formatTrendPercentLocalized(k.payrollChangePercent, !isFullMonthRange.value),
+      trend: translateDashboardLabel('Salaires à jour des fiches employés'),
     },
     {
       id: 'doctor-shares',
@@ -177,10 +176,10 @@ const summaryStats = computed((): SummaryStat[] => {
       icon: Stethoscope,
       variant: 'amber',
       trend: [
-        translateTemplate('Consult. {amount}', {
+        translateTemplate('Consultations : {amount}', {
           amount: formatFcfa(k.doctorSharesConsultationFcfa ?? 0),
         }),
-        translateTemplate('Opér. {amount}', {
+        translateTemplate('Opérations : {amount}', {
           amount: formatFcfa(k.doctorSharesSurgeryFcfa ?? 0),
         }),
         formatTrendPercentLocalized(k.doctorSharesChangePercent ?? 0, !isFullMonthRange.value),
@@ -196,23 +195,24 @@ const summaryStats = computed((): SummaryStat[] => {
   ]
 })
 
-const filteredTrend = computed(() => {
-  if (!overview.value) return []
-  const points = overview.value.monthlyTrend
-  if (!selectedTrendMonth.value) return points
-  const [yearRaw, monthRaw] = selectedTrendMonth.value.split('-')
-  const year = Number(yearRaw)
-  const month = Number(monthRaw)
-  if (!Number.isFinite(year) || !Number.isFinite(month)) return points
-  const endIndex = points.findIndex((row) => row.year === year && row.month === month)
-  if (endIndex < 0) return points
-  return points.slice(Math.max(0, endIndex - 11), endIndex + 1)
+const filteredTrend = computed(() => overview.value?.monthlyTrend ?? [])
+
+const trendRangeCaption = computed(() => {
+  const points = filteredTrend.value
+  const first = points[0]
+  const last = points[points.length - 1]
+  if (first?.fromIso && last?.toIso) return formatRegistrationRange(first.fromIso, last.toIso)
+  return periodCaption.value
 })
 
 const lineChartLabels = computed(() => {
   void localeCode.value
   const locale = isArabic.value ? 'ar-TD' : 'fr-FR'
-  return filteredTrend.value.map((row) => formatMonthLabel(row.year, row.month, locale))
+  return filteredTrend.value.map((row) =>
+    row.fromIso && row.toIso
+      ? formatRegistrationRange(row.fromIso, row.toIso)
+      : formatMonthLabel(row.year, row.month, locale),
+  )
 })
 const lineChartSeries = computed(() => {
   void localeCode.value
@@ -348,10 +348,15 @@ function dashboardExportPayload() {
   const kpiRows: DashboardExportRow[] = summaryStats.value.map((card) => ({
     label: String(card.label),
     value: String(card.value),
-    extra: card.trend ? String(card.trend) : '',
+    extra: evolutionTextForExport(card.trend ? String(card.trend) : ''),
   }))
   if (kpiRows.length) {
-    sections.push({ title: uiText('Indicateurs'), columns: kpiColumns, rows: kpiRows })
+    sections.push({
+      title: uiText('Indicateurs'),
+      columns: kpiColumns,
+      rows: kpiRows,
+      columnWidths: [10, 48, 44, 80],
+    })
   }
 
   const revenueRows: DashboardExportRow[] = (overview.value?.revenueBreakdown ?? []).map((row) => ({
@@ -419,12 +424,13 @@ function dashboardExportPayload() {
     sections.push({
       title: uiText('Évolution mensuelle'),
       columns: [
-        { header: uiText('Mois'), value: (row) => row.label },
+        { header: uiText('Dates'), value: (row) => row.label },
         { header: uiText('Recettes'), value: (row) => row.value },
         { header: uiText('Dépenses'), value: (row) => row.extra ?? '' },
         { header: uiText('Bénéfice net'), value: (row) => row.extra2 ?? '' },
       ],
       rows: trendRows,
+      columnWidths: [12, 62, 36, 36, 36],
     })
   }
 
@@ -458,11 +464,16 @@ async function loadOverview() {
   loadError.value = ''
   try {
     const tasks: Promise<void>[] = []
+    const params = dateFrom.value && dateTo.value ? periodQuery.value : {}
 
     if (showAdminSection.value) {
       tasks.push(
-        api.get<AdminDashboardOverview>('/dashboard/admin', { params: periodQuery.value }).then(({ data }) => {
+        api.get<AdminDashboardOverview>('/dashboard/admin', { params }).then(({ data }) => {
           overview.value = data
+          if (!dateFrom.value && data.period?.from && data.period.to) {
+            dateFrom.value = data.period.from
+            dateTo.value = data.period.to
+          }
         }),
       )
     } else {
@@ -471,7 +482,7 @@ async function loadOverview() {
 
     if (showGestionnaireSection.value) {
       tasks.push(
-        api.get<GestionnaireDashboardOverview>('/dashboard/gestionnaire', { params: periodQuery.value }).then(({ data }) => {
+        api.get<GestionnaireDashboardOverview>('/dashboard/gestionnaire', { params }).then(({ data }) => {
           gestionnaireOverview.value = data
         }),
       )
@@ -496,9 +507,10 @@ async function loadOverview() {
 
 onMounted(loadOverview)
 
-watch([dateFrom, dateTo], () => {
-  if (dateFrom.value > dateTo.value) {
-    dateTo.value = dateFrom.value
+watch([dateFrom, dateTo], ([from, to], [prevFrom, prevTo]) => {
+  if (!prevFrom && !prevTo) return
+  if (from > to) {
+    dateTo.value = from
     return
   }
   void loadOverview()
@@ -508,7 +520,7 @@ watch([dateFrom, dateTo], () => {
 <template>
   <RoleDashboardShell
     title="Tableau de board"
-    subtitle="Vue d'ensemble, finances, caisses et supervision de la clinique"
+    :subtitle="boardSubtitle"
     :icon="LayoutDashboard"
     :stats="summaryStats"
     :loading="loading"
@@ -612,13 +624,10 @@ watch([dateFrom, dateTo], () => {
       <section v-if="showAdminSection" class="charts-grid">
         <UiCard
           title="Évolution mensuelle"
-          description="Recettes, dépenses et bénéfice net — 12 mois glissants"
+          :description="trendRangeCaption"
           :icon="TrendingUp"
           icon-variant="blue"
         >
-          <div class="trend-filters">
-            <UiInput v-model="selectedTrendMonth" type="month" label="Période" class="trend-filters__date" />
-          </div>
           <DashboardLineChart
             :labels="lineChartLabels"
             :series="lineChartSeries"

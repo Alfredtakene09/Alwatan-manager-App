@@ -10,7 +10,8 @@ import {
   doctorUsesQuota,
   type DoctorProfile,
 } from "./doctor-compensation.js";
-import { parsePrescribedExamsByKind } from "./lab-notes.js";
+import { parsePrescribedExamsByKind, type ExamKindSlug } from "./lab-notes.js";
+import { registrationSummaryReceptionistWhere } from "./reception-scope.js";
 import { COLLECTED_INVOICE_TYPES } from "./revenue-stats.js";
 
 /** Orthopédie et traumatologie (y compris la graphie « Tromatologie ») sont un seul service. */
@@ -81,26 +82,58 @@ const summaryInvoiceSelect = {
 
 type SummaryInvoice = Prisma.InvoiceGetPayload<{ select: typeof summaryInvoiceSelect }>;
 
-/** Montant retenu : ce qui a été encaissé, sinon le montant facturé. */
+/** Montant actuel de la ligne : le prix facturé, pas un encaissement antérieur. */
 function summaryAmountFcfa(invoice: SummaryInvoice): number {
-  const paid = Math.max(0, invoice.paidAmountFcfa ?? 0);
-  return paid > 0 ? paid : Math.max(0, invoice.amountFcfa);
+  return Math.max(0, invoice.amountFcfa);
 }
 
 /**
- * Consultation : le prix actuel de la fiche, pour tous les enregistrements
- * déjà facturés. Une réduction saisie sur la visite est conservée.
+ * Consultation : le montant saisi sur la ligne (après réduction).
+ * Sans montant de ligne, on reprend le prix actuel de la fiche médecin.
  */
 export function consultationTariffAmount(invoice: SummaryInvoice, collectedFcfa: number): number {
   if (collectedFcfa <= 0 || invoice.type !== InvoiceType.CONSULTATION) return collectedFcfa;
+  const reduction = Math.max(0, invoice.visit?.reductionFcfa ?? 0);
+  const lineFee = invoice.visit?.consultationFeeFcfa ?? 0;
+  if (lineFee > 0) return Math.max(0, lineFee - reduction);
   const price = invoiceDoctor(invoice)?.employee?.consultationTotalFcfa ?? 0;
   if (price <= 0) return collectedFcfa;
-  const reduction = Math.max(0, invoice.visit?.reductionFcfa ?? 0);
   return Math.max(0, price - reduction);
 }
 
+/** Le médecin actuellement affecté à la ligne prime sur celui de l'ancienne consultation. */
 function invoiceDoctor(invoice: SummaryInvoice): DoctorProfile | null {
-  return invoice.visit?.consultation?.doctor ?? invoice.visit?.assignedDoctor ?? null;
+  return invoice.visit?.assignedDoctor ?? invoice.visit?.consultation?.doctor ?? null;
+}
+
+/** Types dont la quantité du cumul est le nombre d'examens, pas le nombre de lignes. */
+const EXAM_QUANTITY_KINDS = new Set<ExamKindSlug>(["examen", "radio", "echo", "odonto"]);
+
+/**
+ * Nombre d'examens facturés sur la ligne (Cheville + Pied = 2).
+ * null pour une consultation, une opération ou une hospitalisation : on compte alors la ligne.
+ */
+export function registrationExamQuantity(invoice: {
+  billingExamKind?: string | null;
+  visit?: { consultation?: { clinicalNotes?: string | null } | null } | null;
+}): number | null {
+  const kind = invoice.billingExamKind?.trim() as ExamKindSlug | undefined;
+  if (!kind || !EXAM_QUANTITY_KINDS.has(kind)) return null;
+  const labels = (parsePrescribedExamsByKind(invoice.visit?.consultation?.clinicalNotes)[kind] ?? [])
+    .map((label) => label.trim())
+    .filter(Boolean);
+  return Math.max(1, labels.length);
+}
+
+/** Le service modifié sur le dossier prime sur le service figé de la visite. */
+export function registrationServiceLabel(
+  group: DayClosureLineGroup,
+  classifiedLabel: string,
+  patientService: string | null | undefined,
+): string {
+  if (group !== "consultation") return classifiedLabel;
+  const edited = patientService?.trim();
+  return edited || classifiedLabel;
 }
 
 type ShareResult = { shareFcfa: number; percent: number | null };
@@ -201,8 +234,10 @@ function uniquePercent(percents: Set<number>): number | null {
 }
 
 export type RegistrationSummaryOptions = {
-  /** Périmètre patients déjà calculé par l'appelant (réceptionniste, service…). */
+  /** Périmètre patients déjà calculé par l'appelant (dates, service, recherche). */
   patientWhere: Prisma.PatientWhereInput;
+  /** Une réception : ses factures seulement, sans reprendre celles d'une autre caisse. */
+  receptionistId?: string | null;
 };
 
 function foldServiceKey(label: string): string {
@@ -270,11 +305,13 @@ export function registrationLineIdentity(input: {
 export async function buildRegistrationSummary(
   options: RegistrationSummaryOptions,
 ): Promise<RegistrationSummaryLine[]> {
+  const receptionistId = options.receptionistId?.trim() || "";
   const invoices = await prisma.invoice.findMany({
     where: {
       type: { in: COLLECTED_INVOICE_TYPES },
       status: { not: InvoiceStatus.CANCELLED },
       patient: options.patientWhere,
+      ...(receptionistId ? registrationSummaryReceptionistWhere(receptionistId) : {}),
     },
     select: summaryInvoiceSelect,
   });
@@ -287,9 +324,10 @@ export async function buildRegistrationSummary(
     if (amountFcfa <= 0) continue;
 
     const { label, group } = classifyInvoiceForDayClosure(invoice);
+    const serviceLabel = registrationServiceLabel(group, label, invoice.visit?.patient?.service);
     const identity = registrationLineIdentity({
       group,
-      serviceLabel: label,
+      serviceLabel,
       operationName: group === "operation" ? operationActName(invoice) : null,
       invoiceId: invoice.id,
     });
@@ -307,10 +345,15 @@ export async function buildRegistrationSummary(
       operationPercents: new Set<number>(),
     };
 
-    const patientKey = group === "operation" ? invoice.id : (invoice.patientId ?? invoice.id);
-    if (!row.patientIds.has(patientKey)) {
-      row.patientIds.add(patientKey);
-      row.qty += 1;
+    const examQty = registrationExamQuantity(invoice);
+    if (examQty != null) {
+      row.qty += examQty;
+    } else {
+      const patientKey = group === "operation" ? invoice.id : (invoice.patientId ?? invoice.id);
+      if (!row.patientIds.has(patientKey)) {
+        row.patientIds.add(patientKey);
+        row.qty += 1;
+      }
     }
     row.amountFcfa += amountFcfa;
 

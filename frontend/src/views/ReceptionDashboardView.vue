@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
   LayoutDashboard,
@@ -13,14 +13,12 @@ import {
   Stethoscope,
   Banknote,
   Printer,
-  Lock,
-  CheckCircle2,
   CircleDollarSign,
   Clock,
   BedDouble,
 } from '@lucide/vue'
 import api from '@/api/client'
-import { confirmAppModal, showApiErrorModal, showSuccessModal, showValidationErrorModal } from '@/lib/api-modal-helper'
+import { confirmAppModal, showApiErrorModal, showValidationErrorModal } from '@/lib/api-modal-helper'
 import { fullName, formatFcfa, formatFcfaCompact, isDirectionOrGestionnaire } from '@/lib/roles'
 import {
   joinPatientFullName,
@@ -61,7 +59,6 @@ import {
   reservePrintWindow,
   DAY_CLOSURE_GROUPS,
   type DayClosureLineGroup,
-  type DayClosureServiceLine,
 } from '@/lib/print-document'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import { useAuthStore } from '@/stores/auth'
@@ -161,34 +158,6 @@ type ReceiptData = {
   gender?: string | null
   phone?: string | null
   processedBy?: string
-}
-
-type DayClosureStatus = {
-  businessDate: string
-  shiftSlot: 'MORNING' | 'EVENING' | 'NIGHT' | null
-  shiftLabel: string | null
-  collectedFcfa: number
-  expensesFcfa: number
-  netFcfa: number
-  visitsToday: number
-  registeredToday: number
-  consultationsFcfa?: number
-  examsFcfa?: number
-  surgeryFcfa?: number
-  hospitalizationFcfa?: number
-  serviceLines?: DayClosureServiceLine[]
-  reductionFcfa?: number
-  saleFcfa?: number
-  receptionistName: string
-  receptionistUsername?: string
-  closed: boolean
-  closure: {
-    id: string
-    closedAt: string
-    collectedFcfa: number
-    expensesFcfa: number
-    netFcfa: number
-  } | null
 }
 
 const { uiText, clinicServiceText, dateText, localeCode } = useAppI18n()
@@ -318,9 +287,7 @@ const stats = ref<ReceptionStats>({
   revenueTodayFcfa: 0,
 })
 const loadingStats = ref(false)
-const dayClosure = ref<DayClosureStatus | null>(null)
-const closingDay = ref(false)
-const loadingDayClosure = ref(false)
+const printingCumul = ref(false)
 const search = ref('')
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
@@ -809,6 +776,17 @@ const isListDateToday = computed(() => {
   return listFrom.value === today && listTo.value === today
 })
 
+const hasAppliedListFilters = computed(
+  () =>
+    !isListDateToday.value ||
+    search.value.trim() !== '' ||
+    serviceFilter.value.trim() !== '' ||
+    filterReceptionistId.value !== '' ||
+    filterDoctorId.value !== '',
+)
+
+let resettingListFilters = false
+
 const dashboardStats = computed(() => {
   const serviceHint = serviceFilter.value.trim()
     ? clinicServiceText(serviceFilter.value.trim())
@@ -914,94 +892,80 @@ async function loadReceptionStats() {
   }
 }
 
-async function loadDayClosure() {
-  loadingDayClosure.value = true
-  try {
-    const { data } = await api.get<DayClosureStatus>('/cash-desk/day-closure')
-    dayClosure.value = data
-  } catch {
-    dayClosure.value = null
-  } finally {
-    loadingDayClosure.value = false
-  }
-}
-
 async function onHospitalizationCollected() {
-  await Promise.all([loadReceptionStats(), loadDayClosure()])
+  await loadReceptionStats()
 }
 
-function printDayClosure(data: DayClosureStatus) {
-  const closedAt = data.closure?.closedAt ?? new Date().toISOString()
-  openPrintDocument(
-    'Clôture de journée',
-    buildDayClosureReceiptHtml({
-      businessDate: data.businessDate,
-      closedAt,
-      receptionistName: data.receptionistName || currentReceptionistName() || '—',
-      receptionistUsername: data.receptionistUsername || auth.user?.username || null,
-      shiftLabel: data.shiftLabel,
-      collectedFcfa: data.closure?.collectedFcfa ?? data.collectedFcfa,
-      expensesFcfa: data.closure?.expensesFcfa ?? data.expensesFcfa,
-      netFcfa: data.closure?.netFcfa ?? data.netFcfa,
-      visitsToday: data.visitsToday,
-      registeredToday: data.registeredToday,
-      consultationsFcfa: data.consultationsFcfa,
-      examsFcfa: data.examsFcfa,
-      surgeryFcfa: data.surgeryFcfa,
-      hospitalizationFcfa: data.hospitalizationFcfa,
-      serviceLines: data.serviceLines,
-      reductionFcfa: data.reductionFcfa,
-      saleFcfa: data.saleFcfa,
-    }),
-    { pageSize: '80mm', thermalTight: true },
-  )
+function formatCumulFilterDay(iso: string): string {
+  const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!match) return iso
+  return `${match[3]}-${match[2]}-${match[1]}`
 }
 
-async function closeReceptionDay() {
-  if (dayClosure.value?.closed || closingDay.value) return
+function cumulFilterLines(): { label: string; value: string }[] {
+  let from = listFrom.value || todayInputValue()
+  let to = listTo.value || from
+  if (from > to) [from, to] = [to, from]
+  const fromLabel = formatCumulFilterDay(from)
+  const toLabel = formatCumulFilterDay(to)
+  const lines: { label: string; value: string }[] = [
+    {
+      label: 'Période',
+      value: fromLabel === toLabel ? fromLabel : `${fromLabel} au ${toLabel}`,
+    },
+  ]
+  const service = serviceFilter.value.trim()
+  if (service) lines.push({ label: 'Service', value: service })
+  if (selectedDoctorName.value) lines.push({ label: 'Médecin', value: selectedDoctorName.value })
+  if (selectedReceptionistName.value) {
+    lines.push({ label: 'Réceptionniste', value: selectedReceptionistName.value })
+  }
+  const query = search.value.trim()
+  if (query) lines.push({ label: 'Recherche', value: query })
+  return lines
+}
 
-  const snapshot = dayClosure.value
-  const collected = snapshot?.collectedFcfa ?? stats.value.revenueTodayFcfa
-  const expenses = snapshot?.expensesFcfa ?? stats.value.expensesTodayFcfa ?? 0
-  const net = snapshot?.netFcfa ?? stats.value.netTodayFcfa ?? collected
-  const shiftHint = snapshot?.shiftLabel
-    ? ` ${translateTemplate('Créneau : {slot}', { slot: snapshot.shiftLabel })}`
-    : ''
-
-  const confirmed = await confirmAppModal({
-    type: 'WARNING',
-    title: 'Clôturer la journée',
-    message: translateTemplate(
-      'Confirmer la clôture de la journée ? Encaissements : {collected} Dépenses : {expenses} Net à remettre : {net}{shiftHint} Remettez ensuite la caisse à la comptabilité.',
-      {
-        collected: formatFcfa(collected),
-        expenses: formatFcfa(expenses),
-        net: formatFcfa(net),
-        shiftHint,
-      },
-    ),
-    confirmLabel: 'Clôturer',
-    cancelLabel: 'Annuler',
-  })
-  if (!confirmed) return
-
-  closingDay.value = true
+async function printRegistrationCumul() {
+  if (printingCumul.value) return
+  printingCumul.value = true
   reservePrintWindow('80mm')
   try {
-    const { data } = await api.post<DayClosureStatus & { message?: string }>('/cash-desk/day-closure')
-    dayClosure.value = data
-    printDayClosure(data)
-    await showSuccessModal(
-      'Journée clôturée',
-      'Remettez la caisse à la comptabilité.',
+    let from = listFrom.value || todayInputValue()
+    let to = listTo.value || from
+    if (from > to) [from, to] = [to, from]
+    const lines = await loadRegistrationSummary()
+    const totalFcfa = lines.reduce((sum, line) => sum + line.amountFcfa, 0)
+    const qty = lines.reduce((sum, line) => sum + line.qty, 0)
+    openPrintDocument(
+      'Cumul',
+      buildDayClosureReceiptHtml({
+        businessDate: from,
+        businessDateTo: to,
+        closedAt: new Date().toISOString(),
+        receptionistName: currentReceptionistName() || '—',
+        receptionistUsername: auth.user?.username || null,
+        collectedFcfa: totalFcfa,
+        expensesFcfa: 0,
+        netFcfa: totalFcfa,
+        visitsToday: qty,
+        registeredToday: qty,
+        reductionFcfa: 0,
+        saleFcfa: totalFcfa,
+        serviceLines: lines.map((line) => ({
+          label: line.service,
+          qty: line.qty,
+          totalFcfa: line.amountFcfa,
+          group: line.group,
+        })),
+        filterLines: cumulFilterLines(),
+      }),
+      { pageSize: '80mm', thermalTight: true },
     )
-    await loadReceptionStats()
   } catch (error) {
     cancelPrintWindow()
-    await showApiErrorModal(error, 'Impossible de clôturer la journée.')
-    await loadDayClosure()
+    await showApiErrorModal(error, "Impossible d'imprimer le cumul.")
   } finally {
-    closingDay.value = false
+    printingCumul.value = false
   }
 }
 
@@ -1073,7 +1037,6 @@ async function refreshAll() {
     loadReceptionists(),
     loadPatients(),
     loadReceptionStats(),
-    loadDayClosure(),
     loadDoctors(),
     loadServices(),
   ])
@@ -1649,27 +1612,49 @@ function resetListDateToToday() {
   listTo.value = today
 }
 
+function clearListFilters() {
+  resettingListFilters = true
+  clearTimeout(searchTimer)
+  const today = todayInputValue()
+  listFrom.value = today
+  listTo.value = today
+  search.value = ''
+  serviceFilter.value = ''
+  filterReceptionistId.value = ''
+  filterDoctorId.value = ''
+  void nextTick(() => {
+    resettingListFilters = false
+    void loadPatients()
+    void loadReceptionStats()
+  })
+}
+
 watch(search, () => {
+  if (resettingListFilters) return
   clearTimeout(searchTimer)
   searchTimer = setTimeout(loadPatients, 300)
 })
 
 watch([listFrom, listTo], () => {
+  if (resettingListFilters) return
   loadPatients()
   loadReceptionStats()
 })
 
 watch(serviceFilter, () => {
+  if (resettingListFilters) return
   loadPatients()
   loadReceptionStats()
 })
 
 watch(filterReceptionistId, () => {
+  if (resettingListFilters) return
   loadPatients()
   loadReceptionStats()
 })
 
 watch(filterDoctorId, () => {
+  if (resettingListFilters) return
   loadPatients()
   loadReceptionStats()
 })
@@ -1714,22 +1699,12 @@ onUnmounted(clearAlert)
             {{ uiText('En attente de paiement') }}
           </UiButton>
           <UiButton
-            v-if="dayClosure?.closed"
-            variant="success"
-            :icon="CheckCircle2"
-            :disabled="loadingDayClosure"
-            @click="dayClosure && printDayClosure(dayClosure)"
-          >
-            {{ uiText('Journée clôturée') }}
-          </UiButton>
-          <UiButton
-            v-else
             variant="dark"
-            :icon="Lock"
-            :loading="closingDay || loadingDayClosure"
-            @click="closeReceptionDay"
+            :icon="Printer"
+            :loading="printingCumul"
+            @click="printRegistrationCumul"
           >
-            {{ uiText('Clôturer la journée') }}
+            {{ uiText('Imprimer cumul') }}
           </UiButton>
           <UiButton
             variant="primary"
@@ -1827,6 +1802,14 @@ onUnmounted(clearAlert)
                 @click="resetListDateToToday"
               >
                 {{ uiText("Aujourd'hui") }}
+              </button>
+              <button
+                v-if="hasAppliedListFilters"
+                type="button"
+                class="date-filter__today date-filter__clear"
+                @click="clearListFilters"
+              >
+                {{ uiText('Annuler les filtres') }}
               </button>
             </div>
 
@@ -2653,6 +2636,10 @@ onUnmounted(clearAlert)
 
 .date-filter__today:hover {
   text-decoration: underline;
+}
+
+.date-filter__clear {
+  color: #b45309;
 }
 
 .table-toolbar__search {

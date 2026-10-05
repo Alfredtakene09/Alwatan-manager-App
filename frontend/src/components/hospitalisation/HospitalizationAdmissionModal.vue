@@ -20,6 +20,7 @@ import {
 } from '@/lib/hospitalization-admission'
 import { parsePrescribedHospitalisationDays } from '@/lib/lab-notes'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import { useAuthStore } from '@/stores/auth'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 
 export type AdmissionAvailableBed = {
@@ -102,6 +103,7 @@ const emit = defineEmits<{
 }>()
 
 const { uiText, localeCode, isArabic } = useAppI18n()
+const auth = useAuthStore()
 
 const roomTypeChoice = ref<RoomTypeChoice>('')
 const roomChoice = ref('')
@@ -324,7 +326,14 @@ function onEndDateInput(value: string | number) {
 function onPrint() {
   syncStayEndDate()
   applySelectedDoctorLabel()
-  printHospitalizationAdmission(form.value, { autoPrint: true })
+  const user = auth.user
+  printHospitalizationAdmission(
+    {
+      ...form.value,
+      collectedBy: user ? fullName(user.firstName, user.lastName) : form.value.collectedBy,
+    },
+    { autoPrint: true },
+  )
 }
 
 function onSubmit() {

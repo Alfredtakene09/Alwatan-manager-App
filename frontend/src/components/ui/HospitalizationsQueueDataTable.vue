@@ -20,6 +20,8 @@ export type HospitalizationQueueItem = {
   dailyRateFcfa?: number
   startDate?: string | null
   paidAt?: string | Date | null
+  paidFcfa?: number
+  depositFcfa?: number
   visit: {
     id: string
     patient: { code: string; firstName: string; lastName: string; phone?: string | null; service?: string | null }
@@ -115,7 +117,10 @@ const rows = computed(() => {
             ? `${formatFcfa(item.dailyRateFcfa)}/${uiText('nuit')}`
             : '—'
 
-      const unpaid = !item.paidAt && (item.totalDueFcfa ?? 0) > 0 && Boolean(item.startDate)
+      const due = item.totalDueFcfa ?? 0
+      const received = Math.max(0, item.paidFcfa ?? item.depositFcfa ?? 0)
+      const unfinished = item.status !== 'DISCHARGED' && item.status !== 'CANCELLED'
+      const unpaid = unfinished && due > received && Boolean(item.startDate)
       const statusFr = unpaid
         ? 'En attente de paiement'
         : (HOSPITALIZATION_STATUS_LABELS[item.status] ?? item.status)
@@ -237,8 +242,8 @@ const rows = computed(() => {
                     v-if="row.canCollect"
                     type="button"
                     class="st-btn st-btn--pay"
-                    :title="uiText('Encaisser')"
-                    :aria-label="uiText('Encaisser')"
+                    :title="uiText('Acompte (hors solde)')"
+                    :aria-label="uiText('Acompte (hors solde)')"
                     @click="emit('collect', row.id)"
                   >
                     <Banknote :size="15" />

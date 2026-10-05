@@ -187,6 +187,7 @@ function drawTable<T>(
   totalsRows?: ExportCaptionRow[],
   gridLines = false,
   footRow?: ExportCell[],
+  columnWidths?: number[],
 ) {
   let y = startY
   if (title) {
@@ -216,6 +217,11 @@ function drawTable<T>(
     footStyles: { fillColor: [226, 232, 240], textColor: [15, 23, 42], fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     margin: { left: 14, right: 14, bottom: 16 },
+    ...(columnWidths?.length
+      ? {
+          columnStyles: Object.fromEntries(columnWidths.map((cellWidth, index) => [index, { cellWidth }])),
+        }
+      : {}),
     didParseCell: applyCellFont,
   })
   const tableY = lastTableY(doc, y)
@@ -300,6 +306,7 @@ export async function createReportPdf(
         section.totalsRows,
         options?.gridLines,
         section.footRow,
+        section.columnWidths,
       ) + 8
   })
 

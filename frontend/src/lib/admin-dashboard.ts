@@ -17,6 +17,8 @@ export type MonthlyTrendPoint = {
   year: number
   month: number
   label: string
+  fromIso?: string
+  toIso?: string
   revenueFcfa: number
   expensesFcfa: number
   netFcfa: number

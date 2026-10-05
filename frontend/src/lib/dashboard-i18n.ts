@@ -22,6 +22,18 @@ export function formatTrendPercentLocalized(value: number, vsPreviousPeriod = fa
   return `${sign} ${Math.abs(value)} ${suffix}`
 }
 
+/** Helvetica (PDF) n'a pas les flèches : + / - / =, et un détail par ligne. */
+export function evolutionTextForExport(trend: string): string {
+  return trend
+    .replaceAll('↑', '+')
+    .replaceAll('↓', '-')
+    .replaceAll('→', '=')
+    .split(' · ')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n')
+}
+
 export function translateCashDelayLabel(hours: number | null, lastAt: string | null): string {
   if (lastAt) {
     return translateTemplate('Dernier passage le {date}', { date: formatDateTimeFr(lastAt) })

@@ -18,6 +18,7 @@ import HospitalizationAdmissionModal, {
   type AdmissionRoomTypeOption,
 } from '@/components/hospitalisation/HospitalizationAdmissionModal.vue'
 import HospitalizationDischargeModal from '@/components/hospitalisation/HospitalizationDischargeModal.vue'
+import HospitalizationDepositModal from '@/components/hospitalisation/HospitalizationDepositModal.vue'
 import HospitalizationDirectAdmitModal from '@/components/hospitalisation/HospitalizationDirectAdmitModal.vue'
 import OccupiedStayCards, {
   type OccupiedStayCard,
@@ -32,6 +33,7 @@ import { useAppI18n } from '@/i18n/useAppI18n'
 import { useAuthStore } from '@/stores/auth'
 import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
 import { translateTemplate } from '@/lib/dashboard-i18n'
+import { calendarDateKey } from '@/lib/date-filters'
 import '@/assets/comptabilite-section.css'
 
 type HospRow = {
@@ -46,6 +48,7 @@ type HospRow = {
   dailyRateFcfa?: number
   startDate?: string | null
   paidAt?: string | Date | null
+  depositFcfa?: number
   service?: string | null
   attendingDoctor?: string | null
   attendingDoctorId?: string | null
@@ -117,6 +120,8 @@ const admissionMode = ref<'create' | 'edit' | 'view'>('create')
 const admissionSubmitting = ref(false)
 const dischargeHospId = ref<string | null>(null)
 const dischargeSubmitting = ref(false)
+const depositHospId = ref<string | null>(null)
+const depositSubmitting = ref(false)
 const directAdmitOpen = ref(false)
 
 const focusedVisitId = computed(() =>
@@ -256,9 +261,7 @@ const dateFrom = ref('')
 const dateTo = ref('')
 
 function stayDateIso(value?: string | Date | null) {
-  if (!value) return ''
-  const match = String(value).match(/^(\d{4}-\d{2}-\d{2})/)
-  return match?.[1] ?? ''
+  return calendarDateKey(value)
 }
 
 function hospDoctorName(row: HospRow) {
@@ -268,8 +271,36 @@ function hospDoctorName(row: HospRow) {
   return doctor ? `Dr ${fullName(doctor.firstName, doctor.lastName)}` : ''
 }
 
+function stayBalanceFcfa(row: HospRow) {
+  return Math.max(0, (row.totalDueFcfa ?? 0) - Math.max(0, row.paidFcfa ?? row.depositFcfa ?? 0))
+}
+
 function isUnpaidStay(row: HospRow) {
-  return !row.paidAt && (row.totalDueFcfa ?? 0) > 0 && Boolean(row.startDate)
+  return (
+    row.status !== 'DISCHARGED' &&
+    row.status !== 'CANCELLED' &&
+    stayBalanceFcfa(row) > 0 &&
+    Boolean(row.startDate)
+  )
+}
+
+function cashierName() {
+  const user = auth.user
+  return user ? fullName(user.firstName, user.lastName) : ''
+}
+
+function receiptForm(
+  row: HospRow,
+  extra?: { depositFcfa?: number; balancePosted?: boolean },
+) {
+  return admissionFormFromHospitalization({
+    ...row,
+    dailyRateFcfa: row.dailyRateFcfa ?? 0,
+    depositFcfa: extra?.depositFcfa ?? row.depositFcfa ?? 0,
+    collectedBy: cashierName(),
+    status: extra?.balancePosted ? 'DISCHARGED' : row.status,
+    paidAt: extra?.balancePosted ? row.paidAt ?? new Date().toISOString() : row.paidAt,
+  })
 }
 
 function matchesRoomFilter(row: HospRow) {
@@ -470,13 +501,7 @@ function openDirectAdmit() {
 function reprintReceipt(hospId: string) {
   const hosp = data.value?.hospitalizations.find((row) => row.id === hospId)
   if (!hosp) return
-  printHospitalizationAdmission(
-    admissionFormFromHospitalization({
-      ...hosp,
-      dailyRateFcfa: hosp.dailyRateFcfa ?? 0,
-    }),
-    { autoPrint: true },
-  )
+  printHospitalizationAdmission(receiptForm(hosp), { autoPrint: true })
 }
 
 async function deleteHospitalization(hospId: string) {
@@ -516,28 +541,48 @@ async function deleteHospitalization(hospId: string) {
   }
 }
 
-async function collectPayment(hospId: string) {
-  const hosp = data.value?.hospitalizations.find((row) => row.id === hospId)
+function openDeposit(hospId: string) {
+  depositHospId.value = hospId
+}
+
+function closeDeposit() {
+  depositHospId.value = null
+  depositSubmitting.value = false
+}
+
+const depositHosp = computed(() =>
+  depositHospId.value
+    ? (data.value?.hospitalizations.find((row) => row.id === depositHospId.value) ?? null)
+    : null,
+)
+
+async function confirmDeposit(payload: { hospitalizationId: string; amountFcfa: number; print: boolean }) {
+  const hosp = data.value?.hospitalizations.find((row) => row.id === payload.hospitalizationId)
   if (!hosp) return
+  depositSubmitting.value = true
   try {
-    await api.post('/hospitalisation/actions', {
+    const { data: res } = await api.post<{
+      depositFcfa: number
+      balanceFcfa: number
+    }>('/hospitalisation/actions', {
       action: 'collect_payment',
-      hospitalizationId: hospId,
+      hospitalizationId: payload.hospitalizationId,
+      amountFcfa: payload.amountFcfa,
     })
-    printHospitalizationAdmission(
-      admissionFormFromHospitalization({
-        ...hosp,
-        dailyRateFcfa: hosp.dailyRateFcfa ?? 0,
-        paidAt: new Date().toISOString(),
-      }),
-      { autoPrint: true },
-    )
-    message.value = uiText('Paiement encaissé.')
+    if (payload.print) {
+      printHospitalizationAdmission(
+        receiptForm(hosp, { depositFcfa: res.depositFcfa, balancePosted: false }),
+        { autoPrint: true },
+      )
+    }
+    message.value = uiText("Acompte enregistré — hors solde. Le solde sera encaissé à la validation finale.")
     messageType.value = 'success'
-    emit('collected')
+    closeDeposit()
     await load()
   } catch (error: unknown) {
-    await showApiErrorModal(error, uiText("Impossible d'encaisser l'hospitalisation."))
+    await showApiErrorModal(error, uiText("Impossible d'enregistrer l'acompte."))
+  } finally {
+    depositSubmitting.value = false
   }
 }
 
@@ -565,7 +610,7 @@ function admissionSavedMessage(totalDueFcfa: number, nights: number) {
   if (!totalDueFcfa) {
     return uiText('Admission validée — {nights} nuitée(s).').replace('{nights}', String(nights))
   }
-  return uiText('Admission enregistrée — {amount} ({nights} nuitée(s)) à encaisser via « Encaisser ».')
+  return uiText('Admission enregistrée — {amount} ({nights} nuitée(s)). L\'acompte reste hors solde jusqu\'à la validation finale.')
     .replace('{amount}', formatFcfa(totalDueFcfa))
     .replace('{nights}', String(nights))
 }
@@ -642,14 +687,32 @@ async function confirmAdmission(payload: HospitalizationAdmissionForm & { hospit
 async function confirmDischarge(payload: { hospitalizationId: string; endDate: string }) {
   dischargeSubmitting.value = true
   try {
-    const { data: res } = await api.post('/hospitalisation/actions', {
+    const hosp = data.value?.hospitalizations.find((row) => row.id === payload.hospitalizationId)
+    const { data: res } = await api.post<{
+      nights: number
+      totalDue: number
+      balance: number
+      depositFcfa: number
+    }>('/hospitalisation/actions', {
       action: 'discharge',
       hospitalizationId: payload.hospitalizationId,
       endDate: payload.endDate,
     })
-    message.value = uiText('Sortie validée — {nights} nuitée(s), total {amount}')
+    if (hosp) {
+      printHospitalizationAdmission(
+        receiptForm(
+          { ...hosp, totalDueFcfa: res.totalDue },
+          {
+            depositFcfa: Math.max(0, res.totalDue - res.balance),
+            balancePosted: true,
+          },
+        ),
+        { autoPrint: true },
+      )
+    }
+    message.value = uiText('Sortie validée — {nights} nuitée(s), solde {amount} passé en caisse.')
       .replace('{nights}', String(res.nights))
-      .replace('{amount}', formatFcfa(res.totalDue))
+      .replace('{amount}', formatFcfa(res.balance))
     messageType.value = 'success'
     emit('collected')
     closeDischarge()
@@ -666,7 +729,8 @@ const { refresh: refreshData } = useSilentRefresh(
   ({ silent }) => load({ silent }),
   {
     intervalMs: 30_000,
-    enabled: () => !admissionHospId.value && !dischargeHospId.value && !directAdmitOpen.value,
+    enabled: () =>
+      !admissionHospId.value && !dischargeHospId.value && !directAdmitOpen.value && !depositHospId.value,
   },
 )
 
@@ -825,7 +889,7 @@ watch([dateFrom, dateTo], () => {
           @print="reprintReceipt"
           :can-delete="canDeleteHospitalization"
           @delete="deleteHospitalization"
-          @collect="collectPayment"
+          @collect="openDeposit"
         />
       </UiCard>
     </template>
@@ -844,6 +908,14 @@ watch([dateFrom, dateTo], () => {
       :submitting="admissionSubmitting"
       @close="closeAdmission"
       @confirm="confirmAdmission"
+    />
+
+    <HospitalizationDepositModal
+      :hosp="depositHosp"
+      :submitting="depositSubmitting"
+      @close="closeDeposit"
+      @print="depositHosp && reprintReceipt(depositHosp.id)"
+      @confirm="confirmDeposit"
     />
 
     <HospitalizationDischargeModal

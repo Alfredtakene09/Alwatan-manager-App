@@ -21,6 +21,7 @@ import {
   type HospitalizationAdmissionForm,
 } from '@/lib/hospitalization-admission'
 import { formatFcfa, fullName } from '@/lib/roles'
+import { todayDateKey } from '@/lib/date-filters'
 import { sortDoctorsForReception } from '@/lib/doctor-compensation'
 
 type DoctorOption = { id: string; firstName: string; lastName: string }
@@ -60,7 +61,7 @@ const newForm = ref({
 const roomTypeChoice = ref<RoomTypeChoice>('')
 const roomChoice = ref('')
 const bedChoice = ref('')
-const startDate = ref(new Date().toISOString().slice(0, 10))
+const startDate = ref(todayDateKey())
 const stayDays = ref(1)
 const reductionFcfa = ref(0)
 const attendingDoctorId = ref('')
@@ -135,7 +136,7 @@ const labels = computed(() => {
     roomSection: uiText('Salle et séjour'),
     doctorSection: uiText('Médecin hospitalier'),
     paymentSection: uiText('Paiement'),
-    paymentHint: uiText('Le montant sera ajouté à la caisse après clic sur « Encaisser » dans la liste.'),
+    paymentHint: uiText("L'acompte n'est pas ajouté au solde. La validation finale passe le solde restant en caisse et sur le reçu."),
     cancel: uiText('Annuler'),
     confirm: uiText('Enregistrer'),
     creating: uiText('Enregistrement…'),
@@ -155,7 +156,7 @@ function resetState() {
   roomTypeChoice.value = ''
   roomChoice.value = ''
   bedChoice.value = ''
-  startDate.value = new Date().toISOString().slice(0, 10)
+  startDate.value = todayDateKey()
   stayDays.value = 1
   reductionFcfa.value = 0
   attendingDoctorId.value = ''

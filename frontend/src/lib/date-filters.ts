@@ -9,6 +9,18 @@ export function toLocalDateKey(date: Date): string {
   return `${y}-${m}-${d}`
 }
 
+/** Jour calendaire local. Une date seule (AAAA-MM-JJ) est conservée telle quelle. */
+export function calendarDateKey(value?: string | Date | null): string {
+  if (value == null || value === '') return ''
+  if (typeof value === 'string') {
+    const raw = value.trim()
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+  }
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return toLocalDateKey(date)
+}
+
 export function todayDateKey(): string {
   return toLocalDateKey(new Date())
 }

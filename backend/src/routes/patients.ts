@@ -39,6 +39,7 @@ import {
 import { forceDeletePatientCascade } from "../lib/patient-admin-delete.js";
 import {
   findDuplicatePatient,
+  findPatientForDossierFusion,
   serializePatientForDuplicate,
 } from "../lib/duplicate-detection.js";
 import {
@@ -52,7 +53,11 @@ import { requireAuth, requireModule, requireUiAction } from "../middleware/auth.
 import { canAccessModule, isDirectionOrGestionnaire, type AppUserRole } from "../lib/roles.js";
 import { EXTERNAL_PATIENT_VISIT_NOTE } from "../lib/visit-external.js";
 import { patientsWhoReceivedExamsWhere } from "../lib/patient-exam-stats.js";
-import { receptionistOwnPatientsWhere, patientsInDoctorScopeWhere } from "../lib/reception-scope.js";
+import {
+  patientsInDoctorScopeWhere,
+  receptionistOwnPatientsWhere,
+  receptionistScopeUserId,
+} from "../lib/reception-scope.js";
 import { resolveDoctorClinicServices } from "../lib/clinic-service-exam.js";
 
 const router = Router();
@@ -231,6 +236,24 @@ function mapConsultationVisitForReception(
   };
 }
 
+async function syncVisitClinicService(
+  tx: Prisma.TransactionClient,
+  patientId: string,
+  serviceName: string | null,
+) {
+  const name = serviceName?.trim() ?? "";
+  const clinicService = name
+    ? await tx.clinicService.findFirst({
+        where: { active: true, name: { equals: name, mode: "insensitive" } },
+        select: { id: true },
+      })
+    : null;
+  await tx.visit.updateMany({
+    where: { patientId, status: { not: VisitStatus.CANCELLED } },
+    data: { assignedClinicServiceId: clinicService?.id ?? null },
+  });
+}
+
 async function syncWaitingVisit(
   tx: Prisma.TransactionClient,
   patientId: string,
@@ -270,12 +293,14 @@ async function syncWaitingVisit(
   });
 
   if (!visit) {
-    if (!doctorId && consultationAmountFcfa === undefined) return;
-    const alreadyInCare = await tx.visit.findFirst({
+    visit = await tx.visit.findFirst({
       where: { patientId, status: { not: VisitStatus.CANCELLED } },
-      select: { id: true },
+      orderBy: { createdAt: "desc" },
     });
-    if (alreadyInCare) return;
+  }
+
+  if (!visit) {
+    if (!doctorId && consultationAmountFcfa === undefined) return;
     visit = await tx.visit.create({
       data: {
         patientId,
@@ -299,6 +324,13 @@ async function syncWaitingVisit(
     });
   }
 
+  if (doctorId) {
+    await tx.consultation.updateMany({
+      where: { visitId: visit.id },
+      data: { doctorId },
+    });
+  }
+
   if (billing.billableAmountFcfa > 0) {
     const existingInvoice = await tx.invoice.findFirst({
       where: { visitId: visit.id, type: InvoiceType.CONSULTATION },
@@ -306,9 +338,9 @@ async function syncWaitingVisit(
 
     if (existingInvoice?.status === InvoiceStatus.PAID) {
       if (doctorId) {
-        await tx.visit.update({
-          where: { id: visit.id },
-          data: { assignedDoctorId: doctorId },
+        await tx.consultation.updateMany({
+          where: { visitId: visit.id },
+          data: { doctorId },
         });
       }
       return;
@@ -336,9 +368,9 @@ async function syncWaitingVisit(
     });
     if (existingInvoice?.status === InvoiceStatus.PAID) {
       if (doctorId) {
-        await tx.visit.update({
-          where: { id: visit.id },
-          data: { assignedDoctorId: doctorId },
+        await tx.consultation.updateMany({
+          where: { visitId: visit.id },
+          data: { doctorId },
         });
       }
       return;
@@ -660,14 +692,16 @@ router.get("/registration-summary", requireModule("reception"), async (req, res)
       );
     }
     const patientWhere: Prisma.PatientWhereInput = {
-      ...receptionistOwnPatientsWhere(user, createdById),
       active: true,
       ...(service ? { service } : {}),
       createdAt: { gte: rangeStart, lt: rangeEndExclusive },
       ...(andFilters.length > 0 ? { AND: andFilters } : {}),
     };
 
-    const lines = await buildRegistrationSummary({ patientWhere });
+    const lines = await buildRegistrationSummary({
+      patientWhere,
+      receptionistId: receptionistScopeUserId(user, createdById),
+    });
     return res.json({ lines });
   } catch (error) {
     console.error("GET /patients/registration-summary failed:", error);
@@ -1060,14 +1094,13 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
       return res.status(400).json({ error: "Médecin traitant invalide" });
     }
 
-    const duplicatePatient = await findDuplicatePatient({
+    // À la modification, on ne bloque que le vrai doublon (nom + téléphone + genre).
+    // Le même nom sans numéro ne doit pas empêcher de corriger le dossier.
+    const duplicatePatient = await findPatientForDossierFusion({
       firstName: body.firstName,
       lastName: body.lastName,
       phone: body.phone,
       gender: body.gender,
-      age: body.age,
-      ageUnit: body.ageUnit,
-      dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : null,
       excludeId: patientId,
     });
     if (duplicatePatient) {
@@ -1119,6 +1152,9 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
         body.reductionFcfa,
         req.user!.id,
       );
+      if (body.service !== undefined) {
+        await syncVisitClinicService(tx, updated.id, body.service);
+      }
 
       return updated;
     });

@@ -295,9 +295,7 @@ router.get("/", async (req, res) => {
     );
     const hospitalizationsWithPaid = hospitalizations.map((row) => ({
       ...row,
-      paidFcfa: row.paidAt
-        ? Math.max(paidByHospitalization.get(row.id) ?? 0, row.totalDueFcfa)
-        : (paidByHospitalization.get(row.id) ?? 0),
+      paidFcfa: Math.max(paidByHospitalization.get(row.id) ?? 0, row.depositFcfa ?? 0),
     }));
 
     const roomsWithStatus = enrichRoomsWithStatus(rooms, hospitalizationsWithPaid);
@@ -684,55 +682,44 @@ router.post("/actions", async (req, res) => {
     }
 
     if (action === "collect_payment") {
-      const hospitalizationId = z.string().min(1).parse(req.body.hospitalizationId);
+      const body = z
+        .object({
+          hospitalizationId: z.string().min(1),
+          amountFcfa: z.coerce.number().int().positive(),
+        })
+        .parse(req.body);
       const result = await prisma.$transaction(async (tx) => {
         const hospitalization = await tx.hospitalization.findUnique({
-          where: { id: hospitalizationId },
-          include: { visit: true },
+          where: { id: body.hospitalizationId },
         });
         if (!hospitalization) throw new Error("NOT_FOUND");
+        if (
+          hospitalization.status === HospitalizationStatus.DISCHARGED ||
+          hospitalization.status === HospitalizationStatus.CANCELLED
+        ) {
+          throw new Error("STAY_FINISHED");
+        }
         if (hospitalization.paidAt) throw new Error("ALREADY_PAID");
         const totalDueFcfa = Math.max(0, hospitalization.totalDueFcfa);
-        if (totalDueFcfa <= 0) throw new Error("NOTHING_TO_COLLECT");
+        const already = Math.max(0, hospitalization.depositFcfa ?? 0);
+        const remaining = Math.max(0, totalDueFcfa - already);
+        if (remaining <= 0) throw new Error("NOTHING_TO_COLLECT");
+        if (body.amountFcfa > remaining) throw new Error("AMOUNT_EXCEEDS_BALANCE");
 
-        const pending = await tx.invoice.findFirst({
-          where: {
-            hospitalizationId: hospitalization.id,
-            status: InvoiceStatus.PENDING,
-            type: { in: [InvoiceType.HOSPITALIZATION_FINAL, InvoiceType.HOSPITALIZATION_DEPOSIT] },
-          },
-          orderBy: { createdAt: "desc" },
-        });
-
-        const paidAt = new Date();
-        const invoice = pending
-          ? await tx.invoice.update({
-              where: { id: pending.id },
-              data: {
-                ...immediatePaidInvoiceData(totalDueFcfa, user.id),
-                paidAt,
-                issuedById: user.id,
-              },
-            })
-          : await tx.invoice.create({
-              data: {
-                invoiceNumber: await generateInvoiceNumber(tx),
-                patientId: hospitalization.visit.patientId,
-                visitId: hospitalization.visitId,
-                hospitalizationId: hospitalization.id,
-                type: InvoiceType.HOSPITALIZATION_FINAL,
-                issuedById: user.id,
-                ...immediatePaidInvoiceData(totalDueFcfa, user.id),
-              },
-            });
-
+        const depositFcfa = already + body.amountFcfa;
         const updated = await tx.hospitalization.update({
           where: { id: hospitalization.id },
-          data: { paidAt, accountantId: user.id },
+          data: { depositFcfa, accountantId: user.id },
           include: hospitalizationInclude,
         });
 
-        return { hospitalization: updated, invoice, totalDueFcfa };
+        return {
+          hospitalization: updated,
+          amountFcfa: body.amountFcfa,
+          depositFcfa,
+          balanceFcfa: Math.max(0, totalDueFcfa - depositFcfa),
+          postedToCash: false,
+        };
       });
       return res.json(result);
     }
@@ -860,8 +847,10 @@ router.post("/actions", async (req, res) => {
         const grossFcfa = nights * hospitalization.dailyRateFcfa;
         const reductionFcfa = hospitalization.reductionFcfa ?? 0;
         const totalDue = Math.max(0, grossFcfa - reductionFcfa);
-        const alreadyPaid = await sumPaidHospitalizationFcfa(tx, hospitalization.id);
-        const balance = Math.max(0, totalDue - alreadyPaid);
+        const alreadyInvoiced = await sumPaidHospitalizationFcfa(tx, hospitalization.id);
+        const acompteOffBooks = alreadyInvoiced > 0 ? 0 : Math.max(0, hospitalization.depositFcfa ?? 0);
+        const balance = Math.max(0, totalDue - alreadyInvoiced - acompteOffBooks);
+        const paidAt = new Date();
 
         const updated = await tx.hospitalization.update({
           where: { id: hospitalization.id },
@@ -871,14 +860,52 @@ router.post("/actions", async (req, res) => {
             totalDueFcfa: totalDue,
             reductionFcfa,
             status: HospitalizationStatus.DISCHARGED,
-            dischargedAt: new Date(),
+            dischargedAt: paidAt,
+            paidAt,
+            accountantId: user.id,
             roomId: null,
             bedId: null,
           },
         });
 
+        const pendings = await tx.invoice.findMany({
+          where: {
+            hospitalizationId: hospitalization.id,
+            status: InvoiceStatus.PENDING,
+            type: { in: [InvoiceType.HOSPITALIZATION_FINAL, InvoiceType.HOSPITALIZATION_DEPOSIT] },
+          },
+          orderBy: { createdAt: "desc" },
+        });
+
         let invoice = null;
         if (balance > 0) {
+          const [first, ...rest] = pendings;
+          if (first) {
+            invoice = await tx.invoice.update({
+              where: { id: first.id },
+              data: {
+                type: InvoiceType.HOSPITALIZATION_FINAL,
+                amountFcfa: balance,
+                paidAmountFcfa: balance,
+                status: InvoiceStatus.PAID,
+                paidAt,
+                issuedById: user.id,
+                payments: {
+                  create: {
+                    amountFcfa: balance,
+                    recordedById: user.id,
+                    note: "Solde hospitalisation",
+                  },
+                },
+              },
+            });
+            if (rest.length) {
+              await tx.invoice.updateMany({
+                where: { id: { in: rest.map((row) => row.id) } },
+                data: { status: InvoiceStatus.CANCELLED, paidAmountFcfa: 0, paidAt: null },
+              });
+            }
+          } else {
             invoice = await tx.invoice.create({
               data: {
                 invoiceNumber: await generateInvoiceNumber(tx),
@@ -890,9 +917,23 @@ router.post("/actions", async (req, res) => {
                 ...immediatePaidInvoiceData(balance, user.id),
               },
             });
+          }
+        } else if (pendings.length) {
+          await tx.invoice.updateMany({
+            where: { id: { in: pendings.map((row) => row.id) } },
+            data: { status: InvoiceStatus.CANCELLED, paidAmountFcfa: 0, paidAt: null },
+          });
         }
         await tx.visit.update({ where: { id: hospitalization.visitId }, data: { status: VisitStatus.COMPLETED } });
-        return { hospitalization: updated, invoice, nights, totalDue, balance };
+        return {
+          hospitalization: updated,
+          invoice,
+          nights,
+          totalDue,
+          balance,
+          depositFcfa: acompteOffBooks,
+          postedToCash: balance > 0,
+        };
       });
       return res.json(result);
     }
@@ -950,6 +991,12 @@ router.post("/actions", async (req, res) => {
     }
     if (error instanceof Error && error.message === "NOTHING_TO_COLLECT") {
       return res.status(400).json({ error: "Aucun montant à encaisser." });
+    }
+    if (error instanceof Error && error.message === "AMOUNT_EXCEEDS_BALANCE") {
+      return res.status(400).json({ error: "Le montant dépasse le solde restant." });
+    }
+    if (error instanceof Error && error.message === "STAY_FINISHED") {
+      return res.status(409).json({ error: "Ce séjour est déjà terminé. Le solde est passé à la validation finale." });
     }
     if (error instanceof Error && error.message === "NOT_FOUND") {
       return res.status(404).json({ error: "Hospitalisation introuvable" });

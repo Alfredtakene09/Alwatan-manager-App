@@ -1357,6 +1357,12 @@ export const CLINIC_PRINT_STYLES = `
     font-weight: 700;
     text-align: center;
   }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__filter {
+    margin: 0 0 2px;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
+  }
   body.print-thermal .thermal-receipt--day-closure .day-closure__table {
     width: 100%;
     border-collapse: collapse;
@@ -1395,6 +1401,15 @@ export const CLINIC_PRINT_STYLES = `
     font-weight: 800;
     letter-spacing: 0.04em;
     border-bottom: 1px solid #000;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__opservice td {
+    padding: 4px 0 1px;
+    font-size: 12px;
+    font-weight: 800;
+    border-bottom: none;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__opact td.col-service {
+    padding-inline-start: 12px;
   }
   body.print-thermal .thermal-receipt--day-closure .day-closure__group-ar {
     font-size: 11px;
@@ -1674,6 +1689,11 @@ export const CLINIC_PRINT_STYLES = `
   body.print-thermal .thermal-receipt--day-closure .day-closure__period {
     font-size: 15px;
   }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__filter {
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+  }
   body.print-thermal .thermal-receipt--day-closure .day-closure__table,
   body.print-thermal .thermal-receipt--day-closure .day-closure__table td,
   body.print-thermal .thermal-receipt--day-closure .day-closure__table thead th {
@@ -1689,6 +1709,15 @@ export const CLINIC_PRINT_STYLES = `
     font-size: 14px;
     font-weight: 800;
     border-bottom: 1px solid #000;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__opservice td {
+    padding: 5px 0 1px;
+    font-size: 14px;
+    font-weight: 800;
+    border-bottom: none;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__opact td.col-service {
+    padding-inline-start: 12px;
   }
   body.print-thermal .thermal-receipt--day-closure .day-closure__group-ar {
     font-size: 13px;
@@ -2207,6 +2236,8 @@ export type DayClosureReceiptData = {
   serviceLines?: DayClosureServiceLine[]
   reductionFcfa?: number
   saleFcfa?: number
+  /** Filtres appliqués (libellé i18n + valeur), imprimés sous la période. */
+  filterLines?: { label: string; value: string }[]
 }
 
 function formatDayClosureShortDate(isoDate: string): string {
@@ -2221,14 +2252,74 @@ function formatDayClosureAmount(amount: number): string {
   return formatFcfaShort(amount)
 }
 
-function buildDayClosureLineHtml(line: DayClosureServiceLine): string {
+/** « Opération — Gynécologie » ou « Gynécologie (Césarienne) » → service + acte. */
+function splitOperationReceiptLabel(label: string): { service: string; act: string | null } {
+  const cleaned = label.replace(/^Opération\s*[—–-]\s*/u, '').trim()
+  const match = cleaned.match(/^(.*)\s+\(([^)]+)\)\s*$/)
+  if (!match) return { service: cleaned || label.trim(), act: null }
+  const service = match[1].trim()
+  const act = match[2].trim()
+  if (!service) return { service: cleaned, act: null }
+  return { service, act: act || null }
+}
+
+function buildDayClosureGroupHeaderHtml(label: string): string {
+  const fr = translateUiLocale(label, 'fr')
+  const ar = thermalAr(fr)
+  const arHtml = ar
+    ? ` <span class="day-closure__group-ar" dir="rtl" lang="ar">${escapeHtml(ar)}</span>`
+    : ''
+  return `<tr class="day-closure__group">
+  <td class="col-service" colspan="3" dir="ltr">${escapeHtml(fr)}${arHtml}</td>
+</tr>`
+}
+
+function buildDayClosureServiceHeadHtml(service: string): string {
+  return `<tr class="day-closure__opservice">
+  <td class="col-service" colspan="3" dir="ltr">${escapeHtml(service)}</td>
+</tr>`
+}
+
+function buildOperationSectionHtml(lines: DayClosureServiceLine[]): string {
+  const fr = (key: string) => translateUiLocale(key, 'fr')
+  const byService = new Map<string, Map<string, DayClosureServiceLine>>()
+  for (const line of lines) {
+    const { service, act } = splitOperationReceiptLabel(line.label)
+    const acts = byService.get(service) ?? new Map<string, DayClosureServiceLine>()
+    const actKey = act ?? ''
+    const existing = acts.get(actKey)
+    if (existing) {
+      existing.qty += line.qty
+      existing.totalFcfa += line.totalFcfa
+    } else {
+      acts.set(actKey, { ...line, label: act || service, qty: line.qty, totalFcfa: line.totalFcfa })
+    }
+    byService.set(service, acts)
+  }
+
+  const rows = [buildDayClosureGroupHeaderHtml('Opérations')]
+  for (const [service, acts] of byService) {
+    const items = [...acts.entries()]
+    const onlyService = items.length === 1 && items[0][0] === ''
+    if (onlyService) {
+      rows.push(buildDayClosureLineHtml(items[0][1]))
+      continue
+    }
+    rows.push(buildDayClosureServiceHeadHtml(service))
+    for (const [, item] of items) rows.push(buildDayClosureLineHtml(item, 'day-closure__opact'))
+  }
+  rows.push(buildDayClosureSumRowHtml(fr('Total opérations'), lines, 'day-closure__subtotal'))
+  return rows.join('')
+}
+
+function buildDayClosureLineHtml(line: DayClosureServiceLine, rowClass = ''): string {
   const fr = line.label.trim()
   const ar = thermalAr(fr)
   const labelHtml = ar
     ? `<span class="day-closure__service-fr" dir="ltr">${escapeHtml(fr)}</span>
   <span class="day-closure__service-ar" dir="rtl" lang="ar">${escapeHtml(ar)}</span>`
     : `<span class="day-closure__service-fr" dir="ltr">${escapeHtml(fr)}</span>`
-  return `<tr>
+  return `<tr class="${rowClass}">
   <td class="col-service">${labelHtml}</td>
   <td class="col-qty" dir="ltr">${escapeHtml(String(line.qty))}</td>
   <td class="col-total" dir="ltr">${escapeHtml(formatFcfaCompact(line.totalFcfa))}</td>
@@ -2255,13 +2346,19 @@ function buildDayClosureServiceRowsHtml(lines: DayClosureServiceLine[]): string 
   <td class="col-service" colspan="3" dir="ltr">${escapeHtml(t('Aucune vente enregistrée'))}</td>
 </tr>`
   }
-  const rows = lines.map(buildDayClosureLineHtml).join('')
   // Ticket pharmacie : pas de ligne de somme dans le tableau (déjà dans le pied).
-  if (!lines.some((line) => line.group)) return rows
+  if (!lines.some((line) => line.group)) {
+    return lines.map((line) => buildDayClosureLineHtml(line)).join('')
+  }
 
-  // Reçu réception : chaque prestation sur sa ligne, une seule somme en bas.
+  const operations = lines.filter((line) => line.group === 'operation')
+  const others = lines.filter((line) => line.group !== 'operation')
   const fr = (key: string) => translateUiLocale(key, 'fr')
-  return rows + buildDayClosureSumRowHtml(fr('Total général'), lines, 'day-closure__grand-total')
+  return [
+    ...others.map((line) => buildDayClosureLineHtml(line)),
+    operations.length ? buildOperationSectionHtml(operations) : '',
+    buildDayClosureSumRowHtml(fr('Total général'), lines, 'day-closure__grand-total'),
+  ].join('')
 }
 
 export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string {
@@ -2316,10 +2413,19 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
     .replace('{time}', closed.latinTime)
     .replace('{user}', username)
 
+  const filterHtml = (data.filterLines ?? [])
+    .filter((line) => line.value.trim())
+    .map(
+      (line) =>
+        `<p class="day-closure__period day-closure__filter" dir="ltr">${escapeHtml(`${fr(line.label)} : ${line.value.trim()}`)}</p>`,
+    )
+    .join('')
+
   return `
 <div class="${thermalTicketRootClass('thermal-receipt--day-closure')}" dir="ltr">
   ${buildThermalClinicHeaderHtml({ name: 'CLINIQUE AL WATAN' })}
   <p class="day-closure__period" dir="ltr">${escapeHtml(title)}</p>
+  ${filterHtml}
   <hr class="thermal-receipt__rule" />
 
   <table class="thermal-receipt__items-table day-closure__table" dir="ltr">

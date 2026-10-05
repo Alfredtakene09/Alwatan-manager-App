@@ -5,6 +5,7 @@ import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import { fullName } from '@/lib/roles'
+import { calendarDateKey, todayDateKey } from '@/lib/date-filters'
 
 const props = defineProps<{
   hosp: {
@@ -38,9 +39,7 @@ watch(
       endDate.value = ''
       return
     }
-    endDate.value = hosp.endDate
-      ? new Date(hosp.endDate).toISOString().slice(0, 10)
-      : new Date().toISOString().slice(0, 10)
+    endDate.value = hosp.endDate ? calendarDateKey(hosp.endDate) : todayDateKey()
   },
   { immediate: true },
 )

@@ -612,6 +612,7 @@ export default {
     'Dépenses du mois': 'Monthly expenses',
     'Bénéfice net': 'Net profit',
     'Masse salariale': 'Payroll mass',
+    'Salaires à jour des fiches employés': 'Current salaries from employee records',
     Solde: 'Balance',
     Recettes: 'Revenue',
     Dépenses: 'Expenses',
@@ -630,6 +631,7 @@ export default {
     'Examens en attente': 'Pending exams',
     'Hospitalisations actives': 'Active hospitalizations',
     'Évolution mensuelle': 'Monthly trend',
+    Dates: 'Dates',
     'Recettes, dépenses et bénéfice net — 12 mois glissants':
       'Revenue, expenses and net profit — rolling 12 months',
     'Répartition des recettes': 'Revenue breakdown',
@@ -704,6 +706,8 @@ export default {
     'Admission validée — {nights} nuitée(s).': 'Admission confirmed — {nights} night(s).',
     'Admission enregistrée — {amount} ({nights} nuitée(s)) à encaisser via « Encaisser ».':
       'Admission saved — {amount} ({nights} night(s)) to collect with “Charge”.',
+    "Admission enregistrée — {amount} ({nights} nuitée(s)). L'acompte reste hors solde jusqu'à la validation finale.":
+      'Admission saved — {amount} ({nights} night(s)). The deposit stays off the balance until final validation.',
     'Le montant sera ajouté à la caisse après clic sur « Encaisser » dans la liste.':
       'The amount is added to the cash desk only after clicking “Charge” in the list.',
     'Sortie validée — {nights} nuitée(s), total {amount}':
@@ -720,6 +724,26 @@ export default {
     'Payer plus tard': 'Pay later',
     'Patient externe, salle et paiement': 'External patient, room and payment',
     'Paiement encaissé.': 'Payment collected.',
+    'Acompte (hors solde)': 'Deposit (not on balance)',
+    'Acompte hospitalisation': 'Hospitalization deposit',
+    "Cet acompte n'est pas enregistré sur le solde. La validation finale passera le solde restant en caisse et sur le reçu.":
+      'This deposit is not posted to the balance. Final validation posts the remaining balance to the cash desk and the receipt.',
+    'Déjà reçu': 'Already received',
+    'Solde restant': 'Remaining balance',
+    "Montant de l'acompte": 'Deposit amount',
+    "Enregistrer l'acompte": 'Save deposit',
+    "Acompte enregistré — hors solde. Le solde sera encaissé à la validation finale.":
+      'Deposit saved — not on the balance. The balance will be collected at final validation.',
+    "Impossible d'enregistrer l'acompte.": 'Unable to save the deposit.',
+    'Solde passé en caisse': 'Balance posted to cash',
+    'Solde non passé — validation finale': 'Balance not posted — final validation',
+    'Solde encaissé': 'Balance collected',
+    'Acompte hors solde': 'Deposit not on balance',
+    Acompte: 'Deposit',
+    'Sortie validée — {nights} nuitée(s), solde {amount} passé en caisse.':
+      'Discharge confirmed — {nights} night(s), balance {amount} posted to cash.',
+    "L'acompte n'est pas ajouté au solde. La validation finale passe le solde restant en caisse et sur le reçu.":
+      'The deposit is not added to the balance. Final validation posts the remaining balance to cash and the receipt.',
     "Impossible d'encaisser l'hospitalisation.": 'Unable to collect the hospitalization payment.',
     'Chargement des hospitalisations…': 'Loading hospitalizations…',
     'Aucune hospitalisation à afficher': 'No hospitalization to display',
@@ -781,6 +805,8 @@ export default {
     'Aucune dépense ce mois': 'No expenses this month',
     'Aucune alerte': 'No alerts',
     '% vs mois précédent': '% vs previous month',
+    'Consultations : {amount}': 'Consultations: {amount}',
+    'Opérations : {amount}': 'Operations: {amount}',
     '% vs période précédente': '% vs previous period',
     Consultations: 'Consultations',
     Opérations: 'Operations',
@@ -798,6 +824,8 @@ export default {
     'Journée en cours': 'Day in progress',
     'Clôturer la journée': 'Close the day',
     'Journée clôturée': 'Day closed',
+    'Imprimer cumul': 'Print summary',
+    "Impossible d'imprimer le cumul.": 'Unable to print the summary.',
     'Clôturer': 'Close',
     'Dernier passage le {date}': 'Last visit on {date}',
     'Aucun décaissement enregistré': 'No disbursement recorded',
@@ -1773,6 +1801,7 @@ export default {
       'Lab exams transferred — awaiting results',
     "Impossible de charger la file d'attente laboratoire.": 'Unable to load the laboratory queue.',
     "Aujourd'hui": 'Today',
+    'Annuler les filtres': 'Clear filters',
     Terminés: 'Completed',
     'Liste des dossiers': 'Records list',
     'Patient, matricule, examen…': 'Patient, ID, exam…',
@@ -2447,6 +2476,7 @@ export default {
     'Employés par poste': 'Employees by job title',
     'Liste complète': 'Full list',
     'Total général': 'Grand total',
+    'Total opérations': 'Operations total',
     'Total général — employés': 'Grand total — employees',
     'Total général — masse salariale': 'Grand total — payroll',
     'Aucune donnée': 'No data',

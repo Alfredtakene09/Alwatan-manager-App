@@ -612,6 +612,7 @@ export default {
     'Dépenses du mois': 'مصاريف الشهر',
     'Bénéfice net': 'صافي الربح',
     'Masse salariale': 'الكتلة الأجرية',
+    'Salaires à jour des fiches employés': 'الرواتب المحدّثة في ملفات الموظفين',
     Solde: 'الرصيد',
     Recettes: 'الإيرادات',
     Dépenses: 'المصاريف',
@@ -630,6 +631,7 @@ export default {
     'Examens en attente': 'فحوصات قيد الانتظار',
     'Hospitalisations actives': 'حالات استشفاء نشطة',
     'Évolution mensuelle': 'التطور الشهري',
+    Dates: 'التواريخ',
     'Recettes, dépenses et bénéfice net — 12 mois glissants':
       'الإيرادات والمصاريف وصافي الربح — آخر 12 شهراً',
     'Répartition des recettes': 'توزيع الإيرادات',
@@ -704,6 +706,8 @@ export default {
     'Admission validée — {nights} nuitée(s).': 'تم تأكيد القبول — {nights} ليلة/ليالٍ.',
     'Admission enregistrée — {amount} ({nights} nuitée(s)) à encaisser via « Encaisser ».':
       'تم تسجيل القبول — {amount} ({nights} ليلة/ليالٍ) للتحصيل عبر زر «تحصيل».',
+    "Admission enregistrée — {amount} ({nights} nuitée(s)). L'acompte reste hors solde jusqu'à la validation finale.":
+      'تم تسجيل القبول — {amount} ({nights} ليلة). العربون يبقى خارج الرصيد حتى التأكيد النهائي.',
     'Le montant sera ajouté à la caisse après clic sur « Encaisser » dans la liste.':
       'يُضاف المبلغ إلى الصندوق فقط بعد الضغط على «تحصيل» في القائمة.',
     'Sortie validée — {nights} nuitée(s), total {amount}':
@@ -720,6 +724,26 @@ export default {
     'Payer plus tard': 'الدفع لاحقاً',
     'Patient externe, salle et paiement': 'مريض خارجي، غرفة ودفع',
     'Paiement encaissé.': 'تم تحصيل الدفع.',
+    'Acompte (hors solde)': 'عربون (خارج الرصيد)',
+    'Acompte hospitalisation': 'عربون الاستشفاء',
+    "Cet acompte n'est pas enregistré sur le solde. La validation finale passera le solde restant en caisse et sur le reçu.":
+      'هذا العربون لا يُسجَّل في الرصيد. التأكيد النهائي يمرّر الرصيد المتبقي إلى الصندوق وعلى الإيصال.',
+    'Déjà reçu': 'المستلم',
+    'Solde restant': 'الرصيد المتبقي',
+    "Montant de l'acompte": 'مبلغ العربون',
+    "Enregistrer l'acompte": 'تسجيل العربون',
+    "Acompte enregistré — hors solde. Le solde sera encaissé à la validation finale.":
+      'تم تسجيل العربون خارج الرصيد. سيُحصَّل الرصيد عند التأكيد النهائي.',
+    "Impossible d'enregistrer l'acompte.": 'تعذر تسجيل العربون.',
+    'Solde passé en caisse': 'الرصيد مُرحَّل إلى الصندوق',
+    'Solde non passé — validation finale': 'الرصيد غير مُرحَّل — بانتظار التأكيد النهائي',
+    'Solde encaissé': 'الرصيد مُحصَّل',
+    'Acompte hors solde': 'عربون خارج الرصيد',
+    Acompte: 'عربون',
+    'Sortie validée — {nights} nuitée(s), solde {amount} passé en caisse.':
+      'تم تأكيد الخروج — {nights} ليلة، الرصيد {amount} مُرحَّل إلى الصندوق.',
+    "L'acompte n'est pas ajouté au solde. La validation finale passe le solde restant en caisse et sur le reçu.":
+      'العربون لا يُضاف إلى الرصيد. التأكيد النهائي يمرّر الرصيد المتبقي إلى الصندوق وعلى الإيصال.',
     "Impossible d'encaisser l'hospitalisation.": 'تعذر تحصيل دفع الاستشفاء.',
     'Chargement des hospitalisations…': 'جاري تحميل الاستشفاءات…',
     'Aucune hospitalisation à afficher': 'لا يوجد استشفاء للعرض',
@@ -781,6 +805,8 @@ export default {
     'Aucune dépense ce mois': 'لا مصاريف هذا الشهر',
     'Aucune alerte': 'لا تنبيهات',
     '% vs mois précédent': '% مقارنة بالشهر السابق',
+    'Consultations : {amount}': 'استشارات : {amount}',
+    'Opérations : {amount}': 'عمليات : {amount}',
     '% vs période précédente': '% مقارنة بالفترة السابقة',
     Consultations: 'الاستشارات',
     Opérations: 'العمليات',
@@ -798,6 +824,8 @@ export default {
     'Journée en cours': 'اليوم جارٍ',
     'Clôturer la journée': 'إغلاق اليوم',
     'Journée clôturée': 'تم إغلاق اليوم',
+    'Imprimer cumul': 'طباعة المجموع',
+    "Impossible d'imprimer le cumul.": 'تعذر طباعة المجموع.',
     'Clôturer': 'إغلاق',
     'Dernier passage le {date}': 'آخر مرور في {date}',
     'Aucun décaissement enregistré': 'لا صرف مسجّل',
@@ -1775,6 +1803,7 @@ export default {
       'فحوصات المختبر المحوّلة — في انتظار النتائج',
     "Impossible de charger la file d'attente laboratoire.": 'تعذر تحميل طابور المختبر.',
     "Aujourd'hui": 'اليوم',
+    'Annuler les filtres': 'إلغاء عوامل التصفية',
     Terminés: 'منتهية',
     'Liste des dossiers': 'قائمة الملفات',
     'Patient, matricule, examen…': 'المريض، الرقم، الفحص…',
@@ -2447,6 +2476,7 @@ export default {
     'Employés par poste': 'الموظفون حسب المنصب',
     'Liste complète': 'القائمة الكاملة',
     'Total général': 'المجموع العام',
+    'Total opérations': 'مجموع العمليات',
     'Total général — employés': 'المجموع العام — الموظفون',
     'Total général — masse salariale': 'المجموع العام — كتلة الأجور',
     'Aucune donnée': 'لا توجد بيانات',

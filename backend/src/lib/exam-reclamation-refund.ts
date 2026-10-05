@@ -348,17 +348,25 @@ export async function reverseExamReclamationRefund(params: {
   let totalRestoredFcfa = 0;
 
   for (const [kind, restoreFcfa] of restoreByKind) {
-    notes = appendPaidExamKindMarker(notes, kind, new Date());
     const invoice = await findInvoiceForExamKindRestore(
       tx,
       consultation.visitId,
       kind,
       visitInvoices,
     );
-    if (!invoice || restoreFcfa <= 0) continue;
+    if (!invoice || restoreFcfa <= 0) {
+      const alreadyPaid = parsePaidExamKindsByKind(originalNotes)[kind];
+      notes = appendPaidExamKindMarker(notes, kind, alreadyPaid ?? new Date());
+      continue;
+    }
 
     const newAmount = invoice.amountFcfa + restoreFcfa;
     const newPaid = invoice.paidAmountFcfa + restoreFcfa;
+    const stored = await tx.invoice.findUnique({
+      where: { id: invoice.id },
+      select: { paidAt: true, createdAt: true },
+    });
+    const cashAt = stored?.paidAt ?? stored?.createdAt ?? invoice.createdAt;
     await tx.invoice.update({
       where: { id: invoice.id },
       data: {
@@ -370,7 +378,7 @@ export async function reverseExamReclamationRefund(params: {
             : newPaid > 0
               ? InvoiceStatus.PARTIALLY_PAID
               : InvoiceStatus.PENDING,
-        paidAt: invoice.paidAmountFcfa > 0 || newPaid > 0 ? new Date() : null,
+        paidAt: newPaid > 0 ? cashAt : null,
       },
     });
     invoice.amountFcfa = newAmount;
@@ -380,9 +388,11 @@ export async function reverseExamReclamationRefund(params: {
         invoiceId: invoice.id,
         amountFcfa: restoreFcfa,
         recordedById,
+        paidAt: cashAt,
         note: "Annulation réclamation examens",
       },
     });
+    notes = appendPaidExamKindMarker(notes, kind, cashAt);
     totalRestoredFcfa += restoreFcfa;
   }
 

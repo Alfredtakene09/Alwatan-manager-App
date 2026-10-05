@@ -309,9 +309,12 @@ async function submitRegisterOperation() {
   }
 }
 
+const KEEP_CURRENT_OPERATION = '__keep__'
+
 const editRow = ref<OperationRow | null>(null)
 const editAmount = ref('')
 const editDate = ref('')
+const editServiceId = ref('')
 const editInterventionId = ref('')
 const openedInterventionId = ref('')
 const operationCatalog = ref<CatalogExam[]>([])
@@ -658,26 +661,65 @@ const editKeepsCustomName = computed(() => {
   )
 })
 
+const operationServices = computed(() => {
+  const byId = new Map<string, string>()
+  for (const item of operationCatalog.value) {
+    const id = item.clinicServiceId?.trim()
+    if (!id || byId.has(id)) continue
+    byId.set(id, item.clinicServiceName?.trim() || 'Service')
+  }
+  return [...byId.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+})
+
+const editOperationOptions = computed(() => {
+  const serviceId = editServiceId.value.trim()
+  if (!serviceId) return operationCatalog.value
+  return operationCatalog.value.filter((item) => item.clinicServiceId === serviceId)
+})
+
+const selectedEditOperation = computed(
+  () => operationCatalog.value.find((item) => item.id === editInterventionId.value) ?? null,
+)
+
 function openEdit(row: OperationRow) {
   const matchedId = matchOperationCatalogId(row)
+  const matched = operationCatalog.value.find((item) => item.id === matchedId)
   editRow.value = row
   editAmount.value = String(row.billedFcfa)
   editDate.value = dateInputValue(row.timestamp)
-  editInterventionId.value = matchedId
-  openedInterventionId.value = matchedId
+  editServiceId.value = matched?.clinicServiceId?.trim() ?? ''
+  editInterventionId.value = matchedId || KEEP_CURRENT_OPERATION
+  openedInterventionId.value = editInterventionId.value
   message.value = ''
+}
+
+function onEditService(id: string) {
+  editServiceId.value = id
+  if (editInterventionId.value === KEEP_CURRENT_OPERATION) {
+    editInterventionId.value = ''
+    return
+  }
+  const chosen = operationCatalog.value.find((item) => item.id === editInterventionId.value)
+  if (chosen && id && chosen.clinicServiceId !== id) {
+    editInterventionId.value = ''
+  }
 }
 
 function onEditIntervention(id: string) {
   editInterventionId.value = id
   const row = editRow.value
   if (!row) return
-  if (id === openedInterventionId.value) {
+  if (id === openedInterventionId.value || id === KEEP_CURRENT_OPERATION) {
     editAmount.value = String(row.billedFcfa)
     return
   }
   const chosen = operationCatalog.value.find((item) => item.id === id)
-  if (chosen) editAmount.value = String(chosen.priceFcfa)
+  if (chosen) {
+    editAmount.value = String(chosen.priceFcfa)
+    if (chosen.clinicServiceId) editServiceId.value = chosen.clinicServiceId
+  }
 }
 
 function closeEdit() {
@@ -686,9 +728,14 @@ function closeEdit() {
 }
 
 const editAmountFcfa = computed(() => Math.max(0, Math.round(Number(editAmount.value) || 0)))
-const canSaveEdit = computed(
-  () => Boolean(editRow.value && editDate.value) && editAmount.value.trim() !== '',
-)
+const canSaveEdit = computed(() => {
+  if (!editRow.value || !editDate.value || editAmount.value.trim() === '') return false
+  const chosen = selectedEditOperation.value
+  if (chosen) {
+    return !editServiceId.value || chosen.clinicServiceId === editServiceId.value
+  }
+  return editInterventionId.value === KEEP_CURRENT_OPERATION && !editServiceId.value
+})
 
 async function submitEdit() {
   const row = editRow.value
@@ -700,15 +747,17 @@ async function submitEdit() {
       row.source === 'bloc'
         ? `/surgeries/${row.id}/billing`
         : `/surgeries/other-operations/${row.id.replace(/^other-/, '')}/billing`
-    const chosen = operationCatalog.value.find((item) => item.id === editInterventionId.value)
+    const chosen = selectedEditOperation.value
     const nameChanged =
       !!chosen &&
       (chosen.id !== row.interventionTypeId ||
         chosen.label.trim().toLowerCase() !== row.intervention.trim().toLowerCase())
+    const clinicServiceId = chosen?.clinicServiceId?.trim() || editServiceId.value.trim()
     await api.patch(path, {
       amountFcfa: editAmountFcfa.value,
       operationDate: editDate.value,
       ...(nameChanged && chosen ? { interventionTypeId: chosen.id } : {}),
+      ...(clinicServiceId ? { clinicServiceId } : {}),
     })
     closeEdit()
     message.value = 'Opération modifiée.'
@@ -1283,8 +1332,8 @@ onMounted(load)
                           v-if="canEditOperations"
                           type="button"
                           class="st-btn st-btn--edit"
-                          :title="uiText('Modifier le montant et la date')"
-                          :aria-label="uiText('Modifier le montant et la date')"
+                          :title="uiText('Modifier le service, l’opération, le montant et la date')"
+                          :aria-label="uiText('Modifier le service, l’opération, le montant et la date')"
                           @click="openEdit(row)"
                         >
                           <Pencil :size="15" />
@@ -1371,13 +1420,27 @@ onMounted(load)
       @close="closeEdit"
     >
       <UiSelect
+        :model-value="editServiceId"
+        label="Service"
+        :disabled="!operationServices.length"
+        @update:model-value="onEditService"
+      >
+        <option value="">Choisir un service</option>
+        <option v-for="service in operationServices" :key="service.id" :value="service.id">
+          {{ clinicServiceText(service.name) }}
+        </option>
+      </UiSelect>
+      <UiSelect
         :model-value="editInterventionId"
-        label="Opération"
+        label="Nom de l'opération"
         :disabled="!operationCatalog.length"
         @update:model-value="onEditIntervention"
       >
-        <option v-if="editKeepsCustomName" value="">{{ clinicServiceText(editRow.intervention) }}</option>
-        <option v-for="item in operationCatalog" :key="item.id" :value="item.id">
+        <option value="">Choisir l'opération</option>
+        <option v-if="editKeepsCustomName && !editServiceId" :value="KEEP_CURRENT_OPERATION">
+          {{ clinicServiceText(editRow.intervention) }}
+        </option>
+        <option v-for="item in editOperationOptions" :key="item.id" :value="item.id">
           {{ clinicServiceText(item.label) }}
         </option>
       </UiSelect>
