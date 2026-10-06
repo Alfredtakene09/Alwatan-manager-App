@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { InvoiceStatus, InvoiceType, PatientCategory, UserRole, VisitStatus, type Prisma } from "@prisma/client";
+import { InvoiceStatus, InvoiceType, HospitalizationStatus, PatientCategory, SurgeryStatus, UserRole, VisitStatus, type Prisma } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.js";
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
@@ -9,6 +9,7 @@ import { resolveConsultationBilling, shouldCreateImmediateInvoice } from "../lib
 import {
   aggregateCollectedBetween,
   sumRegisteredPatientsConsultationsFcfa,
+  sumRegisteredPatientsEntriesFcfa,
 } from "../lib/revenue-stats.js";
 import { buildRegistrationSummary } from "../lib/registration-summary.js";
 import {
@@ -575,10 +576,14 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     femalePatients,
     malePatients,
     examPatientsCount,
+    hospitalizationPatientsCount,
+    consultationPatientsCount,
+    surgeryPatientsCount,
     visitsToday,
     externalPatientsToday,
     collectedToday,
     registeredConsultationsFcfa,
+    registeredEntriesFcfa,
     myExpensesToday,
   ] = await Promise.all([
     prisma.patient.count({
@@ -587,6 +592,32 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     prisma.patient.count({ where: { ...patientPeriodScope, gender: "F" } }),
     prisma.patient.count({ where: { ...patientPeriodScope, gender: "M" } }),
     prisma.patient.count({ where: patientsWhoReceivedExamsWhere(patientPeriodScope) }),
+    prisma.patient.count({
+      where: {
+        ...patientPeriodScope,
+        visits: {
+          some: {
+            hospitalization: { is: { status: { not: HospitalizationStatus.CANCELLED } } },
+          },
+        },
+      },
+    }),
+    prisma.patient.count({
+      where: {
+        ...patientPeriodScope,
+        visits: { some: { consultation: { isNot: null } } },
+      },
+    }),
+    prisma.patient.count({
+      where: {
+        ...patientPeriodScope,
+        visits: {
+          some: {
+            surgeryCase: { is: { status: { not: SurgeryStatus.CANCELLED } } },
+          },
+        },
+      },
+    }),
     scopedReceptionistId
       ? prisma.visit.count({
           where: {
@@ -630,6 +661,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     }),
     aggregateCollectedBetween(rangeStart, rangeEndExclusive, revenueOptions),
     sumRegisteredPatientsConsultationsFcfa(patientPeriodScope, rangeStart, rangeEndExclusive),
+    sumRegisteredPatientsEntriesFcfa(patientPeriodScope, rangeStart, rangeEndExclusive),
     personalCashScope && !service && !doctorId
       ? sumExpensesForCashierBetween(user.id, rangeStart, rangeEndExclusive)
       : Promise.resolve({ totalFcfa: 0, count: 0, rows: [] }),
@@ -642,6 +674,9 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     femalePatients,
     malePatients,
     examPatientsCount,
+    hospitalizationPatientsCount,
+    consultationPatientsCount,
+    surgeryPatientsCount,
     visitsToday,
     externalPatientsToday,
     revenueTodayFcfa: collectedToday.totalFcfa,
@@ -649,6 +684,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     netTodayFcfa,
     isPersonalScope: personalCashScope,
     consultationsTodayFcfa: registeredConsultationsFcfa,
+    entriesTodayFcfa: registeredEntriesFcfa,
     examsTodayFcfa: collectedToday.examsFcfa,
     surgeryTodayFcfa: collectedToday.surgeryFcfa,
     hospitalizationTodayFcfa: collectedToday.hospitalizationFcfa,

@@ -388,6 +388,35 @@ export async function loadCollectedSlicesBetween(
   return [...fromPayments, ...fromLegacy];
 }
 
+function paidInvoiceAmountFcfa(invoice: {
+  amountFcfa: number;
+  paidAmountFcfa: number | null;
+  status: InvoiceStatus;
+}) {
+  const paid = Math.max(0, Number(invoice.paidAmountFcfa) || 0);
+  if (paid > 0) return paid;
+  if (invoice.status === InvoiceStatus.PAID) return Math.max(0, invoice.amountFcfa);
+  return 0;
+}
+
+/** Encaissements des patients inscrits sur [from, to) : consultations, examens, opérations, hospitalisation. */
+export async function sumRegisteredPatientsEntriesFcfa(
+  patientWhere: Prisma.PatientWhereInput,
+  from: Date,
+  to: Date,
+) {
+  const invoices = await prisma.invoice.findMany({
+    where: {
+      type: { in: COLLECTED_INVOICE_TYPES },
+      status: { not: InvoiceStatus.CANCELLED },
+      createdAt: { gte: from, lt: to },
+      patient: { AND: [patientWhere, countedPatientWhere()] },
+    },
+    select: { amountFcfa: true, paidAmountFcfa: true, status: true },
+  });
+  return invoices.reduce((sum, invoice) => sum + paidInvoiceAmountFcfa(invoice), 0);
+}
+
 /**
  * Consultations encaissées des patients inscrits sur [from, to).
  * N'inclut pas le retour d'un patient inscrit un autre jour : ce versement
@@ -407,12 +436,7 @@ export async function sumRegisteredPatientsConsultationsFcfa(
     },
     select: { amountFcfa: true, paidAmountFcfa: true, status: true },
   });
-  return invoices.reduce((sum, invoice) => {
-    const paid = Math.max(0, Number(invoice.paidAmountFcfa) || 0);
-    if (paid > 0) return sum + paid;
-    if (invoice.status === InvoiceStatus.PAID) return sum + Math.max(0, invoice.amountFcfa);
-    return sum;
-  }, 0);
+  return invoices.reduce((sum, invoice) => sum + paidInvoiceAmountFcfa(invoice), 0);
 }
 
 export async function aggregateCollectedBetween(

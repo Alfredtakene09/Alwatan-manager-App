@@ -5,7 +5,6 @@ import {
   LayoutDashboard,
   Search,
   UserPlus,
-  Users,
   CalendarDays,
   RotateCcw,
   Pencil,
@@ -16,6 +15,8 @@ import {
   CircleDollarSign,
   Clock,
   BedDouble,
+  FlaskConical,
+  Scissors,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal, showValidationErrorModal } from '@/lib/api-modal-helper'
@@ -81,12 +82,17 @@ type ReceptionStats = {
   registeredToday: number
   femalePatients: number
   malePatients: number
+  examPatientsCount?: number
+  hospitalizationPatientsCount?: number
+  consultationPatientsCount?: number
+  surgeryPatientsCount?: number
   visitsToday: number
   revenueTodayFcfa: number
   expensesTodayFcfa?: number
   netTodayFcfa?: number
   isPersonalScope?: boolean
   consultationsTodayFcfa?: number
+  entriesTodayFcfa?: number
   examsTodayFcfa?: number
   surgeryTodayFcfa?: number
   hospitalizationTodayFcfa?: number
@@ -802,13 +808,9 @@ const dashboardStats = computed(() => {
   ]
     .filter(Boolean)
     .join(' · ')
-  const revenueLabel = stats.value.isPersonalScope
-    ? serviceHint
-      ? translateTemplate('Mes encaissements · {service}', { service: serviceHint })
-      : 'Mes encaissements (jour)'
-    : revenueScope
-      ? translateTemplate('Recettes · {scope}', { scope: revenueScope })
-      : 'Recettes du jour'
+  const revenueLabel = revenueScope
+    ? translateTemplate('Recettes · {scope}', { scope: revenueScope })
+    : 'Recettes du jour'
   return [
   {
     id: 'today',
@@ -819,46 +821,47 @@ const dashboardStats = computed(() => {
         })
       : translateTemplate('Inscrits {period}', { period: periodLabel }),
     value: stats.value.registeredToday,
-    hint: translateTemplate('{n} passage(s) enregistré(s)', { n: stats.value.visitsToday }),
+    hint: translateTemplate('{n} passage(s)', { n: stats.value.visitsToday }),
     icon: CalendarDays,
     variant: 'amber' as const,
   },
   {
-    id: 'female',
-    label: serviceHint
-      ? translateTemplate('Féminin · {service}', { service: serviceHint })
-      : 'Féminin',
-    value: stats.value.femalePatients,
-    hint: 'Dossiers patients',
-    icon: Users,
+    id: 'lab',
+    label: 'Laboratoire',
+    value: stats.value.examPatientsCount ?? 0,
+    hint: 'Patients',
+    icon: FlaskConical,
+    variant: 'teal' as const,
+  },
+  {
+    id: 'hospitalization',
+    label: 'Hospitalisation',
+    value: stats.value.hospitalizationPatientsCount ?? 0,
+    hint: 'Patients',
+    icon: BedDouble,
     variant: 'rose' as const,
   },
   {
-    id: 'male',
-    label: serviceHint
-      ? translateTemplate('Masculin · {service}', { service: serviceHint })
-      : 'Masculin',
-    value: stats.value.malePatients,
-    hint: 'Dossiers patients',
-    icon: Users,
+    id: 'consultations',
+    label: 'Consultations',
+    value: stats.value.consultationPatientsCount ?? 0,
+    hint: 'Patients',
+    icon: Stethoscope,
     variant: 'blue' as const,
+  },
+  {
+    id: 'surgery',
+    label: 'Opérations',
+    value: stats.value.surgeryPatientsCount ?? 0,
+    hint: 'Patients',
+    icon: Scissors,
+    variant: 'amber' as const,
   },
   {
     id: 'revenue',
     label: revenueLabel,
-    value: formatFcfaCompact(
-      stats.value.isPersonalScope
-        ? (stats.value.netTodayFcfa ?? stats.value.revenueTodayFcfa)
-        : (stats.value.consultationsTodayFcfa ?? 0),
-    ),
-    hint: stats.value.isPersonalScope
-      ? stats.value.expensesTodayFcfa
-        ? translateTemplate('Brut {gross} − dépenses {expenses}', {
-            gross: formatFcfaCompact(stats.value.revenueTodayFcfa),
-            expenses: formatFcfaCompact(stats.value.expensesTodayFcfa ?? 0),
-          })
-        : 'Uniquement vos encaissements'
-      : 'Consultations des patients inscrits (hors associés)',
+    value: formatFcfaCompact(stats.value.entriesTodayFcfa ?? stats.value.consultationsTodayFcfa ?? 0),
+    hint: 'Consultations, examens, opérations, hospitalisation',
     icon: Banknote,
     variant: 'violet' as const,
   },
@@ -1751,7 +1754,7 @@ onUnmounted(clearAlert)
           :class="`dash-stat--${item.variant}`"
         >
           <div class="dash-stat__icon">
-            <component :is="item.icon" :size="18" />
+            <component :is="item.icon" :size="14" />
           </div>
           <div class="dash-stat__body">
             <span class="dash-stat__label">{{ uiText(item.label) }}</span>
@@ -2365,8 +2368,8 @@ onUnmounted(clearAlert)
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.625rem;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.4rem;
   margin: 0;
 }
 
@@ -2378,8 +2381,8 @@ onUnmounted(clearAlert)
 .dash-stat {
   display: flex;
   align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.55rem 0.65rem;
+  gap: 0.35rem;
+  padding: 0.35rem 0.45rem;
   min-width: 0;
   border-radius: var(--radius-sm);
   overflow: hidden;
@@ -2389,9 +2392,9 @@ onUnmounted(clearAlert)
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 10px;
+  width: 1.45rem;
+  height: 1.45rem;
+  border-radius: 8px;
   flex-shrink: 0;
 }
 
@@ -2427,18 +2430,18 @@ onUnmounted(clearAlert)
 
 .dash-stat__label {
   display: block;
-  font-size: 0.6875rem;
+  font-size: 0.625rem;
   font-weight: 600;
   color: var(--text-muted);
-  line-height: 1.2;
+  line-height: 1.15;
 }
 
 .dash-stat__value {
   display: flex;
   align-items: baseline;
-  gap: 0.2rem;
-  margin-top: 0.15rem;
-  font-size: var(--density-stat-value);
+  gap: 0.15rem;
+  margin-top: 0.05rem;
+  font-size: 1rem;
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.1;
@@ -2915,7 +2918,7 @@ onUnmounted(clearAlert)
 
 @media (max-width: 1100px) {
   .stats-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
   .table-toolbar__title h3 {
@@ -2983,12 +2986,12 @@ onUnmounted(clearAlert)
   }
 
   .stats-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: 0.5rem;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 0.3rem;
   }
 
   .dash-stat__value {
-    font-size: 1.125rem;
+    font-size: 0.9rem;
   }
 
   .dashboard-body {

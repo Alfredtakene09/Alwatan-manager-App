@@ -560,6 +560,7 @@ export default {
     "Date d'inscription": "Date d'inscription",
     Féminin: 'Féminin',
     Masculin: 'Masculin',
+    'Personnes enregistrées': 'Personnes enregistrées',
     'Féminin / Masculin': 'Féminin / Masculin',
     'Patients examens': 'Patients examens',
     'Ont reçu des examens': 'Ont reçu des examens',

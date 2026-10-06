@@ -544,6 +544,7 @@ export default {
     "Date d'inscription": 'تاريخ التسجيل',
     Féminin: 'أنثى',
     Masculin: 'ذكر',
+    'Personnes enregistrées': 'الأشخاص المسجلون',
     'Féminin / Masculin': 'أنثى / ذكر',
     'Patients examens': 'مرضى الفحوصات',
     'Ont reçu des examens': 'تلقّوا فحوصات',
