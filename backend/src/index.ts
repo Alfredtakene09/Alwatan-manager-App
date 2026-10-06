@@ -53,6 +53,7 @@ import { getLanIpv4, getTailscaleIpv4, isPrivateLanOrigin, parseCorsOrigins } fr
 import { prisma, prismaRaw } from "./lib/db.js";
 import { assertJwtSecret } from "./lib/auth.js";
 import { startDataBackupScheduler } from "./lib/data-backup.js";
+import { startHospitalizationReleaseScheduler } from "./lib/hospitalization-auto-release.js";
 import {
   ensureDbDeleteGuard,
   ExternalDataDeleteBlockedError,
@@ -487,3 +488,5 @@ function startServer() {
 startServer();
 /** Sauvegarde auto (SQL + uploads) toutes les 2 h — manifests prêts pour cloud. */
 startDataBackupScheduler({ projectRoot });
+/** Libère les salles des séjours soldés dont la date de fin est atteinte. */
+startHospitalizationReleaseScheduler();

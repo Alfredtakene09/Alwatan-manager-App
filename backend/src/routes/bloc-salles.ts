@@ -7,11 +7,13 @@ import {
   enrichRoomsWithStatus,
   prepareHospitalizationRooms,
 } from "../lib/hospitalization-rooms.js";
+import { releaseSettledHospitalizationsThrottled } from "../lib/hospitalization-auto-release.js";
 
 const router = Router();
 router.use(requireAuth, requireModule("bloc-salles"));
 
 router.get("/", async (_req, res) => {
+  await releaseSettledHospitalizationsThrottled();
   await prepareHospitalizationRooms(prisma);
 
   const [rooms, surgeries, hospitalizations, paidInvoices] = await Promise.all([

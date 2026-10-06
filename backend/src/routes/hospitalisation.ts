@@ -33,6 +33,7 @@ import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
 import { ageUnitSchema, refinePatientAge } from "../lib/patient-age.js";
 import { deleteHospitalizationAndRefund } from "../lib/delete-hospitalization.js";
+import { releaseSettledHospitalizationsThrottled } from "../lib/hospitalization-auto-release.js";
 import { requireAuth, requireModule, requireManageAccess, requireUiAction } from "../middleware/auth.js";
 import { canAccessModule, type AppUserRole } from "../lib/roles.js";
 
@@ -238,6 +239,7 @@ router.get("/", async (req, res) => {
     await syncMissingHospitalizationReferrals(prisma, patientWhere);
     await syncHospitalizationReferralsFromPaymentQueue(prisma, patientWhere);
 
+    await releaseSettledHospitalizationsThrottled();
     await prepareHospitalizationRooms(prisma);
 
     const visitId =
