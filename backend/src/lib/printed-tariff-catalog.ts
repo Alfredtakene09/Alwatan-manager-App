@@ -4,8 +4,13 @@ import { examCatalogServiceScopeKey, isKinesitherapieServiceName } from "./clini
 import { findDuplicateExamCatalogItem, findDuplicateIntervention } from "./duplicate-detection.js";
 import { ensureKinesitherapieCatalogItems } from "./kinesitherapie-catalog.js";
 
-/** Suffixe catalogue du 2ᵉ tarif (patients en provenance d’émiraties). */
+/**
+ * Ancien suffixe du 2ᵉ tarif « émiraties » — plus proposé ni affiché.
+ * Conservé pour repérer / désactiver les lignes déjà en base.
+ */
 export const PRINTED_TARIFF_EMIRATES_SUFFIX = " (émiraties)";
+
+const EMIRATES_LABEL_SUFFIX_RE = /\s*\((?:émiraties|emirates|الإمارات)\)\s*$/iu;
 
 /** Services créés s’ils n’existent pas encore (additif). */
 export const PRINTED_TARIFF_SERVICES = ["Orthopédie", "Kinésithérapie"] as const;
@@ -109,20 +114,46 @@ type AmountVariant = {
   amountFcfa: number;
 };
 
+/** Un seul tarif catalogue par acte (sans variante « émiraties »). */
 function amountVariants(
   code: string,
   label: string,
   standardFcfa: number,
-  emiratesFcfa: number,
+  _emiratesFcfa: number,
 ): AmountVariant[] {
-  return [
-    { code, label, amountFcfa: standardFcfa },
-    {
-      code: `${code}-EM`,
-      label: `${label}${PRINTED_TARIFF_EMIRATES_SUFFIX}`,
-      amountFcfa: emiratesFcfa,
+  return [{ code, label, amountFcfa: standardFcfa }];
+}
+
+/** Désactive les anciens actes / examens encore libellés « (émiraties) ». */
+async function deactivateEmiratesTariffVariants() {
+  await prisma.interventionType.updateMany({
+    where: {
+      active: true,
+      OR: [
+        { code: { endsWith: "-EM" } },
+        { label: { endsWith: PRINTED_TARIFF_EMIRATES_SUFFIX } },
+        { label: { endsWith: " (Emirates)" } },
+        { label: { endsWith: " (الإمارات)" } },
+      ],
     },
-  ];
+    data: { active: false },
+  });
+  await prisma.examCatalogItem.updateMany({
+    where: {
+      active: true,
+      OR: [
+        { code: { endsWith: "-EM" } },
+        { label: { endsWith: PRINTED_TARIFF_EMIRATES_SUFFIX } },
+        { label: { endsWith: " (Emirates)" } },
+        { label: { endsWith: " (الإمارات)" } },
+      ],
+    },
+    data: { active: false },
+  });
+}
+
+export function stripEmiratesTariffSuffix(label: string): string {
+  return label.replace(EMIRATES_LABEL_SUFFIX_RE, "").trim();
 }
 
 async function findClinicServiceId(names: readonly string[]): Promise<string | null> {
@@ -304,12 +335,13 @@ async function ensureExamVariant(input: {
 /**
  * Injecte la liste tarifaire papier (gynéco, ortho, radio, kiné).
  * Additif : n’écrase jamais un prix / libellé déjà en base.
- * Le tarif émiraties est un 2ᵉ acte sélectionnable (`… (émiraties)`).
+ * Les anciennes variantes « (émiraties) » sont désactivées.
  */
 export async function ensurePrintedTariffCatalogItems() {
   await ensurePrintedTariffServices();
   // Après création du service kiné : garantir la séance par défaut avant la consultation tarifée.
   await ensureKinesitherapieCatalogItems();
+  await deactivateEmiratesTariffVariants();
 
   let created = 0;
   const blocServiceId = await findBlocOperatoireServiceId();

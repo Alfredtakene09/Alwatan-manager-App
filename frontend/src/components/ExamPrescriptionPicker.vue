@@ -20,9 +20,10 @@ import {
   buildCartEntriesForSelectedFields,
   countPrescriptionSelectionUnits,
   extractSelectedFieldsFromCart,
+  extractSelectedFormLabels,
+  findCartEntriesForPanel,
   getPrescriptionCheckGroups,
   getPrescriptionCheckItems,
-  isPanelLabelExcluded,
   isPanelLabelInCart,
   normalizeLabLabelKey,
   type LabPrescriptionCheckGroup,
@@ -34,7 +35,8 @@ const props = defineProps<{
   kind: ExamKindSlug
   modelValue: string[]
   hospitalisationDays?: number | null
-  /** En mode ajout : masquer les examens déjà prescrits sur le dossier. */
+  /** En mode ajout : examens déjà prescrits. L’examen entier est masqué ;
+   *  un examen partiel reste visible, champs déjà enregistrés verrouillés. */
   excludeLabels?: string[]
   /** Filtre le catalogue selon le médecin (service + Laboratoire/Hospitalisation). */
   doctorId?: string | null
@@ -75,6 +77,9 @@ const cart = computed({
   get: () => props.modelValue,
   set: (value: string[]) => emit('update:modelValue', value),
 })
+
+/** Lignes déjà sur le dossier au montage. « Tout cocher » ne les remplace pas par le tarif général. */
+const initialSavedLabels = props.modelValue.slice()
 
 const kindLabel = computed(() => {
   void localeCode.value
@@ -145,8 +150,22 @@ const catalog = computed(() => {
   return catalogItems.value
 })
 
+/** Examen entier déjà prescrit (tarif général) : rien à ajouter champ par champ. */
+function isExamFullyPrescribed(panelLabel: string): boolean {
+  return findCartEntriesForPanel(props.excludeLabels ?? [], panelLabel).some(
+    (entry) => extractSelectedFormLabels(entry) === null,
+  )
+}
+
+/** Champs déjà enregistrés : cochés et non retirables en mode ajout. */
+function lockedFieldKeys(panelLabel: string, groups: LabPrescriptionCheckGroup[]): string[] {
+  if (isExamFullyPrescribed(panelLabel)) return []
+  const parsed = extractSelectedFieldsFromCart(props.excludeLabels ?? [], panelLabel, groups)
+  return parsed ?? []
+}
+
 const selectableExams = computed(() =>
-  catalog.value.filter((exam) => !isPanelLabelExcluded(props.excludeLabels, exam.label)),
+  catalog.value.filter((exam) => !isExamFullyPrescribed(exam.label)),
 )
 
 const availableExams = computed(() =>
@@ -325,6 +344,7 @@ const chipGroups = computed(() => {
       checkItems: LabPrescriptionCheckItem[]
       allCheckItems: LabPrescriptionCheckItem[]
       selectedForms: string[]
+      lockedForms: string[]
     }>
   }> = []
   for (const [category, exams] of groupedSelectable.value) {
@@ -339,13 +359,19 @@ const chipGroups = computed(() => {
         const checkGroups = filterCheckGroupsByQuery(allGroups, q, matchedByName)
         const checkItems = flattenGroupFields(checkGroups)
         const parsedFields = extractSelectedFieldsFromCart(cart.value, exam.label, allGroups)
+        const lockedForms = lockedFieldKeys(exam.label, allGroups)
         // Clés `item.key` (pas les libellés) — évite de cocher Colour/Blood dans plusieurs sections.
-        const selectedForms = !parsedFields
-          ? isPanelLabelInCart(cart.value, exam.label)
-            ? allCheckItems.map((item) => item.key)
-            : []
-          : parsedFields
-        const selected = isPanelLabelInCart(cart.value, exam.label)
+        const selectedForms = [
+          ...new Set([
+            ...lockedForms,
+            ...(!parsedFields
+              ? isPanelLabelInCart(cart.value, exam.label)
+                ? allCheckItems.map((item) => item.key)
+                : []
+              : parsedFields),
+          ]),
+        ]
+        const selected = lockedForms.length > 0 || isPanelLabelInCart(cart.value, exam.label)
         // Sans formulaires (ex. Odonto) : sélection globale = case active.
         const allSelected =
           selected &&
@@ -372,6 +398,7 @@ const chipGroups = computed(() => {
           checkItems,
           allCheckItems,
           selectedForms,
+          lockedForms,
         }
       }),
     })
@@ -582,7 +609,11 @@ function setPanelForms(panelLabel: string, fieldKeys: string[]) {
     } as CatalogExam)
   const groups = checkGroupsForExam(catalogExam)
   const allItems = flattenGroupFields(groups)
-  const selected = new Set(fieldKeys.map((key) => key.trim()).filter(Boolean))
+  const locked = lockedFieldKeys(panelLabel, groups)
+  const lockedSet = new Set(locked)
+  const selected = new Set(
+    [...fieldKeys, ...locked].map((key) => key.trim()).filter(Boolean),
+  )
   const allKnown = allItems.map((item) => item.key)
   const knownSet = new Set(allKnown)
   const allFormFieldsSelected =
@@ -599,15 +630,20 @@ function setPanelForms(panelLabel: string, fieldKeys: string[]) {
     }
   }
 
+  const hadSavedFieldLines = findCartEntriesForPanel(initialSavedLabels, panelLabel).some(
+    (entry) => extractSelectedFormLabels(entry) !== null,
+  )
+  const keepFieldLines = locked.length > 0 || hadSavedFieldLines
+
   let keys = [...selected]
-  if (!allFormFieldsSelected) {
+  if (!allFormFieldsSelected || keepFieldLines) {
     const blocked = keys.filter((key) => {
-      if (namedSectionFieldKeys.has(key)) return false
+      if (lockedSet.has(key) || namedSectionFieldKeys.has(key)) return false
       const item = allItems.find((entry) => entry.key === key)
       return item ? !item.hasUnitPrice : false
     })
     keys = keys.filter((key) => {
-      if (namedSectionFieldKeys.has(key)) return true
+      if (lockedSet.has(key) || namedSectionFieldKeys.has(key)) return true
       const item = allItems.find((entry) => entry.key === key)
       return item?.hasUnitPrice === true
     })
@@ -620,7 +656,12 @@ function setPanelForms(panelLabel: string, fieldKeys: string[]) {
     fieldNotice.value = ''
   }
 
-  const nextEntries = buildCartEntriesForSelectedFields(panelLabel, groups, keys)
+  // En ajout, le panier ne contient que les champs nouveaux : le serveur les fusionne
+  // aux lignes déjà facturées et encaisse leur tarif, pas le tarif général.
+  const keysForCart = locked.length ? keys.filter((key) => !lockedSet.has(key)) : keys
+  const nextEntries = buildCartEntriesForSelectedFields(panelLabel, groups, keysForCart, {
+    keepFieldLines,
+  })
   const without = cart.value.filter((item) => !isPanelLabelInCart([item], panelLabel))
   cart.value = [...without, ...nextEntries]
   // Garder le panneau ouvert pour cocher plusieurs champs sans re-développer.
@@ -637,13 +678,15 @@ function currentSelectedFields(panelLabel: string, allItems: LabPrescriptionChec
       priceFcfa: 0,
     } as CatalogExam)
   const groups = checkGroupsForExam(catalogExam)
+  const locked = lockedFieldKeys(panelLabel, groups)
   const parsed = extractSelectedFieldsFromCart(cart.value, panelLabel, groups)
-  if (parsed === null) {
-    return isPanelLabelInCart(cart.value, panelLabel)
-      ? allItems.map((item) => item.key)
-      : []
-  }
-  return parsed
+  const fromCart =
+    parsed === null
+      ? isPanelLabelInCart(cart.value, panelLabel)
+        ? allItems.map((item) => item.key)
+        : []
+      : parsed
+  return [...new Set([...locked, ...fromCart])]
 }
 
 function toggleFormItem(panelLabel: string, item: LabPrescriptionCheckItem) {
@@ -656,6 +699,8 @@ function toggleFormItem(panelLabel: string, item: LabPrescriptionCheckItem) {
       category: 'Laboratoire',
       priceFcfa: 0,
     } as CatalogExam)
+  const groups = checkGroupsForExam(catalogExam)
+  if (lockedFieldKeys(panelLabel, groups).includes(item.key)) return
   const allItems = checkItemsForExam(catalogExam)
   const current = currentSelectedFields(panelLabel, allItems)
   if (current.includes(item.key)) {
@@ -996,6 +1041,10 @@ function onCatalogInvalidate() {
                         type="checkbox"
                         :checked="isSectionFullySelected(exam.selectedForms, section)"
                         :indeterminate="isSectionPartiallySelected(exam.selectedForms, section)"
+                        :disabled="
+                          section.fields.length > 0 &&
+                          section.fields.every((item) => exam.lockedForms.includes(item.key))
+                        "
                         @change="toggleSectionForms(exam.label, section)"
                       />
                       <span>{{ examNameText(section.title) }}</span>
@@ -1012,18 +1061,23 @@ function onCatalogInvalidate() {
                       <li v-for="item in section.fields" :key="item.key">
                         <label
                           class="exam-picker__form-row"
-                          :class="{ 'exam-picker__form-row--blocked': !item.hasUnitPrice }"
+                          :class="{
+                            'exam-picker__form-row--blocked': !item.hasUnitPrice,
+                            'exam-picker__form-row--locked': exam.lockedForms.includes(item.key),
+                          }"
                           :title="
-                            item.hasUnitPrice
-                              ? undefined
-                              : uiText(NO_UNIT_PRICE_MESSAGE)
+                            exam.lockedForms.includes(item.key)
+                              ? uiText('Ce champ est déjà enregistré sur le dossier.')
+                              : item.hasUnitPrice
+                                ? undefined
+                                : uiText(NO_UNIT_PRICE_MESSAGE)
                           "
                           @click="onUnpricedFieldClick(item)"
                         >
                           <input
                             type="checkbox"
                             :checked="exam.selectedForms.includes(item.key)"
-                            :disabled="!item.hasUnitPrice"
+                            :disabled="!item.hasUnitPrice || exam.lockedForms.includes(item.key)"
                             @change="toggleFormItem(exam.label, item)"
                           />
                           <span>{{ examNameText(item.label) }}</span>
@@ -1785,6 +1839,11 @@ function onCatalogInvalidate() {
 .exam-picker__form-row--blocked:hover {
   background: #f8fafc;
   border-color: var(--border);
+}
+
+.exam-picker__form-row--locked {
+  cursor: default;
+  background: #f1f5f9;
 }
 
 .exam-picker__field-notice {

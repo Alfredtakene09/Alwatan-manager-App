@@ -45,7 +45,7 @@ const phoneHint = computed(() => {
   const digits = phone.value.replace(/\D/g, '')
   if (!phone.value.trim()) return ''
   if (digits.length < 6) {
-    return uiText('Au moins 6 chiffres requis pour valider.')
+    return uiText('Si renseigné : au moins 6 chiffres (optionnel).')
   }
   return ''
 })

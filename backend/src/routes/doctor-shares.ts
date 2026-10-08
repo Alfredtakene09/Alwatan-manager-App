@@ -173,13 +173,16 @@ const settleConsultCashSchema = z.object({
 router.post("/settle-consultations-cash", requireDirection, async (req, res) => {
   try {
     const body = settleConsultCashSchema.parse(req.body);
-    const created = await prisma.$transaction((tx) =>
+    const result = await prisma.$transaction((tx) =>
       settleConsultationCash(tx, {
         settledById: req.user!.id,
         items: body.items,
       }),
     );
-    return res.status(201).json({ count: created.length });
+    return res.status(201).json({
+      count: result.created.length,
+      alreadySettled: result.alreadySettled,
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: "Données invalides." });

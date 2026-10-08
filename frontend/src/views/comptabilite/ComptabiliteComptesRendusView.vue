@@ -23,7 +23,7 @@ const sections = computed(() => {
   return [
   {
     to: '/comptabilite/en-attente-paiement',
-    label: uiText('En attente de paiement'),
+    label: uiText('Examens en attente de paiement'),
     description: uiText('Examens prescrits par les médecins'),
     icon: Clock,
     countKey: 'labPending' as const,

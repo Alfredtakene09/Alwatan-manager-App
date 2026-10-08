@@ -1374,11 +1374,15 @@ router.get("/", async (_req, res) => {
   return res.json({ products, patients });
 });
 
-/** Ordonnances médecin en attente de dispensation / encaissement. */
+const ORDONNANCE_PENDING_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Ordonnances médecin en attente, envoyées depuis moins de 24 h. */
 router.get("/ordonnances-pending", async (req, res) => {
   const q = String(req.query.q ?? "").trim();
+  const sentSince = new Date(Date.now() - ORDONNANCE_PENDING_WINDOW_MS);
   const consultations = await prisma.consultation.findMany({
     where: {
+      updatedAt: { gte: sentSince },
       clinicalNotes: { contains: `${PHARMACY_ORDONNANCE_PREFIX} : ` },
       visit: {
         prescriptions: { none: {} },
@@ -1446,7 +1450,8 @@ router.get("/ordonnances-pending", async (req, res) => {
         lines,
       };
     })
-    .filter((row) => row.lines.length > 0);
+    .filter((row) => row.lines.length > 0)
+    .filter((row) => row.prescribedAt >= sentSince);
 
   const products = productIds.size
     ? await prisma.product.findMany({

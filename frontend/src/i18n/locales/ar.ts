@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   common: {
     logout: 'تسجيل الخروج',
     openMenu: 'فتح القائمة',
@@ -464,6 +464,11 @@ export default {
     'Net payé': 'صافي المدفوع',
     'Payé le': 'تاريخ الدفع',
     "Détail de l'encaissement": 'تفاصيل التحصيل',
+    'Examens ajoutés — à encaisser': 'بنود معدّلة — للتحصيل',
+    'Le médecin a modifié ces lignes après le paiement. Seul l\'écart de prix reste à encaisser.':
+      'عدّل الطبيب هذه البنود بعد الدفع. فرق السعر فقط ما زال للتحصيل.',
+    'Avoir — examens retirés': 'رصيد — فحوصات محذوفة',
+    'Reste à encaisser': 'المتبقي للتحصيل',
     Paiement: 'الدفع',
     'Montant brut': 'المبلغ الإجمالي',
     'Aucun examen': 'لا فحص',
@@ -579,6 +584,8 @@ export default {
     'Livre journal et historique des journées': 'دفتر اليومية وسجل الأيام',
     'Dossiers patients': 'ملفات المرضى',
     'Recettes du jour': 'إيرادات اليوم',
+    'Part des médecins': 'حصة الأطباء',
+    'Consultations et opérations': 'الاستشارات والعمليات',
     'Mes encaissements (jour)': 'مقبوضاتي (اليوم)',
     'Se connecter': 'دخول',
     Envoyer: 'إرسال',
@@ -1172,6 +1179,7 @@ export default {
       'حصّل حسب النوع، أو أكّد الكل دفعة واحدة في أسفل النافذة',
     'Faites défiler pour voir tous les examens et saisir les réductions par type':
       'مرّر لعرض كل الفحوصات وإدخال التخفيضات حسب النوع',
+    'Faites défiler pour voir tous les examens': 'مرّر لعرض كل الفحوصات',
     "L'hospitalisation est gérée via le bouton dédié dans la liste (attribution de salle et admission).":
       'يُدار الاستشفاء عبر الزر المخصص في القائمة (تعيين الغرفة والقبول).',
     'Aucun examen facturable trouvé pour ce dossier.': 'لا يوجد فحص قابل للفوترة في هذا الملف.',
@@ -1568,6 +1576,12 @@ export default {
     "Modifier l'opération": 'تعديل العملية',
     'Modifier le montant et la date': 'تعديل المبلغ والتاريخ',
     "Date de l'opération": 'تاريخ العملية',
+    "Date d'enregistrement": 'تاريخ التسجيل',
+    'Cette date sert aux filtres de la liste (modifiée = date du jour par défaut).':
+      'هذا التاريخ يُستخدم لفلاتر القائمة (عند التعديل: تاريخ اليوم افتراضياً).',
+    'Cette date s’affiche dans la colonne Date et sert aux filtres.':
+      'هذا التاريخ يظهر في عمود التاريخ ويُستخدم للفلاتر.',
+    'modifié {date}': 'معدّل {date}',
     'Déjà encaissé : {paid}': 'المحصّل سابقًا: {paid}',
     'Opération modifiée.': 'تم تعديل العملية.',
     'Nouvelle opération avec répartition des honoraires': 'عملية جديدة مع توزيع الأتعاب',
@@ -1945,6 +1959,28 @@ export default {
     Écho: 'موجات فوق صوتية',
     Odonto: 'طب أسنان',
     // === LAB_I18N_START ===
+    'Détail du laboratoire': 'تفاصيل المختبر',
+    'Saisi par': 'أدخله',
+    'Aucun résultat saisi pour le moment.': 'لم تُدخل أي نتيجة بعد.',
+    'Impossible de charger le dossier laboratoire.': 'تعذر تحميل ملف المختبر.',
+    'Examens en attente ou déjà terminés au laboratoire':
+      'فحوصات قيد الانتظار أو منتهية في المختبر',
+    'Examens payés, pas encore saisis au laboratoire':
+      'فحوصات مدفوعة لم تُسجَّل بعد في المختبر',
+    'Résultats déjà enregistrés — lecture seule':
+      'نتائج مسجّلة — للعرض فقط',
+    'En attente au laboratoire': 'قيد الانتظار في المختبر',
+    'Terminés au laboratoire': 'منتهية في المختبر',
+    'Lecture seule — le laboratoire n’a pas encore saisi les résultats.':
+      'للعرض فقط — المختبر لم يُدخل النتائج بعد.',
+    'Lecture seule — examens terminés au laboratoire.':
+      'للعرض فقط — فحوصات منتهية في المختبر.',
+    'Examens prescrits — en attente de résultats au laboratoire':
+      'فحوصات موصوفة — بانتظار نتائج المختبر',
+    'Impossible de charger les examens du laboratoire.':
+      'تعذر تحميل فحوصات المختبر.',
+    'Aucun examen terminé au laboratoire pour le moment.':
+      'لا يوجد فحص مختبر منتهٍ في الوقت الحالي.',
     'Dossier laboratoire': 'ملف المختبر',
     'Clôture…': 'جاري الإغلاق…',
     'Clôturer le dossier': 'إغلاق الملف',
@@ -2356,7 +2392,11 @@ export default {
     'Aucune alerte stock': 'لا تنبيهات مخزون',
     'Impossible de charger le catalogue pharmacie.': 'تعذر تحميل كتالوج الصيدلية.',
     'Vente au comptoir et dispensation': 'البيع من الكاونتر والصرف',
+    'Ma recette du jour': 'مقبوضاتي اليوم',
+    '{n} vente(s)': '{n} عملية بيع',
     'Ordonnances médecin': 'وصفات الطبيب',
+    'Aucune ordonnance envoyée depuis moins de 24 h.':
+      'لا وصفة أُرسلت منذ أقل من 24 ساعة.',
     'Clôturer les ventes': 'إغلاق المبيعات',
     'Ventes clôturées': 'أُغلقت المبيعات',
     'Imprimer le cumul': 'طباعة المجموع',
@@ -2830,7 +2870,6 @@ export default {
     'Total consultations': 'إجمالي الاستشارات',
     'Total encaissé': 'إجمالي المحصّل',
     "Suppression d'hospitalisation non autorisée pour la réception.": 'حذف الاستشفاء غير مسموح لموظفي الاستقبال.',
-    "Date d'enregistrement": 'تاريخ التسجيل',
     // === RECEPTION_I18N_END ===
     // === PHARMACY_I18N_END ===
   },
@@ -2940,13 +2979,16 @@ export default {
     Enregistrement: 'التسجيل',
     'Parts médecins à percevoir': 'حصص الأطباء المستحقة',
     'Part médecin': 'حصة الطبيب',
+    'Récapitulatif par médecin': 'ملخص حسب الطبيب',
+    'Parts médecins': 'حصص الأطباء',
+    'Aucune part médecin sur cette période.': 'لا توجد حصة طبيب في هذه الفترة.',
     Patients: 'المرضى',
     'Patient externe': 'مريض خارجي',
     'Examens & paiements': 'الفحوصات والمدفوعات',
     'Paiement examens': 'دفع الفحوصات',
     'En attente de paiement': 'في انتظار الدفع',
     'Examens prescrits à encaisser': 'فحوصات موصوفة بانتظار التحصيل',
-    'Ajouter examen en cours de paiement': 'إضافة فحص قيد الدفع',
+    'Examens en attente de paiement': 'فحوصات في انتظار الدفع',
     'Examens payés': 'فحوصات مدفوعة',
     Réclamations: 'الشكاوى',
     'Suivi hospitalier': 'المتابعة الاستشفائية',
@@ -2965,6 +3007,8 @@ export default {
     'Saisir une opération': 'إدخال عملية',
     'Nom et prix libres — ou choisissez une opération du catalogue ci-dessous.':
       'اسم وسعر حرّان — أو اختر عملية من القائمة أدناه.',
+    'Nom et prix enregistrés sur ce service : proposés à la prochaine recherche et dans les exports.':
+      'يُحفظ الاسم والسعر على هذه الخدمة: يُقترح في البحث التالي وفي التصدير.',
     'Nom de l’opération': 'اسم العملية',
     'Ex. Appendicectomie': 'مثال: استئصال الزائدة',
     'Prix (FCFA)': 'السعر (فرنك)',
@@ -3041,6 +3085,11 @@ export default {
     'Le téléphone doit contenir au moins 6 chiffres.':
       'يجب أن يحتوي رقم الهاتف على 6 أرقام على الأقل.',
     'Au moins 6 chiffres requis pour valider.': 'يلزم 6 أرقام على الأقل للتأكيد.',
+    'Si renseigné : au moins 6 chiffres (optionnel).':
+      'إن وُجد: 6 أرقام على الأقل (اختياري).',
+    'Nom de l’opération (optionnel)': 'اسم العملية (اختياري)',
+    'Champs manquants': 'حقول ناقصة',
+    'Service / opération': 'القسم / العملية',
     'Champs incomplets': 'حقول غير مكتملة',
     'Veuillez corriger les points suivants :': 'يرجى تصحيح النقاط التالية:',
     'Indiquez le nom et le prénom du patient.': 'أدخل اسم المريض واسم العائلة.',
@@ -3221,6 +3270,8 @@ export default {
       'اختر مساعداً أو طبيب تخدير مسجّلاً.',
     'Choisissez le service de l’opération, puis saisissez le prix.':
       'اختر خدمة العملية، ثم أدخل السعر.',
+    'Opération du service (optionnel)': 'عملية الخدمة (اختياري)',
+    'Aucune — saisir le prix librement': 'لا شيء — أدخل السعر بحرية',
     'Opération pour le service « {name} ». Saisissez le prix ci-dessous.':
       'عملية لخدمة « {name} ». أدخل السعر أدناه.',
     'Médecin obligatoire pour « {op} ». L’assistant est facultatif. Les % s’appliquent au montant.':
@@ -3314,25 +3365,15 @@ export default {
     'Aucune maladie enregistrée.': 'لا يوجد مرض مسجّل.',
     'Chargement des maladies…': 'جاري تحميل الأمراض…',
     Césariennes: 'عمليات قيصرية',
-    'Césariennes (émiraties)': 'عمليات قيصرية (الإمارات)',
     'Accouchement naturel': 'ولادة طبيعية',
-    'Accouchement naturel (émiraties)': 'ولادة طبيعية (الإمارات)',
     'Ablations des fibromes': 'استئصال الأورام الليفية',
-    'Ablations des fibromes (émiraties)': 'استئصال الأورام الليفية (الإمارات)',
     'Fracture de la hanche': 'كسر الورك',
-    'Fracture de la hanche (émiraties)': 'كسر الورك (الإمارات)',
     'Fracture du bassin': 'كسر الحوض',
-    'Fracture du bassin (émiraties)': 'كسر الحوض (الإمارات)',
     'Fracture du bras': 'كسر الذراع',
-    'Fracture du bras (émiraties)': 'كسر الذراع (الإمارات)',
     'Fracture de la jambe': 'كسر الساق',
-    'Fracture de la jambe (émiraties)': 'كسر الساق (الإمارات)',
     'Radio en couleur': 'أشعة ملوّنة',
-    'Radio en couleur (émiraties)': 'أشعة ملوّنة (الإمارات)',
     'Radio simple': 'أشعة بسيطة',
-    'Radio simple (émiraties)': 'أشعة بسيطة (الإمارات)',
     'Consultation de kinésithérapie': 'استشارة علاج طبيعي',
-    'Consultation de kinésithérapie (émiraties)': 'استشارة علاج طبيعي (الإمارات)',
     '— Sélectionner —': '— اختر —',
     'Inclure un assistant chirurgie pour cette opération': 'إضافة مساعد جراحة لهذه العملية',
     'Encaisser l’opération': 'تحصيل العملية',

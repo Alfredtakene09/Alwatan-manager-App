@@ -190,8 +190,6 @@ function onPrint(row: TableRow) {
               <th class="simple-table__patient">{{ uiText('Patient') }}</th>
               <th class="simple-table__doctor">{{ uiText('Médecin') }}</th>
               <th class="simple-table__exam">{{ uiText('Examens') }}</th>
-              <th>{{ uiText(isPaidMode ? 'Net payé' : 'Montant') }}</th>
-              <th>{{ uiText(isPaidMode ? 'Payé le' : 'Prescrit le') }}</th>
               <th class="simple-table__actions-head">{{ uiText('Actions') }}</th>
             </tr>
           </thead>
@@ -220,31 +218,8 @@ function onPrint(row: TableRow) {
                   </div>
                 </div>
               </td>
-              <td class="st-amount-col">
-                <div v-if="isPaidMode" class="st-amount-stack">
-                  <strong class="st-amount" dir="ltr">{{ row.gross }}</strong>
-                  <span v-if="row.remaining" class="st-amount-remaining" dir="ltr">
-                    {{ uiText('Reste') }} {{ row.remaining }}
-                  </span>
-                </div>
-                <div v-else-if="row.collected && row.remaining" class="st-amount-stack">
-                  <strong class="st-amount st-amount--due" dir="ltr">
-                    {{ uiText('Reste') }} {{ row.remaining }}
-                  </strong>
-                  <span class="st-amount-collected" dir="ltr">
-                    {{ uiText('Déjà encaissé') }} {{ row.collected }}
-                  </span>
-                </div>
-                <div v-else class="st-amount-stack">
-                  <strong class="st-amount" dir="ltr">{{ row.gross }}</strong>
-                </div>
-              </td>
-              <td>
-                <span class="st-date">{{ row.date }}</span>
-                <span class="st-sub">{{ row.time }}</span>
-              </td>
               <td class="simple-table__actions">
-                <div v-if="isPaidMode" class="st-actions st-actions--wrap">
+                <div v-if="isPaidMode" class="st-actions">
                   <button
                     type="button"
                     class="st-btn st-btn--soft"
@@ -265,7 +240,7 @@ function onPrint(row: TableRow) {
                   </button>
                   <button
                     type="button"
-                    class="st-btn st-btn--accent st-btn--labeled"
+                    class="st-btn st-btn--accent"
                     :title="
                       row.canPrint
                         ? uiText('Réimprimer le reçu')
@@ -280,18 +255,16 @@ function onPrint(row: TableRow) {
                     @click="onPrint(row)"
                   >
                     <Printer :size="15" />
-                    <span>{{ uiText('Réimprimer') }}</span>
                   </button>
                   <button
                     v-if="canDeletePaid"
                     type="button"
-                    class="st-btn st-btn--delete st-btn--labeled"
+                    class="st-btn st-btn--delete"
                     :title="uiText('Supprimer les examens payés')"
                     :aria-label="uiText('Supprimer les examens payés')"
                     @click="emit('delete', row.id)"
                   >
                     <Trash2 :size="15" />
-                    <span>{{ uiText('Supprimer') }}</span>
                   </button>
                 </div>
                 <div v-else class="st-actions">

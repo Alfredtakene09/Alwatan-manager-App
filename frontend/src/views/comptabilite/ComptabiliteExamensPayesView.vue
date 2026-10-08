@@ -20,7 +20,7 @@ import ExamensPayesSubnav from '@/components/comptabilite/ExamensPayesSubnav.vue
 import { activeExamKindsFromBlocks, normalizeLabExamPendingItem, type LabExamLine, type LabExamPendingItem } from '@/lib/lab-exam-pending'
 import { printAllPendingLabExamInvoices } from '@/lib/lab-exam-invoice'
 import { emptyExamReductionsByKind, emptyExamsByKindBlocks } from '@/lib/exam-billing'
-import { CASHIER_PAYMENT_QUEUE_KINDS, EXAM_KIND_LABELS, type ExamKindSlug } from '@/lib/exam-catalog/types'
+import { LAB_BILLABLE_EXAM_KINDS, EXAM_KIND_LABELS, type ExamKindSlug } from '@/lib/exam-catalog/types'
 import { todayDateKey, toLocalDateKey } from '@/lib/date-filters'
 import { cancelPrintWindow, ensurePrintWindow } from '@/lib/print-document'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
@@ -39,7 +39,7 @@ const paidItems = ref<LabExamPendingItem[]>([])
 const listFrom = ref(todayDateKey())
 const listTo = ref(todayDateKey())
 const kindFilter = ref<'' | ExamKindSlug>('')
-const kindOptions = CASHIER_PAYMENT_QUEUE_KINDS
+const kindOptions = LAB_BILLABLE_EXAM_KINDS
 const loading = ref(false)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
@@ -49,12 +49,14 @@ const detailItem = ref<LabExamPendingItem | null>(null)
 const detailOpen = ref(false)
 
 function paidKindsOf(item: LabExamPendingItem): ExamKindSlug[] {
-  if (item.paidKinds?.length) return item.paidKinds
+  const withoutOperation = (kinds: ExamKindSlug[]) =>
+    kinds.filter((kind) => kind !== 'operation')
+  if (item.paidKinds?.length) return withoutOperation(item.paidKinds)
   const fromInvoices = Object.entries(item.invoicesByKind ?? {})
     .filter(([, inv]) => (inv?.paidFcfa ?? inv?.netFcfa ?? 0) > 0)
     .map(([kind]) => kind as ExamKindSlug)
-  if (fromInvoices.length) return fromInvoices
-  return activeExamKindsFromBlocks(item.allExamsByKind ?? item.examsByKind)
+  if (fromInvoices.length) return withoutOperation(fromInvoices)
+  return withoutOperation(activeExamKindsFromBlocks(item.allExamsByKind ?? item.examsByKind))
 }
 
 function paidDateKey(item: LabExamPendingItem, kind: ExamKindSlug): string | null {

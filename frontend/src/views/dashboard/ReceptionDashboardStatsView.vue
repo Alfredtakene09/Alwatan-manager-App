@@ -153,6 +153,7 @@ async function loadPatients() {
     const { data } = await api.get<PatientRow[]>('/patients', {
       params: {
         q: search.value.trim() || undefined,
+        excludeExternalExams: '1',
         createdById: canFilterByReceptionist.value ? filterReceptionistId.value || undefined : undefined,
         service: serviceFilter.value.trim() || undefined,
       },

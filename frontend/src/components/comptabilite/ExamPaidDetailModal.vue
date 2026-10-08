@@ -80,6 +80,11 @@ const examDetails = computed<ExamDetailLine[]>(() => {
   return lines
 })
 
+const supplementLines = computed(() => props.item?.supplementExamLines ?? [])
+const supplementTotalFcfa = computed(() =>
+  supplementLines.value.reduce((sum, line) => sum + line.unitPriceFcfa, 0),
+)
+
 const invoiceRows = computed(() => {
   const invoices = props.item?.invoicesByKind
   if (!invoices) return []
@@ -193,6 +198,26 @@ function deletePaid() {
         <p v-else class="paid-detail__empty">{{ uiText('Aucun examen') }}</p>
       </section>
 
+      <section v-if="supplementLines.length" class="paid-detail__section">
+        <h3>{{ uiText('Examens ajoutés — à encaisser') }}</h3>
+        <p class="paid-detail__hint">
+          {{ uiText('Le médecin a modifié ces lignes après le paiement. Seul l\'écart de prix reste à encaisser.') }}
+        </p>
+        <ul class="paid-detail__exams">
+          <li v-for="(line, idx) in supplementLines" :key="`extra-${line.label}-${idx}`">
+            <span class="paid-detail__exam-kind">{{ uiText(EXAM_KIND_LABELS[line.kind ?? 'examen']) }}</span>
+            <span class="paid-detail__exam-label">{{
+              line.label === 'Avoir — examens retirés' ? uiText(line.label) : line.label
+            }}</span>
+            <strong dir="ltr">{{ formatFcfa(line.unitPriceFcfa) }}</strong>
+          </li>
+        </ul>
+        <p class="paid-detail__due">
+          {{ uiText('Reste à encaisser') }}
+          <strong dir="ltr">{{ formatFcfa(supplementTotalFcfa) }}</strong>
+        </p>
+      </section>
+
       <section v-if="invoiceRows.length" class="paid-detail__section">
         <h3>{{ uiText('Factures') }}</h3>
         <ul class="paid-detail__invoices">
@@ -298,10 +323,18 @@ function deletePaid() {
   color: var(--text, #0f172a);
 }
 
-.paid-detail__empty {
-  margin: 0;
+.paid-detail__empty,
+.paid-detail__hint {
+  margin: 0 0 0.65rem;
   font-size: 0.875rem;
   color: var(--text-light, #64748b);
+}
+
+.paid-detail__due {
+  margin: 0.75rem 0 0;
+  text-align: right;
+  font-size: 0.875rem;
+  font-weight: 600;
 }
 
 @media (max-width: 640px) {

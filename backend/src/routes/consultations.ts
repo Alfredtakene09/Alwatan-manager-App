@@ -20,6 +20,7 @@ import {
   labsWaitingWhere,
   mergeExamsByKind,
   countNewExamsInAppend,
+  syncBillingForDoctorLineChange,
   parseLatestLabResultAt,
   parsePrescribedExamsByKind,
   mergeHospitalisationDaysInNotes,
@@ -31,6 +32,7 @@ import {
   type ExamKindSlug,
   type PharmacyOrdonnanceLine,
 } from "../lib/lab-notes.js";
+import { getLabExamPriceFcfa, refreshExamPriceCache } from "../lib/lab-exam-prices.js";
 import {
   ensureHospitalizationFromReferral,
   HOSPITALISATION_PRESCRIPTION_LABEL,
@@ -63,23 +65,16 @@ import {
   interventionVisibleForServicesWhere,
   resolveDoctorClinicServices,
 } from "../lib/clinic-service-exam.js";
+import {
+  isRememberedManualOperationCode,
+  manualOperationCode,
+  rememberManualServiceOperation,
+} from "../lib/manual-service-operation.js";
 import { computeInterventionCostShares } from "../lib/surgery-cost-shares.js";
 import { ensureVisitPatientMergedByPhone } from "../lib/merge-patients.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 const DEFAULT_SURGEON_PERCENT = 70;
-
-function generateAdHocInterventionCode(label: string) {
-  const slug = label
-    .trim()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 18);
-  return `OP-${slug || "INTERVENTION"}-${Date.now().toString(36).toUpperCase()}`;
-}
 
 const router = Router();
 router.use(requireAuth, requireModule("consultation"));
@@ -122,6 +117,8 @@ const prescribeExamsSchema = z
     hospitalisationDays: z.number().int().min(1).max(365).optional(),
     /** Montant opération saisi (applique les % chirurgien / clinique du type). */
     operationAmountFcfa: z.number().int().min(0).optional(),
+    /** Service clinique de l’opération saisie (pour la mémoriser et la reproposer). */
+    operationServiceId: z.string().min(1).optional(),
     /** % médecin saisi à la sélection (prérempli depuis la fiche). */
     operationSurgeonPercent: z.number().int().min(1).max(99).optional(),
     /** Assistant chirurgie choisi à l’envoi (appliqué au type / dossier). */
@@ -186,23 +183,42 @@ async function syncPrescribedProcedures(
     anesthesiologistPercent?: number;
   } | null,
   surgeonPercent?: number | null,
+  operationServiceId?: string | null,
 ) {
   const operationLabel = examsByKind.operation?.find(Boolean)?.trim();
   if (operationLabel) {
     const doctorServices = await resolveDoctorClinicServices(doctorId);
     const serviceIds = doctorServices?.ids ?? [];
-    let intervention = await tx.interventionType.findFirst({
-      where: {
-        label: operationLabel,
-        active: true,
-        ...interventionVisibleForServicesWhere(serviceIds, { doctorUserId: doctorId }),
-      },
-    });
-
+    const requestedServiceId =
+      operationServiceId?.trim() || doctorServices?.default?.id || serviceIds[0] || "";
     const resolvedAmount =
       operationAmountFcfa != null && Number.isFinite(operationAmountFcfa)
         ? Math.max(0, Math.round(operationAmountFcfa))
         : null;
+    const appliedCreatePercent =
+      surgeonPercent != null && surgeonPercent > 0
+        ? Math.min(99, Math.round(surgeonPercent))
+        : DEFAULT_SURGEON_PERCENT;
+
+    let intervention = requestedServiceId
+      ? await rememberManualServiceOperation(tx, {
+          label: operationLabel,
+          clinicServiceId: requestedServiceId,
+          amountFcfa: resolvedAmount ?? 0,
+          surgeonPercent: appliedCreatePercent,
+          surgeonId: doctorId,
+        })
+      : null;
+
+    if (!intervention) {
+      intervention = await tx.interventionType.findFirst({
+        where: {
+          label: operationLabel,
+          active: true,
+          ...interventionVisibleForServicesWhere(serviceIds, { doctorUserId: doctorId }),
+        },
+      });
+    }
 
     if (!intervention) {
       if (resolvedAmount == null || resolvedAmount <= 0) {
@@ -214,7 +230,7 @@ async function syncPrescribedProcedures(
       }
       intervention = await tx.interventionType.create({
         data: {
-          code: generateAdHocInterventionCode(operationLabel),
+          code: manualOperationCode(operationLabel),
           label: operationLabel,
           category: InterventionCategory.MOYENNE_B,
           totalCostFcfa: resolvedAmount,
@@ -264,16 +280,21 @@ async function syncPrescribedProcedures(
       }
     }
 
+    const rememberPrice =
+      resolvedAmount != null &&
+      resolvedAmount > 0 &&
+      resolvedAmount !== intervention.totalCostFcfa &&
+      isRememberedManualOperationCode(intervention.code);
     if (
       assistantPercent !== intervention.anesthesiologistPercent ||
       assistantId !== intervention.anesthesiologistId ||
       assistantName !== intervention.anesthesiologistName ||
-      (resolvedAmount != null && resolvedAmount !== intervention.totalCostFcfa)
+      rememberPrice
     ) {
       intervention = await tx.interventionType.update({
         where: { id: intervention.id },
         data: {
-          ...(resolvedAmount != null ? { totalCostFcfa: resolvedAmount } : {}),
+          ...(rememberPrice ? { totalCostFcfa: resolvedAmount } : {}),
           anesthesiologistPercent: assistantPercent,
           anesthesiologistId: assistantId,
           anesthesiologistName: assistantName,
@@ -638,6 +659,7 @@ router.post("/prescribe-exams", async (req, res) => {
   try {
     const body = prescribeExamsSchema.parse(req.body);
     const user = req.user!;
+    await refreshExamPriceCache();
     await ensureVisitPatientMergedByPhone(body.visitId);
     const queueCtx = await resolveDoctorQueueContext(user.id);
 
@@ -673,7 +695,7 @@ router.post("/prescribe-exams", async (req, res) => {
         });
       }
 
-      const existingNotes = visit.consultation?.clinicalNotes;
+      let existingNotes = visit.consultation?.clinicalNotes;
       const hasResults = hasLabResults(existingNotes);
       /** Ancien verrou « déjà au labo » : on autorise la modification des examens
        *  tant qu’aucun résultat n’est saisi. */
@@ -743,6 +765,14 @@ router.post("/prescribe-exams", async (req, res) => {
       const requiresLabWork = prescriptionRequiresLabWork(
         examsByKind ?? (legacyExams?.length ? { examen: legacyExams } : null),
       );
+
+      if (hasExams && examsByKind) {
+        existingNotes = syncBillingForDoctorLineChange(
+          existingNotes,
+          examsByKind,
+          getLabExamPriceFcfa,
+        );
+      }
 
       let notes = hasExams
         ? examsByKind
@@ -814,6 +844,7 @@ router.post("/prescribe-exams", async (req, res) => {
           body.operationAmountFcfa,
           body.operationAssistant,
           body.operationSurgeonPercent,
+          body.operationServiceId,
         );
       }
 

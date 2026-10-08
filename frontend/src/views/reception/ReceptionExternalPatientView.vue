@@ -15,7 +15,17 @@ import {
 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
-import { formatFcfa, fullName } from '@/lib/roles'
+import {
+  formatFcfa,
+  fullName,
+  canReduceExamPrices,
+  isReceptionExamReductionCapped,
+} from '@/lib/roles'
+import {
+  RECEPTION_EXAM_REDUCTION_PERCENTS,
+  matchReceptionReductionPercent,
+  reductionFcfaFromPercent,
+} from '@/lib/reception-reduction'
 import { parsePatientAge, splitPatientFullName } from '@/lib/patient-name'
 import { parsePrescribedExamsByKind, hasLabResults } from '@/lib/lab-notes'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
@@ -27,6 +37,7 @@ import {
   countExamsByKind,
   EXTERNAL_PATIENT_EXAM_KINDS,
   EXAM_KIND_LABELS,
+  invalidateExamCatalogCache,
   loadExamCatalog,
   type ExamKindSlug,
   type ExamsByKind,
@@ -106,6 +117,15 @@ type DraftNewPatient = {
 const { uiText, localeCode } = useAppI18n()
 const auth = useAuthStore()
 const canDeleteExternal = computed(() => auth.user?.role === 'ADMIN')
+const canReduceExams = computed(() => canReduceExamPrices(auth.user?.role))
+const receptionReductionCapped = computed(() =>
+  isReceptionExamReductionCapped(auth.user?.role),
+)
+const examReductionPercents = computed(() =>
+  receptionReductionCapped.value
+    ? [...RECEPTION_EXAM_REDUCTION_PERCENTS]
+    : ([10, 15, 20, 25, 30, 35, 40, 45, 50] as const),
+)
 
 const search = ref('')
 const searchResults = ref<PatientRow[]>([])
@@ -142,7 +162,8 @@ const operationAssistant = ref<OperationAssistantPayload | null>(null)
 const operationServiceId = ref('')
 const reductionFcfaInput = ref('')
 const reductionPercent = ref('')
-const EXTERNAL_REDUCTION_PERCENTS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50] as const
+/** Réduction déjà enregistrée : un compte sans droit ne peut pas l’augmenter. */
+const lockedReductionFcfa = ref(0)
 const submitting = ref(false)
 const savingEdit = ref(false)
 const deletingExternal = ref(false)
@@ -338,6 +359,7 @@ function resetExamsForm() {
   operationServiceId.value = ''
   reductionFcfaInput.value = ''
   reductionPercent.value = ''
+  lockedReductionFcfa.value = 0
 }
 
 function examsPayload() {
@@ -383,6 +405,9 @@ const examGrossFcfa = computed(() =>
 )
 
 const examReductionFcfa = computed(() => {
+  if (!canReduceExams.value) {
+    return Math.min(lockedReductionFcfa.value, examGrossFcfa.value)
+  }
   const raw = Number.parseInt(String(reductionFcfaInput.value).replace(/\s/g, ''), 10)
   if (!Number.isFinite(raw) || raw <= 0) return 0
   return Math.min(raw, examGrossFcfa.value)
@@ -398,7 +423,7 @@ function applyReductionPercent(value: string) {
     else reductionFcfaInput.value = '0'
     return
   }
-  reductionFcfaInput.value = String(Math.round((examGrossFcfa.value * pct) / 100))
+  reductionFcfaInput.value = String(reductionFcfaFromPercent(examGrossFcfa.value, pct))
 }
 
 function onReductionFcfaInput(value: string) {
@@ -408,8 +433,13 @@ function onReductionFcfaInput(value: string) {
     reductionPercent.value = ''
     return
   }
-  const match = EXTERNAL_REDUCTION_PERCENTS.find(
-    (pct) => Math.round((examGrossFcfa.value * pct) / 100) === amount,
+  if (receptionReductionCapped.value) {
+    const match = matchReceptionReductionPercent(examGrossFcfa.value, amount)
+    reductionPercent.value = match != null ? String(match) : ''
+    return
+  }
+  const match = examReductionPercents.value.find(
+    (pct) => reductionFcfaFromPercent(examGrossFcfa.value, pct) === amount,
   )
   reductionPercent.value = match != null ? String(match) : ''
 }
@@ -417,6 +447,7 @@ function onReductionFcfaInput(value: string) {
 watch(
   [examGrossFcfa, examsByKind, operationAmountFcfa],
   () => {
+    if (!canReduceExams.value) return
     if (reductionPercent.value) {
       applyReductionPercent(reductionPercent.value)
       return
@@ -606,6 +637,7 @@ async function openEditModal(row: ExternalQueueRow) {
     operationAmountFcfa.value = remaining > 0 ? Math.round(remaining / opLabels.length) : null
   }
   const reduction = Math.max(0, row.grossFcfa - row.netFcfa)
+  lockedReductionFcfa.value = reduction
   reductionFcfaInput.value = reduction > 0 ? String(reduction) : ''
   onReductionFcfaInput(reductionFcfaInput.value)
   showEditModal.value = true
@@ -895,6 +927,7 @@ async function submitExams() {
       service: serviceFromExams(examsByKind.value) ?? activeRow.value.service ?? undefined,
       doctorId: selectedDoctorId.value || undefined,
     })
+    if ((examsByKind.value.operation?.length ?? 0) > 0) invalidateExamCatalogCache()
     const printed = tryPrintExternalExamTickets(patientForPrint, {
       invoiceNumber: data.invoice?.invoiceNumber,
       status: data.invoice ? 'Payé' : undefined,
@@ -1154,14 +1187,14 @@ onMounted(() => {
             </UiSelect>
           </div>
           <div v-if="examGrossFcfa > 0" class="exam-reduction">
-            <div class="form-grid-2">
+            <div v-if="canReduceExams" class="form-grid-2">
               <UiSelect
                 :model-value="reductionPercent"
                 :label="uiText('Réduction (%)')"
                 @update:model-value="applyReductionPercent"
               >
                 <option value="">{{ uiText('Aucune') }}</option>
-                <option v-for="pct in EXTERNAL_REDUCTION_PERCENTS" :key="pct" :value="String(pct)">
+                <option v-for="pct in examReductionPercents" :key="pct" :value="String(pct)">
                   {{ pct }} %
                 </option>
               </UiSelect>
@@ -1171,6 +1204,7 @@ onMounted(() => {
                 type="number"
                 placeholder="0"
                 :icon="Percent"
+                :readonly="receptionReductionCapped"
                 @update:model-value="onReductionFcfaInput"
               />
             </div>
@@ -1287,14 +1321,14 @@ onMounted(() => {
             </UiSelect>
           </div>
           <div v-if="examGrossFcfa > 0" class="exam-reduction">
-            <div class="form-grid-2">
+            <div v-if="canReduceExams" class="form-grid-2">
               <UiSelect
                 :model-value="reductionPercent"
                 :label="uiText('Réduction (%)')"
                 @update:model-value="applyReductionPercent"
               >
                 <option value="">{{ uiText('Aucune') }}</option>
-                <option v-for="pct in EXTERNAL_REDUCTION_PERCENTS" :key="pct" :value="String(pct)">
+                <option v-for="pct in examReductionPercents" :key="pct" :value="String(pct)">
                   {{ pct }} %
                 </option>
               </UiSelect>
@@ -1304,6 +1338,7 @@ onMounted(() => {
                 type="number"
                 placeholder="0"
                 :icon="Percent"
+                :readonly="receptionReductionCapped"
                 @update:model-value="onReductionFcfaInput"
               />
             </div>
@@ -1381,14 +1416,14 @@ onMounted(() => {
           </UiSelect>
         </div>
         <div v-if="examGrossFcfa > 0" class="exam-reduction">
-          <div class="form-grid-2">
+          <div v-if="canReduceExams" class="form-grid-2">
             <UiSelect
               :model-value="reductionPercent"
               :label="uiText('Réduction (%)')"
               @update:model-value="applyReductionPercent"
             >
               <option value="">{{ uiText('Aucune') }}</option>
-              <option v-for="pct in EXTERNAL_REDUCTION_PERCENTS" :key="pct" :value="String(pct)">
+              <option v-for="pct in examReductionPercents" :key="pct" :value="String(pct)">
                 {{ pct }} %
               </option>
             </UiSelect>
@@ -1398,6 +1433,7 @@ onMounted(() => {
               type="number"
               placeholder="0"
               :icon="Percent"
+              :readonly="receptionReductionCapped"
               @update:model-value="onReductionFcfaInput"
             />
           </div>

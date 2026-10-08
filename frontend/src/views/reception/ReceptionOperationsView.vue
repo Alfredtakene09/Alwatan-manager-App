@@ -2,16 +2,14 @@
 import { computed, onMounted, ref } from 'vue'
 import {
   Scissors,
+  Stethoscope,
   RefreshCw,
-  CalendarDays,
   CalendarRange,
-  Calendar,
   CircleDollarSign,
   CheckCircle2,
   Clock,
   Search,
   Banknote,
-  Layers,
   Pencil,
   Printer,
   Trash2,
@@ -36,10 +34,15 @@ import type { PatientAgeUnit } from '@/lib/patient-age'
 import {
   emptyExamsByKind,
   getExamCatalogSync,
+  invalidateExamCatalogCache,
   loadExamCatalog,
   type CatalogExam,
   type ExamsByKind,
 } from '@/lib/exam-catalog'
+import {
+  doctorMatchesClinicServiceId,
+  type DoctorOption,
+} from '@/lib/doctor-compensation'
 import MultiExamPrescriptionPicker, {
   type OperationAssistantPayload,
 } from '@/components/MultiExamPrescriptionPicker.vue'
@@ -47,12 +50,9 @@ import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPati
 import { type SurgeryCaseRow, type SurgeryUserRef } from '@/lib/surgery-case'
 import { formatAssistantLabel, surgeryCompletedAtIso } from '@/lib/surgery-shares'
 import {
-  currentMonthKey,
   formatPeriodLabel,
   matchesDateFilter,
   todayDateKey,
-  yesterdayDateKey,
-  type DateFilterMode,
 } from '@/lib/date-filters'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -61,14 +61,20 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
-import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
+import {
+  exportTableExcel,
+  exportTablePdf,
+  exportTableWord,
+  type ExportCaptionRow,
+  type ExportColumn,
+  type ExportSection,
+} from '@/lib/table-export'
 import '@/assets/simple-table.css'
 
 type PaymentFilter = 'all' | 'paid' | 'partial' | 'unpaid'
 type PaymentState = Exclude<PaymentFilter, 'all'>
 type SourceFilter = 'all' | OperationSource
 type OperationSource = 'bloc' | 'other'
-type PeriodMode = DateFilterMode | 'all'
 
 type OperationPayment = {
   id: string
@@ -90,8 +96,11 @@ type OtherOperationInvoice = {
   interventionLabel: string
   doctor?: SurgeryUserRef | null
   assistantName?: string | null
+  serviceName?: string | null
   visit: {
     id: string
+    createdAt?: string
+    updatedAt?: string
     createdBy?: SurgeryUserRef | null
     patient: { code: string; firstName: string; lastName: string }
     consultation?: { id: string } | null
@@ -107,6 +116,7 @@ type OperationRow = {
   patientName: string
   patientCode: string
   intervention: string
+  serviceName: string
   interventionTypeId: string
   surgeonId: string
   surgeonName: string
@@ -118,6 +128,8 @@ type OperationRow = {
   timestamp: number
   dateLabel: string
   timeLabel: string
+  /** Sous la date : « modifié DD/MM/YYYY » (remplace l’ancien badge Effectuée). */
+  modifiedLabel: string | null
   billedFcfa: number
   paidFcfa: number
   remainingFcfa: number
@@ -125,6 +137,8 @@ type OperationRow = {
   registeredById: string
   registeredBy: string
   collectedBy: string
+  surgeonShareFcfa: number
+  surgeonPercent: number
 }
 
 type ReceptionistSummary = {
@@ -135,13 +149,6 @@ type ReceptionistSummary = {
   paidFcfa: number
   remainingFcfa: number
 }
-
-const DATE_MODES: { id: PeriodMode; label: string; icon: typeof CalendarDays }[] = [
-  { id: 'all', label: 'Tout', icon: Layers },
-  { id: 'day', label: 'Jour', icon: CalendarDays },
-  { id: 'month', label: 'Mois', icon: Calendar },
-  { id: 'custom', label: 'Personnaliser', icon: CalendarRange },
-]
 
 const PAYMENT_FILTERS: { id: PaymentFilter; label: string }[] = [
   { id: 'all', label: 'Tous' },
@@ -214,20 +221,27 @@ const operationAssistant = ref<OperationAssistantPayload | null>(null)
 const operationServiceId = ref('')
 const selectedDoctorId = ref('')
 
-const canRegisterOperation = computed(() => {
+const registerOperationBlockers = computed(() => {
+  const blockers: string[] = []
   const { firstName, lastName } = splitPatientFullName(patientForm.value.fullName)
   const age = parsePatientAge(patientForm.value.age, patientForm.value.ageUnit)
   const hasOperation = (registerExams.value.operation?.length ?? 0) > 0
   const price = operationAmountFcfa.value ?? 0
-  return (
-    firstName.length >= 2 &&
-    lastName.length >= 2 &&
-    age !== null &&
-    hasOperation &&
-    !!selectedDoctorId.value &&
-    price > 0
-  )
+  const surgeonPct = operationSurgeonPercent.value
+  if (firstName.length < 2 || lastName.length < 2) {
+    blockers.push(uiText('Nom et prénom du patient'))
+  }
+  if (age === null) blockers.push(uiText('Âge'))
+  if (!hasOperation) blockers.push(uiText('Service / opération'))
+  if (price <= 0) blockers.push(uiText('Prix (FCFA)'))
+  if (!selectedDoctorId.value) blockers.push(uiText('Médecin'))
+  if (surgeonPct == null || surgeonPct < 1 || surgeonPct > 99) {
+    blockers.push(uiText('% du médecin'))
+  }
+  return blockers
 })
+
+const canRegisterOperation = computed(() => registerOperationBlockers.value.length === 0)
 
 function resetRegisterForm() {
   patientForm.value = { fullName: '', age: '', ageUnit: 'YEARS', phone: '', gender: 'F' }
@@ -281,6 +295,7 @@ async function submitRegisterOperation() {
       ...(operationAssistant.value ? { operationAssistant: operationAssistant.value } : {}),
       ...(operationServiceId.value ? { operationServiceId: operationServiceId.value } : {}),
     })
+    invalidateExamCatalogCache()
     const doctor = data.doctor ?? null
     const visitId = data.visit?.id
     showRegisterModal.value = false
@@ -315,16 +330,15 @@ const editRow = ref<OperationRow | null>(null)
 const editAmount = ref('')
 const editDate = ref('')
 const editServiceId = ref('')
+const editDoctorId = ref('')
 const editInterventionId = ref('')
 const openedInterventionId = ref('')
 const operationCatalog = ref<CatalogExam[]>([])
+const editDoctors = ref<Array<DoctorOption & { surgeryQuotaPercent?: number | null }>>([])
 const savingEdit = ref(false)
 
-const dateFilterMode = ref<PeriodMode>('all')
-const filterDay = ref(todayDateKey())
-const filterMonth = ref(currentMonthKey())
-const filterFrom = ref('')
-const filterTo = ref('')
+const filterFrom = ref(todayDateKey())
+const filterTo = ref(todayDateKey())
 
 function userName(user?: SurgeryUserRef | null) {
   return user ? fullName(user.firstName, user.lastName) : ''
@@ -345,11 +359,12 @@ function paymentInfo(
   billedFcfa: number,
   invoice?: Pick<OtherOperationInvoice, 'status' | 'paidAmountFcfa' | 'issuedBy' | 'payments'> | null,
 ) {
-  const paidFcfa = invoice?.paidAmountFcfa ?? 0
+  const recordedFcfa = (invoice?.payments ?? []).reduce((sum, payment) => sum + (payment.amountFcfa || 0), 0)
+  let paidFcfa = Math.max(invoice?.paidAmountFcfa ?? 0, recordedFcfa)
   const outstandingFcfa = Math.max(0, billedFcfa - paidFcfa)
   const isPaid = invoice?.status === 'PAID' || (billedFcfa > 0 && outstandingFcfa === 0)
+  if (isPaid && billedFcfa > paidFcfa) paidFcfa = billedFcfa
   const paymentState: PaymentState = isPaid ? 'paid' : paidFcfa > 0 ? 'partial' : 'unpaid'
-  // Facture soldée : plus rien à encaisser, même si le montant réglé est saisi ailleurs.
   const remainingFcfa = isPaid ? 0 : outstandingFcfa
 
   const paymentCollectors = (invoice?.payments ?? []).map((p) => userName(p.recordedBy)).filter(Boolean)
@@ -359,13 +374,93 @@ function paymentInfo(
   return { billedFcfa, paidFcfa, remainingFcfa, paymentState, collectedBy: collectors.join(', ') }
 }
 
+function foldServiceName(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+}
+
+/** Service de l'opération : celui de l'acte, puis celui enregistré sur la visite. */
+function surgeonServiceName(surgery: SurgeryCaseRow) {
+  const typeName = surgery.interventionType.clinicService?.name?.trim() || ''
+  const assignedName = surgery.visit.assignedClinicService?.name?.trim() || ''
+  const recorded = surgery.visit.patient.service?.trim() || assignedName
+  const act = surgery.interventionType.label?.trim() || ''
+  if (
+    recorded &&
+    act &&
+    typeName &&
+    foldServiceName(act) === foldServiceName(typeName) &&
+    foldServiceName(recorded) !== foldServiceName(typeName)
+  ) {
+    return recorded
+  }
+  return typeName || recorded
+}
+
+/** Second tarif catalogue : « (émiraties) », « (Emirates) » ou l’équivalent arabe. */
+const EMIRATES_TARIFF_SUFFIX = /\s*\((?:émiraties|emirates|الإمارات)\)\s*$/iu
+
+function withoutEmiratesTariffMark(label: string) {
+  return label.replace(EMIRATES_TARIFF_SUFFIX, '').trim()
+}
+
+/** (Nom de l’opération) Service. Si l'acte n'est que le nom du service, le service seul. */
+function operationPlaceLabel(name: string, service: string) {
+  const operation = withoutEmiratesTariffMark(clinicServiceText(name.trim()))
+  const place = clinicServiceText(service.trim())
+  if (operation && place && foldServiceName(operation) === foldServiceName(place)) return place
+  if (operation && place) return `(${operation}) ${place}`
+  return place || operation
+}
+
+/** Date colonne + filtres = date d'enregistrement (créée ou dernière modification). */
 function otherOperationDateIso(op: OtherOperationInvoice) {
-  return op.paidAt ?? op.createdAt
+  return op.createdAt || op.paidAt || new Date(0).toISOString()
+}
+
+/** % réellement appliqué : la part enregistrée, recollée au % catalogue si l'écart n'est qu'un arrondi. */
+function appliedSurgeonPercent(shareFcfa: number, baseFcfa: number, catalogPercent: number) {
+  if (baseFcfa <= 0 || shareFcfa <= 0) return 0
+  const derived = Math.round((shareFcfa * 100) / baseFcfa)
+  if (catalogPercent > 0 && Math.abs(derived - catalogPercent) <= 1) return catalogPercent
+  return derived
+}
+
+function otherSurgeonShare(op: OtherOperationInvoice) {
+  const catalog = operationCatalog.value.find(
+    (item) => item.label.trim().toLowerCase() === op.interventionLabel.trim().toLowerCase(),
+  )
+  const surgeonPercent = catalog?.surgeonPercent ?? 0
+  const billed = op.amountFcfa
+  const surgeonShareFcfa =
+    surgeonPercent > 0 && billed > 0 ? Math.round((billed * surgeonPercent) / 100) : 0
+  return { surgeonShareFcfa, surgeonPercent }
+}
+
+function formatModifiedLabel(date: Date) {
+  const label = date.toLocaleDateString('fr-FR')
+  return translateTemplate('modifié {date}', { date: label })
+}
+
+/** Hors bloc : visite retouchée après création = vraie modification. */
+function otherModificationDate(op: OtherOperationInvoice): Date | null {
+  const updated = op.visit.updatedAt ? new Date(op.visit.updatedAt) : null
+  const created = op.visit.createdAt ? new Date(op.visit.createdAt) : null
+  if (!updated || Number.isNaN(updated.getTime())) return null
+  if (created && !Number.isNaN(created.getTime()) && updated.getTime() - created.getTime() > 60_000) {
+    return updated
+  }
+  return null
 }
 
 function toOtherRow(op: OtherOperationInvoice): OperationRow {
   const date = new Date(otherOperationDateIso(op))
   const doctor = userName(op.doctor)
+  const dateLabel = date.toLocaleDateString('fr-FR')
+  const modifiedAt = otherModificationDate(op)
   return {
     id: `other-${op.id}`,
     recordId: op.id,
@@ -375,6 +470,7 @@ function toOtherRow(op: OtherOperationInvoice): OperationRow {
     patientName: fullName(op.visit.patient.firstName, op.visit.patient.lastName),
     patientCode: op.visit.patient.code,
     intervention: op.interventionLabel,
+    serviceName: op.serviceName?.trim() || '',
     interventionTypeId: '',
     surgeonId: op.doctor?.id ?? '',
     surgeonName: doctor ? `Dr ${doctor.replace(/^dr\.?\s+/i, '')}` : '—',
@@ -384,16 +480,26 @@ function toOtherRow(op: OtherOperationInvoice): OperationRow {
     assistantName: op.assistantName?.trim() || '—',
     completed: false,
     timestamp: date.getTime(),
-    dateLabel: date.toLocaleDateString('fr-FR'),
+    dateLabel,
     timeLabel: date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+    // Date du libellé = jour réel de la modification (ex. aujourd’hui), pas la date d’enregistrement.
+    modifiedLabel: modifiedAt ? formatModifiedLabel(modifiedAt) : null,
     ...paymentInfo(op.amountFcfa, op),
     registeredById: op.visit.createdBy?.id ?? '',
     registeredBy: userName(op.visit.createdBy) || '—',
+    ...otherSurgeonShare(op),
   }
 }
 
 function toRow(surgery: SurgeryCaseRow): OperationRow {
   const date = new Date(surgeryCompletedAtIso(surgery))
+  const completed = surgery.status === 'COMPLETED'
+  const updatedAt = surgery.updatedAt ? new Date(surgery.updatedAt) : null
+  const created = surgery.createdAt ? new Date(surgery.createdAt).getTime() : 0
+  const updated = updatedAt && !Number.isNaN(updatedAt.getTime()) ? updatedAt.getTime() : 0
+  const wasEdited = updated > 0 && created > 0 && updated - created > 60_000
+  const dateLabel = date.toLocaleDateString('fr-FR')
+  const modifiedAt = wasEdited || completed ? updatedAt : null
 
   return {
     id: surgery.id,
@@ -404,6 +510,7 @@ function toRow(surgery: SurgeryCaseRow): OperationRow {
     patientName: fullName(surgery.visit.patient.firstName, surgery.visit.patient.lastName),
     patientCode: surgery.visit.patient.code,
     intervention: surgery.interventionType.label,
+    serviceName: surgeonServiceName(surgery),
     interventionTypeId: surgery.interventionType.id,
     surgeonId: surgery.surgeon.id,
     surgeonName: `Dr ${fullName(surgery.surgeon.firstName, surgery.surgeon.lastName).replace(/^dr\.?\s+/i, '')}`,
@@ -411,26 +518,29 @@ function toRow(surgery: SurgeryCaseRow): OperationRow {
     invoiceNumber: surgery.invoice?.invoiceNumber ?? '',
     payments: mapPayments(surgery.invoice),
     assistantName: formatAssistantLabel(surgery) || '—',
-    completed: surgery.status === 'COMPLETED',
+    completed,
     timestamp: date.getTime(),
-    dateLabel: date.toLocaleDateString('fr-FR'),
+    dateLabel,
     timeLabel: date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+    modifiedLabel: modifiedAt ? formatModifiedLabel(modifiedAt) : null,
     ...paymentInfo(surgery.invoice?.amountFcfa ?? surgery.totalCostFcfa, surgery.invoice),
     registeredById: surgery.visit.createdBy?.id ?? '',
     registeredBy: userName(surgery.visit.createdBy) || '—',
+    surgeonShareFcfa: surgery.surgeonShareFcfa ?? 0,
+    surgeonPercent: appliedSurgeonPercent(
+      surgery.surgeonShareFcfa ?? 0,
+      surgery.totalCostFcfa || (surgery.invoice?.amountFcfa ?? 0),
+      surgery.interventionType.surgeonPercent ?? 0,
+    ),
   }
 }
 
 function inPeriod(isoDate: string) {
-  if (dateFilterMode.value === 'all') return true
-  return matchesDateFilter(
-    isoDate,
-    dateFilterMode.value,
-    filterDay.value,
-    filterMonth.value,
-    filterFrom.value,
-    filterTo.value,
-  )
+  const from = filterFrom.value
+  const to = filterTo.value
+  const start = from && to && from > to ? to : from
+  const end = from && to && from > to ? from : to
+  return matchesDateFilter(isoDate, 'custom', '', '', start, end)
 }
 
 const periodRows = computed(() => {
@@ -496,7 +606,8 @@ const displayedRows = computed(() => {
       row.patientName.toLowerCase().includes(q) ||
       row.patientCode.toLowerCase().includes(q) ||
       row.intervention.toLowerCase().includes(q) ||
-      clinicServiceText(row.intervention).toLowerCase().includes(q) ||
+      row.serviceName.toLowerCase().includes(q) ||
+      operationPlaceLabel(row.intervention, row.serviceName).toLowerCase().includes(q) ||
       row.surgeonName.toLowerCase().includes(q) ||
       row.assistantName.toLowerCase().includes(q) ||
       row.registeredBy.toLowerCase().includes(q) ||
@@ -504,6 +615,10 @@ const displayedRows = computed(() => {
     )
   })
 })
+
+const doctorShareTotalFcfa = computed(() =>
+  displayedRows.value.reduce((sum, row) => sum + row.surgeonShareFcfa, 0),
+)
 
 const stats = computed(() => {
   const rows = scopedRows.value
@@ -517,17 +632,13 @@ const stats = computed(() => {
   }
 })
 
-const periodLabel = computed(() =>
-  dateFilterMode.value === 'all'
-    ? uiText('Toutes les dates')
-    : formatPeriodLabel(
-        dateFilterMode.value,
-        filterDay.value,
-        filterMonth.value,
-        filterFrom.value,
-        filterTo.value,
-      ),
-)
+const periodLabel = computed(() => {
+  const from = filterFrom.value
+  const to = filterTo.value
+  const start = from && to && from > to ? to : from
+  const end = from && to && from > to ? from : to
+  return formatPeriodLabel('custom', '', '', start, end)
+})
 
 async function load() {
   loading.value = true
@@ -537,6 +648,7 @@ async function load() {
       api.get<SurgeryCaseRow[]>('/surgeries', { params: { scope: 'all' } }),
       api.get<OtherOperationInvoice[]>('/surgeries/other-operations'),
       loadExamCatalog().catch(() => null),
+      loadEditDoctors(),
     ])
     surgeries.value = blocRes.data
     otherOperations.value = otherRes.data
@@ -553,6 +665,41 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+async function loadEditDoctors() {
+  try {
+    const { data } = await api.get<Array<DoctorOption & { surgeryQuotaPercent?: number | null }>>(
+      '/visits/doctors',
+    )
+    editDoctors.value = Array.isArray(data) ? data : []
+  } catch {
+    editDoctors.value = []
+  }
+}
+
+function doctorsForService(serviceId: string) {
+  const id = serviceId.trim()
+  if (!id) return []
+  return editDoctors.value.filter((doctor) => doctorMatchesClinicServiceId(doctor, id))
+}
+
+function syncEditDoctorForService(serviceId: string) {
+  if (!editDoctorId.value || !serviceId.trim()) return
+  if (!doctorsForService(serviceId).some((doctor) => doctor.id === editDoctorId.value)) {
+    editDoctorId.value = ''
+  }
+}
+
+function editDoctorLabel(doctor: DoctorOption & { surgeryQuotaPercent?: number | null }) {
+  const name = `Dr ${fullName(doctor.firstName, doctor.lastName).replace(/^dr\.?\s+/i, '')}`
+  return doctor.surgeryQuotaPercent ? `${name} (${doctor.surgeryQuotaPercent} %)` : name
+}
+
+function serviceIdFromName(name: string) {
+  const needle = name.trim().toLowerCase()
+  if (!needle) return ''
+  return operationServices.value.find((service) => service.name.trim().toLowerCase() === needle)?.id ?? ''
 }
 
 function apiErrorText(error: unknown) {
@@ -634,13 +781,6 @@ function closeEncaisser() {
   payAmount.value = ''
 }
 
-function dateInputValue(timestamp: number) {
-  const date = new Date(timestamp)
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${date.getFullYear()}-${month}-${day}`
-}
-
 function matchOperationCatalogId(row: OperationRow) {
   if (
     row.interventionTypeId &&
@@ -679,6 +819,17 @@ const editOperationOptions = computed(() => {
   return operationCatalog.value.filter((item) => item.clinicServiceId === serviceId)
 })
 
+const editServiceDoctors = computed(() => {
+  const list = doctorsForService(editServiceId.value)
+  const currentId = editDoctorId.value
+  const openedId = editRow.value?.surgeonId ?? ''
+  if (currentId && currentId === openedId && !list.some((doctor) => doctor.id === currentId)) {
+    const current = editDoctors.value.find((doctor) => doctor.id === currentId)
+    if (current) return [current, ...list]
+  }
+  return list
+})
+
 const selectedEditOperation = computed(
   () => operationCatalog.value.find((item) => item.id === editInterventionId.value) ?? null,
 )
@@ -688,8 +839,15 @@ function openEdit(row: OperationRow) {
   const matched = operationCatalog.value.find((item) => item.id === matchedId)
   editRow.value = row
   editAmount.value = String(row.billedFcfa)
-  editDate.value = dateInputValue(row.timestamp)
-  editServiceId.value = matched?.clinicServiceId?.trim() ?? ''
+  // Date affichée actuelle — l'utilisateur peut la changer (ex. 26/09) ; elle sera sauvegardée telle quelle.
+  const current = new Date(row.timestamp)
+  const month = String(current.getMonth() + 1).padStart(2, '0')
+  const day = String(current.getDate()).padStart(2, '0')
+  editDate.value = Number.isNaN(current.getTime())
+    ? todayDateKey()
+    : `${current.getFullYear()}-${month}-${day}`
+  editServiceId.value = matched?.clinicServiceId?.trim() || serviceIdFromName(row.serviceName)
+  editDoctorId.value = row.surgeonId
   editInterventionId.value = matchedId || KEEP_CURRENT_OPERATION
   openedInterventionId.value = editInterventionId.value
   message.value = ''
@@ -697,6 +855,7 @@ function openEdit(row: OperationRow) {
 
 function onEditService(id: string) {
   editServiceId.value = id
+  syncEditDoctorForService(id)
   if (editInterventionId.value === KEEP_CURRENT_OPERATION) {
     editInterventionId.value = ''
     return
@@ -718,18 +877,25 @@ function onEditIntervention(id: string) {
   const chosen = operationCatalog.value.find((item) => item.id === id)
   if (chosen) {
     editAmount.value = String(chosen.priceFcfa)
-    if (chosen.clinicServiceId) editServiceId.value = chosen.clinicServiceId
+    if (chosen.clinicServiceId && chosen.clinicServiceId !== editServiceId.value) {
+      editServiceId.value = chosen.clinicServiceId
+      syncEditDoctorForService(chosen.clinicServiceId)
+    }
   }
 }
 
 function closeEdit() {
   editRow.value = null
+  editDoctorId.value = ''
   savingEdit.value = false
 }
 
 const editAmountFcfa = computed(() => Math.max(0, Math.round(Number(editAmount.value) || 0)))
 const canSaveEdit = computed(() => {
   if (!editRow.value || !editDate.value || editAmount.value.trim() === '') return false
+  if (editServiceId.value && doctorsForService(editServiceId.value).length > 0 && !editDoctorId.value) {
+    return false
+  }
   const chosen = selectedEditOperation.value
   if (chosen) {
     return !editServiceId.value || chosen.clinicServiceId === editServiceId.value
@@ -758,6 +924,7 @@ async function submitEdit() {
       operationDate: editDate.value,
       ...(nameChanged && chosen ? { interventionTypeId: chosen.id } : {}),
       ...(clinicServiceId ? { clinicServiceId } : {}),
+      ...(editDoctorId.value ? { surgeonId: editDoctorId.value } : {}),
     })
     closeEdit()
     message.value = 'Opération modifiée.'
@@ -981,22 +1148,25 @@ async function deleteRow(row: OperationRow) {
   }
 }
 
-function resetCustomRange() {
-  filterFrom.value = ''
-  filterTo.value = ''
-}
-
 const exportColumns: ExportColumn<OperationRow>[] = [
   { header: uiText('Date'), value: (r) => `${r.dateLabel} ${r.timeLabel}` },
   { header: uiText('Patient'), value: (r) => r.patientName },
   { header: uiText('Code'), value: (r) => r.patientCode },
   { header: uiText('Type'), value: (r) => uiText(SOURCE_LABELS[r.source]) },
-  { header: uiText('Intervention'), value: (r) => clinicServiceText(r.intervention) },
+  {
+    header: uiText('Service'),
+    value: (r) => operationPlaceLabel(r.intervention, r.serviceName),
+  },
   { header: uiText('Médecin'), value: (r) => r.surgeonName },
   { header: uiText('Assistant'), value: (r) => r.assistantName },
   {
     header: uiText('Opération'),
-    value: (r) => (r.source === 'other' ? '—' : r.completed ? uiText('Effectuée') : uiText('En attente')),
+    value: (r) =>
+      r.source === 'other' || (!r.completed && r.paymentState === 'paid')
+        ? '—'
+        : r.completed
+          ? uiText('Effectuée')
+          : uiText('En attente'),
   },
   { header: uiText('Montant'), value: (r) => formatFcfa(r.billedFcfa) },
   { header: uiText('Payé'), value: (r) => formatFcfa(r.paidFcfa) },
@@ -1006,29 +1176,106 @@ const exportColumns: ExportColumn<OperationRow>[] = [
   { header: uiText('Encaissé par'), value: (r) => r.collectedBy || '—' },
 ]
 
+type DoctorRecapRow = {
+  name: string
+  count: number
+  billedFcfa: number
+  paidFcfa: number
+  remainingFcfa: number
+  shareFcfa: number
+}
+
+function doctorRecapRows(rows: OperationRow[]): DoctorRecapRow[] {
+  const map = new Map<string, DoctorRecapRow>()
+  for (const row of rows) {
+    const key = row.surgeonId || row.surgeonName || '—'
+    const current = map.get(key) ?? {
+      name: row.surgeonName || '—',
+      count: 0,
+      billedFcfa: 0,
+      paidFcfa: 0,
+      remainingFcfa: 0,
+      shareFcfa: 0,
+    }
+    current.count += 1
+    current.billedFcfa += row.billedFcfa
+    current.paidFcfa += row.paidFcfa
+    current.remainingFcfa += row.remainingFcfa
+    current.shareFcfa += row.surgeonShareFcfa
+    map.set(key, current)
+  }
+  return [...map.values()].sort(
+    (a, b) => b.billedFcfa - a.billedFcfa || a.name.localeCompare(b.name, 'fr'),
+  )
+}
+
+function operationTotals(rows: OperationRow[]): ExportCaptionRow[] {
+  const sum = (pick: (row: OperationRow) => number) => rows.reduce((total, row) => total + pick(row), 0)
+  return [
+    { label: uiText('Nombre d’opérations'), value: String(rows.length) },
+    { label: uiText('Montant total'), value: formatFcfa(sum((row) => row.billedFcfa)) },
+    { label: uiText('Encaissé'), value: formatFcfa(sum((row) => row.paidFcfa)) },
+    { label: uiText('Reste à payer'), value: formatFcfa(sum((row) => row.remainingFcfa)) },
+    { label: uiText('Part médecin'), value: formatFcfa(sum((row) => row.surgeonShareFcfa)) },
+  ]
+}
+
 function exportShared() {
   const receptionist = receptionistSummaries.value.find((r) => r.id === receptionistFilter.value)
   const doctor = doctorOptions.value.find((item) => item.id === doctorFilter.value)
+  const rows = displayedRows.value
   return {
     captionRows: [
       { label: uiText('Période'), value: periodLabel.value },
       ...(receptionist ? [{ label: uiText('Réceptionniste'), value: receptionist.name }] : []),
       ...(doctor ? [{ label: uiText('Médecin'), value: doctor.name }] : []),
     ],
-    totalsRows: [
-      { label: uiText('Nombre d’opérations'), value: String(displayedRows.value.length) },
-      {
-        label: uiText('Reste à payer'),
-        value: formatFcfa(displayedRows.value.reduce((sum, r) => sum + r.remainingFcfa, 0)),
-      },
-    ],
+    totalsRows: operationTotals(rows),
   }
 }
 
 const EXPORT_TITLE = 'Opérations (bloc et autres chirurgies)'
 
 function exportPdf() {
-  exportTablePdf(uiText(EXPORT_TITLE), exportColumns, displayedRows.value, exportShared())
+  const rows = displayedRows.value
+  const recap = doctorRecapRows(rows)
+  const totals = operationTotals(rows)
+  const recapColumns: ExportColumn<DoctorRecapRow>[] = [
+    { header: uiText('Médecin'), value: (row) => row.name },
+    { header: uiText('Opérations'), value: (row) => String(row.count) },
+    { header: uiText('Montant'), value: (row) => formatFcfa(row.billedFcfa) },
+    { header: uiText('Encaissé'), value: (row) => formatFcfa(row.paidFcfa) },
+    { header: uiText('Reste'), value: (row) => formatFcfa(row.remainingFcfa) },
+    { header: uiText('Part médecin'), value: (row) => formatFcfa(row.shareFcfa) },
+  ]
+  const sections: ExportSection[] = [
+    {
+      title: '',
+      columns: exportColumns,
+      rows,
+      totalsRows: totals,
+    },
+    {
+      title: uiText('Récapitulatif par médecin'),
+      columns: recapColumns,
+      rows: recap,
+      columnWidths: [12, 74, 26, 38, 38, 36, 38],
+      footRow: [
+        uiText('Total'),
+        String(recap.reduce((sum, row) => sum + row.count, 0)),
+        formatFcfa(recap.reduce((sum, row) => sum + row.billedFcfa, 0)),
+        formatFcfa(recap.reduce((sum, row) => sum + row.paidFcfa, 0)),
+        formatFcfa(recap.reduce((sum, row) => sum + row.remainingFcfa, 0)),
+        formatFcfa(recap.reduce((sum, row) => sum + row.shareFcfa, 0)),
+      ],
+    },
+  ]
+  const shared = exportShared()
+  exportTablePdf(uiText(EXPORT_TITLE), exportColumns, rows, {
+    captionRows: shared.captionRows,
+    orientation: 'landscape',
+    sections,
+  })
 }
 
 function exportExcel() {
@@ -1082,63 +1329,26 @@ onMounted(load)
           :icon="Clock"
           variant="violet"
         />
+        <UiStatCard
+          mini
+          label="Part médecin"
+          :value="formatFcfa(doctorShareTotalFcfa)"
+          :icon="Stethoscope"
+          variant="amber"
+        />
       </div>
 
       <div class="filter-bar" role="region" :aria-label="uiText('Filtres')">
         <div class="filter-bar__row">
-          <div class="filter-bar__modes" role="tablist" :aria-label="uiText('Période')">
-            <button
-              v-for="mode in DATE_MODES"
-              :key="mode.id"
-              type="button"
-              role="tab"
-              class="filter-bar__mode"
-              :class="{ 'filter-bar__mode--active': dateFilterMode === mode.id }"
-              :aria-selected="dateFilterMode === mode.id"
-              @click="dateFilterMode = mode.id"
-            >
-              <component :is="mode.icon" :size="15" />
-              {{ uiText(mode.label) }}
-            </button>
-          </div>
-
           <div class="filter-bar__controls">
-            <template v-if="dateFilterMode === 'day'">
-              <label class="filter-bar__field">
-                <span class="filter-bar__field-label">{{ uiText('Date') }}</span>
-                <input v-model="filterDay" type="date" class="filter-bar__input" />
-              </label>
-              <div class="filter-bar__quick">
-                <button type="button" class="filter-bar__chip" @click="filterDay = todayDateKey()">
-                  {{ uiText("Aujourd'hui") }}
-                </button>
-                <button type="button" class="filter-bar__chip" @click="filterDay = yesterdayDateKey()">
-                  {{ uiText('Hier') }}
-                </button>
-              </div>
-            </template>
-
-            <template v-else-if="dateFilterMode === 'month'">
-              <label class="filter-bar__field">
-                <span class="filter-bar__field-label">{{ uiText('Mois') }}</span>
-                <input v-model="filterMonth" type="month" class="filter-bar__input" />
-              </label>
-            </template>
-
-            <template v-else-if="dateFilterMode === 'custom'">
-              <label class="filter-bar__field">
-                <span class="filter-bar__field-label">{{ uiText('Du') }}</span>
-                <input v-model="filterFrom" type="date" class="filter-bar__input" />
-              </label>
-              <span class="filter-bar__sep" aria-hidden="true">→</span>
-              <label class="filter-bar__field">
-                <span class="filter-bar__field-label">{{ uiText('Au') }}</span>
-                <input v-model="filterTo" type="date" class="filter-bar__input" />
-              </label>
-              <button type="button" class="filter-bar__chip filter-bar__chip--muted" @click="resetCustomRange">
-                {{ uiText('Effacer') }}
-              </button>
-            </template>
+            <label class="filter-bar__field">
+              <span class="filter-bar__field-label">{{ uiText('Du') }}</span>
+              <input v-model="filterFrom" type="date" class="filter-bar__input" />
+            </label>
+            <label class="filter-bar__field">
+              <span class="filter-bar__field-label">{{ uiText('Au') }}</span>
+              <input v-model="filterTo" type="date" class="filter-bar__input" />
+            </label>
 
             <label v-if="canSeeAllReceptionists" class="filter-bar__field">
               <span class="filter-bar__field-label">{{ uiText('Réceptionniste') }}</span>
@@ -1229,7 +1439,7 @@ onMounted(load)
                     <th class="simple-table__num">#</th>
                     <th>{{ uiText('Date') }}</th>
                     <th>{{ uiText('Patient') }}</th>
-                    <th>{{ uiText('Intervention') }}</th>
+                    <th>{{ uiText('Service') }}</th>
                     <th class="ops-doctor-col">
                       <select
                         v-model="doctorFilter"
@@ -1257,17 +1467,21 @@ onMounted(load)
                     <td>
                       <span class="st-date">{{ row.dateLabel }}</span>
                       <span class="st-sub">{{ row.timeLabel }}</span>
-                      <template v-if="row.source === 'bloc'">
-                        <span v-if="row.completed" class="st-badge st-badge--success">{{ uiText('Effectuée') }}</span>
-                        <span v-else class="st-badge st-badge--info">{{ uiText("En attente d'opération") }}</span>
-                      </template>
+                      <span
+                        v-if="row.modifiedLabel"
+                        class="st-modified"
+                      >{{ row.modifiedLabel }}</span>
+                      <span
+                        v-else-if="row.source === 'bloc' && row.paymentState !== 'paid' && !row.completed"
+                        class="st-badge st-badge--info"
+                      >{{ uiText("En attente d'opération") }}</span>
                     </td>
                     <td>
                       <span class="st-name">{{ row.patientName }}</span>
                       <span class="st-sub">{{ row.patientCode }}</span>
                     </td>
                     <td>
-                      <span class="st-name">{{ clinicServiceText(row.intervention) }}</span>
+                      <span class="st-name">{{ operationPlaceLabel(row.intervention, row.serviceName) }}</span>
                       <span
                         class="st-badge"
                         :class="row.source === 'bloc' ? 'st-badge--info' : 'st-badge--warning'"
@@ -1288,17 +1502,27 @@ onMounted(load)
                         translateTemplate('Encaissé par {name}', { name: row.collectedBy })
                       }}</span>
                     </td>
-                    <td>
-                      <span class="st-amount">{{ formatFcfa(row.billedFcfa) }}</span>
+                    <td class="st-amount-col">
+                      <strong class="st-amount" dir="ltr">{{ formatFcfa(row.billedFcfa) }}</strong>
                     </td>
-                    <td>
-                      <span class="st-amount">{{ formatFcfa(row.paidFcfa) }}</span>
+                    <td class="st-amount-col">
+                      <div class="st-amount-stack">
+                        <strong class="st-amount" dir="ltr">{{ formatFcfa(row.paidFcfa) }}</strong>
+                        <span
+                          v-for="payment in row.payments"
+                          v-show="row.payments.length > 1"
+                          :key="payment.id"
+                          class="st-amount-collected"
+                          dir="ltr"
+                        >{{ formatFcfa(payment.amountFcfa) }}</span>
+                      </div>
                     </td>
-                    <td>
-                      <span
+                    <td class="st-amount-col">
+                      <strong
                         class="st-amount"
+                        dir="ltr"
                         :class="{ 'st-amount--due': row.remainingFcfa > 0 }"
-                      >{{ formatFcfa(row.remainingFcfa) }}</span>
+                      >{{ formatFcfa(row.remainingFcfa) }}</strong>
                     </td>
                     <td>
                       <span class="st-badge" :class="`st-badge--${PAYMENT_VARIANTS[row.paymentState]}`">
@@ -1320,13 +1544,13 @@ onMounted(load)
                         <button
                           v-if="row.paidFcfa > 0"
                           type="button"
-                          class="st-btn st-btn--print st-btn--labeled"
+                          class="st-btn st-btn--print"
                           :title="uiText('Réimprimer le reçu')"
+                          :aria-label="uiText('Réimprimer le reçu')"
                           :disabled="!!actionId || submittingPayment"
                           @click="reprintReceipts(row)"
                         >
                           <Printer :size="15" />
-                          {{ uiText('Reçu') }}
                         </button>
                         <button
                           v-if="canEditOperations"
@@ -1367,7 +1591,6 @@ onMounted(load)
     <UiFormModal
       v-if="showRegisterModal"
       title="Enregistrer une opération"
-      subtitle="Même saisie qu’un patient externe : service, prix, médecin obligatoire et assistant."
       :icon="Scissors"
       size="wide"
       @close="closeRegisterModal"
@@ -1398,6 +1621,10 @@ onMounted(load)
         />
       </form>
       <template #footer>
+        <p v-if="!canRegisterOperation && !registeringOperation" class="register-op-hint">
+          {{ uiText('Champs manquants') }} :
+          {{ registerOperationBlockers.join(' · ') }}
+        </p>
         <UiButton variant="ghost" type="button" @click="closeRegisterModal">
           {{ uiText('Annuler') }}
         </UiButton>
@@ -1431,6 +1658,22 @@ onMounted(load)
         </option>
       </UiSelect>
       <UiSelect
+        :model-value="editDoctorId"
+        label="Médecin"
+        :disabled="!editServiceId"
+        @update:model-value="editDoctorId = String($event ?? '')"
+      >
+        <option value="">
+          {{ editServiceId ? 'Choisir un médecin' : 'Choisissez d’abord un service' }}
+        </option>
+        <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
+          {{ editDoctorLabel(doctor) }}
+        </option>
+      </UiSelect>
+      <p v-if="editServiceId && !editServiceDoctors.length" class="edit-hint">
+        Aucun médecin rattaché à ce service.
+      </p>
+      <UiSelect
         :model-value="editInterventionId"
         label="Nom de l'opération"
         :disabled="!operationCatalog.length"
@@ -1445,7 +1688,10 @@ onMounted(load)
         </option>
       </UiSelect>
       <UiInput v-model="editAmount" label="Montant (FCFA)" type="number" required />
-      <UiInput v-model="editDate" label="Date de l'opération" type="date" required />
+      <UiInput v-model="editDate" label="Date d'enregistrement" type="date" required />
+      <p class="edit-hint">
+        {{ uiText('Cette date s’affiche dans la colonne Date et sert aux filtres.') }}
+      </p>
       <p v-if="editRow.paidFcfa > 0" class="edit-hint">
         {{
           translateTemplate('Déjà encaissé : {paid}', { paid: formatFcfa(editRow.paidFcfa) })
@@ -1601,11 +1847,12 @@ onMounted(load)
               </div>
               <button
                 type="button"
-                class="st-btn st-btn--print st-btn--labeled"
+                class="st-btn st-btn--print"
+                :title="uiText('Imprimer')"
+                :aria-label="uiText('Imprimer')"
                 @click="printListedReceipt(payment)"
               >
                 <Printer :size="15" />
-                {{ uiText('Imprimer') }}
               </button>
             </li>
           </ul>
@@ -1625,6 +1872,14 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.register-op-hint {
+  flex: 1 1 100%;
+  margin: 0 0 0.35rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--danger, #b91c1c);
 }
 
 .edit-hint {
@@ -1648,36 +1903,6 @@ onMounted(load)
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 0.85rem 1.25rem;
-}
-
-.filter-bar__modes {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  padding: 0.2rem;
-  background: #f1f5f9;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-}
-
-.filter-bar__mode {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.42rem 0.75rem;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.filter-bar__mode--active {
-  background: #fff;
-  color: var(--primary-800);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 
 .filter-bar__controls {
@@ -1831,6 +2056,16 @@ onMounted(load)
 .st-sub,
 .st-amount {
   display: block;
+}
+
+.st-modified {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-muted, #64748b);
+  letter-spacing: 0.01em;
 }
 
 .st-amount--due {

@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   common: {
     logout: 'Log out',
     openMenu: 'Open menu',
@@ -464,6 +464,11 @@ export default {
     'Net payé': 'Net paid',
     'Payé le': 'Paid on',
     "Détail de l'encaissement": 'Payment details',
+    'Examens ajoutés — à encaisser': 'Changed lines — to collect',
+    'Le médecin a modifié ces lignes après le paiement. Seul l\'écart de prix reste à encaisser.':
+      'The doctor changed these lines after payment. Only the price difference still has to be collected.',
+    'Avoir — examens retirés': 'Credit — removed exams',
+    'Reste à encaisser': 'Still to collect',
     Paiement: 'Payment',
     'Montant brut': 'Gross amount',
     'Aucun examen': 'No exam',
@@ -579,6 +584,8 @@ export default {
       'Consultation and exam payments are made with the manager.',
     'Dossiers patients': 'Patient records',
     'Recettes du jour': "Today's revenue",
+    'Part des médecins': "Doctors' share",
+    'Consultations et opérations': 'Consultations and operations',
     'Mes encaissements (jour)': 'My receipts (day)',
     'Se connecter': 'Sign in',
     Envoyer: 'Send',
@@ -1171,6 +1178,7 @@ export default {
       'Collect payment by type, or validate everything at once at the bottom',
     'Faites défiler pour voir tous les examens et saisir les réductions par type':
       'Scroll to view all exams and enter discounts by type',
+    'Faites défiler pour voir tous les examens': 'Scroll to view all exams',
     "L'hospitalisation est gérée via le bouton dédié dans la liste (attribution de salle et admission).":
       'Hospitalization is handled via the dedicated button in the list (room assignment and admission).',
     'Aucun examen facturable trouvé pour ce dossier.': 'No billable exam found for this file.',
@@ -1567,6 +1575,12 @@ export default {
     "Modifier l'opération": 'Edit operation',
     'Modifier le montant et la date': 'Edit amount and date',
     "Date de l'opération": 'Operation date',
+    "Date d'enregistrement": 'Registration date',
+    'Cette date sert aux filtres de la liste (modifiée = date du jour par défaut).':
+      'This date drives the list filters (on edit, defaults to today).',
+    'Cette date s’affiche dans la colonne Date et sert aux filtres.':
+      'This date appears in the Date column and drives the filters.',
+    'modifié {date}': 'modified {date}',
     'Déjà encaissé : {paid}': 'Already collected: {paid}',
     'Opération modifiée.': 'Operation updated.',
     'Nouvelle opération avec répartition des honoraires': 'New operation with fee split',
@@ -1945,6 +1959,28 @@ export default {
     Écho: 'Ultrasound',
     Odonto: 'Dental',
     // === LAB_I18N_START ===
+    'Détail du laboratoire': 'Laboratory detail',
+    'Saisi par': 'Entered by',
+    'Aucun résultat saisi pour le moment.': 'No result entered yet.',
+    'Impossible de charger le dossier laboratoire.': 'Unable to load the laboratory record.',
+    'Examens en attente ou déjà terminés au laboratoire':
+      'Exams waiting or already completed in the laboratory',
+    'Examens payés, pas encore saisis au laboratoire':
+      'Paid exams not yet entered in the laboratory',
+    'Résultats déjà enregistrés — lecture seule':
+      'Results already recorded — read only',
+    'En attente au laboratoire': 'Waiting in the laboratory',
+    'Terminés au laboratoire': 'Completed in the laboratory',
+    'Lecture seule — le laboratoire n’a pas encore saisi les résultats.':
+      'Read only — the laboratory has not entered the results yet.',
+    'Lecture seule — examens terminés au laboratoire.':
+      'Read only — exams completed in the laboratory.',
+    'Examens prescrits — en attente de résultats au laboratoire':
+      'Prescribed exams — waiting for laboratory results',
+    'Impossible de charger les examens du laboratoire.':
+      'Unable to load laboratory exams.',
+    'Aucun examen terminé au laboratoire pour le moment.':
+      'No completed laboratory exam at the moment.',
     'Dossier laboratoire': 'Lab record',
     'Clôture…': 'Closing…',
     'Clôturer le dossier': 'Close the record',
@@ -2356,7 +2392,11 @@ export default {
     'Aucune alerte stock': 'No stock alerts',
     'Impossible de charger le catalogue pharmacie.': 'Unable to load the pharmacy catalog.',
     'Vente au comptoir et dispensation': 'Over-the-counter sales and dispensing',
+    'Ma recette du jour': 'My sales today',
+    '{n} vente(s)': '{n} sale(s)',
     'Ordonnances médecin': 'Doctor prescriptions',
+    'Aucune ordonnance envoyée depuis moins de 24 h.':
+      'No prescription sent in the last 24 hours.',
     'Clôturer les ventes': 'Close sales',
     'Ventes clôturées': 'Sales closed',
     'Imprimer le cumul': 'Print cumulative',
@@ -2830,7 +2870,6 @@ export default {
     'Total consultations': 'Total consultations',
     'Total encaissé': 'Total collected',
     "Suppression d'hospitalisation non autorisée pour la réception.": 'Reception staff cannot delete hospitalizations.',
-    "Date d'enregistrement": 'Registration date',
     // === RECEPTION_I18N_END ===
     // === PHARMACY_I18N_END ===
   },
@@ -2941,13 +2980,16 @@ export default {
     Enregistrement: 'Registration',
     'Parts médecins à percevoir': 'Doctors’ shares receivable',
     'Part médecin': 'Doctor share',
+    'Récapitulatif par médecin': 'Summary by doctor',
+    'Parts médecins': 'Doctor shares',
+    'Aucune part médecin sur cette période.': 'No doctor share for this period.',
     Patients: 'Patients',
     'Patient externe': 'External patient',
     'Examens & paiements': 'Exams & payments',
     'Paiement examens': 'Exam payment',
     'En attente de paiement': 'Awaiting payment',
     'Examens prescrits à encaisser': 'Prescribed exams to collect',
-    'Ajouter examen en cours de paiement': 'Add exam pending payment',
+    'Examens en attente de paiement': 'Exams awaiting payment',
     'Examens payés': 'Paid exams',
     Réclamations: 'Claims',
     'Suivi hospitalier': 'Hospital follow-up',
@@ -2966,6 +3008,8 @@ export default {
     'Saisir une opération': 'Enter an operation',
     'Nom et prix libres — ou choisissez une opération du catalogue ci-dessous.':
       'Free name and price — or pick an operation from the catalog below.',
+    'Nom et prix enregistrés sur ce service : proposés à la prochaine recherche et dans les exports.':
+      'Name and price saved on this service: offered on the next search and in exports.',
     'Nom de l’opération': 'Operation name',
     'Ex. Appendicectomie': 'E.g. Appendectomy',
     'Prix (FCFA)': 'Price (FCFA)',
@@ -3042,6 +3086,11 @@ export default {
     'Le téléphone doit contenir au moins 6 chiffres.':
       'Phone number must contain at least 6 digits.',
     'Au moins 6 chiffres requis pour valider.': 'At least 6 digits are required to validate.',
+    'Si renseigné : au moins 6 chiffres (optionnel).':
+      'If provided: at least 6 digits (optional).',
+    'Nom de l’opération (optionnel)': 'Operation name (optional)',
+    'Champs manquants': 'Missing fields',
+    'Service / opération': 'Service / operation',
     'Champs incomplets': 'Incomplete fields',
     'Veuillez corriger les points suivants :': 'Please correct the following:',
     'Indiquez le nom et le prénom du patient.': 'Enter the patient’s first and last name.',
@@ -3223,6 +3272,8 @@ export default {
       'Choose a registered assistant or anesthetist.',
     'Choisissez le service de l’opération, puis saisissez le prix.':
       'Choose the service for the operation, then enter the price.',
+    'Opération du service (optionnel)': 'Service operation (optional)',
+    'Aucune — saisir le prix librement': 'None — enter the price freely',
     'Opération pour le service « {name} ». Saisissez le prix ci-dessous.':
       'Operation for the “{name}” service. Enter the price below.',
     'Médecin obligatoire pour « {op} ». L’assistant est facultatif. Les % s’appliquent au montant.':
@@ -3316,25 +3367,15 @@ export default {
     'Aucune maladie enregistrée.': 'No disease recorded.',
     'Chargement des maladies…': 'Loading diseases…',
     Césariennes: 'C-sections',
-    'Césariennes (émiraties)': 'C-sections (Emirates)',
     'Accouchement naturel': 'Natural delivery',
-    'Accouchement naturel (émiraties)': 'Natural delivery (Emirates)',
     'Ablations des fibromes': 'Fibroid removal',
-    'Ablations des fibromes (émiraties)': 'Fibroid removal (Emirates)',
     'Fracture de la hanche': 'Hip fracture',
-    'Fracture de la hanche (émiraties)': 'Hip fracture (Emirates)',
     'Fracture du bassin': 'Pelvic fracture',
-    'Fracture du bassin (émiraties)': 'Pelvic fracture (Emirates)',
     'Fracture du bras': 'Arm fracture',
-    'Fracture du bras (émiraties)': 'Arm fracture (Emirates)',
     'Fracture de la jambe': 'Leg fracture',
-    'Fracture de la jambe (émiraties)': 'Leg fracture (Emirates)',
     'Radio en couleur': 'Color X-ray',
-    'Radio en couleur (émiraties)': 'Color X-ray (Emirates)',
     'Radio simple': 'Plain X-ray',
-    'Radio simple (émiraties)': 'Plain X-ray (Emirates)',
     'Consultation de kinésithérapie': 'Physiotherapy consultation',
-    'Consultation de kinésithérapie (émiraties)': 'Physiotherapy consultation (Emirates)',
     '— Sélectionner —': '— Select —',
     'Inclure un assistant chirurgie pour cette opération':
       'Include a surgical assistant for this operation',

@@ -21,6 +21,26 @@ export async function resolveClinicServiceById(
   });
 }
 
+type ClinicServiceNameLookup = {
+  clinicService: {
+    findFirst: Prisma.TransactionClient["clinicService"]["findFirst"];
+  };
+};
+
+/** Service clinique dont le nom correspond exactement (casse ignorée). Aucun autre service n'est substitué. */
+export async function resolveActiveClinicServiceByName(
+  db: ClinicServiceNameLookup,
+  serviceName: string | null | undefined,
+): Promise<ClinicServiceRef | null> {
+  const name = serviceName?.trim() ?? "";
+  if (!name) return null;
+  const service = await db.clinicService.findFirst({
+    where: { active: true, name: { equals: name, mode: "insensitive" } },
+    select: { id: true, name: true },
+  });
+  return service ?? null;
+}
+
 /**
  * Résout le service clinique par défaut d'un employé.
  * Pour un médecin, clinicServiceId (défaut) est obligatoire.

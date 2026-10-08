@@ -490,12 +490,21 @@ function employeeExportGroupTotals(count: number, payroll: number) {
   ]
 }
 
+function employeeExportFilterCaption(): string {
+  const parts: string[] = []
+  if (filterProfile.value === 'MEDECIN') parts.push(uiText('Médecins'))
+  else if (filterProfile.value === 'STAFF') parts.push(uiText('Personnel'))
+  const jobTitle = filterJobTitle.value.trim()
+  if (jobTitle) parts.push(jobTitle)
+  const q = searchQuery.value.trim()
+  if (q) parts.push(`${uiText('Recherche')} : ${q}`)
+  return parts.length ? parts.join(' · ') : uiText('Liste complète')
+}
+
 function employeeExportPayload() {
   localeCode.value
-  const grouped = groupEmployeeExportRows(
-    employees.value.map(toEmployeeExportRow),
-    employeesById.value,
-  )
+  // Même périmètre que le tableau affiché (profil, poste, recherche).
+  const grouped = groupEmployeeExportRows(tableRows.value, employeesById.value)
   const rows = grouped.groups.flatMap((group) => group.rows)
   const detailColumns = employeeExportColumns.value
   const recapColumns: ExportColumn<EmployeeJobRecapRow>[] = [
@@ -548,7 +557,7 @@ function employeeExportPayload() {
     columns: detailColumns,
     sections,
     excelSheets,
-    captionRows: [{ label: uiText('Périmètre'), value: uiText('Liste complète') }],
+    captionRows: [{ label: uiText('Périmètre'), value: employeeExportFilterCaption() }],
   }
 }
 

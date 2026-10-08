@@ -170,7 +170,7 @@ onMounted(() => {
                   <span class="lab-visit-date">{{ row.resultDate }}</span>
                   <span class="lab-visit-sub">{{ row.resultTime }}</span>
                 </td>
-                <td>
+                <td class="lab-visit-table__actions">
                   <div class="lab-visit-actions">
                     <button
                       type="button"

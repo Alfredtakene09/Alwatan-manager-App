@@ -11,6 +11,10 @@ import {
   isCollectedOperationInvoice,
 } from "./revenue-stats.js";
 import { comptabiliteInvoicePatientWhere } from "./patient-billing.js";
+import {
+  EXTERNAL_PATIENT_VISIT_NOTE,
+  extractExternalPatientService,
+} from "./visit-external.js";
 
 /** Famille de prestation (consultation, opération, examen…). Le ticket ne les imprime plus en sections. */
 export type DayClosureLineGroup =
@@ -82,10 +86,14 @@ export type DayClosureInvoice = {
     assignedClinicService: { name: string } | null;
     patient: { service: string | null } | null;
     consultation: { clinicalNotes: string | null } | null;
+    notes?: string | null;
   } | null;
   hospitalization: { reductionFcfa: number } | null;
   surgeryCase?: {
-    interventionType: { clinicService: { name: string } | null } | null;
+    interventionType: {
+      label?: string | null;
+      clinicService: { name: string } | null;
+    } | null;
   } | null;
 };
 
@@ -136,14 +144,42 @@ function cumulServiceLabel(group: DayClosureLineGroup, serviceLabel: string): st
   return serviceLabel;
 }
 
-/** Service ayant réalisé l'opération : type d'intervention, sinon service de la visite. */
+function foldClosureService(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
 
-function operationServiceLabel(invoice: DayClosureInvoice): string {
-  const serviceName =
-    invoice.surgeryCase?.interventionType?.clinicService?.name?.trim() ||
-    invoice.visit?.assignedClinicService?.name?.trim() ||
+/** Service enregistré sur le dossier : patient, note externe, puis service de la visite. */
+function recordedClosureService(invoice: DayClosureInvoice): string {
+  return (
     invoice.visit?.patient?.service?.trim() ||
-    "";
+    extractExternalPatientService(invoice.visit?.notes) ||
+    invoice.visit?.assignedClinicService?.name?.trim() ||
+    ""
+  );
+}
+
+/**
+ * Service de l'opération : celui de l'acte, sauf si l'acte n'est que le nom
+ * d'un autre service (ex. « Ophtalmologie ») alors que le dossier est gynécologie.
+ */
+function operationServiceLabel(invoice: DayClosureInvoice): string {
+  const fromType = invoice.surgeryCase?.interventionType?.clinicService?.name?.trim() || "";
+  const recorded = recordedClosureService(invoice);
+  const act = invoice.surgeryCase?.interventionType?.label?.trim() || "";
+  if (
+    recorded &&
+    act &&
+    fromType &&
+    foldClosureService(act) === foldClosureService(fromType) &&
+    foldClosureService(recorded) !== foldClosureService(fromType)
+  ) {
+    return normalizeDayClosureLabel(recorded);
+  }
+  const serviceName = fromType || recorded;
   return serviceName ? normalizeDayClosureLabel(serviceName) : "Chirurgie";
 }
 
@@ -156,10 +192,7 @@ export function classifyInvoiceForDayClosure(
   invoice: DayClosureInvoice,
 ): DayClosureClassification {
   if (invoice.type === InvoiceType.CONSULTATION) {
-    const serviceName =
-      invoice.visit?.assignedClinicService?.name?.trim() ||
-      invoice.visit?.patient?.service?.trim() ||
-      "";
+    const serviceName = recordedClosureService(invoice);
     return {
       label: normalizeDayClosureLabel(serviceName || "Consultations"),
       group: "consultation",
@@ -173,7 +206,15 @@ export function classifyInvoiceForDayClosure(
   }
   if (invoice.type === InvoiceType.LAB_EXAM) {
     const label = classifyLabExamForDayClosure(invoice);
-    return { label, group: dayClosureExamGroup(label) };
+    const group = dayClosureExamGroup(label);
+    // Patient externe : l'acte reste un examen, même spécialité ou odontologie.
+    if (
+      group === "consultation" &&
+      invoice.visit?.notes?.includes(EXTERNAL_PATIENT_VISIT_NOTE)
+    ) {
+      return { label, group: "exam" };
+    }
+    return { label, group };
   }
   return { label: normalizeDayClosureLabel(classifyInvoiceForSettlement(invoice)), group: "other" };
 }
@@ -226,13 +267,16 @@ const dayClosureInvoiceSelect = {
       consultationFeeFcfa: true,
       assignedClinicService: { select: { name: true } },
       patient: { select: { service: true } },
+      notes: true,
       consultation: { select: { clinicalNotes: true } },
     },
   },
   hospitalization: { select: { reductionFcfa: true } },
   surgeryCase: {
     select: {
-      interventionType: { select: { clinicService: { select: { name: true } } } },
+      interventionType: {
+        select: { label: true, clinicService: { select: { name: true } } },
+      },
     },
   },
 } satisfies Prisma.InvoiceSelect;

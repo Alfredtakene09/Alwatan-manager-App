@@ -72,6 +72,14 @@ export function isCollectedOperationInvoice(invoice: {
   return invoice.billingExamKind === "operation";
 }
 
+/** Opération enregistrée : facture non annulée. Un dossier seulement notifié ne compte pas. */
+export function registeredOperationInvoiceWhere(): Prisma.InvoiceWhereInput {
+  return {
+    status: { not: InvoiceStatus.CANCELLED },
+    OR: [{ type: InvoiceType.SURGERY }, { billingExamKind: "operation" }],
+  };
+}
+
 export function isCollectedHospitalizationInvoice(invoice: {
   type: InvoiceType;
   billingExamKind?: string | null;

@@ -5,6 +5,8 @@ export type ExportCell = string | number | boolean | null | undefined
 export type ExportColumn<T> = {
   header: string
   value: (row: T) => ExportCell
+  /** Taille PDF du texte de la colonne quand la cellule contient plusieurs lignes. */
+  fontSize?: number
 }
 
 export type ExportCaptionRow = { label: string; value: string }

@@ -41,8 +41,12 @@
   font-variant-numeric: tabular-nums;
 }
 
-.lab-visit-table__actions-head {
+.lab-visit-table__actions-head,
+.lab-visit-table__actions {
+  width: 1%;
   text-align: right;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .lab-visit-badge {
@@ -102,11 +106,12 @@
 }
 
 .lab-visit-actions {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: flex-end;
   gap: 0.35rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .lab-visit-act {

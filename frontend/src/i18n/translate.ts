@@ -25,12 +25,21 @@ const COMMON_FR: Record<string, string> = {
   continueConsultation: 'Continuer la consultation',
 }
 
+/** Ancien suffixe tarifaire catalogue — ne plus l’afficher. */
+const EMIRATES_TARIFF_SUFFIX_RE = /\s*\((?:émiraties|emirates|الإمارات)\)\s*$/iu
+
+export function stripEmiratesTariffSuffix(text: string): string {
+  return text.replace(EMIRATES_TARIFF_SUFFIX_RE, '').trim()
+}
+
 function normalizeKey(text: string): string {
-  return text
-    .replace(/\u2019/g, "'")
-    .replace(/\u2018/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim()
+  return stripEmiratesTariffSuffix(
+    text
+      .replace(/\u2019/g, "'")
+      .replace(/\u2018/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim(),
+  )
 }
 
 /** Index ui/nav avec clés normalisées (évite les échecs sur \\n vs espaces). */
@@ -85,7 +94,7 @@ export function translateUi(text: string | null | undefined): string {
  */
 export function translateExamName(text: string | null | undefined): string {
   if (text == null) return ''
-  return String(text)
+  return stripEmiratesTariffSuffix(String(text))
 }
 
 /** Traduction figée vers une locale (ex. tickets thermiques toujours en arabe). */
@@ -100,20 +109,22 @@ export function translateUiLocale(
   const bundle = CATALOGS[locale] ?? CATALOGS.fr
   // Priorité au catalogue vivant (HMR / fichiers locale mis à jour).
   const liveUi = bundle.ui?.[text] ?? bundle.ui?.[key]
-  if (liveUi != null) return liveUi
+  if (liveUi != null) return stripEmiratesTariffSuffix(liveUi)
   const liveNav = bundle.nav?.[text] ?? bundle.nav?.[key]
-  if (liveNav != null) return liveNav
+  if (liveNav != null) return stripEmiratesTariffSuffix(liveNav)
 
   const fromUi = NORMALIZED_UI[locale]?.[key]
-  if (fromUi != null) return fromUi
+  if (fromUi != null) return stripEmiratesTariffSuffix(fromUi)
   const fromNav = NORMALIZED_NAV[locale]?.[key]
-  if (fromNav != null) return fromNav
+  if (fromNav != null) return stripEmiratesTariffSuffix(fromNav)
 
   for (const [code, frLabel] of Object.entries(COMMON_FR)) {
-    if (normalizeKey(frLabel) === key && bundle.common?.[code]) return bundle.common[code]
+    if (normalizeKey(frLabel) === key && bundle.common?.[code]) {
+      return stripEmiratesTariffSuffix(bundle.common[code])
+    }
   }
 
-  return key
+  return stripEmiratesTariffSuffix(key)
 }
 
 export function translateRole(role: string): string {

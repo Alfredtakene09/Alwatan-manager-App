@@ -174,9 +174,11 @@ export async function buildDoctorReceivable(
       status: { in: blockingClaimStatuses },
       OR: [
         { businessDate: { gte: period.from, lt: period.to } },
-        {
-          status: DoctorShareClaimStatus.PENDING_PAYROLL,
-        },
+        { status: DoctorShareClaimStatus.PENDING_PAYROLL },
+        // Une facture ou une opération déjà réclamée ne doit plus compter,
+        // même si la date enregistrée a glissé d'un jour.
+        { invoiceId: { not: null } },
+        { surgeryCaseId: { not: null } },
       ],
     },
     select: {
@@ -196,6 +198,18 @@ export async function buildDoctorReceivable(
   const claimedInvoices = new Set(
     existingClaims.filter((c) => c.invoiceId).map((c) => c.invoiceId as string),
   );
+  // Une facture déjà réglée (même au nom d'un autre médecin) ne doit plus compter.
+  const settledElsewhere = await prisma.doctorShareClaim.findMany({
+    where: {
+      status: { in: blockingClaimStatuses },
+      OR: [{ invoiceId: { not: null } }, { surgeryCaseId: { not: null } }],
+    },
+    select: { invoiceId: true, surgeryCaseId: true, kind: true },
+  });
+  for (const claim of settledElsewhere) {
+    if (claim.invoiceId) claimedInvoices.add(claim.invoiceId);
+    if (claim.surgeryCaseId) claimedSurgery.add(`${claim.surgeryCaseId}:${claim.kind}`);
+  }
   const pendingPayrollFcfa = existingClaims
     .filter((c) => c.status === DoctorShareClaimStatus.PENDING_PAYROLL)
     .reduce((sum, c) => sum + c.amountFcfa, 0);
@@ -782,20 +796,49 @@ export async function settleConsultationCash(
 ) {
   const now = new Date();
   const created = [];
+  let alreadySettled = 0;
   for (const item of input.items) {
     const doctor = await tx.user.findUnique({
       where: { id: item.doctorUserId },
       select: { id: true, employeeId: true },
     });
-    if (!doctor) continue;
+    if (!doctor?.employeeId) continue;
     const [y, m, d] = item.businessDate.split("-").map(Number);
+    const businessDate = new Date(Date.UTC(y, m - 1, d));
+    const existing = await tx.doctorShareClaim.findFirst({
+      where: { invoiceId: item.invoiceId, kind: DoctorShareKind.CONSULTATION },
+    });
+    if (
+      existing?.status === DoctorShareClaimStatus.SETTLED_CASH ||
+      existing?.status === DoctorShareClaimStatus.SETTLED_PAYROLL
+    ) {
+      alreadySettled += 1;
+      continue;
+    }
+    if (existing) {
+      const row = await tx.doctorShareClaim.update({
+        where: { id: existing.id },
+        data: {
+          status: DoctorShareClaimStatus.SETTLED_CASH,
+          amountFcfa: Math.round(item.amountFcfa),
+          businessDate,
+          doctorUserId: doctor.id,
+          employeeId: doctor.employeeId,
+          settledAt: now,
+          settledById: input.settledById,
+          rejectionReason: null,
+        },
+      });
+      created.push(row);
+      continue;
+    }
     const row = await tx.doctorShareClaim.create({
       data: {
         employeeId: doctor.employeeId,
         doctorUserId: doctor.id,
         kind: DoctorShareKind.CONSULTATION,
         amountFcfa: Math.round(item.amountFcfa),
-        businessDate: new Date(y, m - 1, d),
+        businessDate,
         invoiceId: item.invoiceId,
         status: DoctorShareClaimStatus.SETTLED_CASH,
         requestedById: input.settledById,
@@ -805,7 +848,7 @@ export async function settleConsultationCash(
     });
     created.push(row);
   }
-  return created;
+  return { created, alreadySettled };
 }
 
 /**

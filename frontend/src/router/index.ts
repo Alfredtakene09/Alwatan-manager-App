@@ -44,6 +44,18 @@ const router = createRouter({
           meta: { module: 'reception' },
         },
         {
+          path: 'reception/laboratoire',
+          name: 'reception-laboratoire',
+          component: () => import('@/views/reception/ReceptionLabQueueView.vue'),
+          meta: { module: 'reception' },
+        },
+        {
+          path: 'reception/laboratoire/dossier/:visitId',
+          name: 'reception-laboratoire-dossier',
+          component: () => import('@/views/LaboratoireDossierView.vue'),
+          meta: { module: 'reception' },
+        },
+        {
           path: 'reception/patient-externe',
           name: 'reception-patient-externe',
           component: () => import('@/views/reception/ReceptionExternalPatientView.vue'),

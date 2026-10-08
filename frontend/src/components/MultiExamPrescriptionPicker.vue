@@ -436,9 +436,13 @@ function selectKind(kind: ExamKindSlug) {
 
 function selectSpecialtyService(serviceId: string) {
   activePanel.value = `specialty:${serviceId}`
-  if (props.showConsultation) return
   const service = specialtyServiceTabs.value.find((item) => item.id === serviceId)
-  if (service && !service.hasExams) selectOperationService(service)
+  if (!service) return
+  if (!props.showConsultation && !service.hasExams) {
+    selectOperationService(service)
+    return
+  }
+  emit('update:operationServiceId', service.id)
 }
 
 const showExternalOperationServices = computed(() => {
@@ -448,13 +452,61 @@ const showExternalOperationServices = computed(() => {
 })
 
 const selectedOperationServiceId = computed(() => {
+  const explicit = activeSpecialtyClinicServiceId.value || props.operationServiceId?.trim() || ''
+  if (explicit) return explicit
   const label = cartOperationLabel.value
   if (!label) return ''
   return specialtyServiceTabs.value.find((service) => service.name === label)?.id ?? ''
 })
 
+const serviceOperationChoices = computed(() => {
+  void catalogEpoch.value
+  const serviceId = selectedOperationServiceId.value
+  if (!serviceId || !showExternalOperationServices.value) return []
+  const serviceName =
+    specialtyServiceTabs.value.find((service) => service.id === serviceId)?.name ?? ''
+  return getCatalogForKind('operation', props.doctorId, props.serviceId, serviceId)
+    .filter((exam) => exam.label.trim() && exam.label.trim() !== serviceName)
+    .slice()
+    .sort((a, b) => a.label.localeCompare(b.label, 'fr', { sensitivity: 'base' }))
+})
+
+const selectedServiceOperationId = computed(() => {
+  const label = cartOperationLabel.value
+  if (!label) return ''
+  return serviceOperationChoices.value.find((exam) => exam.label === label)?.id ?? ''
+})
+
+function onServiceOperationPick(examId: string | number) {
+  const serviceId = selectedOperationServiceId.value
+  const service = specialtyServiceTabs.value.find((item) => item.id === serviceId)
+  if (!service) return
+  const id = String(examId ?? '').trim()
+  if (!id) {
+    updateKind('operation', [])
+    emit('update:operationServiceId', service.id)
+    return
+  }
+  const exam = serviceOperationChoices.value.find((item) => item.id === id)
+  if (!exam) return
+  updateKind('operation', [exam.label])
+  emit('update:operationServiceId', service.id)
+  if (exam.priceFcfa > 0) {
+    const amount = Math.max(0, Math.round(exam.priceFcfa))
+    operationAmountDraft.value = String(amount)
+    emit('update:operationAmountFcfa', amount)
+  }
+}
+
 function selectOperationService(service: SpecialtyServiceInfo) {
-  updateKind('operation', [service.name])
+  customOpName.value = ''
+  const allowed = new Set(
+    getCatalogForKind('operation', props.doctorId, props.serviceId, service.id)
+      .map((exam) => exam.label.trim())
+      .filter((label) => label && label.toLowerCase() !== service.name.trim().toLowerCase()),
+  )
+  const kept = (examsByKind.value.operation ?? []).filter((label) => allowed.has(label.trim()))
+  updateKind('operation', kept)
   emit('update:operationServiceId', service.id)
 }
 
@@ -477,6 +529,18 @@ function emitActiveService() {
     })
     return
   }
+  const operationServiceId = props.operationServiceId?.trim() || ''
+  if (activePanel.value === 'operation' && operationServiceId) {
+    const tab = specialtyTabs.value.find((svc) => svc.id === operationServiceId)
+    if (tab) {
+      emit('active-service-change', {
+        kind: 'operation',
+        clinicServiceId: tab.id,
+        clinicServiceName: tab.name,
+      })
+      return
+    }
+  }
   if (activePanel.value === 'consultation') {
     emit('active-service-change', {
       kind: 'consultation',
@@ -494,7 +558,8 @@ function emitActiveService() {
 }
 
 watch(
-  () => [activePanel.value, specialtyTabs.value, catalogEpoch.value] as const,
+  () =>
+    [activePanel.value, specialtyTabs.value, catalogEpoch.value, props.operationServiceId] as const,
   () => {
     emitActiveService()
   },
@@ -526,6 +591,7 @@ function updateSpecialtyForActiveService(selected: string[]) {
 
 function updateOperationForActiveService(selected: string[]) {
   const serviceId = activeSpecialtyClinicServiceId.value
+  if (serviceId) emit('update:operationServiceId', serviceId)
   if (!serviceId) {
     updateKind('operation', selected)
     return
@@ -569,9 +635,12 @@ const assistantDoctors = ref<AssistantOption[]>([])
 const assistantSaving = ref(false)
 const assistantMessage = ref('')
 const assistantMessageType = ref<'success' | 'error'>('success')
+const DEFAULT_ASSISTANT_PERCENT = 11
+
 const assistantForm = ref({
-  withAssistant: true,
-  percent: '10',
+  // Réception : décoché par défaut — l’assistant reste optionnel.
+  withAssistant: false,
+  percent: String(DEFAULT_ASSISTANT_PERCENT),
   doctorId: '',
   name: '',
   mode: 'select' as AssistantInputMode,
@@ -604,30 +673,78 @@ const cartOperationExam = computed<CatalogExam | null>(() => {
   void catalogEpoch.value
   const label = cartOperationLabel.value
   if (!label) return null
-  const serviceId = activeSpecialtyClinicServiceId.value
-  const fromCatalog =
-    getCatalogForKind('operation', props.doctorId, props.serviceId, serviceId).find(
-      (exam) => exam.label === label,
-    ) ??
+  const serviceId =
+    activeSpecialtyClinicServiceId.value || props.operationServiceId?.trim() || ''
+  const fromCatalog = getCatalogForKind(
+    'operation',
+    props.doctorId,
+    props.serviceId,
+    serviceId || null,
+  ).find((exam) => exam.label === label)
+  if (fromCatalog) return fromCatalog
+  if (serviceId) {
+    return {
+      id: `custom:${label}`,
+      code: 'CUSTOM',
+      label,
+      category: 'MOYENNE_B',
+      priceFcfa: Math.max(0, Math.round(Number(operationAmountDraft.value) || 0)),
+      surgeonPercent: 70,
+      anesthesiologistPercent: 0,
+      hasAssistant: false,
+      clinicServiceId: serviceId,
+    }
+  }
+  return (
     getCatalogForKind('operation', props.doctorId, props.serviceId).find(
       (exam) => exam.label === label,
-    )
-  if (fromCatalog) return fromCatalog
-  // Opération saisie libre (pas encore au catalogue)
-  return {
-    id: `custom:${label}`,
-    code: 'CUSTOM',
-    label,
-    category: 'MOYENNE_B',
-    priceFcfa: Math.max(0, Math.round(Number(operationAmountDraft.value) || 0)),
-    surgeonPercent: 70,
-    anesthesiologistPercent: 0,
-    hasAssistant: false,
-  }
+    ) ?? {
+      id: `custom:${label}`,
+      code: 'CUSTOM',
+      label,
+      category: 'MOYENNE_B',
+      priceFcfa: Math.max(0, Math.round(Number(operationAmountDraft.value) || 0)),
+      surgeonPercent: 70,
+      anesthesiologistPercent: 0,
+      hasAssistant: false,
+    }
+  )
 })
 
-const showCustomOperationPanel = computed(
-  () => props.showConsultation && (activeKind.value === 'operation' || !!cartOperationLabel.value),
+const operationServiceName = computed(() => {
+  const serviceId = selectedOperationServiceId.value || activeSpecialtyClinicServiceId.value || ''
+  return specialtyServiceTabs.value.find((service) => service.id === serviceId)?.name?.trim() ?? ''
+})
+
+/** Libellé d’acte distinct du nom du service (sinon c’est seulement un prix libre). */
+const namedOperationLabel = computed(() => {
+  const label = cartOperationLabel.value?.trim() ?? ''
+  const serviceName = operationServiceName.value
+  if (!label) return ''
+  if (serviceName && label.toLowerCase() === serviceName.toLowerCase()) return ''
+  return label
+})
+
+const showCustomOperationPanel = computed(() => {
+  // Médecin (consultation) : panneau « saisir une opération » séparé.
+  if (props.showConsultation) {
+    return (
+      activeKind.value === 'operation' ||
+      !!cartOperationLabel.value ||
+      !!activeSpecialtyTab()?.hasOperations
+    )
+  }
+  // Réception / patient externe : prix + médecin suffisent (nom d’acte optionnel).
+  return false
+})
+
+/** Prix libre sans acte catalogue : proposer un nom d’opération optionnel. */
+const showOptionalFreeOpName = computed(
+  () =>
+    !props.showConsultation &&
+    showExternalOperationServices.value &&
+    !!selectedOperationServiceId.value &&
+    !namedOperationLabel.value,
 )
 
 const showOperationPricePanel = computed(() => !!cartOperationLabel.value)
@@ -698,7 +815,13 @@ function addCustomOperation() {
     customOpMessage.value = uiText('Indiquez le prix de l’opération.')
     return
   }
+  const serviceId =
+    activeSpecialtyClinicServiceId.value ||
+    selectedOperationServiceId.value ||
+    props.operationServiceId?.trim() ||
+    ''
   updateKind('operation', [label])
+  if (serviceId) emit('update:operationServiceId', serviceId)
   emit('update:operationAmountFcfa', amount)
   operationAmountDraft.value = String(amount)
   lastSyncedOperationLabel.value = label
@@ -849,19 +972,30 @@ function syncAssistantFormFromSelection() {
   }
   const hasAssistant = !!exam.hasAssistant
   assistantForm.value = {
-    withAssistant: true,
+    withAssistant: hasAssistant,
     percent: String(exam.anesthesiologistPercent && exam.anesthesiologistPercent > 0
       ? exam.anesthesiologistPercent
-      : 10),
+      : DEFAULT_ASSISTANT_PERCENT),
     doctorId: exam.anesthesiologistId ?? '',
     name: exam.anesthesiologistId ? '' : (exam.anesthesiologistName ?? ''),
     mode: exam.anesthesiologistId || !exam.anesthesiologistName ? 'select' : 'custom',
   }
-  if (!hasAssistant) {
-    assistantForm.value.withAssistant = true
-  }
   assistantMessage.value = ''
   emitOperationAssistant()
+}
+
+function onOptionalFreeOpNameInput(value: string | number) {
+  const label = String(value ?? '').trim()
+  customOpName.value = String(value ?? '')
+  const serviceId = selectedOperationServiceId.value
+  const service = specialtyServiceTabs.value.find((item) => item.id === serviceId)
+  if (!service) return
+  if (label.length >= 2) {
+    updateKind('operation', [label])
+  } else {
+    updateKind('operation', [service.name])
+  }
+  emit('update:operationServiceId', service.id)
 }
 
 function emitOperationAssistant() {
@@ -873,7 +1007,7 @@ function emitOperationAssistant() {
     emit('update:operationAssistant', { anesthesiologistPercent: 0 })
     return
   }
-  const percent = Math.min(99, Math.max(1, Math.round(Number(assistantForm.value.percent) || 10)))
+  const percent = Math.min(99, Math.max(1, Math.round(Number(assistantForm.value.percent) || DEFAULT_ASSISTANT_PERCENT)))
   const selected = assistantDoctors.value.find((person) => person.id === assistantForm.value.doctorId)
   if (!selected) {
     emit('update:operationAssistant', null)
@@ -1263,9 +1397,6 @@ watch(
         class="multi-exam-picker__op-services"
       >
         <template v-if="activePanel === 'operation'">
-          <p class="multi-exam-picker__consultation-hint">
-            {{ uiText('Choisissez le service de l’opération, puis saisissez le prix.') }}
-          </p>
           <div class="multi-exam-picker__op-services-grid">
             <button
               v-for="service in specialtyServiceTabs"
@@ -1281,13 +1412,17 @@ watch(
             </button>
           </div>
         </template>
-        <p v-else class="multi-exam-picker__consultation-hint">
-          {{
-            translateTemplate('Opération pour le service « {name} ». Saisissez le prix ci-dessous.', {
-              name: clinicServiceText(activeSpecialtyTab()?.name ?? ''),
-            })
-          }}
-        </p>
+        <UiSelect
+          v-if="selectedOperationServiceId && serviceOperationChoices.length"
+          :model-value="selectedServiceOperationId"
+          :label="uiText('Opération du service (optionnel)')"
+          @update:model-value="onServiceOperationPick"
+        >
+          <option value="">{{ uiText('Aucune — saisir le prix librement') }}</option>
+          <option v-for="exam in serviceOperationChoices" :key="exam.id" :value="exam.id">
+            {{ exam.label }} — {{ formatFcfa(exam.priceFcfa) }}
+          </option>
+        </UiSelect>
       </div>
 
       <ExamPrescriptionPicker
@@ -1319,7 +1454,7 @@ watch(
       >
         <header class="multi-exam-picker__price-head">
           <h4>{{ uiText('Saisir une opération') }}</h4>
-          <p>{{ uiText('Nom et prix libres — ou choisissez une opération du catalogue ci-dessous.') }}</p>
+          <p>{{ uiText('Nom et prix enregistrés sur ce service : proposés à la prochaine recherche et dans les exports.') }}</p>
         </header>
         <div class="multi-exam-picker__custom-op-grid">
           <UiInput
@@ -1352,7 +1487,7 @@ watch(
         v-if="showOperationPricePanel && cartOperationExam"
         class="multi-exam-picker__price"
       >
-        <header class="multi-exam-picker__price-head">
+        <header v-if="showConsultation" class="multi-exam-picker__price-head">
           <h4>{{ uiText('Montant de l’opération') }}</h4>
           <p>
             {{
@@ -1364,13 +1499,36 @@ watch(
         </header>
 
         <UiInput
-          :model-value="operationAmountDraft"
-          :label="uiText(showConsultation ? 'Montant (FCFA)' : 'Prix (FCFA)')"
-          type="number"
-          min="0"
-          step="1"
-          @update:model-value="onOperationAmountInput"
+          v-if="showOptionalFreeOpName"
+          :model-value="customOpName"
+          :label="uiText('Nom de l’opération (optionnel)')"
+          :placeholder="uiText('Ex. Appendicectomie')"
+          @update:model-value="onOptionalFreeOpNameInput"
         />
+        <div
+          class="multi-exam-picker__price-row"
+          :class="{ 'multi-exam-picker__price-row--pair': !showConsultation }"
+        >
+          <UiInput
+            :model-value="operationAmountDraft"
+            :label="uiText(showConsultation ? 'Montant (FCFA)' : 'Prix (FCFA)')"
+            type="number"
+            min="0"
+            step="1"
+            @update:model-value="onOperationAmountInput"
+          />
+          <UiSelect
+            v-if="!showConsultation"
+            v-model="operationDoctorIdModel"
+            :label="uiText('Médecin')"
+            required
+          >
+            <option value="">{{ uiText('— Sélectionner —') }}</option>
+            <option v-for="doctor in surgeonDoctors" :key="`surgeon-${doctor.id}`" :value="doctor.id">
+              {{ surgeonOptionLabel(doctor) }}
+            </option>
+          </UiSelect>
+        </div>
 
         <ul v-if="operationSharePreview" class="multi-exam-picker__shares">
           <li>
@@ -1401,37 +1559,20 @@ watch(
         v-if="showOperationAssistantPanel && cartOperationExam"
         class="multi-exam-picker__assistant"
       >
-        <header class="multi-exam-picker__assistant-head">
-          <h4>{{ uiText(showConsultation ? 'Assistant chirurgie' : 'Médecin et assistant') }}</h4>
+        <header v-if="showConsultation" class="multi-exam-picker__assistant-head">
+          <h4>{{ uiText('Assistant chirurgie') }}</h4>
           <p>
             {{
-              showConsultation
-                ? cartOperationExam.hasAssistant
-                  ? translateTemplate('Déjà lié à « {op} » — vous pouvez modifier.', {
-                      op: clinicServiceText(cartOperationExam.label),
-                    })
-                  : translateTemplate('Choisissez un assistant pour « {op} » (optionnel).', {
-                      op: clinicServiceText(cartOperationExam.label),
-                    })
-                : translateTemplate(
-                    'Médecin obligatoire pour « {op} ». L’assistant est facultatif. Les % s’appliquent au montant.',
-                    { op: clinicServiceText(cartOperationExam.label) },
-                  )
+              cartOperationExam.hasAssistant
+                ? translateTemplate('Déjà lié à « {op} » — vous pouvez modifier.', {
+                    op: clinicServiceText(cartOperationExam.label),
+                  })
+                : translateTemplate('Choisissez un assistant pour « {op} » (optionnel).', {
+                    op: clinicServiceText(cartOperationExam.label),
+                  })
             }}
           </p>
         </header>
-
-        <UiSelect
-          v-if="!showConsultation"
-          v-model="operationDoctorIdModel"
-          :label="uiText('Médecin')"
-          required
-        >
-          <option value="">{{ uiText('— Sélectionner —') }}</option>
-          <option v-for="doctor in surgeonDoctors" :key="`surgeon-${doctor.id}`" :value="doctor.id">
-            {{ surgeonOptionLabel(doctor) }}
-          </option>
-        </UiSelect>
 
         <UiInput
           v-if="activeSurgeonId"
@@ -1443,9 +1584,6 @@ watch(
           required
           @update:model-value="onSurgeonPercentInput"
         />
-        <p v-if="activeSurgeonId" class="multi-exam-picker__assistant-current">
-          {{ uiText('Pourcentage obligatoire pour cette opération (1 à 99).') }}
-        </p>
 
         <p v-if="cartOperationExam.hasAssistant" class="multi-exam-picker__assistant-current">
           {{
@@ -1846,6 +1984,13 @@ watch(
   line-height: 1.4;
 }
 
+.multi-exam-picker__price-row--pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  align-items: end;
+}
+
 .multi-exam-picker__shares {
   list-style: none;
   margin: 0;
@@ -1978,7 +2123,8 @@ watch(
 }
 
 @media (max-width: 639px) {
-  .multi-exam-picker__assistant-grid {
+  .multi-exam-picker__assistant-grid,
+  .multi-exam-picker__price-row--pair {
     grid-template-columns: 1fr;
   }
 }

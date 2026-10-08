@@ -16,7 +16,18 @@ import {
   Calendar,
   ChevronDown,
 } from '@lucide/vue'
-import { formatFcfa, fullName } from '@/lib/roles'
+import {
+  formatFcfa,
+  fullName,
+  canReduceExamPrices,
+  isReceptionExamReductionCapped,
+} from '@/lib/roles'
+import {
+  RECEPTION_EXAM_REDUCTION_PERCENTS,
+  matchReceptionReductionPercent,
+  reductionFcfaFromPercent,
+} from '@/lib/reception-reduction'
+import { useAuthStore } from '@/stores/auth'
 import { formatAppDateTime } from '@/i18n/locale-format'
 import { EXAM_KIND_LABELS, type ExamKindSlug } from '@/lib/exam-catalog/types'
 import {
@@ -68,6 +79,11 @@ const emit = defineEmits<{
 }>()
 
 const { uiText, localeCode } = useAppI18n()
+const auth = useAuthStore()
+const canReduceExams = computed(() => canReduceExamPrices(auth.user?.role))
+const receptionReductionCapped = computed(() =>
+  isReceptionExamReductionCapped(auth.user?.role),
+)
 
 const payingKind = ref<ExamKindSlug | null>(null)
 const installmentEnabledByKind = ref<Partial<Record<ExamKindSlug, boolean>>>({})
@@ -110,7 +126,7 @@ const kindCards = computed(() => {
       kindLabel: uiText(EXAM_KIND_LABELS[sheet.kind]),
       reductionLabel: uiText(EXAM_KIND_REDUCTION_LABELS[sheet.kind]),
       docTitle: uiText(resolveSingleExamInvoiceDocTitle(sheet.kind)),
-      examCount: sheet.lines.length,
+      examCount: sheet.lines.filter((line) => line.unitPriceFcfa >= 0).length,
       hasExams: true,
       comment: examCommentsByKind.value[sheet.kind]?.trim() ?? '',
     }))
@@ -223,6 +239,7 @@ function installmentLabel(kind: ExamKindSlug, netFcfa: number) {
 
 function buildPayableReductions(kinds: ExamKindSlug[]): ExamReductionsByKind {
   const reductions = emptyExamReductionsByKind()
+  if (!canReduceExams.value) return reductions
   for (const kind of kinds) {
     reductions[kind] = reductionsByKind.value[kind] ?? 0
   }
@@ -236,6 +253,7 @@ function close() {
 /** Affichage compact : section si présente (ex. « Stool General »), sinon nom d’examen. */
 function formatExamLineLabel(label: string) {
   void localeCode.value
+  if (label === 'Avoir — examens retirés') return uiText(label)
   return translateExamName(primaryPrescribedSectionOrExamName(label))
 }
 
@@ -317,10 +335,10 @@ function confirmKind(kind: ExamKindSlug) {
   emit('confirm', {
     consultationId: props.item.id,
     kinds: [kind],
-    reductionFcfa: reductionsByKind.value[kind] ?? 0,
+    reductionFcfa: canReduceExams.value ? (reductionsByKind.value[kind] ?? 0) : 0,
     reductionsByKind: {
       ...emptyExamReductionsByKind(),
-      [kind]: reductionsByKind.value[kind] ?? 0,
+      [kind]: canReduceExams.value ? (reductionsByKind.value[kind] ?? 0) : 0,
     },
     installmentAmountFcfa,
     ...(installmentAmountFcfa != null
@@ -339,8 +357,36 @@ function kindFollowUpLabel(kind: ExamKindSlug) {
 }
 
 function updateReduction(kind: ExamKindSlug, value: string | number, max: number) {
-  const parsed = Math.min(Math.max(0, Number(value) || 0), max)
+  let parsed = Math.min(Math.max(0, Number(value) || 0), max)
+  if (receptionReductionCapped.value && parsed > 0) {
+    const match = matchReceptionReductionPercent(max, parsed)
+    if (match == null) {
+      // Forcer le palier le plus proche inférieur parmi 10 / 15 / 20
+      const allowed = RECEPTION_EXAM_REDUCTION_PERCENTS.map((pct) =>
+        reductionFcfaFromPercent(max, pct),
+      ).filter((amount) => amount <= parsed)
+      parsed = allowed.length ? Math.max(...allowed) : 0
+    }
+  }
   reductionsByKind.value = { ...reductionsByKind.value, [kind]: parsed }
+}
+
+function applyKindReductionPercent(kind: ExamKindSlug, percent: string, max: number) {
+  if (!percent) {
+    reductionsByKind.value = { ...reductionsByKind.value, [kind]: 0 }
+    return
+  }
+  const current = reductionsByKind.value[kind] ?? 0
+  const next = reductionFcfaFromPercent(max, Number(percent))
+  if (current === next) {
+    reductionsByKind.value = { ...reductionsByKind.value, [kind]: 0 }
+    return
+  }
+  reductionsByKind.value = { ...reductionsByKind.value, [kind]: next }
+}
+
+function kindReductionPercent(kind: ExamKindSlug, grossFcfa: number) {
+  return matchReceptionReductionPercent(grossFcfa, reductionsByKind.value[kind] ?? 0)
 }
 </script>
 
@@ -369,7 +415,11 @@ function updateReduction(kind: ExamKindSlug, value: string | number, max: number
         <div class="invoice-modal__scroll-hint" aria-hidden="true">
           <ChevronDown :size="16" />
           <span>{{
-            uiText('Faites défiler pour voir tous les examens et saisir les réductions par type')
+            uiText(
+              canReduceExams
+                ? 'Faites défiler pour voir tous les examens et saisir les réductions par type'
+                : 'Faites défiler pour voir tous les examens',
+            )
           }}</span>
         </div>
 
@@ -501,10 +551,42 @@ function updateReduction(kind: ExamKindSlug, value: string | number, max: number
                 @update:model-value="installmentAmountByKind = { ...installmentAmountByKind, [card.kind]: String($event) }"
               />
               <div
+                v-if="canReduceExams"
                 class="exam-card__reduction"
                 :class="`exam-card__reduction--${card.kind}`"
               >
+                <div
+                  v-if="receptionReductionCapped"
+                  class="exam-card__reduction-chips"
+                  role="group"
+                  :aria-label="card.reductionLabel"
+                >
+                  <button
+                    type="button"
+                    class="exam-card__reduction-chip"
+                    :class="{
+                      'exam-card__reduction-chip--active': !kindReductionPercent(card.kind, card.grossFcfa),
+                    }"
+                    @click="applyKindReductionPercent(card.kind, '', card.grossFcfa)"
+                  >
+                    {{ uiText('Aucune') }}
+                  </button>
+                  <button
+                    v-for="pct in RECEPTION_EXAM_REDUCTION_PERCENTS"
+                    :key="`${card.kind}-${pct}`"
+                    type="button"
+                    class="exam-card__reduction-chip"
+                    :class="{
+                      'exam-card__reduction-chip--active':
+                        kindReductionPercent(card.kind, card.grossFcfa) === pct,
+                    }"
+                    @click="applyKindReductionPercent(card.kind, String(pct), card.grossFcfa)"
+                  >
+                    {{ pct }} %
+                  </button>
+                </div>
                 <UiInput
+                  v-else
                   :model-value="reductionsByKind[card.kind]"
                   :label="card.reductionLabel"
                   type="number"
@@ -539,7 +621,7 @@ function updateReduction(kind: ExamKindSlug, value: string | number, max: number
                   → {{ kindFollowUpLabel(card.kind) }}
                 </span>
               </div>
-              <p v-if="card.reductionFcfa > 0" class="exam-card__reduction-hint">
+              <p v-if="canReduceExams && card.reductionFcfa > 0" class="exam-card__reduction-hint">
                 {{ translateTemplate('Réduction : - {amount}', { amount: formatFcfa(card.reductionFcfa) }) }}
               </p>
             </div>
@@ -563,7 +645,7 @@ function updateReduction(kind: ExamKindSlug, value: string | number, max: number
               <span class="invoice-modal__totals-label">{{ uiText('Brut') }}</span>
               <strong class="invoice-modal__totals-value">{{ formatFcfa(grossFcfa) }}</strong>
             </div>
-            <div class="invoice-modal__totals-item">
+            <div v-if="canReduceExams" class="invoice-modal__totals-item">
               <span class="invoice-modal__totals-label">{{ uiText('Réduc.') }}</span>
               <strong class="invoice-modal__totals-value invoice-modal__negative"
                 >- {{ formatFcfa(totalReductionFcfa) }}</strong
@@ -981,6 +1063,35 @@ function updateReduction(kind: ExamKindSlug, value: string | number, max: number
   padding: 0.3rem 0.45rem;
   border-radius: var(--radius-sm);
   border: 1.5px solid var(--border);
+}
+
+.exam-card__reduction:has(.exam-card__reduction-chips) {
+  flex: 1 1 16rem;
+  max-width: 22rem;
+}
+
+.exam-card__reduction-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.exam-card__reduction-chip {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.28rem 0.7rem;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.exam-card__reduction-chip--active {
+  background: color-mix(in srgb, var(--primary, #2563eb) 14%, #fff);
+  border-color: color-mix(in srgb, var(--primary, #2563eb) 45%, var(--border));
+  color: var(--primary, #2563eb);
 }
 
 .exam-card__reduction--examen { background: #f1f8f1; border-color: #81c784; }

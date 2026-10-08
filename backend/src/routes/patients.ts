@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { InvoiceStatus, InvoiceType, HospitalizationStatus, PatientCategory, SurgeryStatus, UserRole, VisitStatus, type Prisma } from "@prisma/client";
+import { InvoiceStatus, InvoiceType, PatientCategory, UserRole, VisitStatus, type Prisma } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.js";
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
@@ -11,7 +11,7 @@ import {
   sumRegisteredPatientsConsultationsFcfa,
   sumRegisteredPatientsEntriesFcfa,
 } from "../lib/revenue-stats.js";
-import { buildRegistrationSummary } from "../lib/registration-summary.js";
+import { buildRegistrationReport, buildRegistrationSummary } from "../lib/registration-summary.js";
 import {
   applyOpenClosureAdjustments,
   listPatientClosureAmounts,
@@ -51,15 +51,29 @@ import {
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere, resolveDoctorConsultationAmount } from "../lib/doctor-compensation.js";
 import { requireAuth, requireModule, requireUiAction } from "../middleware/auth.js";
-import { canAccessModule, isDirectionOrGestionnaire, type AppUserRole } from "../lib/roles.js";
-import { EXTERNAL_PATIENT_VISIT_NOTE } from "../lib/visit-external.js";
-import { patientsWhoReceivedExamsWhere } from "../lib/patient-exam-stats.js";
+import { isAllowedReceptionReduction } from "../lib/reception-reduction.js";
+import {
+  canAccessModule,
+  canReduceExamPrices,
+  isReceptionExamReductionCapped,
+  isDirectionOrGestionnaire,
+  type AppUserRole,
+} from "../lib/roles.js";
+import {
+  EXTERNAL_PATIENT_VISIT_NOTE,
+  buildExternalPatientVisitNote,
+  extractExternalPatientService,
+  isExternalPatientVisit,
+} from "../lib/visit-external.js";
 import {
   patientsInDoctorScopeWhere,
   receptionistOwnPatientsWhere,
   receptionistScopeUserId,
 } from "../lib/reception-scope.js";
-import { resolveDoctorClinicServices } from "../lib/clinic-service-exam.js";
+import {
+  resolveActiveClinicServiceByName,
+  resolveDoctorClinicServices,
+} from "../lib/clinic-service-exam.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -135,10 +149,20 @@ const ACTIVE_CONSULTATION_STATUSES: VisitStatus[] = [
 
 const consultationVisitInclude = {
   assignedDoctor: { select: { id: true, firstName: true, lastName: true } },
+  assignedClinicService: { select: { name: true } },
+  consultation: {
+    select: {
+      doctorId: true,
+      labExamReductionFcfa: true,
+      doctor: { select: { id: true, firstName: true, lastName: true } },
+    },
+  },
   invoices: {
-    where: { type: InvoiceType.CONSULTATION },
+    where: {
+      type: { in: [InvoiceType.CONSULTATION, InvoiceType.LAB_EXAM] },
+      status: { not: InvoiceStatus.CANCELLED },
+    },
     orderBy: { createdAt: "desc" as const },
-    take: 1,
   },
 };
 
@@ -177,14 +201,10 @@ async function findPrintableConsultationVisit(patientId: string) {
   if (billedVisit) return billedVisit;
   if (activeVisit) return activeVisit;
 
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-
   return prisma.visit.findFirst({
     where: {
       patientId,
-      status: { notIn: [VisitStatus.CANCELLED, VisitStatus.COMPLETED] },
-      createdAt: { gte: startOfToday },
+      status: { not: VisitStatus.CANCELLED },
     },
     orderBy: { createdAt: "desc" },
     include: consultationVisitInclude,
@@ -218,23 +238,105 @@ function mapConsultationPayment(invoice: {
 function mapConsultationVisitForReception(
   visit: NonNullable<Awaited<ReturnType<typeof findPrintableConsultationVisit>>>,
 ) {
+  const consultationInvoice = visit.invoices.find((invoice) => invoice.type === InvoiceType.CONSULTATION);
+  const labInvoices = visit.invoices.filter((invoice) => invoice.type === InvoiceType.LAB_EXAM);
+  const doctor = visit.assignedDoctor ?? visit.consultation?.doctor ?? null;
+  const doctorId = visit.assignedDoctorId ?? visit.consultation?.doctorId ?? null;
+  const serviceName =
+    extractExternalPatientService(visit.notes) ||
+    visit.assignedClinicService?.name ||
+    null;
+  const examLine =
+    labInvoices.length > 0 &&
+    !consultationInvoice &&
+    (visit.consultationFeeFcfa ?? 0) <= 0;
+
+  if (examLine) {
+    const reductionFcfa = Math.max(0, visit.consultation?.labExamReductionFcfa ?? 0);
+    const netFcfa = labInvoices.reduce((sum, invoice) => sum + invoice.amountFcfa, 0);
+    const grossFcfa = netFcfa + reductionFcfa;
+    return {
+      id: visit.id,
+      doctorId,
+      doctor,
+      serviceName,
+      billingKind: "exam" as const,
+      consultationFeeFcfa: grossFcfa,
+      reductionFcfa,
+      consultationAmountFcfa: grossFcfa || null,
+      invoiceNumber: labInvoices[0]?.invoiceNumber ?? null,
+      totalFcfa: netFcfa,
+      consultationPayment: mapConsultationPayment(labInvoices[0]),
+    };
+  }
+
   const amounts = computeConsultationAmounts(
     visit.consultationFeeFcfa,
     visit.reductionFcfa,
-    visit.invoices[0]?.amountFcfa,
+    consultationInvoice?.amountFcfa,
   );
 
   return {
     id: visit.id,
-    doctorId: visit.assignedDoctorId,
-    doctor: visit.assignedDoctor,
+    doctorId,
+    doctor,
+    serviceName,
+    billingKind: "consultation" as const,
     consultationFeeFcfa: amounts.consultationFeeFcfa,
     reductionFcfa: amounts.reductionFcfa,
     consultationAmountFcfa: amounts.consultationFeeFcfa || null,
-    invoiceNumber: visit.invoices[0]?.invoiceNumber ?? null,
+    invoiceNumber: consultationInvoice?.invoiceNumber ?? null,
     totalFcfa: amounts.totalFcfa,
-    consultationPayment: mapConsultationPayment(visit.invoices[0]),
+    consultationPayment: mapConsultationPayment(consultationInvoice),
   };
+}
+
+/** Aligne une consultation déjà encaissée sur le nouveau prix, sans changer le jour de caisse. */
+async function syncPaidConsultationAmount(
+  tx: Prisma.TransactionClient,
+  invoice: { id: string; paidAt: Date | null; createdAt: Date },
+  amountFcfa: number,
+  recordedById: string,
+) {
+  const cashAt = invoice.paidAt ?? invoice.createdAt;
+  await tx.invoice.update({
+    where: { id: invoice.id },
+    data: {
+      amountFcfa,
+      paidAmountFcfa: amountFcfa,
+      status: amountFcfa > 0 ? InvoiceStatus.PAID : InvoiceStatus.CANCELLED,
+      paidAt: amountFcfa > 0 ? cashAt : null,
+    },
+  });
+
+  const payments = await tx.invoicePayment.findMany({
+    where: { invoiceId: invoice.id },
+    orderBy: { paidAt: "asc" },
+  });
+  if (!payments.length) {
+    if (amountFcfa > 0) {
+      await tx.invoicePayment.create({
+        data: {
+          invoiceId: invoice.id,
+          amountFcfa,
+          recordedById,
+          paidAt: cashAt,
+        },
+      });
+    }
+    return;
+  }
+
+  await tx.invoicePayment.update({
+    where: { id: payments[0].id },
+    data: { amountFcfa },
+  });
+  if (payments.length > 1) {
+    await tx.invoicePayment.updateMany({
+      where: { invoiceId: invoice.id, id: { not: payments[0].id } },
+      data: { amountFcfa: 0 },
+    });
+  }
 }
 
 async function syncVisitClinicService(
@@ -242,17 +344,17 @@ async function syncVisitClinicService(
   patientId: string,
   serviceName: string | null,
 ) {
-  const name = serviceName?.trim() ?? "";
-  const clinicService = name
-    ? await tx.clinicService.findFirst({
-        where: { active: true, name: { equals: name, mode: "insensitive" } },
-        select: { id: true },
-      })
-    : null;
+  const clinicService = await resolveActiveClinicServiceByName(tx, serviceName);
   await tx.visit.updateMany({
     where: { patientId, status: { not: VisitStatus.CANCELLED } },
     data: { assignedClinicServiceId: clinicService?.id ?? null },
   });
+  if (clinicService) {
+    await tx.patient.update({
+      where: { id: patientId },
+      data: { service: clinicService.name },
+    });
+  }
 }
 
 async function syncWaitingVisit(
@@ -337,13 +439,17 @@ async function syncWaitingVisit(
       where: { visitId: visit.id, type: InvoiceType.CONSULTATION },
     });
 
-    if (existingInvoice?.status === InvoiceStatus.PAID) {
-      if (doctorId) {
-        await tx.consultation.updateMany({
-          where: { visitId: visit.id },
-          data: { doctorId },
-        });
-      }
+    if (
+      existingInvoice &&
+      (existingInvoice.status === InvoiceStatus.PAID ||
+        existingInvoice.status === InvoiceStatus.PARTIALLY_PAID)
+    ) {
+      await syncPaidConsultationAmount(
+        tx,
+        existingInvoice,
+        billing.billableAmountFcfa,
+        issuedById,
+      );
       return;
     }
 
@@ -367,19 +473,116 @@ async function syncWaitingVisit(
     const existingInvoice = await tx.invoice.findFirst({
       where: { visitId: visit.id, type: InvoiceType.CONSULTATION },
     });
-    if (existingInvoice?.status === InvoiceStatus.PAID) {
-      if (doctorId) {
-        await tx.consultation.updateMany({
-          where: { visitId: visit.id },
-          data: { doctorId },
-        });
-      }
+    if (
+      existingInvoice &&
+      (existingInvoice.status === InvoiceStatus.PAID ||
+        existingInvoice.status === InvoiceStatus.PARTIALLY_PAID)
+    ) {
+      await syncPaidConsultationAmount(tx, existingInvoice, 0, issuedById);
       return;
     }
     if (existingInvoice) {
       await tx.invoice.delete({ where: { id: existingInvoice.id } });
     }
   }
+}
+
+/** Ligne examen / externe : garder le service, le médecin et appliquer la réduction sur la facture. */
+async function syncExamRegistrationLine(
+  tx: Prisma.TransactionClient,
+  patientId: string,
+  doctorId: string | undefined,
+  consultationAmountFcfa: number | undefined,
+  reductionFcfa: number | undefined,
+  serviceName: string | undefined,
+  issuedById: string,
+  role: AppUserRole,
+) {
+  const visit = await tx.visit.findFirst({
+    where: { patientId, status: { not: VisitStatus.CANCELLED } },
+    orderBy: { createdAt: "desc" },
+    include: {
+      consultation: { select: { id: true, labExamReductionFcfa: true } },
+      invoices: {
+        where: {
+          status: { not: InvoiceStatus.CANCELLED },
+          type: { in: [InvoiceType.CONSULTATION, InvoiceType.LAB_EXAM] },
+        },
+        orderBy: { createdAt: "asc" },
+      },
+    },
+  });
+  if (!visit) return false;
+
+  const consultationInvoices = visit.invoices.filter((invoice) => invoice.type === InvoiceType.CONSULTATION);
+  const labInvoices = visit.invoices.filter((invoice) => invoice.type === InvoiceType.LAB_EXAM);
+  const isExamLine =
+    labInvoices.length > 0 &&
+    consultationInvoices.length === 0 &&
+    (visit.consultationFeeFcfa ?? 0) <= 0;
+  if (!isExamLine) return false;
+
+  const currentReduction = Math.max(0, visit.consultation?.labExamReductionFcfa ?? 0);
+  const currentNet = labInvoices.reduce((sum, invoice) => sum + invoice.amountFcfa, 0);
+  const currentGross = currentNet + currentReduction;
+  const gross =
+    consultationAmountFcfa != null && consultationAmountFcfa > 0
+      ? consultationAmountFcfa
+      : currentGross;
+  const reduction = Math.max(0, reductionFcfa ?? currentReduction);
+  if (reduction > gross) throw new Error("REDUCTION_TOO_HIGH");
+  if (reduction > currentReduction && !canReduceExamPrices(role)) {
+    throw new Error("REDUCTION_FORBIDDEN");
+  }
+  if (
+    reduction > currentReduction &&
+    isReceptionExamReductionCapped(role) &&
+    !isAllowedReceptionReduction(gross, reduction)
+  ) {
+    throw new Error("REDUCTION_PERCENT_INVALID");
+  }
+  const net = Math.max(0, gross - reduction);
+
+  const nextDoctorId = doctorId?.trim() || null;
+  await tx.visit.update({
+    where: { id: visit.id },
+    data: {
+      ...(nextDoctorId ? { assignedDoctorId: nextDoctorId } : {}),
+      ...(serviceName !== undefined && isExternalPatientVisit(visit.notes)
+        ? { notes: buildExternalPatientVisitNote(serviceName) }
+        : {}),
+    },
+  });
+  if (visit.consultation) {
+    await tx.consultation.update({
+      where: { id: visit.consultation.id },
+      data: {
+        labExamReductionFcfa: reduction,
+        ...(nextDoctorId ? { doctorId: nextDoctorId } : {}),
+      },
+    });
+  }
+
+  const currentTotal = currentNet > 0 ? currentNet : labInvoices.length;
+  let allocated = 0;
+  for (let index = 0; index < labInvoices.length; index += 1) {
+    const invoice = labInvoices[index]!;
+    const share =
+      index === labInvoices.length - 1
+        ? Math.max(0, net - allocated)
+        : Math.round((net * (currentNet > 0 ? invoice.amountFcfa : 1)) / currentTotal);
+    allocated += share;
+    if (invoice.status === InvoiceStatus.PAID || invoice.status === InvoiceStatus.PARTIALLY_PAID) {
+      await syncPaidConsultationAmount(tx, invoice, share, issuedById);
+    } else {
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: { amountFcfa: share },
+      });
+    }
+  }
+
+  return true;
 }
 
 router.get("/", async (req, res) => {
@@ -428,7 +631,21 @@ router.get("/", async (req, res) => {
   }
 
   const doctorPatientWhere = await patientsRegisteredForDoctorWhere(doctorId);
+  const excludeExternalExams = String(req.query.excludeExternalExams ?? "") === "1";
   const andFilters: Prisma.PatientWhereInput[] = [];
+  if (excludeExternalExams) {
+    andFilters.push({
+      visits: {
+        some: {
+          status: { not: VisitStatus.CANCELLED },
+          OR: [
+            { notes: null },
+            { NOT: { notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE } } },
+          ],
+        },
+      },
+    });
+  }
   if (doctorPatientWhere) andFilters.push(doctorPatientWhere);
   if (terms.length > 0) {
     andFilters.push(
@@ -575,49 +792,19 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     registeredToday,
     femalePatients,
     malePatients,
-    examPatientsCount,
-    hospitalizationPatientsCount,
-    consultationPatientsCount,
-    surgeryPatientsCount,
     visitsToday,
     externalPatientsToday,
     collectedToday,
     registeredConsultationsFcfa,
     registeredEntriesFcfa,
     myExpensesToday,
+    registration,
   ] = await Promise.all([
     prisma.patient.count({
       where: patientPeriodScope,
     }),
     prisma.patient.count({ where: { ...patientPeriodScope, gender: "F" } }),
     prisma.patient.count({ where: { ...patientPeriodScope, gender: "M" } }),
-    prisma.patient.count({ where: patientsWhoReceivedExamsWhere(patientPeriodScope) }),
-    prisma.patient.count({
-      where: {
-        ...patientPeriodScope,
-        visits: {
-          some: {
-            hospitalization: { is: { status: { not: HospitalizationStatus.CANCELLED } } },
-          },
-        },
-      },
-    }),
-    prisma.patient.count({
-      where: {
-        ...patientPeriodScope,
-        visits: { some: { consultation: { isNot: null } } },
-      },
-    }),
-    prisma.patient.count({
-      where: {
-        ...patientPeriodScope,
-        visits: {
-          some: {
-            surgeryCase: { is: { status: { not: SurgeryStatus.CANCELLED } } },
-          },
-        },
-      },
-    }),
     scopedReceptionistId
       ? prisma.visit.count({
           where: {
@@ -665,9 +852,25 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     personalCashScope && !service && !doctorId
       ? sumExpensesForCashierBetween(user.id, rangeStart, rangeEndExclusive)
       : Promise.resolve({ totalFcfa: 0, count: 0, rows: [] }),
+    buildRegistrationReport({
+      patientWhere: {
+        active: true,
+        createdAt: createdAtRange,
+        ...(service ? { service } : {}),
+        ...(doctorPatientWhere ? { AND: [doctorPatientWhere] } : {}),
+      },
+      receptionistId: receptionistScopeUserId(user, createdById),
+    }),
   ]);
 
   const netTodayFcfa = Math.max(0, collectedToday.totalFcfa - myExpensesToday.totalFcfa);
+  const doctorShareFcfa = registration.lines.reduce((sum, line) => sum + line.doctorShareFcfa, 0);
+  const {
+    examPatients: examPatientsCount,
+    hospitalizationPatients: hospitalizationPatientsCount,
+    consultationPatients: consultationPatientsCount,
+    operationPatients: surgeryPatientsCount,
+  } = registration.activity;
 
   return res.json({
     registeredToday,
@@ -685,6 +888,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     isPersonalScope: personalCashScope,
     consultationsTodayFcfa: registeredConsultationsFcfa,
     entriesTodayFcfa: registeredEntriesFcfa,
+    doctorShareFcfa,
     examsTodayFcfa: collectedToday.examsFcfa,
     surgeryTodayFcfa: collectedToday.surgeryFcfa,
     hospitalizationTodayFcfa: collectedToday.hospitalizationFcfa,
@@ -828,18 +1032,34 @@ router.post(
       }
     }
 
-    if ((body.reductionFcfa ?? 0) > (consultationAmountFcfa ?? 0)) {
+    const registrationReduction = body.reductionFcfa ?? 0;
+    if (registrationReduction > (consultationAmountFcfa ?? 0)) {
       return res.status(400).json({ error: "La réduction ne peut pas dépasser le montant." });
+    }
+    if (
+      isReceptionExamReductionCapped(req.user!.role as AppUserRole) &&
+      registrationReduction > 0 &&
+      !isAllowedReceptionReduction(consultationAmountFcfa ?? 0, registrationReduction)
+    ) {
+      return res.status(400).json({
+        error: "Les réceptionnistes ne peuvent appliquer qu'une réduction de 10 %, 15 % ou 20 %.",
+      });
     }
     const billing = resolveConsultationBilling(
       category,
       consultationAmountFcfa,
-      body.reductionFcfa ?? 0,
+      registrationReduction,
     );
 
     const reconsultPlan = existingPatient
       ? await planReconsultation(existingPatient.id)
       : null;
+
+    const requestedService = body.service?.trim() || "";
+    const clinicService = requestedService
+      ? await resolveActiveClinicServiceByName(prisma, requestedService)
+      : null;
+    const serviceName = clinicService?.name ?? (requestedService || null);
 
     const result = await prisma.$transaction(async (tx) => {
       if (existingPatient && reconsultPlan) {
@@ -866,7 +1086,7 @@ router.post(
               : body.address
                 ? { address: body.address }
                 : {}),
-            ...(body.service?.trim() ? { service: body.service.trim() } : {}),
+            ...(serviceName ? { service: serviceName } : {}),
             ...(treatingDoctorId !== undefined && treatingDoctorId !== null
               ? { treatingDoctorId }
               : {}),
@@ -881,6 +1101,7 @@ router.post(
                 data: {
                   status: VisitStatus.WAITING_CONSULTATION,
                   assignedDoctorId: body.doctorId,
+                  ...(clinicService ? { assignedClinicServiceId: clinicService.id } : {}),
                   consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
                   reductionFcfa: billing.reductionFcfa,
                 },
@@ -891,6 +1112,7 @@ router.post(
                   status: VisitStatus.WAITING_CONSULTATION,
                   createdById: req.user!.id,
                   assignedDoctorId: body.doctorId,
+                  ...(clinicService ? { assignedClinicServiceId: clinicService.id } : {}),
                   consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
                   reductionFcfa: billing.reductionFcfa,
                 },
@@ -941,7 +1163,7 @@ router.post(
           age: body.age,
           ageUnit: body.ageUnit,
           phone: body.phone?.trim() || null,
-          service: body.service?.trim() || null,
+          service: serviceName,
           gender: body.gender,
           address: body.address,
           category: resolvePatientCategory(requestedCategory),
@@ -960,6 +1182,7 @@ router.post(
           status: VisitStatus.WAITING_CONSULTATION,
           createdById: req.user!.id,
           assignedDoctorId: body.doctorId,
+          ...(clinicService ? { assignedClinicServiceId: clinicService.id } : {}),
           consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
           reductionFcfa: billing.reductionFcfa,
         },
@@ -1130,15 +1353,27 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
       return res.status(400).json({ error: "Médecin traitant invalide" });
     }
 
-    // À la modification, on ne bloque que le vrai doublon (nom + téléphone + genre).
-    // Le même nom sans numéro ne doit pas empêcher de corriger le dossier.
-    const duplicatePatient = await findPatientForDossierFusion({
-      firstName: body.firstName,
-      lastName: body.lastName,
-      phone: body.phone,
-      gender: body.gender,
-      excludeId: patientId,
-    });
+    const sameText = (left?: string | null, right?: string | null) =>
+      (left ?? "").trim().toLowerCase().replace(/\s+/g, " ") ===
+      (right ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+    const samePhone = (left?: string | null, right?: string | null) =>
+      (left ?? "").replace(/\D/g, "") === (right ?? "").replace(/\D/g, "");
+    const identityUnchanged =
+      sameText(existing.firstName, body.firstName) &&
+      sameText(existing.lastName, body.lastName) &&
+      samePhone(existing.phone, body.phone) &&
+      sameText(existing.gender, body.gender);
+
+    // Changer le service ou le médecin ne doit pas être refusé à cause d'un homonyme.
+    const duplicatePatient = identityUnchanged
+      ? null
+      : await findPatientForDossierFusion({
+          firstName: body.firstName,
+          lastName: body.lastName,
+          phone: body.phone,
+          gender: body.gender,
+          excludeId: patientId,
+        });
     if (duplicatePatient) {
       return res.status(409).json(
         duplicateErrorResponse(
@@ -1156,6 +1391,30 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
         where: selectableDoctorByIdWhere(body.doctorId),
       });
       if (!doctor) return res.status(400).json({ error: "Médecin invalide" });
+    }
+
+    if (body.reductionFcfa != null && body.reductionFcfa > 0) {
+      const fee =
+        body.consultationAmountFcfa ??
+        (
+          await prisma.visit.findFirst({
+            where: {
+              patientId,
+              status: { in: [VisitStatus.WAITING_CONSULTATION, VisitStatus.IN_CONSULTATION] },
+            },
+            orderBy: { createdAt: "desc" },
+            select: { consultationFeeFcfa: true },
+          })
+        )?.consultationFeeFcfa ??
+        0;
+      if (
+        isReceptionExamReductionCapped(req.user!.role as AppUserRole) &&
+        !isAllowedReceptionReduction(fee, body.reductionFcfa)
+      ) {
+        return res.status(400).json({
+          error: "Les réceptionnistes ne peuvent appliquer qu'une réduction de 10 %, 15 % ou 20 %.",
+        });
+      }
     }
 
     const patient = await prisma.$transaction(async (tx) => {
@@ -1180,16 +1439,31 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
         include: { treatingDoctor: { select: treatingDoctorSelect } },
       });
 
-      await syncWaitingVisit(
+      await syncExamRegistrationLine(
         tx,
         updated.id,
         body.doctorId,
         body.consultationAmountFcfa,
         body.reductionFcfa,
+        body.service,
         req.user!.id,
-      );
+        req.user!.role as AppUserRole,
+      ).then(async (handled) => {
+        if (!handled) {
+          await syncWaitingVisit(
+            tx,
+            updated.id,
+            body.doctorId,
+            body.consultationAmountFcfa,
+            body.reductionFcfa,
+            req.user!.id,
+          );
+        }
+      });
       if (body.service !== undefined) {
         await syncVisitClinicService(tx, updated.id, body.service);
+        const canonical = await resolveActiveClinicServiceByName(tx, body.service);
+        if (canonical) updated.service = canonical.name;
       }
 
       return updated;
@@ -1199,6 +1473,16 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
   } catch (error) {
     if (error instanceof Error && error.message === "REDUCTION_TOO_HIGH") {
       return res.status(400).json({ error: "La réduction ne peut pas dépasser le montant." });
+    }
+    if (error instanceof Error && error.message === "REDUCTION_PERCENT_INVALID") {
+      return res.status(400).json({
+        error: "Les réceptionnistes ne peuvent appliquer qu'une réduction de 10 %, 15 % ou 20 %.",
+      });
+    }
+    if (error instanceof Error && error.message === "REDUCTION_FORBIDDEN") {
+      return res.status(403).json({
+        error: "Vous n'êtes pas autorisé à réduire le prix des examens.",
+      });
     }
     if (error instanceof Error && error.message === PATIENT_HAS_PAYMENTS_CODE) {
       return res.status(409).json({

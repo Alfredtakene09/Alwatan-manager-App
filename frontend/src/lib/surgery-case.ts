@@ -29,11 +29,16 @@ export type SurgeryCaseRow = {
       firstName: string
       lastName: string
     } | null
+    clinicService?: { id: string; name: string } | null
   }
   surgeon: {
     id: string
     firstName: string
     lastName: string
+    employee?: {
+      clinicService?: { id: string; name: string } | null
+      clinicServiceLinks?: { clinicService?: { id: string; name: string } | null }[]
+    } | null
   }
   accountant?: SurgeryUserRef | null
   visit: {
@@ -44,12 +49,14 @@ export type SurgeryCaseRow = {
       firstName: string
       lastName: string
       phone?: string | null
+      service?: string | null
     }
     consultation?: {
       id?: string
       doctorComment?: string | null
       diagnosis?: string | null
     } | null
+    assignedClinicService?: { id: string; name: string } | null
   }
   invoice?: {
     id?: string

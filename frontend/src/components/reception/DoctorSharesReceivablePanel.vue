@@ -33,6 +33,7 @@ type DoctorShareDoctor = {
   consultationShareFcfa: number
   surgeryShareFcfa: number
   totalShareFcfa: number
+  pendingPayrollFcfa?: number
   items?: DoctorShareItem[]
 }
 
@@ -53,14 +54,33 @@ const doctorSharePeriod = ref<'day' | 'month'>('day')
 const doctorShareDay = ref(todayDateKey())
 const doctorShareMonth = ref(currentMonthKey())
 const doctorShareDoctorId = ref('')
-const doctorShareOptions = ref<Array<{ id: string; firstName: string; lastName: string }>>([])
 const settlingDoctorShares = ref(false)
 const settleSharesMessage = ref('')
 const settleSharesType = ref<'success' | 'error'>('success')
 const loading = ref(false)
 const loadError = ref('')
 
+const doctorsWithShare = computed(() => {
+  const rows = doctorShares.value?.doctors ?? []
+  const owed = rows.filter((doc) => doc.totalShareFcfa > 0)
+  const selected = rows.find((doc) => doc.id === doctorShareDoctorId.value)
+  const list =
+    selected && !owed.some((doc) => doc.id === selected.id) ? [...owed, selected] : owed
+  return list.sort((a, b) =>
+    fullName(a.firstName, a.lastName).localeCompare(fullName(b.firstName, b.lastName), 'fr'),
+  )
+})
+
 const shareTotals = computed(() => {
+  const row = selectedDoctorShareRow.value
+  if (row) {
+    return {
+      consultationShareFcfa: row.consultationShareFcfa ?? 0,
+      surgeryShareFcfa: row.surgeryShareFcfa ?? 0,
+      totalShareFcfa: row.totalShareFcfa ?? 0,
+      pendingPayrollFcfa: row.pendingPayrollFcfa ?? 0,
+    }
+  }
   const totals = doctorShares.value?.totals
   return {
     consultationShareFcfa: totals?.consultationShareFcfa ?? 0,
@@ -79,7 +99,7 @@ const payrollTrend = computed(() => {
 
 const selectedDoctorLabel = computed(() => {
   if (!doctorShareDoctorId.value) return translateDashboardLabel('Somme globale')
-  const doc = doctorShareOptions.value.find((d) => d.id === doctorShareDoctorId.value)
+  const doc = doctorsWithShare.value.find((d) => d.id === doctorShareDoctorId.value)
   return doc ? fullName(doc.firstName, doc.lastName) : translateDashboardLabel('Médecin')
 })
 
@@ -138,15 +158,20 @@ async function settleSelectedDoctorCash() {
     const consultItems = row.items.filter(
       (item) => item.kind === 'CONSULTATION' && item.invoiceId,
     )
+    let alreadySettled = 0
     if (consultItems.length) {
-      await api.post('/doctor-shares/settle-consultations-cash', {
-        items: consultItems.map((item) => ({
-          invoiceId: item.invoiceId!,
-          amountFcfa: item.amountFcfa,
-          businessDate: item.businessDate,
-          doctorUserId: row.id,
-        })),
-      })
+      const { data } = await api.post<{ count: number; alreadySettled?: number }>(
+        '/doctor-shares/settle-consultations-cash',
+        {
+          items: consultItems.map((item) => ({
+            invoiceId: item.invoiceId!,
+            amountFcfa: item.amountFcfa,
+            businessDate: item.businessDate,
+            doctorUserId: row.id,
+          })),
+        },
+      )
+      alreadySettled = data.alreadySettled ?? 0
     }
 
     const surgeryShares = new Map<string, Set<'surgeon' | 'assistant'>>()
@@ -166,7 +191,9 @@ async function settleSelectedDoctorCash() {
 
     settleSharesType.value = 'success'
     settleSharesMessage.value = translateDashboardLabel(
-      'Parts réglées en espèces — la carte est à jour.',
+      alreadySettled > 0 && consultItems.length > 0 && alreadySettled >= consultItems.length
+        ? 'Ces consultations sont déjà réglées. La somme a été retirée.'
+        : 'Parts réglées en espèces — la carte est à jour.',
     )
     await loadDoctorShares()
   } catch (error: unknown) {
@@ -189,20 +216,11 @@ async function loadDoctorShares() {
     }
     if (doctorSharePeriod.value === 'day') params.day = doctorShareDay.value || todayDateKey()
     else params.month = doctorShareMonth.value || currentMonthKey()
-    if (doctorShareDoctorId.value) params.doctorId = doctorShareDoctorId.value
 
-    const [{ data: overviewData }, { data: doctors }] = await Promise.all([
-      api.get<DoctorSharesOverview>('/doctor-shares/receivable', { params }),
-      doctorShareOptions.value.length
-        ? Promise.resolve({ data: doctorShareOptions.value })
-        : api.get<Array<{ id: string; firstName: string; lastName: string }>>(
-            '/doctor-shares/doctors',
-          ),
-    ])
+    const { data: overviewData } = await api.get<DoctorSharesOverview>('/doctor-shares/receivable', {
+      params,
+    })
     doctorShares.value = overviewData
-    if (!doctorShareOptions.value.length) {
-      doctorShareOptions.value = doctors
-    }
   } catch {
     doctorShares.value = null
     loadError.value = translateDashboardLabel('Impossible de charger les parts médecins.')
@@ -215,9 +233,13 @@ onMounted(() => {
   void loadDoctorShares()
 })
 
-watch([doctorSharePeriod, doctorShareDoctorId, doctorShareDay, doctorShareMonth], () => {
+watch([doctorSharePeriod, doctorShareDay, doctorShareMonth], () => {
   settleSharesMessage.value = ''
   void loadDoctorShares()
+})
+
+watch(doctorShareDoctorId, () => {
+  settleSharesMessage.value = ''
 })
 
 defineExpose({ reload: loadDoctorShares })
@@ -259,7 +281,7 @@ defineExpose({ reload: loadDoctorShares })
       </label>
       <UiSelect v-model="doctorShareDoctorId" :label="translateDashboardLabel('Médecin')">
         <option value="">{{ translateDashboardLabel('Tous (somme globale)') }}</option>
-        <option v-for="doc in doctorShareOptions" :key="doc.id" :value="doc.id">
+        <option v-for="doc in doctorsWithShare" :key="doc.id" :value="doc.id">
           {{ fullName(doc.firstName, doc.lastName) }}
         </option>
       </UiSelect>

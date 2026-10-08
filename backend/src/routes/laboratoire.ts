@@ -26,11 +26,21 @@ import {
 } from "../lib/lab-panel-results.js";
 import { backfillLabSentToLabAtForPaidQueue } from "../lib/lab-receptionist-backfill.js";
 import { refreshLabPanelRegistry } from "../lib/lab-panels-registry.js";
-import { requireAuth, requireModule } from "../middleware/auth.js";
-import type { AppUserRole } from "../lib/roles.js";
+import { requireAuth } from "../middleware/auth.js";
+import { canAccessModule, type AppUserRole } from "../lib/roles.js";
 
 const router = Router();
-router.use(requireAuth, requireModule("laboratoire"));
+router.use(requireAuth);
+router.use((req, res, next) => {
+  const role = req.user?.role as AppUserRole | undefined;
+  if (!role) return res.status(401).json({ error: "Non authentifié" });
+  const reading = req.method === "GET" || req.method === "HEAD";
+  if (reading && (canAccessModule(role, "laboratoire") || canAccessModule(role, "reception"))) {
+    return next();
+  }
+  if (!reading && canAccessModule(role, "laboratoire")) return next();
+  return res.status(403).json({ error: "Accès refusé" });
+});
 
 /** Les laborantins ne voient que leurs propres dossiers dans « Examens terminés ». */
 function isLaborantinScoped(role: string | undefined): boolean {

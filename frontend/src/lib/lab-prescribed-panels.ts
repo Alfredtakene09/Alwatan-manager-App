@@ -587,6 +587,7 @@ export function buildCartEntriesForSelectedFields(
   panelLabel: string,
   groups: LabPrescriptionCheckGroup[],
   selectedFieldKeys: string[],
+  options?: { keepFieldLines?: boolean },
 ): string[] {
   const selected = new Set(selectedFieldKeys.map((key) => key.trim()).filter(Boolean))
   if (!selected.size) return []
@@ -598,7 +599,9 @@ export function buildCartEntriesForSelectedFields(
     allKnown.every((key) => selected.has(key)) &&
     [...selected].every((key) => knownSet.has(key))
 
-  if (allFormFieldsSelected) {
+  // Examen déjà partiellement enregistré : garder une ligne par champ / section,
+  // sinon « tout cocher » remplace les prix des champs par le tarif général.
+  if (allFormFieldsSelected && !options?.keepFieldLines) {
     return [panelLabel.trim()]
   }
 

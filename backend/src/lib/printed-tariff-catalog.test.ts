@@ -27,7 +27,7 @@ describe("catalogue tarifaire papier", () => {
     assert.equal(byCode["OP-ORTHO-JAMBE"]?.emiratesCostFcfa, 500_000);
   });
 
-  it("définit radio et kiné (standard + émiraties)", () => {
+  it("définit radio et kiné (tarif standard)", () => {
     const radio = Object.fromEntries(PRINTED_TARIFF_RADIO.map((item) => [item.code, item]));
     assert.equal(radio["radio-couleur"]?.priceFcfa, 75_000);
     assert.equal(radio["radio-couleur"]?.emiratesPriceFcfa, 60_000);
@@ -38,13 +38,14 @@ describe("catalogue tarifaire papier", () => {
     assert.equal(PRINTED_TARIFF_KINE[0]?.emiratesPriceFcfa, 5_000);
   });
 
-  it("utilise des codes uniques stables (standard et -EM)", () => {
+  it("n’injecte plus de variante « émiraties » dans le catalogue", () => {
     const codes = [
-      ...PRINTED_TARIFF_OPERATIONS.flatMap((item) => [item.code, `${item.code}-EM`]),
-      ...PRINTED_TARIFF_RADIO.flatMap((item) => [item.code, `${item.code}-EM`]),
-      ...PRINTED_TARIFF_KINE.flatMap((item) => [item.code, `${item.code}-EM`]),
+      ...PRINTED_TARIFF_OPERATIONS.map((item) => item.code),
+      ...PRINTED_TARIFF_RADIO.map((item) => item.code),
+      ...PRINTED_TARIFF_KINE.map((item) => item.code),
     ];
     assert.equal(new Set(codes).size, codes.length);
+    assert.ok(codes.every((code) => !code.endsWith("-EM")));
     assert.equal(PRINTED_TARIFF_EMIRATES_SUFFIX, " (émiraties)");
     assert.deepEqual([...PRINTED_TARIFF_SERVICES], ["Orthopédie", "Kinésithérapie"]);
   });

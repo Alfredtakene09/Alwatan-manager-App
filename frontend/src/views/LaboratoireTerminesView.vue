@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onActivated, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { CheckCircle2, ClipboardEdit, Printer, RefreshCw, Search } from '@lucide/vue'
+import { CheckCircle2, ClipboardEdit, Eye, Printer, RefreshCw, Search } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { fetchAndPrintLabVisitResults } from '@/lib/lab-visit-print'
@@ -23,6 +23,7 @@ import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
 import { type LabsWaitingVisitRow } from '@/components/ui/LabsWaitingDataTable.vue'
 import '@/assets/lab-visit-table.css'
 import LabQueueBell from '@/components/layout/LabQueueBell.vue'
+import LabVisitDetailModal from '@/components/laboratoire/LabVisitDetailModal.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import '@/assets/lab-visit-table.css'
@@ -167,6 +168,14 @@ function goToResaisirResults(visitId: string) {
   })
 }
 
+const detailOpen = ref(false)
+const detailVisitId = ref<string | null>(null)
+
+function goToView(visitId: string) {
+  detailVisitId.value = visitId
+  detailOpen.value = true
+}
+
 async function printResults(visitId: string) {
   const visit = visits.value.find((v) => v.id === visitId)
   if (!visit) return
@@ -189,7 +198,7 @@ function resetSearch() {
 
 const { refresh: refreshCompleted } = useSilentRefresh(
   ({ silent }) => loadCompleted({ silent }),
-  { intervalMs: 30_000 },
+  { intervalMs: 30_000, enabled: () => !detailOpen.value },
 )
 
 onActivated(() => {
@@ -296,7 +305,7 @@ onActivated(() => {
                     <span class="lab-visit-sub lab-visit-sub--truncate">{{ row.exams }}</span>
                   </span>
                 </td>
-                <td>
+                <td class="lab-visit-table__actions">
                   <div class="lab-visit-actions">
                     <button
                       type="button"
@@ -307,6 +316,15 @@ onActivated(() => {
                     >
                       <ClipboardEdit :size="15" />
                       <span>{{ uiText('Resaisir') }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="lab-visit-act lab-visit-act--icon"
+                      :title="uiText('Voir')"
+                      :aria-label="uiText('Voir')"
+                      @click="goToView(row.id)"
+                    >
+                      <Eye :size="15" />
                     </button>
                     <button
                       v-if="canSeeUiAction('export.print')"
@@ -328,6 +346,7 @@ onActivated(() => {
         </div>
       </UiCard>
     </section>
+    <LabVisitDetailModal v-model:open="detailOpen" :visit-id="detailVisitId" />
   </div>
 </template>
 

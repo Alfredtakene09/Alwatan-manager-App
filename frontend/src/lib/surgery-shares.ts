@@ -9,7 +9,12 @@ export type OperationShareBreakdown = {
   hasAssistant: boolean
 }
 
+/**
+ * Date colonne / filtres = date d'enregistrement saisie (créée ou modifiée).
+ * Ne pas utiliser updatedAt : il vaut « maintenant » à chaque sauvegarde et écrase la date choisie.
+ */
 export function surgeryCompletedAtIso(surgery: SurgeryCaseRow): string {
+  if (surgery.invoice?.createdAt) return surgery.invoice.createdAt
   return (
     surgery.completedAt ??
     surgery.operationScheduledAt ??

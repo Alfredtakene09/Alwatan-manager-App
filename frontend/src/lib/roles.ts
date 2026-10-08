@@ -100,6 +100,20 @@ export function isDirectionOrGestionnaire(role: AppUserRole) {
   return role === 'COMPTABLE' || role === 'GESTIONNAIRE' || role === 'ADMIN'
 }
 
+/**
+ * Réduction du prix des examens :
+ * - ADMIN / GESTIONNAIRE : libre (dans la limite du montant)
+ * - RECEPTIONNISTE : uniquement 10 %, 15 % ou 20 %
+ */
+export function canReduceExamPrices(role: AppUserRole | null | undefined) {
+  return role === 'ADMIN' || role === 'GESTIONNAIRE' || role === 'RECEPTIONNISTE'
+}
+
+/** Réduction examens plafonnée aux paliers 10 / 15 / 20 % (réception). */
+export function isReceptionExamReductionCapped(role: AppUserRole | null | undefined) {
+  return role === 'RECEPTIONNISTE'
+}
+
 /** Salaires, primes, heures supp. — admin / direction / gestionnaire uniquement. */
 export function canViewEmployeeCompensation(role: AppUserRole) {
   return DIRECTION_GESTIONNAIRE_ROLES.includes(role)

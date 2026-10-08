@@ -1,5 +1,5 @@
 import { PatientCategory, VisitStatus, type Prisma } from "@prisma/client";
-import { EXAMS_PRESCRIBED_PREFIX } from "./lab-notes.js";
+import { EXAMS_PRESCRIBED_PREFIX, visitNotExternalWhere } from "./lab-notes.js";
 import { resolveDoctorClinicServices } from "./clinic-service-exam.js";
 
 /** Patient assigné à la réception / transféré, ou déjà pris en charge en consultation. */
@@ -75,6 +75,7 @@ export function medecinDejaConsulteVisitWhere(doctorId: string): Prisma.VisitWhe
     status: { notIn: [VisitStatus.COMPLETED, VisitStatus.CANCELLED] },
     AND: [
       { assignedDoctorId: doctorId },
+      visitNotExternalWhere(),
       {
         patient: { category: { in: [PatientCategory.STANDARD, PatientCategory.ONG] } },
         consultation: {
@@ -100,6 +101,7 @@ export function medecinDejaConsulteListVisitWhere(
   return {
     AND: [
       { assignedDoctorId: doctorId },
+      visitNotExternalWhere(),
       {
         patient: { category: { in: [PatientCategory.STANDARD, PatientCategory.ONG] } },
         OR: [
@@ -178,6 +180,6 @@ export function medecinPendingConsultationVisitWhere(
         clinicalNotes: { contains: EXAMS_PRESCRIBED_PREFIX },
       },
     },
-    AND: [medecinAssignedQueueWhere(doctorId, clinicServiceIds)],
+    AND: [medecinAssignedQueueWhere(doctorId, clinicServiceIds), visitNotExternalWhere()],
   };
 }

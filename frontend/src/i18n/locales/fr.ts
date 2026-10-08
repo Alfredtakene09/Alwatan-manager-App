@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   common: {
     logout: 'Déconnexion',
     openMenu: 'Ouvrir le menu',
@@ -472,6 +472,11 @@ export default {
     'Net payé': 'Net payé',
     'Payé le': 'Payé le',
     "Détail de l'encaissement": "Détail de l'encaissement",
+    'Examens ajoutés — à encaisser': 'Lignes modifiées — à encaisser',
+    'Le médecin a modifié ces lignes après le paiement. Seul l\'écart de prix reste à encaisser.':
+      'Le médecin a modifié ces lignes après le paiement. Seul l\'écart de prix reste à encaisser.',
+    'Avoir — examens retirés': 'Avoir — examens retirés',
+    'Reste à encaisser': 'Reste à encaisser',
     Paiement: 'Paiement',
     'Montant brut': 'Montant brut',
     'Aucun examen': 'Aucun examen',
@@ -594,6 +599,8 @@ export default {
       'Le paiement des consultations et examens se fait chez le gestionnaire.',
     'Dossiers patients': 'Dossiers patients',
     'Recettes du jour': 'Recettes du jour',
+    'Part des médecins': 'Part des médecins',
+    'Consultations et opérations': 'Consultations et opérations',
     'Mes encaissements (jour)': 'Mes encaissements (jour)',
     'Se connecter': 'Se connecter',
     Envoyer: 'Envoyer',
@@ -1496,6 +1503,12 @@ export default {
     "Modifier l'opération": "Modifier l'opération",
     'Modifier le montant et la date': 'Modifier le montant et la date',
     "Date de l'opération": "Date de l'opération",
+    "Date d'enregistrement": "Date d'enregistrement",
+    'Cette date sert aux filtres de la liste (modifiée = date du jour par défaut).':
+      'Cette date sert aux filtres de la liste (modifiée = date du jour par défaut).',
+    'Cette date s’affiche dans la colonne Date et sert aux filtres.':
+      'Cette date s’affiche dans la colonne Date et sert aux filtres.',
+    'modifié {date}': 'modifié {date}',
     'Déjà encaissé : {paid}': 'Déjà encaissé : {paid}',
     'Opération modifiée.': 'Opération modifiée.',
     'Nouvelle opération avec répartition des honoraires':
@@ -1736,6 +1749,28 @@ export default {
     'Chargement des postes…': 'Chargement des postes…',
     Rôle: 'Rôle',
     // === LAB_I18N_START ===
+    'Détail du laboratoire': 'Détail du laboratoire',
+    'Saisi par': 'Saisi par',
+    'Aucun résultat saisi pour le moment.': 'Aucun résultat saisi pour le moment.',
+    'Impossible de charger le dossier laboratoire.': 'Impossible de charger le dossier laboratoire.',
+    'Examens en attente ou déjà terminés au laboratoire':
+      'Examens en attente ou déjà terminés au laboratoire',
+    'Examens payés, pas encore saisis au laboratoire':
+      'Examens payés, pas encore saisis au laboratoire',
+    'Résultats déjà enregistrés — lecture seule':
+      'Résultats déjà enregistrés — lecture seule',
+    'En attente au laboratoire': 'En attente au laboratoire',
+    'Terminés au laboratoire': 'Terminés au laboratoire',
+    'Lecture seule — le laboratoire n’a pas encore saisi les résultats.':
+      'Lecture seule — le laboratoire n’a pas encore saisi les résultats.',
+    'Lecture seule — examens terminés au laboratoire.':
+      'Lecture seule — examens terminés au laboratoire.',
+    'Examens prescrits — en attente de résultats au laboratoire':
+      'Examens prescrits — en attente de résultats au laboratoire',
+    'Impossible de charger les examens du laboratoire.':
+      'Impossible de charger les examens du laboratoire.',
+    'Aucun examen terminé au laboratoire pour le moment.':
+      'Aucun examen terminé au laboratoire pour le moment.',
     'Examens de laboratoire transférés — en attente de résultats': 'Examens de laboratoire transférés — en attente de résultats',
     'Impossible de charger la file d\'attente laboratoire.': 'Impossible de charger la file d\'attente laboratoire.',
     Terminés: 'Terminés',
@@ -2280,7 +2315,11 @@ export default {
     'Aucune alerte stock': 'Aucune alerte stock',
     'Impossible de charger le catalogue pharmacie.': 'Impossible de charger le catalogue pharmacie.',
     'Vente au comptoir et dispensation': 'Vente au comptoir et dispensation',
+    'Ma recette du jour': 'Ma recette du jour',
+    '{n} vente(s)': '{n} vente(s)',
     'Ordonnances médecin': 'Ordonnances médecin',
+    'Aucune ordonnance envoyée depuis moins de 24 h.':
+      'Aucune ordonnance envoyée depuis moins de 24 h.',
     'Clôturer les ventes': 'Clôturer les ventes',
     'Ventes clôturées': 'Ventes clôturées',
     'Imprimer le cumul': 'Imprimer le cumul',
@@ -2369,6 +2408,8 @@ export default {
       'Encaissez type par type, ou validez tout en une fois en bas de la fenêtre',
     'Faites défiler pour voir tous les examens et saisir les réductions par type':
       'Faites défiler pour voir tous les examens et saisir les réductions par type',
+    'Faites défiler pour voir tous les examens':
+      'Faites défiler pour voir tous les examens',
     'Tél.': 'Tél.',
     "L'hospitalisation est gérée via le bouton dédié dans la liste (attribution de salle et admission).":
       "L'hospitalisation est gérée via le bouton dédié dans la liste (attribution de salle et admission).",
@@ -2807,13 +2848,16 @@ export default {
     Enregistrement: 'Enregistrement',
     'Parts médecins à percevoir': 'Parts médecins à percevoir',
     'Part médecin': 'Part médecin',
+    'Récapitulatif par médecin': 'Récapitulatif par médecin',
+    'Parts médecins': 'Parts médecins',
+    'Aucune part médecin sur cette période.': 'Aucune part médecin sur cette période.',
     Patients: 'Patients',
     'Patient externe': 'Patient externe',
     'Examens & paiements': 'Examens & paiements',
     'Paiement examens': 'Paiement examens',
     'En attente de paiement': 'En attente de paiement',
     'Examens prescrits à encaisser': 'Examens prescrits à encaisser',
-    'Ajouter examen en cours de paiement': 'Ajouter examen en cours de paiement',
+    'Examens en attente de paiement': 'Examens en attente de paiement',
     'Examens payés': 'Examens payés',
     Réclamations: 'Réclamations',
     'Suivi hospitalier': 'Suivi hospitalier',
@@ -2832,6 +2876,8 @@ export default {
     'Saisir une opération': 'Saisir une opération',
     'Nom et prix libres — ou choisissez une opération du catalogue ci-dessous.':
       'Nom et prix libres — ou choisissez une opération du catalogue ci-dessous.',
+    'Nom et prix enregistrés sur ce service : proposés à la prochaine recherche et dans les exports.':
+      'Nom et prix enregistrés sur ce service : proposés à la prochaine recherche et dans les exports.',
     'Nom de l’opération': 'Nom de l’opération',
     'Ex. Appendicectomie': 'Ex. Appendicectomie',
     'Prix (FCFA)': 'Prix (FCFA)',
@@ -2908,6 +2954,11 @@ export default {
     'Le téléphone doit contenir au moins 6 chiffres.':
       'Le téléphone doit contenir au moins 6 chiffres.',
     'Au moins 6 chiffres requis pour valider.': 'Au moins 6 chiffres requis pour valider.',
+    'Si renseigné : au moins 6 chiffres (optionnel).':
+      'Si renseigné : au moins 6 chiffres (optionnel).',
+    'Nom de l’opération (optionnel)': 'Nom de l’opération (optionnel)',
+    'Champs manquants': 'Champs manquants',
+    'Service / opération': 'Service / opération',
     'Champs incomplets': 'Champs incomplets',
     'Veuillez corriger les points suivants :': 'Veuillez corriger les points suivants :',
     'Indiquez le nom et le prénom du patient.': 'Indiquez le nom et le prénom du patient.',
@@ -3076,6 +3127,8 @@ export default {
       'Choisissez un assistant ou un anesthésiste enregistré.',
     'Choisissez le service de l’opération, puis saisissez le prix.':
       'Choisissez le service de l’opération, puis saisissez le prix.',
+    'Opération du service (optionnel)': 'Opération du service (optionnel)',
+    'Aucune — saisir le prix librement': 'Aucune — saisir le prix librement',
     'Opération pour le service « {name} ». Saisissez le prix ci-dessous.':
       'Opération pour le service « {name} ». Saisissez le prix ci-dessous.',
     'Médecin obligatoire pour « {op} ». L’assistant est facultatif. Les % s’appliquent au montant.':
@@ -3168,25 +3221,15 @@ export default {
     'Aucune maladie enregistrée.': 'Aucune maladie enregistrée.',
     'Chargement des maladies…': 'Chargement des maladies…',
     Césariennes: 'Césariennes',
-    'Césariennes (émiraties)': 'Césariennes (émiraties)',
     'Accouchement naturel': 'Accouchement naturel',
-    'Accouchement naturel (émiraties)': 'Accouchement naturel (émiraties)',
     'Ablations des fibromes': 'Ablations des fibromes',
-    'Ablations des fibromes (émiraties)': 'Ablations des fibromes (émiraties)',
     'Fracture de la hanche': 'Fracture de la hanche',
-    'Fracture de la hanche (émiraties)': 'Fracture de la hanche (émiraties)',
     'Fracture du bassin': 'Fracture du bassin',
-    'Fracture du bassin (émiraties)': 'Fracture du bassin (émiraties)',
     'Fracture du bras': 'Fracture du bras',
-    'Fracture du bras (émiraties)': 'Fracture du bras (émiraties)',
     'Fracture de la jambe': 'Fracture de la jambe',
-    'Fracture de la jambe (émiraties)': 'Fracture de la jambe (émiraties)',
     'Radio en couleur': 'Radio en couleur',
-    'Radio en couleur (émiraties)': 'Radio en couleur (émiraties)',
     'Radio simple': 'Radio simple',
-    'Radio simple (émiraties)': 'Radio simple (émiraties)',
     'Consultation de kinésithérapie': 'Consultation de kinésithérapie',
-    'Consultation de kinésithérapie (émiraties)': 'Consultation de kinésithérapie (émiraties)',
     '— Sélectionner —': '— Sélectionner —',
     'Inclure un assistant chirurgie pour cette opération':
       'Inclure un assistant chirurgie pour cette opération',

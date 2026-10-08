@@ -57,7 +57,7 @@ function pendingExportShared() {
 
 function exportPendingPdf() {
   exportTablePdf(
-    uiText('En attente de paiement'),
+    uiText('Examens en attente de paiement'),
     pendingExportColumns.value,
     pendingExportRows.value,
     pendingExportShared(),
@@ -66,7 +66,7 @@ function exportPendingPdf() {
 
 function exportPendingExcel() {
   exportTableExcel(
-    uiText('En attente de paiement'),
+    uiText('Examens en attente de paiement'),
     pendingExportColumns.value,
     pendingExportRows.value,
     pendingExportShared(),
@@ -75,7 +75,7 @@ function exportPendingExcel() {
 
 function exportPendingWord() {
   void exportTableWord(
-    uiText('En attente de paiement'),
+    uiText('Examens en attente de paiement'),
     pendingExportColumns.value,
     pendingExportRows.value,
     pendingExportShared(),
@@ -212,7 +212,7 @@ const { refresh: refreshQueue } = useSilentRefresh(
   <div class="page-with-table">
     <section class="page-with-table__head">
       <UiPageHeader
-        title="En attente de paiement"
+        title="Examens en attente de paiement"
         subtitle="Encaissez chaque type d'examen séparément — labo, opération, radio…"
         :icon="Clock"
       />
@@ -223,7 +223,7 @@ const { refresh: refreshQueue } = useSilentRefresh(
     </section>
 
     <section class="page-with-table__body">
-      <UiCard direct title="En attente de paiement"
+      <UiCard direct title="Examens en attente de paiement"
         description="Les types déjà payés disparaissent et suivent leur parcours (labo, opérations…)"
         class="ui-card--table-panel"
         :icon="FlaskConical"

@@ -16,8 +16,10 @@ import {
   ClipboardList,
   RotateCcw,
   Lock,
+  Banknote,
 } from '@lucide/vue'
 import api from '@/api/client'
+import { useAuthStore } from '@/stores/auth'
 import { CLINIC } from '@/lib/clinic'
 import { formatFcfa, fullName } from '@/lib/roles'
 import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, cancelPrintWindow, openPrintDocument, reservePrintWindow, thermalIsRtl, thermalLocaleMetaRow, thermalThanksHtml, thermalTicketDirAttrs, thermalTicketRootClass } from '@/lib/print-document'
@@ -116,6 +118,27 @@ const emit = defineEmits<{
 }>()
 
 const { uiText } = useAppI18n()
+const auth = useAuthStore()
+
+const myTodayNetFcfa = ref<number | null>(null)
+const myTodaySalesCount = ref(0)
+
+async function loadMyTodayRevenue() {
+  const userId = auth.user?.id
+  if (!userId) return
+  try {
+    const { data } = await api.get<{
+      netRevenueFcfa: number
+      prescriptionsCount: number
+    }>('/pharmacie/revenue-report', {
+      params: { period: 'today', pharmacistId: userId },
+    })
+    myTodayNetFcfa.value = data.netRevenueFcfa
+    myTodaySalesCount.value = data.prescriptionsCount
+  } catch {
+    myTodayNetFcfa.value = null
+  }
+}
 
 const rootRef = ref<HTMLElement | null>(null)
 const searchRef = ref<{ focus: () => void } | null>(null)
@@ -773,6 +796,7 @@ function pickSaleForReturn(sale: PharmacySaleForReturn) {
 
 async function onReturnSuccess(sale: PharmacySaleForReturn) {
   returnSale.value = sale
+  void loadMyTodayRevenue()
   await loadTodayReturnableSales()
   const fresh = todayReturnableSales.value.find((item) => item.id === sale.id)
   if (fresh) returnSale.value = fresh
@@ -865,6 +889,7 @@ async function submitSale() {
     emit('changed')
     void loadPendingOrdonnances('')
     void loadTodayReturnableSales()
+    void loadMyTodayRevenue()
     void nextTick(() => searchRef.value?.focus())
   } catch (error: unknown) {
     cancelPrintWindow()
@@ -937,6 +962,7 @@ onMounted(() => {
     /* compteur badge uniquement */
   })
   void loadTodayReturnableSales()
+  void loadMyTodayRevenue()
 })
 
 onUnmounted(() => {
@@ -969,6 +995,17 @@ watch(
           <h2 class="cashier__title">{{ uiText('Caisse') }}</h2>
           <p class="cashier__subtitle">{{ uiText('Vente au comptoir et dispensation') }}</p>
         </div>
+      </div>
+      <div class="cashier__recette" :aria-label="uiText('Ma recette du jour')">
+        <span class="cashier__recette-icon" aria-hidden="true">
+          <Banknote :size="16" />
+        </span>
+        <strong class="cashier__recette-amount">
+          {{ myTodayNetFcfa == null ? '—' : formatFcfa(myTodayNetFcfa) }}
+        </strong>
+        <span class="cashier__recette-count">
+          {{ translateTemplate('{n} vente(s)', { n: myTodaySalesCount }) }}
+        </span>
       </div>
       <div class="cashier__head-actions">
         <UiButton variant="secondary" size="sm" :icon="RotateCcw" @click="openReturnPicker">
@@ -1313,7 +1350,9 @@ watch(
 
       <div v-else class="ord-list-wrap">
         <p v-if="ordonnancesLoading" class="ord-empty">{{ uiText('Chargement…') }}</p>
-        <p v-else-if="!ordonnances.length" class="ord-empty">{{ uiText('Aucune ordonnance en attente.') }}</p>
+        <p v-else-if="!ordonnances.length" class="ord-empty">
+          {{ uiText('Aucune ordonnance envoyée depuis moins de 24 h.') }}
+        </p>
         <table v-else class="ord-table">
           <thead>
             <tr>
@@ -1517,6 +1556,43 @@ watch(
   margin: 0.15rem 0 0;
   font-size: 0.8125rem;
   color: var(--text-muted);
+}
+
+.cashier__recette {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: auto;
+  padding: 0.28rem 0.65rem;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #f0fdf4, #ecfdf5);
+  border: 1px solid rgba(22, 163, 74, 0.28);
+}
+
+.cashier__recette-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 8px;
+  background: #dcfce7;
+  color: #15803d;
+  flex-shrink: 0;
+}
+
+.cashier__recette-amount {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #14532d;
+  line-height: 1;
+}
+
+.cashier__recette-count {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #3f6212;
+  line-height: 1;
 }
 
 .cashier__head-actions {

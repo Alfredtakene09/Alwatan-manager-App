@@ -1456,6 +1456,12 @@ export const CLINIC_PRINT_STYLES = `
     padding-top: 4px;
     font-weight: 700;
   }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__totals-line--share {
+    margin-top: 4px;
+    border-top: 1px dashed #000;
+    padding-top: 4px;
+    font-weight: 700;
+  }
   body.print-thermal .thermal-receipt--day-closure .day-closure__footer {
     margin-top: 8px;
     font-size: 11px;
@@ -2238,6 +2244,8 @@ export type DayClosureReceiptData = {
   saleFcfa?: number
   /** Filtres appliqués (libellé i18n + valeur), imprimés sous la période. */
   filterLines?: { label: string; value: string }[]
+  /** Présent sur le cumul des enregistrements : part médecins, le reste est pour la clinique. */
+  doctorShareFcfa?: number | null
 }
 
 function formatDayClosureShortDate(isoDate: string): string {
@@ -2380,6 +2388,22 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
     Number(data.saleFcfa) || collectedFcfa + reductionFcfa,
   )
   const fr = (key: string) => translateUiLocale(key, 'fr')
+  const doctorShareFcfa =
+    data.doctorShareFcfa == null ? null : Math.max(0, Math.round(Number(data.doctorShareFcfa) || 0))
+  const clinicShareFcfa =
+    doctorShareFcfa == null ? null : Math.max(0, collectedFcfa - doctorShareFcfa)
+  const shareBlock =
+    doctorShareFcfa == null
+      ? ''
+      : `
+    <p class="day-closure__totals-line day-closure__totals-line--share">
+      <span>${escapeHtml(fr('Part des médecins'))} :</span>
+      <strong>${escapeHtml(formatDayClosureAmount(doctorShareFcfa))}</strong>
+    </p>
+    <p class="day-closure__totals-line">
+      <span>${escapeHtml(fr('Part clinique'))} :</span>
+      <strong>${escapeHtml(formatDayClosureAmount(clinicShareFcfa ?? 0))}</strong>
+    </p>`
   const title = fr('Cumul vente du {from} au {to}')
     .replace('{from}', dateShort)
     .replace('{to}', dateShortTo)
@@ -2406,6 +2430,7 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
       <span>${escapeHtml(fr('Total Perçu'))} :</span>
       <strong>${escapeHtml(formatDayClosureAmount(collectedFcfa))}</strong>
     </p>
+    ${shareBlock}
   </div>`
 
   const footerLine = fr('Le {date} - {time} par {user}')
@@ -2633,7 +2658,7 @@ export function buildLabExamThermalReceiptHtml(data: LabExamInvoiceData): string
     ...(showInstallment
       ? [thermalLocaleAmountRow(t('Ce versement'), formatFcfaPrint(installmentFcfa))]
       : []),
-    ...(showCumulative
+    ...(paidFcfa > 0 && (showCumulative || !hasPartialPayment)
       ? [thermalLocaleAmountRow(t('Encaissé'), formatFcfaPrint(paidFcfa))]
       : []),
     ...(hasPartialPayment

@@ -173,9 +173,27 @@ function drawClinicHeader(doc: jsPDF, title: string, logo: PdfLogo | null): numb
   return y
 }
 
-function applyCellFont(data: { cell: { text: string[]; styles: { font?: string } } }) {
+function applyCellFont(
+  data: {
+    section?: string
+    column?: { index: number }
+    cell: {
+      raw?: unknown
+      text: string[]
+      styles: { font?: string; fontSize?: number; valign?: string }
+    }
+  },
+  columns?: ExportColumn<any>[],
+) {
   const text = data.cell.text.join(' ')
   if (arabicFontReady && hasArabic(text)) data.cell.styles.font = ARABIC_FONT
+  const column =
+    data.section === 'body' ? columns?.[Math.max(0, (data.column?.index ?? 0) - 1)] : undefined
+  const raw = typeof data.cell.raw === 'string' ? data.cell.raw : text
+  if (column?.fontSize && (data.cell.text.length > 1 || raw.includes('\n'))) {
+    data.cell.styles.fontSize = column.fontSize
+    data.cell.styles.valign = 'top'
+  }
 }
 
 function drawTable<T>(
@@ -222,7 +240,7 @@ function drawTable<T>(
           columnStyles: Object.fromEntries(columnWidths.map((cellWidth, index) => [index, { cellWidth }])),
         }
       : {}),
-    didParseCell: applyCellFont,
+    didParseCell: (data) => applyCellFont(data, columns),
   })
   const tableY = lastTableY(doc, y)
   if (!totalsRows?.length) return tableY
@@ -231,7 +249,8 @@ function drawTable<T>(
     body: totalsRows.map((row) => [pdfText(row.label), pdfText(row.value)]),
     theme: 'plain',
     styles: { font: 'helvetica', fontSize: 10.5, fontStyle: 'bold', cellPadding: 1.8 },
-    columnStyles: { 0: { cellWidth: 120 }, 1: { halign: 'right' } },
+    tableWidth: 130,
+    columnStyles: { 0: { cellWidth: 72 }, 1: { cellWidth: 58, halign: 'right' } },
     margin: { left: 14, right: 14, bottom: 16 },
     didParseCell: applyCellFont,
   })

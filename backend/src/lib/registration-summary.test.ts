@@ -4,7 +4,10 @@ import { ConsultationQuotaMode, DoctorCompensationType, InvoiceType, UserRole } 
 import {
   consultationShare,
   consultationTariffAmount,
+  exactRegistrationService,
   operationActName,
+  operationLineLabel,
+  registrationActivityPatientCounts,
   registrationServiceLabel,
   operationShare,
   ORTHO_TRAUMA_SERVICE,
@@ -173,6 +176,29 @@ describe("parts médecin à l'export", () => {
     assert.equal(registrationServiceLabel("consultation", "Pédiatrie", "Gynécologie"), "Gynécologie");
     assert.equal(registrationServiceLabel("operation", "Ophtalmologie", "Gynécologie"), "Ophtalmologie");
   });
+
+  it("rattache une opération au service enregistré quand l'acte n'est que le nom d'un autre service", () => {
+    assert.equal(
+      exactRegistrationService({
+        group: "operation",
+        classifiedLabel: "Ophtalmologie",
+        recordedService: "Gynécologie",
+        operationName: "Ophtalmologie",
+      }),
+      "Gynécologie",
+    );
+    assert.equal(
+      exactRegistrationService({
+        group: "operation",
+        classifiedLabel: "Ophtalmologie",
+        recordedService: "Gynécologie",
+        operationName: "Trichiasis",
+      }),
+      "Ophtalmologie",
+    );
+    assert.equal(operationLineLabel("Gynécologie", "Gynécologie"), "Gynécologie");
+    assert.equal(operationLineLabel("Gynécologie", "Césarienne"), "Gynécologie (Césarienne)");
+  });
 });
 
 describe("lignes d'opérations à l'export", () => {
@@ -190,10 +216,12 @@ describe("lignes d'opérations à l'export", () => {
       invoiceId: "inv-2",
     });
     assert.equal(cesarienne.service, "Gynécologie (Césarienne)");
+    assert.equal(cesarienne.serviceName, "Gynécologie");
+    assert.equal(cesarienne.operationName, "Césarienne");
     assert.notEqual(cesarienne.key, autre.key);
   });
 
-  it("nomme orthopédie et traumatologie ensemble, avec l'acte entre parenthèses", () => {
+  it("fusionne orthopédie et traumatologie, toutes opérations confondues", () => {
     const ortho = registrationLineIdentity({
       group: "operation",
       serviceLabel: "ORTHOPEDIE",
@@ -212,11 +240,14 @@ describe("lignes d'opérations à l'export", () => {
       operationName: "Fracture",
       invoiceId: "inv-f",
     });
-    assert.equal(ortho.service, `${ORTHO_TRAUMA_SERVICE} (Prothèse)`);
-    assert.equal(trauma.service, `${ORTHO_TRAUMA_SERVICE} (Prothèse)`);
+    assert.equal(ORTHO_TRAUMA_SERVICE, "traumatologie&Orthopedie");
+    assert.equal(ortho.service, "traumatologie&Orthopedie");
+    assert.equal(ortho.serviceName, "traumatologie&Orthopedie");
+    assert.equal(ortho.operationName, null);
+    assert.equal(trauma.service, ortho.service);
+    assert.equal(fracture.service, ortho.service);
     assert.equal(ortho.key, trauma.key);
-    assert.equal(fracture.service, `${ORTHO_TRAUMA_SERVICE} (Fracture)`);
-    assert.notEqual(ortho.key, fracture.key);
+    assert.equal(ortho.key, fracture.key);
   });
 
   it("laisse les consultations cumulées par service", () => {
@@ -227,6 +258,8 @@ describe("lignes d'opérations à l'export", () => {
       invoiceId: "inv-c",
     });
     assert.equal(line.service, "Gynécologie");
+    assert.equal(line.serviceName, "Gynécologie");
+    assert.equal(line.operationName, null);
     assert.equal(line.key, "consultation\u0000Gynécologie");
   });
 
@@ -270,5 +303,82 @@ describe("lignes d'opérations à l'export", () => {
       visit: null,
     } as Parameters<typeof operationActName>[0]);
     assert.equal(catalog, "Appendicectomie");
+  });
+});
+
+describe("cartes d'enregistrement", () => {
+  const invoice = (partial: Record<string, unknown>) =>
+    partial as Parameters<typeof registrationActivityPatientCounts>[0][number];
+
+  it("compte une facture dans une seule carte et ignore un montant nul", () => {
+    const counts = registrationActivityPatientCounts([
+      invoice({
+        patientId: "pat-op",
+        type: InvoiceType.LAB_EXAM,
+        amountFcfa: 275_000,
+        billingExamKind: "operation",
+        surgeryCaseId: "case-1",
+        hospitalizationId: null,
+        visit: null,
+        hospitalization: null,
+      }),
+      invoice({
+        patientId: "pat-op",
+        type: InvoiceType.LAB_EXAM,
+        amountFcfa: 10_000,
+        billingExamKind: "examen",
+        surgeryCaseId: null,
+        hospitalizationId: null,
+        visit: null,
+        hospitalization: null,
+      }),
+      invoice({
+        patientId: "pat-radio",
+        type: InvoiceType.LAB_EXAM,
+        amountFcfa: 10_000,
+        billingExamKind: "radio",
+        surgeryCaseId: null,
+        hospitalizationId: null,
+        visit: null,
+        hospitalization: null,
+      }),
+      invoice({
+        patientId: "pat-consult",
+        type: InvoiceType.CONSULTATION,
+        amountFcfa: 5_000,
+        billingExamKind: null,
+        surgeryCaseId: null,
+        hospitalizationId: null,
+        visit: { consultationFeeFcfa: 5_000, reductionFcfa: 0, consultation: null },
+        hospitalization: null,
+      }),
+      invoice({
+        patientId: "pat-empty",
+        type: InvoiceType.CONSULTATION,
+        amountFcfa: 0,
+        billingExamKind: null,
+        surgeryCaseId: null,
+        hospitalizationId: null,
+        visit: null,
+        hospitalization: null,
+      }),
+      invoice({
+        patientId: "pat-hosp",
+        type: InvoiceType.HOSPITALIZATION_FINAL,
+        amountFcfa: 20_000,
+        billingExamKind: null,
+        surgeryCaseId: null,
+        hospitalizationId: "stay-1",
+        visit: null,
+        hospitalization: { reductionFcfa: 0 },
+      }),
+    ]);
+
+    assert.deepEqual(counts, {
+      consultationPatients: 1,
+      operationPatients: 1,
+      examPatients: 2,
+      hospitalizationPatients: 1,
+    });
   });
 });

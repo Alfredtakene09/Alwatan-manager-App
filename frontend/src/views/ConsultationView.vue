@@ -34,7 +34,7 @@ import DoctorPharmacyOrdonnancePicker from '@/components/DoctorPharmacyOrdonnanc
 import PatientMedicalHistory, {
   type MedicalHistoryEntry,
 } from '@/components/dossier/PatientMedicalHistory.vue'
-import { emptyExamsByKind, emptyExamCommentsByKind, countExamsByKind, filterInvoiceExamComments, type ExamsByKind, type ExamCommentsByKind } from '@/lib/exam-catalog'
+import { emptyExamsByKind, emptyExamCommentsByKind, countExamsByKind, filterInvoiceExamComments, invalidateExamCatalogCache, type ExamsByKind, type ExamCommentsByKind } from '@/lib/exam-catalog'
 import {
   CLINICAL_CONSULTATION_EXAM_LABEL,
   hasClinicalConsultationSelected,
@@ -63,6 +63,7 @@ const transferring = ref(false)
 const selectedExamsByKind = ref<ExamsByKind>(emptyExamsByKind())
 const examCommentsByKind = ref<ExamCommentsByKind>(emptyExamCommentsByKind())
 const operationAmountFcfa = ref<number | null>(null)
+const operationServiceId = ref('')
 const operationSurgeonPercent = ref<number | null>(null)
 const operationAssistant = ref<{
   anesthesiologistId?: string | null
@@ -231,6 +232,7 @@ function resetExamForm() {
   doctorComment.value = ''
   pharmacyOrdonnance.value = []
   operationAmountFcfa.value = null
+  operationServiceId.value = ''
   operationSurgeonPercent.value = null
   operationAssistant.value = null
   consultModalTab.value = 'exams'
@@ -395,6 +397,12 @@ async function submitExams() {
         }
         if (
           (selectedExamsByKind.value.operation?.length ?? 0) > 0 &&
+          operationServiceId.value.trim()
+        ) {
+          payload.operationServiceId = operationServiceId.value.trim()
+        }
+        if (
+          (selectedExamsByKind.value.operation?.length ?? 0) > 0 &&
           operationSurgeonPercent.value != null
         ) {
           payload.operationSurgeonPercent = operationSurgeonPercent.value
@@ -413,6 +421,7 @@ async function submitExams() {
 
     const hadOrdonnance = pharmacyOrdonnance.value.length > 0
     await api.post('/consultations/prescribe-exams', payload)
+    if ((selectedExamsByKind.value.operation?.length ?? 0) > 0) invalidateExamCatalogCache()
     const hasComment = !!doctorComment.value.trim()
     const consultationOnly = isDirectClinicalConsultationPrescription(selectedExamsByKind.value)
     message.value = uiText(
@@ -664,6 +673,7 @@ onUnmounted(() => {
                 v-model:comments="examCommentsByKind"
                 v-model:hospitalisation-days="hospitalisationDays"
                 v-model:operation-amount-fcfa="operationAmountFcfa"
+                v-model:operation-service-id="operationServiceId"
                 v-model:operation-surgeon-percent="operationSurgeonPercent"
                 v-model:operation-assistant="operationAssistant"
                 :doctor-id="auth.user?.id"

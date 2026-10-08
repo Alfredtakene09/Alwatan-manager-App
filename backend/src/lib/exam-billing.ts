@@ -3,6 +3,8 @@ import {
   type ExamKindSlug,
   LAB_BILLABLE_EXAM_KINDS,
   filterCashierBillableExamLabels,
+  payableExamLabels,
+  removedExamCreditFcfa,
 } from "./lab-notes.js";
 import { getLabExamPriceFcfa } from "./lab-exam-prices.js";
 
@@ -72,6 +74,42 @@ export function buildExamLinesFromNotes(notes?: string | null): ExamLineDto[] {
 
 export function computeExamGrossFcfa(notes?: string | null): number {
   return buildExamSheetsByKind(notes).reduce((sum, sheet) => sum + sheet.grossFcfa, 0);
+}
+
+/** Ligne d'affichage : valeur déjà encaissée sur des examens retirés ou remplacés. */
+export const EXAM_REMOVED_CREDIT_LABEL = "Avoir — examens retirés";
+
+/** Montant encore dû : hors examens déjà facturés, moins la valeur des lignes retirées. */
+export function computePayableExamGrossFcfa(notes?: string | null): number {
+  return buildExamSheetsByKind(notes).reduce((sum, sheet) => {
+    const allowed = new Set(payableExamLabels(notes, sheet.kind));
+    const gross = sheet.lines.reduce(
+      (inner, line) => (allowed.has(line.label.trim()) ? inner + line.unitPriceFcfa : inner),
+      0,
+    );
+    const credit = Math.min(removedExamCreditFcfa(notes, sheet.kind, getLabExamPriceFcfa), Math.max(0, gross));
+    return sum + Math.max(0, gross - credit);
+  }, 0);
+}
+
+export function applyRemovedExamCredit(
+  notes: string | null | undefined,
+  kind: ExamKindSlug,
+  lines: ExamLineDto[],
+): { lines: ExamLineDto[]; grossFcfa: number } {
+  const grossFcfa = lines.reduce((sum, line) => sum + line.unitPriceFcfa, 0);
+  if (lines.some((line) => line.label === EXAM_REMOVED_CREDIT_LABEL)) {
+    return { lines, grossFcfa };
+  }
+  const credit = Math.min(
+    removedExamCreditFcfa(notes, kind, getLabExamPriceFcfa),
+    Math.max(0, grossFcfa),
+  );
+  if (credit <= 0) return { lines, grossFcfa };
+  return {
+    lines: [...lines, { kind, label: EXAM_REMOVED_CREDIT_LABEL, unitPriceFcfa: -credit }],
+    grossFcfa: grossFcfa - credit,
+  };
 }
 
 export function buildExamsByKindPayload(notes?: string | null): Record<

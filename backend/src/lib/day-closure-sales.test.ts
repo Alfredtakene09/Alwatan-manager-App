@@ -89,6 +89,29 @@ describe("classifyInvoiceForDayClosure", () => {
     );
   });
 
+  it("range un examen externe spécialité dans « Examens »", () => {
+    const line = classifyInvoiceForDayClosure({
+      id: "ext-1",
+      patientId: "p-ext",
+      type: InvoiceType.LAB_EXAM,
+      amountFcfa: 5000,
+      paidAmountFcfa: 5000,
+      billingExamKind: "specialty",
+      surgeryCaseId: null,
+      hospitalizationId: null,
+      visit: {
+        notes: "PATIENT_EXTERNE",
+        reductionFcfa: 0,
+        consultationFeeFcfa: null,
+        assignedClinicService: null,
+        patient: { service: null },
+        consultation: { clinicalNotes: null },
+      },
+      hospitalization: null,
+    });
+    assert.deepEqual(line, { label: "Spécialité", group: "exam" });
+  });
+
   it("classe une opération du bloc sous le service du type d'intervention", () => {
     const line = classifyInvoiceForDayClosure({
       id: "3",
@@ -126,6 +149,58 @@ describe("classifyInvoiceForDayClosure", () => {
       hospitalization: null,
     });
     assert.deepEqual(line, { label: "Traumatologie", group: "operation" });
+  });
+
+  it("corrige un acte nommé Ophtalmologie quand le dossier est Gynécologie", () => {
+    const line = classifyInvoiceForDayClosure({
+      id: "6",
+      patientId: "p6",
+      type: InvoiceType.SURGERY,
+      amountFcfa: 75000,
+      paidAmountFcfa: 75000,
+      billingExamKind: null,
+      surgeryCaseId: "s3",
+      hospitalizationId: null,
+      visit: {
+        reductionFcfa: 0,
+        consultationFeeFcfa: 0,
+        notes: null,
+        assignedClinicService: { name: "Ophtalmologie" },
+        patient: { service: "Gynécologie" },
+        consultation: { clinicalNotes: null },
+      },
+      hospitalization: null,
+      surgeryCase: {
+        interventionType: { label: "Ophtalmologie", clinicService: { name: "Ophtalmologie" } },
+      },
+    });
+    assert.deepEqual(line, { label: "Gynécologie", group: "operation" });
+  });
+
+  it("garde Ophtalmologie pour un acte réel même si le dossier dit Gynécologie", () => {
+    const line = classifyInvoiceForDayClosure({
+      id: "7",
+      patientId: "p7",
+      type: InvoiceType.SURGERY,
+      amountFcfa: 20000,
+      paidAmountFcfa: 20000,
+      billingExamKind: null,
+      surgeryCaseId: "s4",
+      hospitalizationId: null,
+      visit: {
+        reductionFcfa: 0,
+        consultationFeeFcfa: 0,
+        notes: null,
+        assignedClinicService: { name: "Ophtalmologie" },
+        patient: { service: "Gynécologie" },
+        consultation: { clinicalNotes: null },
+      },
+      hospitalization: null,
+      surgeryCase: {
+        interventionType: { label: "Trichiasis", clinicService: { name: "Ophtalmologie" } },
+      },
+    });
+    assert.deepEqual(line, { label: "Ophtalmologie", group: "operation" });
   });
 
   it("retombe sur « Chirurgie » quand aucun service n'est rattaché", () => {

@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { z } from "zod";
 import { InvoiceStatus, InvoiceType, Prisma, SurgeryStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
-import { computeSurgeryShares, resolveSurgeonPercent } from "../lib/doctor-compensation.js";
+import { computeSurgeryShares, resolveSurgeonPercent, selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
 import { syncPaidOperationSurgeonCashShare } from "../lib/doctor-share-claims.js";
 import {
   buildPrescribedExamsNotesByKind,
@@ -36,14 +36,30 @@ const surgeryInclude = {
       patient: true,
       consultation: { select: { id: true, doctorComment: true, diagnosis: true } },
       createdBy: { select: { id: true, firstName: true, lastName: true } },
+      assignedClinicService: { select: { id: true, name: true } },
     },
   },
   interventionType: {
     include: {
       anesthesiologist: { select: { id: true, firstName: true, lastName: true } },
+      clinicService: { select: { id: true, name: true } },
     },
   },
-  surgeon: { select: { id: true, firstName: true, lastName: true } },
+  surgeon: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      employee: {
+        select: {
+          clinicService: { select: { id: true, name: true } },
+          clinicServiceLinks: {
+            select: { clinicService: { select: { id: true, name: true } } },
+          },
+        },
+      },
+    },
+  },
   accountant: { select: { id: true, firstName: true, lastName: true } },
   invoice: {
     select: {
@@ -340,6 +356,39 @@ function personName(user?: { firstName: string; lastName: string } | null) {
   return `${user.firstName} ${user.lastName}`.trim();
 }
 
+type ServiceRef = { id: string; name: string } | null | undefined;
+
+/** Service de l'opération : celui de l'acte, puis celui enregistré sur la visite. */
+function operationServiceName(input: {
+  assignedService?: ServiceRef;
+  typeService?: ServiceRef;
+  operationLabel?: string | null;
+  patientService?: string | null;
+}) {
+  const typeName = input.typeService?.name?.trim() || "";
+  const assignedName = input.assignedService?.name?.trim() || "";
+  const recorded = input.patientService?.trim() || assignedName;
+  const act = input.operationLabel?.trim() || "";
+  if (
+    recorded &&
+    act &&
+    typeName &&
+    foldServiceName(act) === foldServiceName(typeName) &&
+    foldServiceName(recorded) !== foldServiceName(typeName)
+  ) {
+    return recorded;
+  }
+  return typeName || recorded;
+}
+
+function foldServiceName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
 function assistantNameFromType(type: {
   anesthesiologistPercent: number;
   anesthesiologistName: string | null;
@@ -378,11 +427,22 @@ router.get("/other-operations", async (_req, res) => {
         visit: {
           select: {
             id: true,
+            createdAt: true,
+            updatedAt: true,
             createdBy: userRefSelect,
-            assignedDoctor: userRefSelect,
-            patient: { select: { code: true, firstName: true, lastName: true } },
+            assignedDoctor: {
+              select: { id: true, firstName: true, lastName: true },
+            },
+            assignedClinicService: { select: { id: true, name: true } },
+            patient: { select: { code: true, firstName: true, lastName: true, service: true } },
             consultation: {
-              select: { id: true, clinicalNotes: true, doctor: userRefSelect },
+              select: {
+                id: true,
+                clinicalNotes: true,
+                doctor: {
+                  select: { id: true, firstName: true, lastName: true },
+                },
+              },
             },
           },
         },
@@ -393,14 +453,18 @@ router.get("/other-operations", async (_req, res) => {
     const drafts = invoices
       .filter((invoice) => invoice.visit)
       .map(({ visit, ...invoice }) => {
-        const { consultation, assignedDoctor, ...visitRest } = visit!;
+        const { consultation, assignedDoctor, assignedClinicService, ...visitRest } = visit!;
         const labels = parsePrescribedExamsByKind(consultation?.clinicalNotes).operation ?? [];
         const interventionLabel = labels.filter(Boolean).join(", ") || "Opération";
-        const doctor = consultation?.doctor ?? assignedDoctor ?? null;
+        const doctorSource = consultation?.doctor ?? assignedDoctor ?? null;
+        const doctor = doctorSource
+          ? { id: doctorSource.id, firstName: doctorSource.firstName, lastName: doctorSource.lastName }
+          : null;
         return {
           ...invoice,
           interventionLabel,
           doctor,
+          assignedClinicService,
           visit: { ...visitRest, consultation: consultation ? { id: consultation.id } : null },
         };
       });
@@ -415,17 +479,32 @@ router.get("/other-operations", async (_req, res) => {
             anesthesiologistPercent: true,
             anesthesiologistName: true,
             anesthesiologist: { select: { firstName: true, lastName: true } },
+            clinicService: { select: { id: true, name: true } },
           },
         })
       : [];
 
     const payload = drafts.map((row) => {
       const matches = types.filter((type) => type.label === row.interventionLabel);
+      const assignedId = row.assignedClinicService?.id;
       const type =
-        matches.find((item) => item.surgeonId && item.surgeonId === row.doctor?.id) ?? matches[0];
+        (assignedId
+          ? matches.find((item) => item.clinicService?.id === assignedId)
+          : undefined) ??
+        matches.find(
+          (item) => item.surgeonId && item.surgeonId === row.doctor?.id,
+        ) ??
+        (matches.length === 1 ? matches[0] : undefined);
+      const { assignedClinicService, ...rest } = row;
       return {
-        ...row,
+        ...rest,
         assistantName: type ? assistantNameFromType(type) : null,
+        serviceName: operationServiceName({
+          assignedService: assignedClinicService,
+          typeService: type?.clinicService,
+          operationLabel: row.interventionLabel,
+          patientService: row.visit.patient.service,
+        }),
       };
     });
 
@@ -453,6 +532,7 @@ const operationBillingSchema = z.object({
   operationDate: z.string().min(1),
   interventionTypeId: z.string().trim().min(1).optional(),
   clinicServiceId: z.string().trim().min(1).optional(),
+  surgeonId: z.string().trim().min(1).optional(),
 });
 
 async function resolveClinicServiceId(clinicServiceId?: string | null) {
@@ -463,6 +543,49 @@ async function resolveClinicServiceId(clinicServiceId?: string | null) {
     select: { id: true },
   });
   return service?.id ?? null;
+}
+
+async function resolveOperationSurgeon(
+  surgeonId: string | null | undefined,
+  clinicServiceId: string | null,
+  currentSurgeonId?: string | null,
+) {
+  const id = surgeonId?.trim();
+  if (!id) return null;
+  const doctor = await prisma.user.findFirst({
+    where: selectableDoctorByIdWhere(id),
+    select: {
+      id: true,
+      role: true,
+      employee: {
+        select: {
+          isMedecin: true,
+          doctorCompensationType: true,
+          surgeryQuotaPercent: true,
+          clinicServiceId: true,
+          clinicServiceLinks: { select: { clinicServiceId: true } },
+        },
+      },
+    },
+  });
+  if (!doctor) throw new Error("INVALID_SURGEON");
+  if (clinicServiceId && doctor.id !== currentSurgeonId) {
+    const employee = doctor.employee;
+    const linked =
+      employee?.clinicServiceId === clinicServiceId ||
+      (employee?.clinicServiceLinks ?? []).some((link) => link.clinicServiceId === clinicServiceId);
+    if (!linked) throw new Error("SURGEON_SERVICE");
+  }
+  return doctor;
+}
+
+function operationBillingError(error: unknown, fallback: string) {
+  if (error instanceof z.ZodError) return "Montant ou date invalide.";
+  if (error instanceof Error && error.message === "INVALID_SURGEON") return "Médecin invalide.";
+  if (error instanceof Error && error.message === "SURGEON_SERVICE") {
+    return "Ce médecin n'est pas rattaché à ce service.";
+  }
+  return fallback;
 }
 
 /** Remplace le libellé d'opération dans la prescription, ou le laisse tel quel s'il n'y figure pas. */
@@ -489,11 +612,19 @@ function notesWithRenamedOperation(
   return buildPrescribedExamsNotesByKind(byKind, notes, undefined, comments);
 }
 
-/** Nouvelle date en conservant l'heure d'origine (la colonne affiche date + heure). */
-function replaceDatePart(input: string, previous: Date | null): Date {
+/**
+ * Applique le jour saisi. Par défaut l'heure courante (modification = maintenant),
+ * pour que la colonne Date/heure suive la modification.
+ */
+function replaceDatePart(
+  input: string,
+  previous: Date | null,
+  options?: { keepPreviousTime?: boolean },
+): Date {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input.trim());
   if (!match) throw new Error("INVALID_OPERATION_DATE");
-  const base = previous ?? new Date();
+  const base =
+    options?.keepPreviousTime && previous ? previous : new Date();
   const next = new Date(
     Number(match[1]),
     Number(match[2]) - 1,
@@ -513,10 +644,92 @@ function invoiceStatusFor(amountFcfa: number, paidAmountFcfa: number): InvoiceSt
   return InvoiceStatus.PENDING;
 }
 
+/**
+ * Corrige le montant facturé en gardant l’encaissement cohérent.
+ * Si la facture était soldée, le payé suit le nouveau montant (évite paid > amount).
+ */
+async function syncOperationInvoiceBillingAmount(
+  tx: Prisma.TransactionClient,
+  invoice: {
+    id: string;
+    amountFcfa: number;
+    paidAmountFcfa: number;
+    paidAt: Date | null;
+    createdAt?: Date | null;
+  },
+  amountFcfa: number,
+  recordedById: string,
+  datePatch?: { paidAt?: Date; createdAt?: Date },
+) {
+  const wasFullyPaid =
+    invoice.paidAmountFcfa > 0 && invoice.paidAmountFcfa >= invoice.amountFcfa;
+  const nextPaid = wasFullyPaid
+    ? amountFcfa
+    : Math.min(Math.max(0, invoice.paidAmountFcfa), amountFcfa);
+  const cashAt = datePatch?.paidAt ?? invoice.paidAt ?? invoice.createdAt ?? new Date();
+
+  const listingAt = datePatch?.createdAt ?? datePatch?.paidAt ?? null;
+
+  await tx.invoice.update({
+    where: { id: invoice.id },
+    data: {
+      amountFcfa,
+      paidAmountFcfa: nextPaid,
+      status: invoiceStatusFor(amountFcfa, nextPaid),
+      // Date d'enregistrement (filtres liste) : toujours alignée sur la date de saisie / modification.
+      ...(listingAt ? { createdAt: listingAt } : {}),
+      ...(datePatch?.paidAt
+        ? { paidAt: datePatch.paidAt }
+        : nextPaid > 0 && !invoice.paidAt && wasFullyPaid
+          ? { paidAt: cashAt }
+          : nextPaid <= 0
+            ? { paidAt: null }
+            : {}),
+    },
+  });
+
+  if (nextPaid <= 0) {
+    await tx.invoicePayment.deleteMany({ where: { invoiceId: invoice.id } });
+    return nextPaid;
+  }
+
+  const payments = await tx.invoicePayment.findMany({
+    where: { invoiceId: invoice.id },
+    orderBy: { paidAt: "asc" },
+    select: { id: true },
+  });
+  if (!payments.length) {
+    await tx.invoicePayment.create({
+      data: {
+        invoiceId: invoice.id,
+        amountFcfa: nextPaid,
+        recordedById,
+        paidAt: cashAt,
+      },
+    });
+    return nextPaid;
+  }
+
+  await tx.invoicePayment.update({
+    where: { id: payments[0]!.id },
+    data: {
+      amountFcfa: nextPaid,
+      ...(datePatch?.paidAt ? { paidAt: datePatch.paidAt } : {}),
+    },
+  });
+  if (payments.length > 1) {
+    await tx.invoicePayment.updateMany({
+      where: { invoiceId: invoice.id, id: { not: payments[0]!.id } },
+      data: { amountFcfa: 0 },
+    });
+  }
+  return nextPaid;
+}
+
 /** Corriger le montant facturé et la date d'une opération du bloc opératoire. */
 router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
   try {
-    const { amountFcfa, operationDate, interventionTypeId, clinicServiceId } =
+    const { amountFcfa, operationDate, interventionTypeId, clinicServiceId, surgeonId } =
       operationBillingSchema.parse(req.body);
     const surgeryId = String(req.params.id);
 
@@ -536,7 +749,15 @@ router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
             },
           },
         },
-        invoice: { select: { id: true, paidAmountFcfa: true, paidAt: true } },
+        invoice: {
+          select: {
+            id: true,
+            amountFcfa: true,
+            paidAmountFcfa: true,
+            paidAt: true,
+            createdAt: true,
+          },
+        },
       },
     });
 
@@ -573,17 +794,20 @@ router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
       return res.status(400).json({ error: "Service introuvable." });
     }
 
+    const nextSurgeon = await resolveOperationSurgeon(surgeonId, resolvedServiceId, surgery.surgeonId);
+
     const surgeonPercent = resolveSurgeonPercent(
       nextType?.surgeonPercent ?? surgery.interventionType.surgeonPercent,
-      surgery.surgeon,
+      nextSurgeon ?? surgery.surgeon,
     );
-    const shares = computeSurgeryShares(amountFcfa, surgeonPercent, surgery.surgeon);
+    const shares = computeSurgeryShares(amountFcfa, surgeonPercent, nextSurgeon ?? surgery.surgeon);
 
     await prisma.$transaction(async (tx) => {
       await tx.surgeryCase.update({
         where: { id: surgery.id },
         data: {
           ...(nextType ? { interventionTypeId: nextType.id } : {}),
+          ...(nextSurgeon ? { surgeonId: nextSurgeon.id, surgeonPercent } : {}),
           totalCostFcfa: amountFcfa,
           surgeonShareFcfa: shares.surgeonShareFcfa,
           clinicShareFcfa: shares.clinicShareFcfa,
@@ -593,41 +817,49 @@ router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
         },
       });
 
-      if (nextType) {
+      if (nextType || nextSurgeon) {
         const consultation = await tx.consultation.findUnique({
           where: { visitId: surgery.visitId },
           select: { id: true, clinicalNotes: true },
         });
-        const notes = consultation
-          ? notesWithRenamedOperation(
-              consultation.clinicalNotes,
-              surgery.interventionType.label,
-              nextType.label,
-            )
-          : null;
-        if (consultation && notes != null) {
+        const notes =
+          nextType && consultation
+            ? notesWithRenamedOperation(
+                consultation.clinicalNotes,
+                surgery.interventionType.label,
+                nextType.label,
+              )
+            : null;
+        if (consultation && (notes != null || nextSurgeon)) {
           await tx.consultation.update({
             where: { id: consultation.id },
-            data: { clinicalNotes: notes },
+            data: {
+              ...(notes != null ? { clinicalNotes: notes } : {}),
+              ...(nextSurgeon ? { doctorId: nextSurgeon.id } : {}),
+            },
           });
         }
       }
 
-      if (resolvedServiceId) {
+      if (resolvedServiceId || nextSurgeon) {
         await tx.visit.update({
           where: { id: surgery.visitId },
-          data: { assignedClinicServiceId: resolvedServiceId },
+          data: {
+            ...(resolvedServiceId ? { assignedClinicServiceId: resolvedServiceId } : {}),
+            ...(nextSurgeon ? { assignedDoctorId: nextSurgeon.id } : {}),
+          },
         });
       }
 
       if (surgery.invoice) {
-        await tx.invoice.update({
-          where: { id: surgery.invoice.id },
-          data: {
-            amountFcfa,
-            status: invoiceStatusFor(amountFcfa, surgery.invoice.paidAmountFcfa),
-          },
-        });
+        // createdAt = date colonne / filtres (modification) ; paidAt reste la date d'encaissement.
+        await syncOperationInvoiceBillingAmount(
+          tx,
+          surgery.invoice,
+          amountFcfa,
+          req.user!.id,
+          { createdAt: nextDate },
+        );
         await syncPaidOperationSurgeonCashShare(tx, surgery.invoice.id, req.user!.id);
       }
     });
@@ -639,9 +871,8 @@ router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
 
     return res.json(updated);
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: "Montant ou date invalide." });
-    }
+    const message = operationBillingError(error, "");
+    if (message) return res.status(400).json({ error: message });
     console.error("PATCH /surgeries/:id/billing failed:", error);
     return res.status(500).json({ error: "Impossible de modifier l'opération." });
   }
@@ -650,7 +881,7 @@ router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
 /** Corriger le montant facturé et la date d'une opération hors bloc opératoire. */
 router.patch("/other-operations/:id/billing", requireOperationEditor, async (req, res) => {
   try {
-    const { amountFcfa, operationDate, interventionTypeId, clinicServiceId } =
+    const { amountFcfa, operationDate, interventionTypeId, clinicServiceId, surgeonId } =
       operationBillingSchema.parse(req.body);
     const invoiceId = String(req.params.id);
 
@@ -663,13 +894,15 @@ router.patch("/other-operations/:id/billing", requireOperationEditor, async (req
       },
       select: {
         id: true,
+        amountFcfa: true,
         paidAmountFcfa: true,
         paidAt: true,
         createdAt: true,
         visitId: true,
         visit: {
           select: {
-            consultation: { select: { id: true, clinicalNotes: true } },
+            assignedDoctorId: true,
+            consultation: { select: { id: true, clinicalNotes: true, doctorId: true } },
           },
         },
       },
@@ -705,6 +938,11 @@ router.patch("/other-operations/:id/billing", requireOperationEditor, async (req
     }
 
     const consultation = invoice.visit?.consultation ?? null;
+    const nextSurgeon = await resolveOperationSurgeon(
+      surgeonId,
+      resolvedServiceId,
+      consultation?.doctorId ?? invoice.visit?.assignedDoctorId ?? null,
+    );
     const currentLabel = consultation
       ? (parsePrescribedExamsByKind(consultation.clinicalNotes).operation ?? [])
           .filter(Boolean)
@@ -716,33 +954,42 @@ router.patch("/other-operations/:id/billing", requireOperationEditor, async (req
         : null;
 
     await prisma.$transaction(async (tx) => {
-      await tx.invoice.update({
-        where: { id: invoice.id },
-        data: {
-          amountFcfa,
-          status: invoiceStatusFor(amountFcfa, invoice.paidAmountFcfa),
-          ...(invoice.paidAt ? { paidAt: nextDate } : { createdAt: nextDate }),
-        },
-      });
-      if (consultation && notes != null) {
+      // createdAt facture = date d'enregistrement affichée ; visite.updatedAt = jour réel de modification.
+      await syncOperationInvoiceBillingAmount(
+        tx,
+        invoice,
+        amountFcfa,
+        req.user!.id,
+        { createdAt: nextDate },
+      );
+      if (consultation && (notes != null || nextSurgeon)) {
         await tx.consultation.update({
           where: { id: consultation.id },
-          data: { clinicalNotes: notes },
+          data: {
+            ...(notes != null ? { clinicalNotes: notes } : {}),
+            ...(nextSurgeon ? { doctorId: nextSurgeon.id } : {}),
+          },
         });
       }
-      if (resolvedServiceId && invoice.visitId) {
-        await tx.visit.update({
-          where: { id: invoice.visitId },
-          data: { assignedClinicServiceId: resolvedServiceId },
-        });
+      if (invoice.visitId) {
+        if (resolvedServiceId || nextSurgeon) {
+          await tx.visit.update({
+            where: { id: invoice.visitId },
+            data: {
+              ...(resolvedServiceId ? { assignedClinicServiceId: resolvedServiceId } : {}),
+              ...(nextSurgeon ? { assignedDoctorId: nextSurgeon.id } : {}),
+            },
+          });
+        }
+        // Horodatage réel de modification (libellé « modifié JJ/MM/AAAA » = aujourd’hui).
+        await tx.$executeRaw`UPDATE "Visit" SET "updatedAt" = NOW() WHERE id = ${invoice.visitId}`;
       }
     });
 
     return res.json({ ok: true });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return res.status(400).json({ error: "Montant ou date invalide." });
-    }
+    const message = operationBillingError(error, "");
+    if (message) return res.status(400).json({ error: message });
     console.error("PATCH /surgeries/other-operations/:id/billing failed:", error);
     return res.status(500).json({ error: "Impossible de modifier l'opération." });
   }

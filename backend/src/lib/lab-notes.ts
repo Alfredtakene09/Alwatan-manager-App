@@ -5,6 +5,9 @@ import { EXTERNAL_PATIENT_VISIT_NOTE } from "./visit-external.js";
 
 export const EXAMS_PRESCRIBED_PREFIX = "Examens prescrits";
 export const EXAMS_PAID_PREFIX = "Examens payés";
+/** Libellés déjà encaissés, quand des examens sont ajoutés ensuite. */
+export const EXAMS_BILLED_PREFIX = "Examens facturés";
+export const EXAMS_REMOVED_PREFIX = "Examens retirés";
 export const EXAM_COMMENT_PREFIX = "Commentaire";
 export const LAB_RESULTS_PREFIX = "Résultats laboratoire";
 export const LAB_RESULTS_COMPLETION_MARKER = `${LAB_RESULTS_PREFIX} — validé le `;
@@ -317,6 +320,27 @@ export const CASHIER_PAYMENT_QUEUE_KINDS: ExamKindSlug[] = [
   "operation",
 ];
 
+/**
+ * Types affichés dans les listes « Examens » (attente / payés).
+ * Les opérations ont leur propre écran Opérations.
+ */
+export const EXAM_LIST_KINDS: ExamKindSlug[] = [...LAB_BILLABLE_EXAM_KINDS];
+
+/** True s’il y a au moins un examen (hors opération / hospitalisation) à lister côté examens. */
+export function hasExamListContent(notes?: string | null): boolean {
+  const prescribed = parsePrescribedExamsByKind(notes);
+  return EXAM_LIST_KINDS.some((kind) => kindHasCashierBillableExams(prescribed[kind]));
+}
+
+/** Prescription uniquement opérationnelle — à afficher dans Opérations, pas Examens. */
+export function isOperationOnlyPrescription(notes?: string | null): boolean {
+  const prescribed = parsePrescribedExamsByKind(notes);
+  if ((prescribed.operation?.length ?? 0) === 0) return false;
+  if (hasExamListContent(notes)) return false;
+  if ((prescribed.hospitalisation?.length ?? 0) > 0) return false;
+  return true;
+}
+
 /** Acte clinique de nomenclature (ex. Ophtalmologie) — pas d'envoi labo. */
 export const CLINICAL_CONSULTATION_EXAM_LABEL = "Consultation";
 
@@ -518,7 +542,8 @@ export function labsPaidExamsWhere() {
       {
         OR: [
           { labSentToLabAt: { not: null } },
-          ...EXAM_KIND_ORDER.flatMap((kind) =>
+          // Marqueurs payés hors opérations (réservées à l’écran Opérations).
+          ...EXAM_LIST_KINDS.flatMap((kind) =>
             sectionLabelsForKind(kind).map((label) => ({
               clinicalNotes: { contains: `${EXAMS_PAID_PREFIX} (${label})` },
             })),
@@ -531,6 +556,7 @@ export function labsPaidExamsWhere() {
                   type: InvoiceType.LAB_EXAM,
                   status: { in: [InvoiceStatus.PAID, InvoiceStatus.PARTIALLY_PAID] },
                   paidAmountFcfa: { gt: 0 },
+                  billingExamKind: { in: [...EXAM_LIST_KINDS] },
                 },
               },
             },
@@ -624,6 +650,8 @@ function isStructuredExamNoteLine(line: string) {
     !!parseExamLine(line) ||
     !!parseExamCommentLine(line) ||
     !!parsePaidKindLine(line) ||
+    !!parseBilledKindLine(line) ||
+    !!parseRemovedKindLine(line) ||
     !!parseHospitalisationDaysLine(line) ||
     !!parsePharmacyOrdonnanceLine(line)
   );
@@ -660,10 +688,256 @@ export function isExamKindPaid(notes: string | null | undefined, kind: ExamKindS
   return !!parsePaidExamKindsByKind(notes)[kind];
 }
 
+function parseBilledKindLine(line: string): { kind: ExamKindSlug; labels: string[] } | null {
+  const trimmed = line.trim();
+  for (const kind of EXAM_KIND_ORDER) {
+    for (const label of sectionLabelsForKind(kind)) {
+      const prefix = `${EXAMS_BILLED_PREFIX} (${label}) : `;
+      if (!trimmed.startsWith(prefix)) continue;
+      return { kind, labels: splitPrescribedExamList(trimmed.slice(prefix.length)) };
+    }
+  }
+  return null;
+}
+
+export function parseBilledExamLabelsByKind(
+  notes?: string | null,
+): Partial<Record<ExamKindSlug, string[]>> {
+  const result: Partial<Record<ExamKindSlug, string[]>> = {};
+  if (!notes) return result;
+  for (const line of notes.split("\n")) {
+    const parsed = parseBilledKindLine(line);
+    if (!parsed) continue;
+    result[parsed.kind] = [...(result[parsed.kind] ?? []), ...parsed.labels];
+  }
+  return result;
+}
+
+export function setBilledExamLabels(
+  notes: string | null | undefined,
+  kind: ExamKindSlug,
+  labels: string[],
+): string {
+  const unique = [...new Set(labels.map((label) => label.trim()).filter(Boolean))];
+  const kept = (notes ?? "")
+    .split("\n")
+    .filter((line) => {
+      const parsed = parseBilledKindLine(line);
+      return !parsed || parsed.kind !== kind;
+    })
+    .join("\n")
+    .trim();
+  if (!unique.length) return kept;
+  const marker = `${EXAMS_BILLED_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]}) : ${unique.join(", ")}`;
+  return kept ? `${kept}\n${marker}` : marker;
+}
+
+function parseRemovedKindLine(line: string): { kind: ExamKindSlug; labels: string[] } | null {
+  const trimmed = line.trim();
+  for (const kind of EXAM_KIND_ORDER) {
+    for (const label of sectionLabelsForKind(kind)) {
+      const prefix = `${EXAMS_REMOVED_PREFIX} (${label}) : `;
+      if (!trimmed.startsWith(prefix)) continue;
+      return { kind, labels: splitPrescribedExamList(trimmed.slice(prefix.length)) };
+    }
+  }
+  return null;
+}
+
+export function parseRemovedExamLabelsByKind(
+  notes?: string | null,
+): Partial<Record<ExamKindSlug, string[]>> {
+  const result: Partial<Record<ExamKindSlug, string[]>> = {};
+  if (!notes) return result;
+  for (const line of notes.split("\n")) {
+    const parsed = parseRemovedKindLine(line);
+    if (!parsed) continue;
+    result[parsed.kind] = [...(result[parsed.kind] ?? []), ...parsed.labels];
+  }
+  return result;
+}
+
+export function setRemovedExamLabels(
+  notes: string | null | undefined,
+  kind: ExamKindSlug,
+  labels: string[],
+): string {
+  const unique = [...new Set(labels.map((label) => label.trim()).filter(Boolean))];
+  const kept = (notes ?? "")
+    .split("\n")
+    .filter((line) => {
+      const parsed = parseRemovedKindLine(line);
+      return !parsed || parsed.kind !== kind;
+    })
+    .join("\n")
+    .trim();
+  if (!unique.length) return kept;
+  const marker = `${EXAMS_REMOVED_PREFIX} (${EXAM_KIND_SECTION_LABELS[kind]}) : ${unique.join(", ")}`;
+  return kept ? `${kept}\n${marker}` : marker;
+}
+
+const DOCTOR_LINE_BILLING_KINDS: ExamKindSlug[] = ["specialty", "examen", "radio", "echo", "odonto"];
+
+function uniqueExamLabels(labels: string[] | null | undefined): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const label of labels ?? []) {
+    const trimmed = label.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    unique.push(trimmed);
+  }
+  return unique;
+}
+
+function examLabelPriceSum(labels: string[], priceOf: (label: string) => number): number {
+  return labels.reduce((sum, label) => sum + Math.max(0, Math.floor(priceOf(label) || 0)), 0);
+}
+
+/**
+ * Le médecin a changé les lignes d'un type déjà encaissé (ajout, remplacement ou retrait).
+ * Les lignes déjà payées restent facturées. L'écart de prix (nouvelles lignes moins lignes
+ * retirées) revient à la caisse. Un écart nul ou négatif ne réouvre pas l'encaissement.
+ */
+export function syncBillingForDoctorLineChange(
+  notes: string | null | undefined,
+  nextByKind: Partial<Record<ExamKindSlug, string[]>>,
+  priceOf: (label: string) => number,
+): string {
+  let next = notes ?? "";
+  const prescribed = parsePrescribedExamsByKind(next);
+  for (const kind of DOCTOR_LINE_BILLING_KINDS) {
+    const previous = uniqueExamLabels(filterCashierBillableExamLabels(prescribed[kind]));
+    const upcoming = uniqueExamLabels(filterCashierBillableExamLabels(nextByKind[kind] ?? []));
+    const upcomingSet = new Set(upcoming);
+    const sameSet =
+      previous.length === upcoming.length && previous.every((label) => upcomingSet.has(label));
+    if (sameSet) continue;
+
+    const billed = uniqueExamLabels(parseBilledExamLabelsByKind(next)[kind] ?? []);
+    const paid = isExamKindPaid(next, kind);
+    if (!paid && !billed.length) continue;
+
+    const settled = billed.length ? billed : previous;
+    const settledSet = new Set(settled);
+    const added = upcoming.filter((label) => !settledSet.has(label));
+    const removed = settled.filter((label) => !upcomingSet.has(label));
+    if (!added.length && !removed.length) {
+      if (!paid && upcoming.every((label) => settledSet.has(label))) {
+        next = appendPaidExamKindMarker(next, kind, new Date());
+        next = setRemovedExamLabels(next, kind, []);
+      }
+      continue;
+    }
+
+    const addedSum = examLabelPriceSum(added, priceOf);
+    const removedSum = examLabelPriceSum(removed, priceOf);
+    if (addedSum <= removedSum) {
+      next = setBilledExamLabels(next, kind, upcoming);
+      next = setRemovedExamLabels(next, kind, []);
+      if (!isExamKindPaid(next, kind)) {
+        next = appendPaidExamKindMarker(next, kind, new Date());
+      }
+      continue;
+    }
+
+    next = setBilledExamLabels(next, kind, settled);
+    next = setRemovedExamLabels(next, kind, removed);
+    next = removePaidExamKindMarker(next, kind);
+  }
+  return next;
+}
+
+export function removedExamCreditFcfa(
+  notes: string | null | undefined,
+  kind: ExamKindSlug,
+  priceOf: (label: string) => number,
+): number {
+  return examLabelPriceSum(parseRemovedExamLabelsByKind(notes)[kind] ?? [], priceOf);
+}
+
+/** Libellés encore à encaisser. Vide si le type est déjà soldé sans ajout. */
+export function payableExamLabels(
+  notes: string | null | undefined,
+  kind: ExamKindSlug,
+): string[] {
+  const labels = filterCashierBillableExamLabels(parsePrescribedExamsByKind(notes)[kind]);
+  const billedLabels = parseBilledExamLabelsByKind(notes)[kind];
+  if (billedLabels?.length) {
+    const billed = new Set(billedLabels.map((label) => label.trim()));
+    return labels.filter((label) => !billed.has(label.trim()));
+  }
+  if (isExamKindPaid(notes, kind)) return [];
+  return labels;
+}
+
+/**
+ * Examens ajoutés après l'encaissement : le préfixe dont les prix égalent
+ * la facture déjà payée reste facturé, le reste redevient à encaisser.
+ * Ne détache rien si les prix ne tombent pas juste (changement de tarif).
+ */
+export function detachExamsAddedAfterPayment(
+  notes: string | null | undefined,
+  paidAmountByKind: Partial<Record<ExamKindSlug, number>>,
+  priceOf: (label: string) => number,
+): string {
+  const detachable: ExamKindSlug[] = ["specialty", "examen", "radio", "echo", "odonto"];
+  let next = notes ?? "";
+  if (!next) return next;
+  for (const kind of detachable) {
+    if (!isExamKindPaid(next, kind)) continue;
+    if (parseBilledExamLabelsByKind(next)[kind]?.length) continue;
+    const paid = paidAmountByKind[kind];
+    if (paid == null || paid <= 0) continue;
+    const labels = filterCashierBillableExamLabels(parsePrescribedExamsByKind(next)[kind]);
+    let sum = 0;
+    let prefix = 0;
+    let aligned = true;
+    for (const label of labels) {
+      if (sum === paid) break;
+      const price = Math.max(0, Math.floor(priceOf(label) || 0));
+      if (sum + price > paid) {
+        aligned = false;
+        break;
+      }
+      sum += price;
+      prefix += 1;
+    }
+    if (!aligned || sum !== paid || prefix <= 0 || prefix >= labels.length) continue;
+    next = setBilledExamLabels(next, kind, labels.slice(0, prefix));
+    next = removePaidExamKindMarker(next, kind);
+  }
+  return next;
+}
+
+/** Vrai si les notes ont été modifiées après le marqueur de paiement (ajout d'examens). */
+export function consultationMayHaveExamsAddedAfterPayment(
+  notes: string | null | undefined,
+  updatedAt: Date,
+): boolean {
+  if (!notes?.includes(EXAMS_PAID_PREFIX)) return false;
+  if (notes.includes(`${EXAMS_BILLED_PREFIX} (`)) return false;
+  const paid = parsePaidExamKindsByKind(notes);
+  const dates = Object.values(paid).filter((date): date is Date => date instanceof Date);
+  if (!dates.length) return false;
+  const latestPaid = Math.max(...dates.map((date) => date.getTime()));
+  return updatedAt.getTime() > latestPaid + 10_000;
+}
+
 export function getUnpaidPrescribedExamKinds(notes?: string | null): ExamKindSlug[] {
   const prescribed = parsePrescribedExamsByKind(notes);
   const paid = parsePaidExamKindsByKind(notes);
-  return EXAM_KIND_ORDER.filter((kind) => (prescribed[kind]?.length ?? 0) > 0 && !paid[kind]);
+  const billed = parseBilledExamLabelsByKind(notes);
+  return EXAM_KIND_ORDER.filter((kind) => {
+    const labels = (prescribed[kind] ?? []).map((label) => label.trim()).filter(Boolean);
+    if (!labels.length) return false;
+    const billedLabels = billed[kind];
+    if (billedLabels?.length) {
+      const billedSet = new Set(billedLabels.map((label) => label.trim()));
+      return labels.some((label) => !billedSet.has(label.trim()));
+    }
+    return !paid[kind];
+  });
 }
 
 export function hasUnpaidPrescribedExams(notes?: string | null): boolean {
@@ -673,9 +947,17 @@ export function hasUnpaidPrescribedExams(notes?: string | null): boolean {
 export function getUnpaidCashierQueueKinds(notes?: string | null): ExamKindSlug[] {
   const prescribed = parsePrescribedExamsByKind(notes);
   const paid = parsePaidExamKindsByKind(notes);
+  const billed = parseBilledExamLabelsByKind(notes);
   return CASHIER_PAYMENT_QUEUE_KINDS.filter((kind) => {
+    const labels = filterCashierBillableExamLabels(prescribed[kind]);
+    if (!labels.length) return false;
+    const billedLabels = billed[kind];
+    if (billedLabels?.length) {
+      const billedSet = new Set(billedLabels.map((label) => label.trim()));
+      return labels.some((label) => !billedSet.has(label.trim()));
+    }
     if (paid[kind]) return false;
-    return kindHasCashierBillableExams(prescribed[kind]);
+    return true;
   });
 }
 
@@ -838,6 +1120,23 @@ export function flattenPrescribedExams(
   );
 }
 
+function mergePrescribedLabels(existing: string[], additional: string[]): string[] {
+  const result = existing.map((label) => label.trim()).filter(Boolean);
+  for (const raw of additional) {
+    const label = raw.trim();
+    if (!label || result.includes(label)) continue;
+    const base = extractBasePanelLabel(label);
+    const incomingFields = extractPrescribedFieldLabels(label);
+    const samePanel = result.filter((item) => extractBasePanelLabel(item) === base);
+    if (!incomingFields.length && samePanel.some((item) => extractPrescribedFieldLabels(item).length > 0)) {
+      // Le tarif général ne doit pas recouvrir des champs déjà choisis.
+      continue;
+    }
+    result.push(label);
+  }
+  return result;
+}
+
 export function mergeExamsByKind(
   existing: Record<ExamKindSlug, string[]>,
   additional: Partial<Record<ExamKindSlug, string[]>>,
@@ -846,7 +1145,7 @@ export function mergeExamsByKind(
   for (const kind of EXAM_KIND_ORDER) {
     const added = additional[kind]?.filter(Boolean) ?? [];
     if (!added.length) continue;
-    result[kind] = [...new Set([...(result[kind] ?? []), ...added])];
+    result[kind] = mergePrescribedLabels(result[kind] ?? [], added);
   }
   return result;
 }
@@ -916,6 +1215,8 @@ function preserveNonPrescriptionClinicalLines(notes?: string | null): string[] {
     const trimmed = line.trim();
     if (!trimmed) return false;
     if (parsePaidKindLine(trimmed)) return true;
+    if (parseBilledKindLine(trimmed)) return true;
+    if (parseRemovedKindLine(trimmed)) return true;
     if (parsePharmacyOrdonnanceLine(trimmed)) return true;
     if (trimmed.startsWith(LAB_RESULTS_PREFIX)) return true;
     if (trimmed.startsWith("Labo panel")) return true;

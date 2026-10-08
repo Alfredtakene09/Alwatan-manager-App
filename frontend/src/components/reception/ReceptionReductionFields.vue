@@ -77,6 +77,7 @@ watch(
         min="0"
         placeholder="0"
         :icon="Percent"
+        readonly
         @update:model-value="onFcfaInput"
       />
       <slot />

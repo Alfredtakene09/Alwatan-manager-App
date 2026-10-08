@@ -76,10 +76,18 @@ const draftResults = reactive<Partial<Record<LabPanelSlug, Record<string, string
 const visitId = computed(() => String(route.params.visitId ?? ''))
 const isEditMode = computed(() => route.query.from === 'termines' && route.query.edit === '1')
 const isAddMode = computed(() => route.query.from === 'termines' && route.query.add === '1')
+const isReceptionView = computed(
+  () => route.name === 'reception-laboratoire-dossier' || route.query.from === 'reception',
+)
+const isLabViewOnly = computed(() => route.query.view === '1')
 const isConsultMode = computed(
-  () => route.query.from === 'termines' && !isEditMode.value && !isAddMode.value,
+  () =>
+    isReceptionView.value ||
+    isLabViewOnly.value ||
+    (route.query.from === 'termines' && !isEditMode.value && !isAddMode.value),
 )
 const backRouteName = computed(() => {
+  if (isReceptionView.value) return 'reception-laboratoire'
   if (route.query.from === 'termines') return 'laboratoire-termines'
   return 'laboratoire'
 })
@@ -159,6 +167,12 @@ const listedPanels = computed(() => {
 
   const base = prescribedPanels.value.length ? prescribedPanels.value : []
 
+  if (isReceptionView.value || (isLabViewOnly.value && !dossierCompleted.value)) {
+    return base.slice().sort((a, b) =>
+      examNameText(a.label).localeCompare(examNameText(b.label), localeCode.value, { sensitivity: 'base' }),
+    )
+  }
+
   if (isEditMode.value || isConsultMode.value) {
     const filled = base.filter((panel) => isPanelFilled(panel.slug))
     if (filled.length) return filled
@@ -197,6 +211,9 @@ const showPanelSwitcher = computed(() => listedPanels.value.length > 1)
 const formsCardDescription = computed(() => {
   if (isEditMode.value) {
     return uiText('Corrigez les résultats des examens prescrits déjà enregistrés')
+  }
+  if ((isReceptionView.value || isLabViewOnly.value) && !dossierCompleted.value) {
+    return uiText('Examens prescrits — en attente de résultats au laboratoire')
   }
   if (isConsultMode.value) {
     return uiText('Consultation en lecture seule des examens prescrits')
@@ -605,6 +622,11 @@ async function savePanel() {
 }
 
 function goBack() {
+  if (isReceptionView.value) {
+    const tab = route.query.tab === 'termines' ? 'termines' : 'attente'
+    router.push({ name: 'reception-laboratoire', query: { tab } })
+    return
+  }
   router.push({ name: backRouteName.value })
 }
 
@@ -689,6 +711,16 @@ onMounted(async () => {
       v-else-if="isAddMode && !loading"
       type="info"
       :message="uiText('Ajoutez un formulaire supplémentaire non encore saisi.')"
+    />
+    <UiAlert
+      v-if="(isReceptionView || isLabViewOnly) && !loading && !dossierCompleted"
+      type="info"
+      :message="uiText('Lecture seule — le laboratoire n’a pas encore saisi les résultats.')"
+    />
+    <UiAlert
+      v-else-if="isReceptionView && !loading && dossierCompleted"
+      type="success"
+      :message="uiText('Lecture seule — examens terminés au laboratoire.')"
     />
     <UiAlert
       v-else-if="isConsultMode && !loading"
@@ -842,7 +874,7 @@ onMounted(async () => {
 
           <div class="form-actions">
             <UiButton
-              v-if="isActivePanelReadOnly && !isEntryFlow"
+              v-if="isActivePanelReadOnly && !isEntryFlow && (savedPanelCount || displayedSections.length)"
               variant="outline"
               :icon="Printer"
               ui-action="export.print"

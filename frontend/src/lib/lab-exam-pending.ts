@@ -54,6 +54,8 @@ export type LabExamPendingItem = {
   collectedFcfa?: number
   /** Solde restant sur les types partiellement payés. */
   remainingFcfa?: number
+  /** Examens ajoutés après l'encaissement : leur prix n'est pas dans la facture déjà payée. */
+  supplementExamLines?: LabExamLine[]
   allExamsByKind?: ExamsByKindBlocks
   cashierName?: string | null
   clinicalNotes?: string | null

@@ -25,10 +25,15 @@ import {
   getUnpaidCashierQueueKinds,
   hasUnpaidCashierQueueExams,
   isExamKindPaid,
+  isOperationOnlyPrescription,
   labsPendingApprovalWhere,
   labsPaidExamsWhere,
+  parseBilledExamLabelsByKind,
   parsePaidExamKindsByKind,
   parsePrescribedExamsByKind,
+  payableExamLabels,
+  setBilledExamLabels,
+  setRemovedExamLabels,
   prescriptionRequiresLabWork,
   EXAMS_PRESCRIBED_PREFIX,
   LAB_BILLABLE_EXAM_KINDS,
@@ -41,18 +46,19 @@ import {
   syncMissingHospitalizationReferrals,
 } from "../lib/hospitalization-referral.js";
 import {
+  applyRemovedExamCredit,
   buildExamLinesFromNotes,
   buildExamsByKindPayload,
   buildExamSheetsByKind,
   computeExamNetFcfa,
+  computePayableExamGrossFcfa,
+  EXAM_REMOVED_CREDIT_LABEL,
   emptyExamReductionsByKind,
   normalizeExamReductionsByKind,
   sumExamReductionsByKind,
   type ExamKindSlug,
 } from "../lib/exam-billing.js";
-import {
-  computeLabExamsGrossFcfa,
-} from "../lib/lab-exam-prices.js";
+import { refreshExamPriceCache } from "../lib/lab-exam-prices.js";
 import { generateInvoiceNumber, generateInvoiceNumberBatch } from "../lib/patient-code.js";
 import { immediatePaidInvoiceData } from "../lib/invoice-paid.js";
 import {
@@ -68,7 +74,13 @@ import {
 } from "../lib/revenue-stats.js";
 import { aggregateCollectedForCashier } from "../lib/cashier-personal-stats.js";
 import { applyExamKindPayment } from "../lib/patient-invoice-payments.js";
-import { canAccessModule, type AppUserRole } from "../lib/roles.js";
+import { isAllowedReceptionReduction } from "../lib/reception-reduction.js";
+import {
+  canAccessModule,
+  canReduceExamPrices,
+  isReceptionExamReductionCapped,
+  type AppUserRole,
+} from "../lib/roles.js";
 import { requireAuth, requireAnyModule, requireAdmin, isUiActionPermitted } from "../middleware/auth.js";
 import {
   receptionistOwnsPatient,
@@ -186,7 +198,10 @@ function filterExamsByKindUnpaid(
   const filtered = {} as ReturnType<typeof buildExamsByKindPayload>;
   for (const kind of Object.keys(examsByKind) as ExamKindSlug[]) {
     if (!unpaidKinds.has(kind)) continue;
-    filtered[kind] = examsByKind[kind];
+    const allowed = new Set(payableExamLabels(notes, kind));
+    const lines = examsByKind[kind].lines.filter((line) => allowed.has(line.label.trim()));
+    if (!lines.length) continue;
+    filtered[kind] = applyRemovedExamCredit(notes, kind, lines);
   }
   return filtered;
 }
@@ -222,9 +237,17 @@ function mapLabExamPending(
     allExamsByKind,
     unpaidOnly,
   );
-  let examLines = buildExamLinesFromNotes(consultation.clinicalNotes).filter(
-    (line) => !unpaidOnly || !isExamKindPaid(consultation.clinicalNotes, line.kind),
-  );
+  let examLines = buildExamLinesFromNotes(consultation.clinicalNotes).filter((line) => {
+    if (!unpaidOnly) return true;
+    const allowed = new Set(payableExamLabels(consultation.clinicalNotes, line.kind));
+    return allowed.has(line.label.trim());
+  });
+  if (unpaidOnly) {
+    for (const kind of Object.keys(examsByKind) as ExamKindSlug[]) {
+      const credit = examsByKind[kind]?.lines.find((line) => line.label === EXAM_REMOVED_CREDIT_LABEL);
+      if (credit) examLines.push(credit);
+    }
+  }
   const surgeryTotal = consultation.visit.surgeryCase?.totalCostFcfa;
   if (surgeryTotal != null && surgeryTotal > 0) {
     examLines = examLines.map((line) =>
@@ -252,6 +275,7 @@ function mapLabExamPending(
     if (paidKinds.includes(kind)) continue;
     const paidAmountFcfa = invoice.paidAmountFcfa ?? 0;
     const status = invoice.status ?? InvoiceStatus.PENDING;
+    if (status === InvoiceStatus.PAID) continue;
     if (paidAmountFcfa <= 0 && status !== InvoiceStatus.PARTIALLY_PAID) continue;
     partialPaymentsByKind[kind] = {
       totalFcfa: invoice.amountFcfa,
@@ -261,7 +285,7 @@ function mapLabExamPending(
   }
   return {
     ...consultation,
-    allExamsByKind,
+    allExamsByKind: unpaidOnly ? examsByKind : allExamsByKind,
     examsByKind,
     examLines,
     grossFcfa,
@@ -347,17 +371,33 @@ function mapLabExamPaid(consultation: {
     if (!kind) continue;
 
     const sheet = sheetByKind.get(kind);
-    const grossFcfa = sheet?.grossFcfa ?? amountFcfa;
-    const reductionFcfa = Math.max(0, grossFcfa - amountFcfa);
+    const billedLabels = parseBilledExamLabelsByKind(consultation.clinicalNotes)[kind];
+    const coveredGrossFcfa = sheet
+      ? billedLabels?.length
+        ? sheet.lines
+            .filter((line) => billedLabels.some((label) => label.trim() === line.label.trim()))
+            .reduce((sum, line) => sum + line.unitPriceFcfa, 0)
+        : sheet.grossFcfa
+      : amountFcfa;
+    const grossFcfa = coveredGrossFcfa;
+    const previous = invoicesByKind[kind];
+    const netFcfa = (previous?.netFcfa ?? 0) + amountFcfa;
+    const paidSum = (previous?.paidFcfa ?? 0) + paidFcfa;
+    const remainingSum = (previous?.remainingFcfa ?? 0) + remaining;
+    const reductionFcfa = Math.max(0, grossFcfa - netFcfa);
     reductionsByKind[kind] = reductionFcfa;
     invoicesByKind[kind] = {
-      invoiceNumber: invoice.invoiceNumber,
+      invoiceNumber: previous
+        ? `${previous.invoiceNumber}, ${invoice.invoiceNumber}`
+        : invoice.invoiceNumber,
       grossFcfa,
       reductionFcfa,
-      netFcfa: amountFcfa,
-      paidFcfa,
-      remainingFcfa: remaining,
-      isFullyPaid: invoice.status === InvoiceStatus.PAID || remaining <= 0,
+      netFcfa,
+      paidFcfa: paidSum,
+      remainingFcfa: remainingSum,
+      isFullyPaid:
+        (previous?.isFullyPaid ?? true) &&
+        (invoice.status === InvoiceStatus.PAID || remaining <= 0),
     };
   }
 
@@ -413,8 +453,52 @@ function mapLabExamPaid(consultation: {
       ? new Date(Math.max(...markerDates.map((d) => d.getTime())))
       : latestInvoiceAt);
 
+  const billedByKind = parseBilledExamLabelsByKind(consultation.clinicalNotes);
+  const hasBilledSnapshot = Object.values(billedByKind).some((labels) => (labels?.length ?? 0) > 0);
+  const supplementExamLines = hasBilledSnapshot
+    ? base.examLines.filter((line) => {
+        const allowed = new Set(payableExamLabels(consultation.clinicalNotes, line.kind));
+        return allowed.has(line.label.trim());
+      })
+    : [];
+  if (hasBilledSnapshot) {
+    const supplementKinds = [...new Set(supplementExamLines.map((line) => line.kind))];
+    for (const kind of supplementKinds) {
+      const lines = supplementExamLines.filter((line) => line.kind === kind);
+      const credit = applyRemovedExamCredit(consultation.clinicalNotes, kind, lines).lines.find(
+        (line) => line.label === EXAM_REMOVED_CREDIT_LABEL,
+      );
+      if (credit) supplementExamLines.push(credit);
+    }
+  }
+  const paidExamLines = hasBilledSnapshot
+    ? base.examLines.filter(
+        (line) => !supplementExamLines.some((extra) => extra.kind === line.kind && extra.label === line.label),
+      )
+    : base.examLines;
+
+  const coveredByKind = { ...base.examsByKind };
+  if (hasBilledSnapshot) {
+    for (const kind of Object.keys(coveredByKind) as ExamKindSlug[]) {
+      const billed = new Set((billedByKind[kind] ?? []).map((label) => label.trim()));
+      if (!billed.size) continue;
+      const lines = (base.allExamsByKind?.[kind]?.lines ?? coveredByKind[kind]?.lines ?? []).filter((line) =>
+        billed.has(line.label.trim()),
+      );
+      coveredByKind[kind] = {
+        lines,
+        grossFcfa: lines.reduce((sum, line) => sum + line.unitPriceFcfa, 0),
+      };
+    }
+  }
+
   return {
     ...base,
+    examLines: paidExamLines,
+    examsByKind: coveredByKind,
+    allExamsByKind: coveredByKind,
+    grossFcfa: paidExamLines.reduce((sum, line) => sum + line.unitPriceFcfa, 0),
+    supplementExamLines,
     paidAt,
     paidAtByKind,
     labExamReductionFcfa: consultation.labExamReductionFcfa,
@@ -423,6 +507,57 @@ function mapLabExamPaid(consultation: {
     collectedFcfa,
     remainingFcfa,
     cashierName,
+  };
+}
+
+/** Retire les opérations du payload examens payés (elles restent sur l’écran Opérations). */
+function stripOperationFromPaidExam<T extends {
+  examLines?: Array<{ kind: ExamKindSlug; unitPriceFcfa: number }>
+  examsByKind?: Partial<Record<ExamKindSlug, { lines: unknown[]; grossFcfa: number }>>
+  allExamsByKind?: Partial<Record<ExamKindSlug, { lines: unknown[]; grossFcfa: number }>>
+  invoicesByKind?: Partial<Record<ExamKindSlug, { paidFcfa?: number; netFcfa?: number; remainingFcfa?: number }>>
+  reductionsByKind?: Partial<Record<ExamKindSlug, number>>
+  paidAtByKind?: Partial<Record<ExamKindSlug, string>>
+  paidKinds?: ExamKindSlug[]
+  unpaidKinds?: ExamKindSlug[]
+  collectedFcfa?: number
+  remainingFcfa?: number
+  grossFcfa?: number
+}>(row: T): T {
+  const examLines = (row.examLines ?? []).filter((line) => line.kind !== "operation");
+  const examsByKind = { ...(row.examsByKind ?? {}) };
+  const allExamsByKind = { ...(row.allExamsByKind ?? {}) };
+  const invoicesByKind = { ...(row.invoicesByKind ?? {}) };
+  const reductionsByKind = { ...(row.reductionsByKind ?? {}) };
+  const paidAtByKind = { ...(row.paidAtByKind ?? {}) };
+  delete examsByKind.operation;
+  delete allExamsByKind.operation;
+  delete invoicesByKind.operation;
+  delete reductionsByKind.operation;
+  delete paidAtByKind.operation;
+
+  const collectedFcfa = Object.values(invoicesByKind).reduce((sum, inv) => {
+    if (!inv) return sum;
+    return sum + Math.max(0, inv.paidFcfa ?? inv.netFcfa ?? 0);
+  }, 0);
+  const remainingFcfa = Object.values(invoicesByKind).reduce(
+    (sum, inv) => sum + Math.max(0, inv?.remainingFcfa ?? 0),
+    0,
+  );
+
+  return {
+    ...row,
+    examLines,
+    examsByKind,
+    allExamsByKind,
+    invoicesByKind,
+    reductionsByKind,
+    paidAtByKind,
+    paidKinds: (row.paidKinds ?? []).filter((kind) => kind !== "operation"),
+    unpaidKinds: (row.unpaidKinds ?? []).filter((kind) => kind !== "operation"),
+    grossFcfa: examLines.reduce((sum, line) => sum + line.unitPriceFcfa, 0),
+    collectedFcfa,
+    remainingFcfa,
   };
 }
 
@@ -474,7 +609,11 @@ router.get("/payment-alerts", cashierAccess, async (req, res) => {
   ]);
 
   const exams = examRows
-    .filter((row) => hasUnpaidCashierQueueExams(row.clinicalNotes))
+    .filter((row) => {
+      if (!hasUnpaidCashierQueueExams(row.clinicalNotes)) return false;
+      if (isOperationOnlyPrescription(row.clinicalNotes)) return false;
+      return getUnpaidCashierQueueKinds(row.clinicalNotes).some((kind) => kind !== "operation");
+    })
     .map((row) => {
       const mapped = mapLabExamPending({
         id: row.id,
@@ -534,8 +673,10 @@ router.get("/stats", cashierAccess, async (req, res) => {
   ] = await Promise.all([
     prisma.consultation.findMany({
       where: labsPendingApprovalWhere(),
-      select: { clinicalNotes: true },
-    }).then(rows => rows.filter(row => hasUnpaidCashierQueueExams(row.clinicalNotes))),
+      select: { id: true, clinicalNotes: true, updatedAt: true },
+    }).then(async (rows) => {
+      return rows.filter((row) => hasUnpaidCashierQueueExams(row.clinicalNotes));
+    }),
     scopedCashierId
       ? aggregateCollectedForCashier(scopedCashierId, todayStart, tomorrowStart)
       : aggregateCollectedToday(),
@@ -572,7 +713,7 @@ router.get("/stats", cashierAccess, async (req, res) => {
   const hospitalizationsPending = hospitalizationsForStats.filter(isHospitalizationPendingAdmission).length;
 
   const labPendingGrossFcfa = labExamsPending.reduce(
-    (sum, row) => sum + computeLabExamsGrossFcfa(row.clinicalNotes),
+    (sum, row) => sum + computePayableExamGrossFcfa(row.clinicalNotes),
     0,
   );
 
@@ -690,8 +831,12 @@ router.get("/", cashierAccess, async (req, res) => {
     labExamsPending: labExamsPending
       .filter((row) => {
         if (!hasUnpaidCashierQueueExams(row.clinicalNotes)) return false;
+        // Opérations seules → écran Opérations, pas Examens.
+        if (isOperationOnlyPrescription(row.clinicalNotes)) return false;
+        const unpaidKinds = getUnpaidCashierQueueKinds(row.clinicalNotes);
+        if (!unpaidKinds.some((kind) => kind !== "operation")) return false;
         const surgeryStatus = row.visit.surgeryCase?.status;
-        const unpaidOps = getUnpaidPrescribedExamKinds(row.clinicalNotes).includes("operation");
+        const unpaidOps = unpaidKinds.includes("operation");
         if (
           unpaidOps &&
           surgeryStatus &&
@@ -702,7 +847,7 @@ router.get("/", cashierAccess, async (req, res) => {
             surgeryStatus === SurgeryStatus.COMPLETED
           )
         ) {
-          return getUnpaidCashierQueueKinds(row.clinicalNotes).some((kind) => kind !== "operation");
+          return unpaidKinds.some((kind) => kind !== "operation");
         }
         return true;
       })
@@ -743,7 +888,12 @@ router.get("/paid-exams", cashierAccess, async (req, res) => {
     orderBy: [{ updatedAt: "desc" }, { labSentToLabAt: "desc" }],
   });
 
-  return res.json(labExamsPaid.map(mapLabExamPaid));
+  return res.json(
+    labExamsPaid
+      .filter((row) => !isOperationOnlyPrescription(row.clinicalNotes))
+      .map((row) => stripOperationFromPaidExam(mapLabExamPaid(row)))
+      .filter((row) => (row.examLines?.length ?? 0) > 0 || (row.collectedFcfa ?? 0) > 0),
+  );
 });
 
 router.delete("/paid-exams/:consultationId", cashierAccess, requireAdmin, async (req, res) => {
@@ -1128,6 +1278,7 @@ router.post("/", cashierAccess, async (req, res) => {
     }
 
     if (action === "pay_lab_exams") {
+      await refreshExamPriceCache();
       const data = payLabExamsSchema.parse(req.body);
       const existing = await prisma.consultation.findUnique({
         where: { id: data.consultationId },
@@ -1204,6 +1355,18 @@ router.post("/", cashierAccess, async (req, res) => {
         });
       }
 
+      sheets = sheets.flatMap((sheet) => {
+        const allowed = new Set(payableExamLabels(existing.clinicalNotes, sheet.kind));
+        const lines = sheet.lines.filter((line) => allowed.has(line.label.trim()));
+        if (!lines.length) return [];
+        const priced = applyRemovedExamCredit(existing.clinicalNotes, sheet.kind, lines);
+        if (priced.grossFcfa < 0) return [];
+        return [{ ...sheet, lines: priced.lines, grossFcfa: priced.grossFcfa }];
+      });
+      if (!sheets.length) {
+        return res.status(400).json({ error: "Aucun examen facturable pour les types sélectionnés." });
+      }
+
       const grossFcfa = sheets.reduce((sum, sheet) => sum + sheet.grossFcfa, 0);
       const reductionsByKind = normalizeExamReductionsByKind(
         sheets,
@@ -1211,8 +1374,25 @@ router.post("/", cashierAccess, async (req, res) => {
         data.reductionFcfa,
       );
       const totalReductionFcfa = sumExamReductionsByKind(reductionsByKind, sheets);
+      const role = user.role as AppUserRole;
+      if (totalReductionFcfa > 0 && !canReduceExamPrices(role)) {
+        return res.status(403).json({
+          error: "Vous n'êtes pas autorisé à réduire le prix des examens.",
+        });
+      }
       if (totalReductionFcfa > grossFcfa) {
         return res.status(400).json({ error: "La réduction totale ne peut pas dépasser le montant total." });
+      }
+      if (isReceptionExamReductionCapped(role) && totalReductionFcfa > 0) {
+        const invalidKind = sheets.find((sheet) => {
+          const reduction = reductionsByKind[sheet.kind] ?? 0;
+          return reduction > 0 && !isAllowedReceptionReduction(sheet.grossFcfa, reduction);
+        });
+        if (invalidKind) {
+          return res.status(400).json({
+            error: "Les réceptionnistes ne peuvent appliquer qu'une réduction de 10 %, 15 % ou 20 %.",
+          });
+        }
       }
 
       const netFcfa = computeExamNetFcfa(sheets, reductionsByKind);
@@ -1274,6 +1454,7 @@ router.post("/", cashierAccess, async (req, res) => {
             : null;
 
         const sheetsNeedingNewInvoice = sheets.filter((sheet) => {
+          if (sheet.grossFcfa <= 0) return false;
           if (sheet.kind === "operation" && existingSurgeryInvoice) return false;
           return true;
         });
@@ -1284,6 +1465,17 @@ router.post("/", cashierAccess, async (req, res) => {
         const fullyPaidKinds = new Set<ExamKindSlug>();
 
         for (const sheet of sheets) {
+          if (sheet.grossFcfa <= 0) {
+            const previousBilled = parseBilledExamLabelsByKind(updatedNotes)[sheet.kind] ?? [];
+            const coveredLabels = sheet.lines
+              .filter((line) => line.label !== EXAM_REMOVED_CREDIT_LABEL)
+              .map((line) => line.label.trim());
+            updatedNotes = setBilledExamLabels(updatedNotes, sheet.kind, [...previousBilled, ...coveredLabels]);
+            updatedNotes = setRemovedExamLabels(updatedNotes, sheet.kind, []);
+            fullyPaidKinds.add(sheet.kind);
+            updatedNotes = appendPaidExamKindMarker(updatedNotes, sheet.kind, paidAt);
+            continue;
+          }
           const reductionFcfa = reductionsByKind[sheet.kind] ?? 0;
           const sheetNetFcfa = Math.max(0, sheet.grossFcfa - reductionFcfa);
           const paymentAmountFcfa = resolvePaymentAmount(sheet.kind, sheetNetFcfa);
@@ -1342,6 +1534,12 @@ router.post("/", cashierAccess, async (req, res) => {
           };
 
           if (isFullyPaid) {
+            const previousBilled = parseBilledExamLabelsByKind(updatedNotes)[sheet.kind] ?? [];
+            const paidLabels = sheet.lines
+              .filter((line) => line.label !== EXAM_REMOVED_CREDIT_LABEL)
+              .map((line) => line.label.trim());
+            updatedNotes = setBilledExamLabels(updatedNotes, sheet.kind, [...previousBilled, ...paidLabels]);
+            updatedNotes = setRemovedExamLabels(updatedNotes, sheet.kind, []);
             fullyPaidKinds.add(sheet.kind);
             updatedNotes = appendPaidExamKindMarker(updatedNotes, sheet.kind, paidAt);
           }

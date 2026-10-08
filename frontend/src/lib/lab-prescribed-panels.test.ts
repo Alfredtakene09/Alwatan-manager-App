@@ -104,6 +104,16 @@ describe('prescription labo groupes Routine liés', () => {
     assert.deepEqual(lines, ['Routine Investigation'])
   })
 
+  it('garde les lignes de champs quand l’examen est déjà partiellement enregistré', () => {
+    const allKeys = groups.flatMap((group) => group.fields.map((field) => field.key))
+    const lines = buildCartEntriesForSelectedFields('Routine Investigation', groups, allKeys, {
+      keepFieldLines: true,
+    })
+    assert.ok(!lines.includes('Routine Investigation'))
+    assert.ok(lines.length > 1)
+    assert.ok(lines.every((line) => line.startsWith('Routine Investigation (')))
+  })
+
   it('laisse les champs hors section cochables un par un', () => {
     const main = groups.find((group) => group.title === 'Formulaire principal')
     assert.ok(main)

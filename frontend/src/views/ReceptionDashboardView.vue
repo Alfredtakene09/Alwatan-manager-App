@@ -13,10 +13,10 @@ import {
   Banknote,
   Printer,
   CircleDollarSign,
-  Clock,
   BedDouble,
   FlaskConical,
   Scissors,
+  Percent,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal, showValidationErrorModal } from '@/lib/api-modal-helper'
@@ -28,7 +28,9 @@ import {
 } from '@/lib/patient-name'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
 import {
+  exportTableExcel,
   exportTablePdf,
+  exportTableWord,
   type ExportCell,
   type ExportColumn,
   type ExportSection,
@@ -96,6 +98,7 @@ type ReceptionStats = {
   examsTodayFcfa?: number
   surgeryTodayFcfa?: number
   hospitalizationTodayFcfa?: number
+  doctorShareFcfa?: number
 }
 
 type Patient = {
@@ -141,6 +144,8 @@ type PatientDetail = Patient & {
   waitingVisit?: {
     doctorId?: string | null
     doctor?: Doctor | null
+    serviceName?: string | null
+    billingKind?: 'consultation' | 'exam'
     consultationFeeFcfa?: number | null
     reductionFcfa?: number | null
     consultationAmountFcfa?: number | null
@@ -284,7 +289,11 @@ function filteredDoctorsByService(serviceName: string) {
   return sortedDoctors.value.filter((doctor) => doctorMatchesService(doctor, serviceName))
 }
 const formServiceDoctors = computed(() => filteredDoctorsByService(form.value.service))
-const editServiceDoctors = computed(() => filteredDoctorsByService(editForm.value.service))
+const editServiceDoctors = computed(() => {
+  const matched = filteredDoctorsByService(editForm.value.service)
+  if (editForm.value.service && !matched.length) return sortedDoctors.value
+  return matched
+})
 const stats = ref<ReceptionStats>({
   registeredToday: 0,
   femalePatients: 0,
@@ -381,8 +390,10 @@ const formTotal = computed(() => Math.max(0, formEffectiveAmount.value - formRed
 
 const editAmount = computed(() => Number(editForm.value.consultationAmount) || 0)
 const editReduction = computed(() => Math.max(0, Number(editForm.value.reduction) || 0))
+/** Montant déjà saisi sur la ligne : on ne le remplace pas par le tarif actuel de la fiche. */
 const editEffectiveAmount = computed(() => {
   if (editBillingExempt.value) return 0
+  if (editForm.value.consultationAmount.trim() !== '') return Math.max(0, editAmount.value)
   return resolveConsultationAmountForDoctor(editDoctor.value, editAmount.value)
 })
 const editTotal = computed(() => Math.max(0, editEffectiveAmount.value - editReduction.value))
@@ -390,12 +401,22 @@ const editTotal = computed(() => Math.max(0, editEffectiveAmount.value - editRed
 const formBillingExempt = computed(() => isExemptCategory(form.value.category))
 const editBillingExempt = computed(() => isExemptCategory(editForm.value.category))
 
+/** Médecin dont le montant affiché est encore celui chargé : on ne le réécrit qu’au changement. */
+let lastPricedEditDoctorId = ''
+/** Évite que les watchers écrasent le montant et la réduction pendant le chargement. */
+let hydratingEditForm = false
+
 const formDoctor = computed(() => findDoctor(form.value.doctorId))
 const editDoctor = computed(() => findDoctor(editForm.value.doctorId))
 const editHasConsultation = computed(() => {
   const visit = selectedPatient.value?.waitingVisit
   if (!visit) return false
-  return Boolean(visit.doctorId || (visit.consultationAmountFcfa ?? 0) > 0 || visit.invoiceNumber)
+  return Boolean(
+    visit.doctorId ||
+      visit.serviceName ||
+      (visit.consultationAmountFcfa ?? 0) > 0 ||
+      visit.invoiceNumber,
+  )
 })
 const reconsultDoctor = computed(() => findDoctor(reconsultForm.value.doctorId))
 
@@ -417,11 +438,12 @@ const showFormConsultationBilling = computed(
     !formBillingExempt.value &&
     showDoctorConsultationBilling(formDoctor.value),
 )
-const showEditConsultationBilling = computed(
+/** Modification : montant enregistré + réduction, même si le médecin a un tarif fixe. */
+const showEditConsultationFields = computed(
   () =>
+    editHasConsultation.value &&
     showConsultationBillingSummary(editForm.value.category) &&
-    !editBillingExempt.value &&
-    showDoctorConsultationBilling(editDoctor.value),
+    !editBillingExempt.value,
 )
 const reconsultEffectiveAmount = computed(() => {
   const patient = selectedPatient.value
@@ -522,11 +544,7 @@ function collectEditPatientValidationErrors(): string[] {
     issues.push('Sélectionnez un médecin.')
   }
 
-  if (
-    editHasConsultation.value &&
-    !editBillingExempt.value &&
-    showDoctorConsultationBilling(editDoctor.value)
-  ) {
+  if (showEditConsultationFields.value) {
     if (editEffectiveAmount.value <= 0) {
       issues.push('Indiquez un montant de consultation supérieur à 0.')
     } else if (editReduction.value > editEffectiveAmount.value) {
@@ -646,11 +664,33 @@ const PATIENT_EXPORT_TITLE = 'Patients enregistrés'
 type RegistrationSummaryLine = {
   group: DayClosureLineGroup
   service: string
+  serviceName?: string
+  operationName?: string | null
+  doctorNames?: string[]
   qty: number
   amountFcfa: number
   doctorShareFcfa: number
   doctorPercent: number | null
   operationPercent: number | null
+}
+
+function registrationDetailLabel(row: RegistrationSummaryLine): string {
+  const serviceSource = (row.serviceName || row.service).trim()
+  const service =
+    serviceSource === 'traumatologie&Orthopedie' ? serviceSource : clinicServiceText(serviceSource)
+  const operation =
+    row.group === 'operation' && row.operationName?.trim()
+      ? clinicServiceText(row.operationName.trim())
+      : ''
+  const doctors =
+    row.group === 'operation'
+      ? (row.doctorNames ?? [])
+          .map((name) => name.trim().replace(/^dr\.?\s+/i, ''))
+          .filter(Boolean)
+          .map((name) => `Dr ${name}`)
+      : []
+  const lines = [service, operation, ...doctors].filter(Boolean)
+  return lines.join('\n')
 }
 
 function doctorShareLabel(row: RegistrationSummaryLine): string {
@@ -663,7 +703,7 @@ function clinicShareLabel(row: RegistrationSummaryLine): string {
 }
 
 const registrationExportColumns: ExportColumn<RegistrationSummaryLine>[] = [
-  { header: 'Service', value: (row) => row.service },
+  { header: 'Service', value: (row) => registrationDetailLabel(row), fontSize: 7 },
   { header: 'Quantité', value: (row) => row.qty },
   { header: 'Montant', value: (row) => formatFcfa(row.amountFcfa) },
   { header: '% des médecins', value: (row) => doctorShareLabel(row) },
@@ -753,27 +793,31 @@ async function loadRegistrationSummary(): Promise<RegistrationSummaryLine[]> {
   return Array.isArray(data?.lines) ? data.lines : []
 }
 
-const exportingPdf = ref(false)
+const exportingPatients = ref(false)
 
-async function exportPatientsPdf() {
-  if (exportingPdf.value) return
-  exportingPdf.value = true
+async function exportPatients(format: 'pdf' | 'excel' | 'word') {
+  if (exportingPatients.value) return
+  exportingPatients.value = true
   try {
     const sections = registrationExportSections(await loadRegistrationSummary())
     if (!sections.length) {
       showAlert('Aucune prestation à exporter sur cette période.', 'error')
       return
     }
-    exportTablePdf(uiText(PATIENT_EXPORT_TITLE), [], [], {
+    const options = {
       captionRows: patientExportCaptionRows(),
       sections,
-      orientation: 'portrait',
+      orientation: 'portrait' as const,
       gridLines: true,
-    })
+    }
+    const title = uiText(PATIENT_EXPORT_TITLE)
+    if (format === 'excel') exportTableExcel(title, [], [], options)
+    else if (format === 'word') await exportTableWord(title, [], [], options)
+    else exportTablePdf(title, [], [], options)
   } catch (error) {
-    await showApiErrorModal(error, 'Impossible de générer le PDF des enregistrements.')
+    await showApiErrorModal(error, 'Impossible de générer l’export des enregistrements.')
   } finally {
-    exportingPdf.value = false
+    exportingPatients.value = false
   }
 }
 
@@ -824,6 +868,7 @@ const dashboardStats = computed(() => {
     hint: translateTemplate('{n} passage(s)', { n: stats.value.visitsToday }),
     icon: CalendarDays,
     variant: 'amber' as const,
+    money: false,
   },
   {
     id: 'lab',
@@ -832,6 +877,7 @@ const dashboardStats = computed(() => {
     hint: 'Patients',
     icon: FlaskConical,
     variant: 'teal' as const,
+    money: false,
   },
   {
     id: 'hospitalization',
@@ -840,6 +886,7 @@ const dashboardStats = computed(() => {
     hint: 'Patients',
     icon: BedDouble,
     variant: 'rose' as const,
+    money: false,
   },
   {
     id: 'consultations',
@@ -848,6 +895,7 @@ const dashboardStats = computed(() => {
     hint: 'Patients',
     icon: Stethoscope,
     variant: 'blue' as const,
+    money: false,
   },
   {
     id: 'surgery',
@@ -856,6 +904,7 @@ const dashboardStats = computed(() => {
     hint: 'Patients',
     icon: Scissors,
     variant: 'amber' as const,
+    money: false,
   },
   {
     id: 'revenue',
@@ -864,6 +913,16 @@ const dashboardStats = computed(() => {
     hint: 'Consultations, examens, opérations, hospitalisation',
     icon: Banknote,
     variant: 'violet' as const,
+    money: true,
+  },
+  {
+    id: 'doctor-share',
+    label: 'Part des médecins',
+    value: formatFcfaCompact(stats.value.doctorShareFcfa ?? 0),
+    hint: 'Consultations et opérations',
+    icon: Percent,
+    variant: 'green' as const,
+    money: true,
   },
 ]
 })
@@ -938,6 +997,7 @@ async function printRegistrationCumul() {
     if (from > to) [from, to] = [to, from]
     const lines = await loadRegistrationSummary()
     const totalFcfa = lines.reduce((sum, line) => sum + line.amountFcfa, 0)
+    const doctorShareFcfa = lines.reduce((sum, line) => sum + line.doctorShareFcfa, 0)
     const qty = lines.reduce((sum, line) => sum + line.qty, 0)
     openPrintDocument(
       'Cumul',
@@ -961,6 +1021,7 @@ async function printRegistrationCumul() {
           group: line.group,
         })),
         filterLines: cumulFilterLines(),
+        doctorShareFcfa,
       }),
       { pageSize: '80mm', thermalTight: true },
     )
@@ -985,6 +1046,7 @@ async function loadPatients() {
     const { data } = await api.get('/patients', {
       params: {
         q: search.value.trim() || undefined,
+        excludeExternalExams: '1',
         from,
         to,
         createdById: canFilterByReceptionist.value
@@ -1100,7 +1162,7 @@ function syncDoctorForService(target: 'form' | 'edit') {
     return
   }
   if (!allowed.some((doctor) => doctor.id === state.doctorId)) {
-    if (target === 'form') state.doctorId = allowed[0]?.id ?? ''
+    state.doctorId = target === 'form' ? (allowed[0]?.id ?? '') : ''
   }
   if (state.treatingDoctorId && !allowed.some((doctor) => doctor.id === state.treatingDoctorId)) {
     state.treatingDoctorId = ''
@@ -1131,7 +1193,12 @@ function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
     return
   }
   if (target === 'edit') {
+    if (selectedPatient.value?.waitingVisit?.billingKind === 'exam') return
     const doctor = findDoctor(editForm.value.doctorId)
+    if (!doctor) return
+    const doctorChanged = doctor.id !== lastPricedEditDoctorId
+    if (!doctorChanged && editForm.value.consultationAmount.trim()) return
+    lastPricedEditDoctorId = doctor.id
     if (isExemptCategory(editForm.value.category)) {
       editForm.value.consultationAmount = '0'
       editForm.value.reduction = '0'
@@ -1140,15 +1207,18 @@ function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
     }
     if (doctorShowsFixedConsultationPrice(doctor)) {
       editForm.value.consultationAmount = String(defaultConsultationAmountForDoctor(doctor))
-      return
+    } else if (doctorNeedsConsultationAmountInput(doctor)) {
+      if (doctorChanged) editForm.value.consultationAmount = ''
+    } else {
+      editForm.value.consultationAmount = '0'
+      editForm.value.reduction = '0'
+      editReductionPercent.value = ''
     }
-    if (doctorNeedsConsultationAmountInput(doctor)) {
-      editForm.value.consultationAmount = ''
-      return
+    const nextAmount = Number(editForm.value.consultationAmount) || 0
+    if ((Number(editForm.value.reduction) || 0) > nextAmount) {
+      editForm.value.reduction = '0'
+      editReductionPercent.value = ''
     }
-    editForm.value.consultationAmount = '0'
-    editForm.value.reduction = '0'
-    editReductionPercent.value = ''
     return
   }
   const doctor = findDoctor(reconsultForm.value.doctorId)
@@ -1389,65 +1459,53 @@ async function togglePatientActive(patient: Patient) {
   }
 }
 
+function assignEditForm(detail: PatientDetail) {
+  const visit = detail.waitingVisit
+  const recordedAmount = visit?.consultationAmountFcfa
+  const recordedService = detail.service?.trim() || visit?.serviceName?.trim() || ''
+  lastPricedEditDoctorId = visit?.doctorId ?? ''
+  editForm.value = {
+    fullName: joinPatientFullName(detail.firstName, detail.lastName),
+    age: detail.age != null ? String(detail.age) : '',
+    ageUnit: normalizePatientAgeUnit(detail.ageUnit),
+    phone: detail.phone ?? '',
+    service: recordedService,
+    gender: detail.gender ?? 'F',
+    category: detail.category === 'ONG' ? 'STANDARD' : (detail.category ?? 'STANDARD'),
+    doctorId: visit?.doctorId ?? '',
+    treatingDoctorId: detail.treatingDoctorId ?? '',
+    consultationAmount: recordedAmount != null ? String(recordedAmount) : '',
+    reduction: visit?.reductionFcfa != null ? String(visit.reductionFcfa) : '0',
+  }
+  syncEditReductionPercent()
+}
+
 async function openEditModal(patient: Patient) {
   loadingEdit.value = true
   showEditModal.value = true
+  hydratingEditForm = true
   try {
     await loadServices()
     const detail = await loadPatientDetail(patient.id)
     selectedPatient.value = detail
-    editForm.value = {
-      fullName: joinPatientFullName(detail.firstName, detail.lastName),
-      age: detail.age != null ? String(detail.age) : '',
-      ageUnit: normalizePatientAgeUnit(detail.ageUnit),
-      phone: detail.phone ?? '',
-      service: detail.service || '',
-      gender: detail.gender ?? 'F',
-      category: detail.category === 'ONG' ? 'STANDARD' : (detail.category ?? 'STANDARD'),
-      doctorId: detail.waitingVisit?.doctorId ?? '',
-      treatingDoctorId: detail.treatingDoctorId ?? '',
-      consultationAmount: detail.waitingVisit?.consultationAmountFcfa
-        ? String(detail.waitingVisit.consultationAmountFcfa)
-        : '',
-      reduction: detail.waitingVisit?.reductionFcfa != null
-        ? String(detail.waitingVisit.reductionFcfa)
-        : '0',
-    }
-    syncDoctorForService('edit')
-    applyCategoryBillingDefaults('edit')
-    syncEditReductionPercent()
+    assignEditForm(detail)
+    await nextTick()
   } catch {
     showAlert('Impossible de charger le dossier patient.', 'error')
     closeEditModal()
   } finally {
+    hydratingEditForm = false
     loadingEdit.value = false
   }
 }
 
 function resetEditForm() {
   if (!selectedPatient.value) return
-  editForm.value = {
-    fullName: joinPatientFullName(selectedPatient.value.firstName, selectedPatient.value.lastName),
-    age: selectedPatient.value.age != null ? String(selectedPatient.value.age) : '',
-    ageUnit: normalizePatientAgeUnit(selectedPatient.value.ageUnit),
-    phone: selectedPatient.value.phone ?? '',
-    service: selectedPatient.value.service ?? '',
-    gender: selectedPatient.value.gender ?? 'F',
-    category:
-      selectedPatient.value.category === 'ONG'
-        ? 'STANDARD'
-        : (selectedPatient.value.category ?? 'STANDARD'),
-    doctorId: selectedPatient.value.waitingVisit?.doctorId ?? '',
-    treatingDoctorId: selectedPatient.value.treatingDoctorId ?? '',
-    consultationAmount: selectedPatient.value.waitingVisit?.consultationAmountFcfa
-      ? String(selectedPatient.value.waitingVisit.consultationAmountFcfa)
-      : '',
-    reduction: selectedPatient.value.waitingVisit?.reductionFcfa != null
-      ? String(selectedPatient.value.waitingVisit.reductionFcfa)
-      : '0',
-  }
-  syncDoctorForService('edit')
-  syncEditReductionPercent()
+  hydratingEditForm = true
+  assignEditForm(selectedPatient.value)
+  void nextTick(() => {
+    hydratingEditForm = false
+  })
 }
 
 function syncEditReductionPercent() {
@@ -1462,6 +1520,7 @@ function closeEditModal() {
   showEditModal.value = false
   selectedPatient.value = null
   editReductionPercent.value = ''
+  lastPricedEditDoctorId = ''
 }
 
 function openReconsultModal(patient: Patient) {
@@ -1667,13 +1726,20 @@ watch(() => form.value.service, () => {
   applyDoctorBillingDefaults('form')
 })
 watch(() => editForm.value.service, () => {
+  if (hydratingEditForm) return
   syncDoctorForService('edit')
   applyDoctorBillingDefaults('edit')
 })
 watch(() => form.value.category, () => applyCategoryBillingDefaults('form'))
-watch(() => editForm.value.category, () => applyCategoryBillingDefaults('edit'))
+watch(() => editForm.value.category, () => {
+  if (hydratingEditForm) return
+  applyCategoryBillingDefaults('edit')
+})
 watch(() => form.value.doctorId, () => applyDoctorBillingDefaults('form'))
-watch(() => editForm.value.doctorId, () => applyDoctorBillingDefaults('edit'))
+watch(() => editForm.value.doctorId, () => {
+  if (hydratingEditForm) return
+  applyDoctorBillingDefaults('edit')
+})
 watch(() => reconsultForm.value.doctorId, () => {
   applyDoctorBillingDefaults('reconsult')
   void refreshReconsultFee()
@@ -1696,10 +1762,10 @@ onUnmounted(clearAlert)
         <template #actions>
           <UiButton
             variant="outline"
-            :icon="Clock"
-            @click="router.push('/reception/en-attente-paiement')"
+            :icon="Scissors"
+            @click="router.push('/reception/operations')"
           >
-            {{ uiText('En attente de paiement') }}
+            {{ uiText('Opérations') }}
           </UiButton>
           <UiButton
             variant="dark"
@@ -1760,7 +1826,7 @@ onUnmounted(clearAlert)
             <span class="dash-stat__label">{{ uiText(item.label) }}</span>
             <strong class="dash-stat__value">
               {{ item.value }}
-              <small v-if="item.id === 'revenue'" class="dash-stat__unit">FCFA</small>
+              <small v-if="item.money" class="dash-stat__unit">FCFA</small>
             </strong>
             <span class="dash-stat__hint">{{ uiText(item.hint) }}</span>
           </div>
@@ -1862,10 +1928,10 @@ onUnmounted(clearAlert)
             <div class="table-toolbar__actions">
               <ExportButtons
                 v-if="canExportPatients"
-                :disabled="loadingPatients || exportingPdf || !patients.length"
-                :show-excel="false"
-                :show-word="false"
-                @pdf="exportPatientsPdf"
+                :disabled="loadingPatients || exportingPatients || !patients.length"
+                @pdf="exportPatients('pdf')"
+                @excel="exportPatients('excel')"
+                @word="exportPatients('word')"
               />
               <UiButton variant="primary" class="table-toolbar__new" @click="openModal">
                 Nouveau
@@ -2028,6 +2094,7 @@ onUnmounted(clearAlert)
         v-else
         id="reception-edit-patient-form"
         class="ui-form-modal__form reception-modal-form"
+        novalidate
         @submit.prevent="saveEdit"
       >
         <ReceptionPatientIdentityFields
@@ -2094,24 +2161,15 @@ onUnmounted(clearAlert)
           <RouterLink to="/admin/employes">{{ uiText('Employés') }}</RouterLink>
         </p>
 
-        <div class="form-grid-2">
+        <div v-if="showEditConsultationFields" class="form-grid-2">
           <UiInput
-            v-if="!editBillingExempt && doctorNeedsConsultationAmountInput(editDoctor)"
             v-model="editForm.consultationAmount"
-            label="Montant consultation (FCFA)"
+            :label="selectedPatient.waitingVisit?.billingKind === 'exam' ? 'Montant (FCFA)' : 'Montant consultation (FCFA)'"
             type="number"
             min="0"
             placeholder="5000"
             :icon="Banknote"
-            required
           />
-          <div
-            v-else-if="!editBillingExempt && doctorShowsFixedConsultationPrice(editDoctor)"
-            class="total-preview total-preview--compact"
-          >
-            <span>{{ uiText('Prix consultation') }}</span>
-            <strong>{{ formatFcfa(editEffectiveAmount) }}</strong>
-          </div>
         </div>
 
         <p v-if="editDoctorQuotaHint" class="doctor-hint doctor-hint--compact">{{ editDoctorQuotaHint }}</p>
@@ -2120,7 +2178,7 @@ onUnmounted(clearAlert)
         </p>
 
         <ReceptionReductionFields
-          v-if="showEditConsultationBilling"
+          v-if="showEditConsultationFields"
           v-model:reduction-fcfa="editForm.reduction"
           v-model:reduction-percent="editReductionPercent"
           :amount-fcfa="editEffectiveAmount"
@@ -2368,7 +2426,7 @@ onUnmounted(clearAlert)
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 0.4rem;
   margin: 0;
 }
@@ -2421,6 +2479,11 @@ onUnmounted(clearAlert)
 .dash-stat--rose .dash-stat__icon {
   background: #ffe4e6;
   color: #e11d48;
+}
+
+.dash-stat--green .dash-stat__icon {
+  background: #dcfce7;
+  color: #15803d;
 }
 
 .dash-stat__body {
@@ -2918,7 +2981,7 @@ onUnmounted(clearAlert)
 
 @media (max-width: 1100px) {
   .stats-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
   }
 
   .table-toolbar__title h3 {
@@ -2986,7 +3049,7 @@ onUnmounted(clearAlert)
   }
 
   .stats-grid {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 0.3rem;
   }
 

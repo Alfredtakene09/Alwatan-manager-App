@@ -12,7 +12,13 @@ import {
   last7DayStarts,
   startOfDay,
 } from "../lib/dashboard-charts.js";
-import { labsPendingApprovalWhere, labsWaitingWhere, hasUnpaidCashierQueueExams } from "../lib/lab-notes.js";
+import {
+  labsPendingApprovalWhere,
+  labsWaitingWhere,
+  hasUnpaidCashierQueueExams,
+  getUnpaidCashierQueueKinds,
+  isOperationOnlyPrescription,
+} from "../lib/lab-notes.js";
 import {
   aggregateCollectedToday,
   buildRevenueLast7Days,
@@ -104,7 +110,14 @@ router.get("/reception", requireModule("reception"), async (req, res) => {
         where: labsPendingApprovalWhere(),
         select: { clinicalNotes: true },
       })
-      .then((rows) => rows.filter((row) => hasUnpaidCashierQueueExams(row.clinicalNotes)).length),
+      .then((rows) =>
+        rows.filter(
+          (row) =>
+            hasUnpaidCashierQueueExams(row.clinicalNotes) &&
+            !isOperationOnlyPrescription(row.clinicalNotes) &&
+            getUnpaidCashierQueueKinds(row.clinicalNotes).some((kind) => kind !== "operation"),
+        ).length,
+      ),
     prisma.visit.count({
       where: {
         status: { in: [VisitStatus.WAITING_CONSULTATION, VisitStatus.AWAITING_ACCOUNTING] },

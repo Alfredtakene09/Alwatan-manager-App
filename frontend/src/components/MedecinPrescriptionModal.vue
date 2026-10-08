@@ -27,6 +27,7 @@ import {
   EXAM_KIND_ORDER,
   INVOICE_EXAM_COMMENT_KINDS,
   filterInvoiceExamComments,
+  invalidateExamCatalogCache,
   type ExamsByKind,
   type ExamCommentsByKind,
 } from '@/lib/exam-catalog'
@@ -95,6 +96,7 @@ const hospitalisationDays = ref<number | null>(null)
 const doctorComment = ref('')
 const pharmacyOrdonnance = ref<PharmacyOrdonnanceLine[]>([])
 const operationAmountFcfa = ref<number | null>(null)
+const operationServiceId = ref('')
 const operationSurgeonPercent = ref<number | null>(null)
 const operationAssistant = ref<{
   anesthesiologistId?: string | null
@@ -309,6 +311,7 @@ function resetForm() {
     doctorComment.value = ''
     pharmacyOrdonnance.value = []
     operationAmountFcfa.value = null
+    operationServiceId.value = ''
     operationSurgeonPercent.value = null
     operationAssistant.value = null
     return
@@ -320,6 +323,7 @@ function resetForm() {
     doctorComment.value = ''
     pharmacyOrdonnance.value = []
     operationAmountFcfa.value = null
+    operationServiceId.value = ''
     operationSurgeonPercent.value = null
     operationAssistant.value = null
   } else {
@@ -329,6 +333,7 @@ function resetForm() {
     doctorComment.value = sessionVisit.value.consultation?.doctorComment?.trim() ?? ''
     pharmacyOrdonnance.value = parsePharmacyOrdonnanceLines(sessionVisit.value.consultation?.clinicalNotes)
     operationAmountFcfa.value = null
+    operationServiceId.value = ''
     operationSurgeonPercent.value = null
     operationAssistant.value = null
   }
@@ -353,6 +358,7 @@ function switchToAppendFromResume() {
   doctorComment.value = ''
   pharmacyOrdonnance.value = []
   operationAmountFcfa.value = null
+  operationServiceId.value = ''
   operationSurgeonPercent.value = null
   operationAssistant.value = null
   consultModalTab.value = 'exams'
@@ -462,6 +468,13 @@ async function submit() {
       ...(
         selectedInPickerCount.value > 0 &&
         (selectedExamsByKind.value.operation?.length ?? 0) > 0 &&
+        operationServiceId.value.trim()
+          ? { operationServiceId: operationServiceId.value.trim() }
+          : {}
+      ),
+      ...(
+        selectedInPickerCount.value > 0 &&
+        (selectedExamsByKind.value.operation?.length ?? 0) > 0 &&
         operationSurgeonPercent.value != null
           ? { operationSurgeonPercent: operationSurgeonPercent.value }
           : {}
@@ -474,6 +487,7 @@ async function submit() {
           : {}
       ),
     })
+    if ((selectedExamsByKind.value.operation?.length ?? 0) > 0) invalidateExamCatalogCache()
     emit('saved')
     emit('close')
   } catch (error: unknown) {
@@ -727,6 +741,7 @@ async function submit() {
               v-model:comments="examCommentsByKind"
               v-model:hospitalisation-days="hospitalisationDays"
               v-model:operation-amount-fcfa="operationAmountFcfa"
+              v-model:operation-service-id="operationServiceId"
               v-model:operation-surgeon-percent="operationSurgeonPercent"
               v-model:operation-assistant="operationAssistant"
               :exclude-by-kind="excludeByKind"

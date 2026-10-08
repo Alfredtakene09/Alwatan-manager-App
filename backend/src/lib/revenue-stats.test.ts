@@ -4,6 +4,7 @@ import { InvoiceStatus, InvoiceType } from "@prisma/client";
 import {
   isCollectedOperationInvoice,
   netPaymentAmountsAfterPaidCap,
+  registeredOperationInvoiceWhere,
   sumCollectedBreakdown,
 } from "./revenue-stats.js";
 
@@ -127,5 +128,12 @@ describe("sumCollectedBreakdown operations", () => {
     ]);
     assert.equal(breakdown.surgeryFcfa, 1_350_000);
     assert.equal(breakdown.examsFcfa, 0);
+  });
+
+  it("ne compte qu'une facture d'opération non annulée", () => {
+    assert.deepEqual(registeredOperationInvoiceWhere(), {
+      status: { not: InvoiceStatus.CANCELLED },
+      OR: [{ type: InvoiceType.SURGERY }, { billingExamKind: "operation" }],
+    });
   });
 });
