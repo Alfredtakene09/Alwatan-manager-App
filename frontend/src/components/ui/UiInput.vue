@@ -55,7 +55,9 @@ defineExpose({
 
 <template>
   <label class="ui-field">
-    <span class="ui-field__label">{{ labelText }}</span>
+    <span class="ui-field__label">
+      {{ labelText }}<abbr v-if="required && labelText" class="ui-field__req" title="obligatoire">*</abbr>
+    </span>
     <div class="ui-field__wrap" :class="{ 'ui-field__wrap--revealable': revealable && isPasswordField }">
       <component :is="icon" v-if="icon" :size="18" class="ui-field__icon" />
       <input
@@ -103,6 +105,13 @@ defineExpose({
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text);
+}
+
+.ui-field__req {
+  margin-left: 0.2rem;
+  color: #dc2626;
+  font-weight: 700;
+  text-decoration: none;
 }
 
 .ui-field__wrap {

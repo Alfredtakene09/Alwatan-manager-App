@@ -15,6 +15,7 @@ import {
 import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
 import { suggestExamCatalogKindSlugFromServiceName } from '@/lib/exam-catalog-service-kind'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
+import { isLegacyEmiratesTariffLabel } from '@/i18n/translate'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
@@ -153,6 +154,7 @@ const filteredItems = computed(() => {
   const category = selectedCategory.value.trim()
   return items.value
     .filter((item) => {
+      if (isLegacyEmiratesTariffLabel(item.label, item.code)) return false
       if (category && (item.category?.trim() || '') !== category) return false
       if (!query) return true
       const haystack = [item.label, item.code, item.category ?? '', item.clinicService?.name ?? '']
@@ -199,46 +201,32 @@ const tableRows = computed(() => {
 
 type CatalogExportRow = {
   label: string
-  code: string
-  category: string
   service: string
-  formLabel: string
   price: string
-  statusLabel: string
 }
 
 const catalogExportColumns = computed<ExportColumn<CatalogExportRow>[]>(() => {
   void localeCode.value
-  const cols: ExportColumn<CatalogExportRow>[] = [
-    { header: uiText('Libellé'), value: (row) => row.label },
-    { header: uiText('Code'), value: (row) => row.code },
-    { header: uiText('Catégorie'), value: (row) => row.category },
+  return [
+    { header: uiText('Nom'), value: (row) => row.label },
+    { header: uiText('Prix'), value: (row) => row.price },
     { header: uiText('Service'), value: (row) => row.service },
   ]
-  if (props.kind === 'examen') {
-    cols.push({ header: uiText('Formulaire résultats'), value: (row) => row.formLabel })
-  }
-  cols.push(
-    { header: uiText('Tarif'), value: (row) => row.price },
-    { header: uiText('Statut'), value: (row) => row.statusLabel },
-  )
-  return cols
 })
 
 const catalogExportRows = computed<CatalogExportRow[]>(() =>
-  tableRows.value.filter((row) => row.isActive).map((row) => ({
+  tableRows.value.map((row) => ({
     label: row.label,
-    code: row.code || '—',
-    category: row.category,
     service: row.service,
-    formLabel: row.formLabel,
     price: row.price,
-    statusLabel: row.statusLabel,
   })),
 )
 
 function catalogExportFilterCaption(): string {
   const parts: string[] = [contextLabel.value]
+  if (isServiceContext.value) {
+    parts.push(`${uiText('Service')} : ${activeServiceTabName.value}`)
+  }
   if (selectedCategory.value.trim()) {
     parts.push(`${uiText('Catégorie')} : ${examNameText(selectedCategory.value)}`)
   }
@@ -302,10 +290,14 @@ async function loadItems() {
       const { data } = await api.get<CatalogItem[]>(
         `/comptabilite/exam-types/catalog-by-service/${activeServiceTabId.value}`,
       )
-      items.value = Array.isArray(data) ? data : []
+      items.value = Array.isArray(data)
+        ? data.filter((item) => !isLegacyEmiratesTariffLabel(item.label, item.code))
+        : []
     } else {
       const { data } = await api.get<CatalogItem[]>(`/comptabilite/exam-types/catalog/${props.kind}`)
-      items.value = Array.isArray(data) ? data : []
+      items.value = Array.isArray(data)
+        ? data.filter((item) => !isLegacyEmiratesTariffLabel(item.label, item.code))
+        : []
     }
   } catch {
     message.value = 'Impossible de charger la nomenclature.'
@@ -630,7 +622,16 @@ onMounted(async () => {
 
 <template>
   <div>
-    <UiPageHeader :title="pageTitle" :subtitle="pageSubtitle" :icon="config.icon" />
+    <UiPageHeader :title="pageTitle" :subtitle="pageSubtitle" :icon="config.icon">
+      <template #actions>
+        <ExportButtons
+          :disabled="loading || !catalogExportRows.length"
+          @pdf="exportCatalogPdf"
+          @excel="exportCatalogExcel"
+          @word="exportCatalogWord"
+        />
+      </template>
+    </UiPageHeader>
 
     <nav class="exam-kind-tabs" :aria-label="uiText(`Types d'examen`)">
       <RouterLink
@@ -697,12 +698,6 @@ onMounted(async () => {
       class="section"
     >
       <template #actions>
-        <ExportButtons
-          :disabled="loading || !catalogExportRows.length"
-          @pdf="exportCatalogPdf"
-          @excel="exportCatalogExcel"
-          @word="exportCatalogWord"
-        />
         <UiButton variant="primary" size="sm" :icon="Plus" ui-action="catalog.exam_types" @click="openAddModal">
           {{ uiText(addButtonLabel) }}
         </UiButton>

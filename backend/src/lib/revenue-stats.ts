@@ -1,6 +1,6 @@
 import { InvoiceStatus, InvoiceType, Prisma } from "@prisma/client";
 import { prisma } from "./db.js";
-import { comptabiliteInvoicePatientWhere, countedPatientWhere } from "./patient-billing.js";
+import { comptabiliteInvoicePatientWhere, comptabilitePatientWhere } from "./patient-billing.js";
 
 /** Encaissements comptoir : consultations, examens, chirurgie, hospitalisation — hors associés et pharmacie. */
 export const COLLECTED_INVOICE_TYPES: InvoiceType[] = [
@@ -290,7 +290,10 @@ export async function loadCollectedSlicesBetween(
   const doctorId = options?.doctorId?.trim();
   const patientParts: Prisma.PatientWhereInput[] = [];
   if (service || options?.patientMatch) {
-    patientParts.push(countedPatientWhere(service ? { service } : undefined));
+    patientParts.push({
+      ...comptabilitePatientWhere(),
+      ...(service ? { service } : {}),
+    });
   }
   if (options?.patientMatch) patientParts.push(options.patientMatch);
   const patientClause: Prisma.PatientWhereInput | undefined =
@@ -418,7 +421,7 @@ export async function sumRegisteredPatientsEntriesFcfa(
       type: { in: COLLECTED_INVOICE_TYPES },
       status: { not: InvoiceStatus.CANCELLED },
       createdAt: { gte: from, lt: to },
-      patient: { AND: [patientWhere, countedPatientWhere()] },
+      patient: { AND: [patientWhere, comptabilitePatientWhere()] },
     },
     select: { amountFcfa: true, paidAmountFcfa: true, status: true },
   });
@@ -440,7 +443,7 @@ export async function sumRegisteredPatientsConsultationsFcfa(
       type: InvoiceType.CONSULTATION,
       status: { not: InvoiceStatus.CANCELLED },
       createdAt: { gte: from, lt: to },
-      patient: { AND: [patientWhere, countedPatientWhere()] },
+      patient: { AND: [patientWhere, comptabilitePatientWhere()] },
     },
     select: { amountFcfa: true, paidAmountFcfa: true, status: true },
   });

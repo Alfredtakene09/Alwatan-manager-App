@@ -47,9 +47,11 @@ function closePrescriptionModal() {
   prescriptionVisit.value = null
 }
 
-function onPrescriptionSaved() {
+function onPrescriptionSaved(payload?: { examsReplaced?: boolean }) {
   message.value = uiText(
-    'Nouveaux examens ajoutés. Les examens supplémentaires suivront le circuit paiement / laboratoire.',
+    payload?.examsReplaced
+      ? 'Prescription remplacée. Le dossier est de nouveau en attente de paiement. Le paiement précédent, s’il existait, a été annulé et retiré du solde.'
+      : 'Nouveaux examens ajoutés. Les examens supplémentaires suivront le circuit paiement / laboratoire.',
   )
   messageType.value = 'success'
   void loadVisits()

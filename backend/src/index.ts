@@ -24,6 +24,7 @@ import { refreshExamPriceCache } from "./lib/lab-exam-prices.js";
 import { ensureKinesitherapieCatalogItems } from "./lib/kinesitherapie-catalog.js";
 import { ensurePetiteChirurgieCatalogItems } from "./lib/petite-chirurgie-catalog.js";
 import { ensurePrintedTariffCatalogItems } from "./lib/printed-tariff-catalog.js";
+import { mergeOrthoTraumaClinicServices } from "./lib/ortho-trauma-service.js";
 import { backfillLegacyConsultationInvoices } from "./lib/revenue-stats.js";
 import { syncAllRecordedTariffs } from "./lib/recalculate-employee-compensation.js";
 import { backfillLabReceptionistApprovals } from "./lib/lab-receptionist-backfill.js";
@@ -211,6 +212,17 @@ void (async () => {
         await refreshExamPriceCache();
       } catch (error) {
         console.error("Impossible de charger le cache des tarifs examens:", error);
+      }
+
+      try {
+        const orthoTrauma = await mergeOrthoTraumaClinicServices();
+        if (orthoTrauma.removed > 0 || orthoTrauma.renamed) {
+          console.log(
+            `Orthopédie et Tromatologie réunis sous « Orthopédie & Tromatologie » (${orthoTrauma.removed} doublon(s) retiré(s)).`,
+          );
+        }
+      } catch (error) {
+        console.error("Impossible de fusionner Orthopédie et Tromatologie:", error);
       }
 
       try {

@@ -8,6 +8,7 @@ import { translateUi } from '@/i18n/translate'
 
 export const EXAMS_PRESCRIBED_PREFIX = 'Examens prescrits'
 export const EXAMS_PAID_PREFIX = 'Examens payés'
+export const EXAMS_BILLED_PREFIX = 'Examens facturés'
 export const EXAM_COMMENT_PREFIX = 'Commentaire'
 export const LAB_RESULTS_PREFIX = 'Résultats laboratoire'
 export const LAB_RESULTS_COMPLETION_MARKER = `${LAB_RESULTS_PREFIX} — validé le `
@@ -320,14 +321,14 @@ export function countPrescribedExams(notes?: string | null): number {
   return countGroupedPrescribedPanels(parsePrescribedExamsList(notes))
 }
 
-/** Résumé détaillé laboratoire : noms des champs cochés. */
+/** Résumé détaillé laboratoire : examens déjà payés. */
 export function formatLabPrescribedExamsSummary(notes?: string | null): string {
-  return summarizePrescribedExamFieldNames(parsePrescribedExamsByKind(notes).examen)
+  return summarizePrescribedExamFieldNames(paidExamLabels(notes, 'examen'))
 }
 
-/** Aperçu court laboratoire : noms de champs (max N visibles). */
+/** Aperçu court laboratoire : examens déjà payés (max N visibles). */
 export function formatLabPrescribedExamsPreview(notes?: string | null, maxVisible = 2): string {
-  const summary = summarizePrescribedExamFieldNames(parsePrescribedExamsByKind(notes).examen)
+  const summary = summarizePrescribedExamFieldNames(paidExamLabels(notes, 'examen'))
   if (summary === '—') return '—'
   const fields = summary.split(', ').filter(Boolean)
   if (fields.length <= maxVisible) return summary
@@ -335,7 +336,7 @@ export function formatLabPrescribedExamsPreview(notes?: string | null, maxVisibl
 }
 
 export function countLabPrescribedExams(notes?: string | null): number {
-  return countGroupedPrescribedPanels(parsePrescribedExamsByKind(notes).examen)
+  return countGroupedPrescribedPanels(paidExamLabels(notes, 'examen'))
 }
 
 export function hasLabResults(notes?: string | null): boolean {
@@ -462,6 +463,54 @@ export function parsePaidExamKindsByKind(notes?: string | null): Partial<Record<
 
 export function isExamKindPaid(notes: string | null | undefined, kind: ExamKindSlug): boolean {
   return !!parsePaidExamKindsByKind(notes)[kind]
+}
+
+function parseBilledKindLine(line: string): { kind: ExamKindSlug; labels: string[] } | null {
+  const trimmed = line.trim()
+  for (const kind of EXAM_KIND_ORDER) {
+    for (const label of sectionLabelsForKind(kind)) {
+      const prefix = `${EXAMS_BILLED_PREFIX} (${label}) : `
+      if (!trimmed.startsWith(prefix)) continue
+      return { kind, labels: splitPrescribedExamList(trimmed.slice(prefix.length)) }
+    }
+  }
+  return null
+}
+
+export function parseBilledExamLabelsByKind(
+  notes?: string | null,
+): Partial<Record<ExamKindSlug, string[]>> {
+  const result: Partial<Record<ExamKindSlug, string[]>> = {}
+  if (!notes) return result
+  for (const line of notes.split('\n')) {
+    const parsed = parseBilledKindLine(line)
+    if (!parsed) continue
+    result[parsed.kind] = [...(result[parsed.kind] ?? []), ...parsed.labels]
+  }
+  return result
+}
+
+/** Examens déjà encaissés. Une liste facturée prime sur le reste de la prescription. */
+export function paidExamLabels(notes: string | null | undefined, kind: ExamKindSlug): string[] {
+  const prescribed = [
+    ...new Set(
+      filterCashierBillableExamLabels(parsePrescribedExamsByKind(notes)[kind])
+        .map((label) => label.trim())
+        .filter(Boolean),
+    ),
+  ]
+  const billed = [
+    ...new Set(
+      (parseBilledExamLabelsByKind(notes)[kind] ?? []).map((label) => label.trim()).filter(Boolean),
+    ),
+  ]
+  if (billed.length) {
+    const billedSet = new Set(billed)
+    const matched = prescribed.filter((label) => billedSet.has(label))
+    return matched.length ? matched : billed
+  }
+  if (isExamKindPaid(notes, kind)) return prescribed
+  return []
 }
 
 export function getUnpaidPrescribedExamKinds(notes?: string | null): ExamKindSlug[] {

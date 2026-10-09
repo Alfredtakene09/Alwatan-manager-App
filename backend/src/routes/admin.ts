@@ -16,6 +16,7 @@ import {
 import { parseShiftSlot } from "../lib/cash-shift.js";
 import { refreshUnvalidatedDayClosureForExpense } from "../lib/cashier-personal-stats.js";
 import { prisma } from "../lib/db.js";
+import { excludeLegacyEmiratesTariffWhere } from "../lib/printed-tariff-catalog.js";
 import { ensureDefaultBedsForRoom } from "../lib/hospitalization-rooms.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
 import { listRecordedDiagnoses } from "../lib/recorded-diagnoses.js";
@@ -1170,7 +1171,10 @@ router.delete("/users/:id", requireModule("user-accounts"), async (req, res) => 
 router.use(requireModule("admin"));
 
 router.get("/interventions", async (_req, res) => {
-  const items = await prisma.interventionType.findMany({ orderBy: { category: "asc" } });
+  const items = await prisma.interventionType.findMany({
+    where: excludeLegacyEmiratesTariffWhere(),
+    orderBy: { category: "asc" },
+  });
   return res.json(items);
 });
 

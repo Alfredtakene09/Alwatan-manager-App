@@ -6,7 +6,7 @@ export type OperationShareKind = 'surgeon' | 'assistant' | 'clinic'
 
 export const SHARE_KIND_LABELS: Record<OperationShareKind, string> = {
   surgeon: 'Médecin',
-  assistant: 'Assistant',
+  assistant: 'Anesthésiste',
   clinic: 'Clinique',
 }
 

@@ -2,8 +2,17 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { z } from "zod";
 import { InvoiceStatus, InvoiceType, Prisma, SurgeryStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
-import { computeSurgeryShares, resolveSurgeonPercent, selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
+import {
+  computeSurgeryShares,
+  effectiveSurgeryAssistant,
+  resolveAssistantPercent,
+  resolveSurgeonPercent,
+  selectableDoctorByIdWhere,
+  surgeryCaseAssistantWhere,
+} from "../lib/doctor-compensation.js";
+import { isAnesthetistStaff } from "../lib/doctor-profile.js";
 import { syncPaidOperationSurgeonCashShare } from "../lib/doctor-share-claims.js";
+import { collectedAmountFcfa } from "../lib/surgery-cost-shares.js";
 import {
   buildPrescribedExamsNotesByKind,
   parsePrescribedExamCommentsByKind,
@@ -36,6 +45,7 @@ const surgeryInclude = {
       patient: true,
       consultation: { select: { id: true, doctorComment: true, diagnosis: true } },
       createdBy: { select: { id: true, firstName: true, lastName: true } },
+      updatedBy: { select: { id: true, firstName: true, lastName: true } },
       assignedClinicService: { select: { id: true, name: true } },
     },
   },
@@ -45,6 +55,7 @@ const surgeryInclude = {
       clinicService: { select: { id: true, name: true } },
     },
   },
+  anesthesiologist: { select: { id: true, firstName: true, lastName: true } },
   surgeon: {
     select: {
       id: true,
@@ -96,31 +107,21 @@ const DOCTOR_VISIBLE_STATUSES: SurgeryStatus[] = [
 function resolveMyShareKind(
   surgery: {
     surgeonId: string;
+    anesthesiologistId?: string | null;
+    anesthesiologistPercent?: number | null;
     interventionType: { anesthesiologistId: string | null; anesthesiologistPercent: number };
   },
   userId: string,
 ): OperationShareKind | null {
   if (surgery.surgeonId === userId) return "surgeon";
-  if (
-    surgery.interventionType.anesthesiologistPercent > 0 &&
-    surgery.interventionType.anesthesiologistId === userId
-  ) {
-    return "assistant";
-  }
+  const assistant = effectiveSurgeryAssistant(surgery);
+  if (assistant.percent > 0 && assistant.id === userId) return "assistant";
   return null;
 }
 
 function doctorSurgeryWhere(userId: string) {
   return {
-    OR: [
-      { surgeonId: userId },
-      {
-        interventionType: {
-          anesthesiologistId: userId,
-          anesthesiologistPercent: { gt: 0 },
-        },
-      },
-    ],
+    OR: [{ surgeonId: userId }, surgeryCaseAssistantWhere(userId)],
   };
 }
 
@@ -430,6 +431,7 @@ router.get("/other-operations", async (_req, res) => {
             createdAt: true,
             updatedAt: true,
             createdBy: userRefSelect,
+            updatedBy: userRefSelect,
             assignedDoctor: {
               select: { id: true, firstName: true, lastName: true },
             },
@@ -476,6 +478,7 @@ router.get("/other-operations", async (_req, res) => {
           select: {
             label: true,
             surgeonId: true,
+            anesthesiologistId: true,
             anesthesiologistPercent: true,
             anesthesiologistName: true,
             anesthesiologist: { select: { firstName: true, lastName: true } },
@@ -499,6 +502,8 @@ router.get("/other-operations", async (_req, res) => {
       return {
         ...rest,
         assistantName: type ? assistantNameFromType(type) : null,
+        assistantId: type && type.anesthesiologistPercent > 0 ? (type.anesthesiologistId ?? "") : "",
+        assistantPercent: type?.anesthesiologistPercent ?? 0,
         serviceName: operationServiceName({
           assignedService: assignedClinicService,
           typeService: type?.clinicService,
@@ -533,6 +538,7 @@ const operationBillingSchema = z.object({
   interventionTypeId: z.string().trim().min(1).optional(),
   clinicServiceId: z.string().trim().min(1).optional(),
   surgeonId: z.string().trim().min(1).optional(),
+  anesthesiologistId: z.string().trim().nullable().optional(),
 });
 
 async function resolveClinicServiceId(clinicServiceId?: string | null) {
@@ -585,7 +591,40 @@ function operationBillingError(error: unknown, fallback: string) {
   if (error instanceof Error && error.message === "SURGEON_SERVICE") {
     return "Ce médecin n'est pas rattaché à ce service.";
   }
+  if (error instanceof Error && error.message === "INVALID_ASSISTANT") {
+    return "Choisissez un médecin anesthésiste.";
+  }
   return fallback;
+}
+
+async function resolveOperationAnesthetist(anesthesiologistId: string | null | undefined) {
+  if (anesthesiologistId === undefined) return undefined;
+  const id = anesthesiologistId?.trim() || "";
+  if (!id) return { id: null as string | null, percent: 0, profile: null };
+  const doctor = await prisma.user.findFirst({
+    where: selectableDoctorByIdWhere(id),
+    select: {
+      id: true,
+      role: true,
+      employee: {
+        select: {
+          isMedecin: true,
+          jobTitle: true,
+          specialty: true,
+          doctorCompensationType: true,
+          surgeryQuotaPercent: true,
+        },
+      },
+    },
+  });
+  if (!doctor?.employee || !isAnesthetistStaff(doctor.employee)) {
+    throw new Error("INVALID_ASSISTANT");
+  }
+  return {
+    id: doctor.id,
+    percent: null as number | null,
+    profile: { role: doctor.role, employee: doctor.employee },
+  };
 }
 
 /** Remplace le libellé d'opération dans la prescription, ou le laisse tel quel s'il n'y figure pas. */
@@ -729,14 +768,22 @@ async function syncOperationInvoiceBillingAmount(
 /** Corriger le montant facturé et la date d'une opération du bloc opératoire. */
 router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
   try {
-    const { amountFcfa, operationDate, interventionTypeId, clinicServiceId, surgeonId } =
-      operationBillingSchema.parse(req.body);
+    const {
+      amountFcfa,
+      operationDate,
+      interventionTypeId,
+      clinicServiceId,
+      surgeonId,
+      anesthesiologistId,
+    } = operationBillingSchema.parse(req.body);
     const surgeryId = String(req.params.id);
 
     const surgery = await prisma.surgeryCase.findUnique({
       where: { id: surgeryId },
       include: {
-        interventionType: { select: { id: true, label: true, surgeonPercent: true } },
+        interventionType: {
+          select: { id: true, label: true, surgeonPercent: true, anesthesiologistPercent: true },
+        },
         surgeon: {
           select: {
             role: true,
@@ -779,7 +826,14 @@ router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
       interventionTypeId && interventionTypeId !== surgery.interventionType.id
         ? await prisma.interventionType.findUnique({
             where: { id: interventionTypeId },
-            select: { id: true, label: true, surgeonPercent: true, active: true, clinicServiceId: true },
+            select: {
+              id: true,
+              label: true,
+              surgeonPercent: true,
+              anesthesiologistPercent: true,
+              active: true,
+              clinicServiceId: true,
+            },
           })
         : null;
     if (interventionTypeId && interventionTypeId !== surgery.interventionType.id && !nextType?.active) {
@@ -795,19 +849,52 @@ router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
     }
 
     const nextSurgeon = await resolveOperationSurgeon(surgeonId, resolvedServiceId, surgery.surgeonId);
+    const requestedAssistant = await resolveOperationAnesthetist(anesthesiologistId);
 
     const surgeonPercent = resolveSurgeonPercent(
       nextType?.surgeonPercent ?? surgery.interventionType.surgeonPercent,
       nextSurgeon ?? surgery.surgeon,
     );
-    const shares = computeSurgeryShares(amountFcfa, surgeonPercent, nextSurgeon ?? surgery.surgeon);
+    const typeAssistantPercent =
+      nextType?.anesthesiologistPercent ?? surgery.interventionType.anesthesiologistPercent ?? 0;
+    const assistantPercent = requestedAssistant
+      ? requestedAssistant.id
+        ? resolveAssistantPercent(typeAssistantPercent, requestedAssistant.profile)
+        : 0
+      : effectiveSurgeryAssistant({
+          anesthesiologistId: surgery.anesthesiologistId,
+          anesthesiologistPercent: surgery.anesthesiologistPercent,
+          interventionType: {
+            anesthesiologistId: null,
+            anesthesiologistPercent: typeAssistantPercent,
+          },
+        }).percent;
+    const previousPaid = surgery.invoice?.paidAmountFcfa ?? 0;
+    const previousBilled = surgery.invoice?.amountFcfa ?? surgery.totalCostFcfa;
+    const wasFullyPaid = previousPaid > 0 && previousPaid >= previousBilled;
+    const collected = wasFullyPaid
+      ? amountFcfa
+      : collectedAmountFcfa({ paidAmountFcfa: previousPaid, amountFcfa });
+    const shares = computeSurgeryShares(
+      collected,
+      surgeonPercent,
+      nextSurgeon ?? surgery.surgeon,
+      assistantPercent,
+    );
 
     await prisma.$transaction(async (tx) => {
       await tx.surgeryCase.update({
         where: { id: surgery.id },
         data: {
           ...(nextType ? { interventionTypeId: nextType.id } : {}),
-          ...(nextSurgeon ? { surgeonId: nextSurgeon.id, surgeonPercent } : {}),
+          ...(nextSurgeon ? { surgeonId: nextSurgeon.id } : {}),
+          surgeonPercent,
+          ...(requestedAssistant
+            ? {
+                anesthesiologistId: requestedAssistant.id,
+                anesthesiologistPercent: assistantPercent,
+              }
+            : {}),
           totalCostFcfa: amountFcfa,
           surgeonShareFcfa: shares.surgeonShareFcfa,
           clinicShareFcfa: shares.clinicShareFcfa,
@@ -841,15 +928,14 @@ router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
         }
       }
 
-      if (resolvedServiceId || nextSurgeon) {
-        await tx.visit.update({
-          where: { id: surgery.visitId },
-          data: {
-            ...(resolvedServiceId ? { assignedClinicServiceId: resolvedServiceId } : {}),
-            ...(nextSurgeon ? { assignedDoctorId: nextSurgeon.id } : {}),
-          },
-        });
-      }
+      await tx.visit.update({
+        where: { id: surgery.visitId },
+        data: {
+          updatedById: req.user!.id,
+          ...(resolvedServiceId ? { assignedClinicServiceId: resolvedServiceId } : {}),
+          ...(nextSurgeon ? { assignedDoctorId: nextSurgeon.id } : {}),
+        },
+      });
 
       if (surgery.invoice) {
         // createdAt = date colonne / filtres (modification) ; paidAt reste la date d'encaissement.
@@ -881,8 +967,14 @@ router.patch("/:id/billing", requireOperationEditor, async (req, res) => {
 /** Corriger le montant facturé et la date d'une opération hors bloc opératoire. */
 router.patch("/other-operations/:id/billing", requireOperationEditor, async (req, res) => {
   try {
-    const { amountFcfa, operationDate, interventionTypeId, clinicServiceId, surgeonId } =
-      operationBillingSchema.parse(req.body);
+    const {
+      amountFcfa,
+      operationDate,
+      interventionTypeId,
+      clinicServiceId,
+      surgeonId,
+      anesthesiologistId,
+    } = operationBillingSchema.parse(req.body);
     const invoiceId = String(req.params.id);
 
     const invoice = await prisma.invoice.findFirst({
@@ -922,7 +1014,13 @@ router.patch("/other-operations/:id/billing", requireOperationEditor, async (req
     const nextType = interventionTypeId
       ? await prisma.interventionType.findUnique({
           where: { id: interventionTypeId },
-          select: { id: true, label: true, active: true, clinicServiceId: true },
+          select: {
+            id: true,
+            label: true,
+            active: true,
+            clinicServiceId: true,
+            anesthesiologistPercent: true,
+          },
         })
       : null;
     if (interventionTypeId && !nextType?.active) {
@@ -938,22 +1036,56 @@ router.patch("/other-operations/:id/billing", requireOperationEditor, async (req
     }
 
     const consultation = invoice.visit?.consultation ?? null;
-    const nextSurgeon = await resolveOperationSurgeon(
-      surgeonId,
-      resolvedServiceId,
-      consultation?.doctorId ?? invoice.visit?.assignedDoctorId ?? null,
-    );
+    const requestedAssistant = await resolveOperationAnesthetist(anesthesiologistId);
     const currentLabel = consultation
       ? (parsePrescribedExamsByKind(consultation.clinicalNotes).operation ?? [])
           .filter(Boolean)
           .join(", ")
       : "";
+    let typeForAssistant = nextType;
+    if (requestedAssistant && !typeForAssistant && currentLabel) {
+      const matches = await prisma.interventionType.findMany({
+        where: { label: { equals: currentLabel, mode: "insensitive" }, active: true },
+        select: {
+          id: true,
+          label: true,
+          active: true,
+          clinicServiceId: true,
+          anesthesiologistPercent: true,
+        },
+      });
+      const linked = resolvedServiceId
+        ? matches.find((item) => item.clinicServiceId === resolvedServiceId)
+        : undefined;
+      typeForAssistant = linked ?? (matches.length === 1 ? matches[0]! : null);
+    }
+    const nextSurgeon = await resolveOperationSurgeon(
+      surgeonId,
+      resolvedServiceId,
+      consultation?.doctorId ?? invoice.visit?.assignedDoctorId ?? null,
+    );
     const notes =
       nextType && consultation
         ? notesWithRenamedOperation(consultation.clinicalNotes, currentLabel, nextType.label)
         : null;
 
     await prisma.$transaction(async (tx) => {
+      if (requestedAssistant && typeForAssistant) {
+        const assistantPercent = requestedAssistant.id
+          ? resolveAssistantPercent(
+              typeForAssistant.anesthesiologistPercent ?? 0,
+              requestedAssistant.profile,
+            )
+          : 0;
+        await tx.interventionType.update({
+          where: { id: typeForAssistant.id },
+          data: {
+            anesthesiologistId: requestedAssistant.id,
+            anesthesiologistName: null,
+            anesthesiologistPercent: assistantPercent,
+          },
+        });
+      }
       // createdAt facture = date d'enregistrement affichée ; visite.updatedAt = jour réel de modification.
       await syncOperationInvoiceBillingAmount(
         tx,
@@ -972,17 +1104,14 @@ router.patch("/other-operations/:id/billing", requireOperationEditor, async (req
         });
       }
       if (invoice.visitId) {
-        if (resolvedServiceId || nextSurgeon) {
-          await tx.visit.update({
-            where: { id: invoice.visitId },
-            data: {
-              ...(resolvedServiceId ? { assignedClinicServiceId: resolvedServiceId } : {}),
-              ...(nextSurgeon ? { assignedDoctorId: nextSurgeon.id } : {}),
-            },
-          });
-        }
-        // Horodatage réel de modification (libellé « modifié JJ/MM/AAAA » = aujourd’hui).
-        await tx.$executeRaw`UPDATE "Visit" SET "updatedAt" = NOW() WHERE id = ${invoice.visitId}`;
+        await tx.visit.update({
+          where: { id: invoice.visitId },
+          data: {
+            updatedById: req.user!.id,
+            ...(resolvedServiceId ? { assignedClinicServiceId: resolvedServiceId } : {}),
+            ...(nextSurgeon ? { assignedDoctorId: nextSurgeon.id } : {}),
+          },
+        });
       }
     });
 
@@ -1195,7 +1324,7 @@ const paySharesBatchSchema = z.object({
 function mapSharePaymentError(error: unknown) {
   if (error instanceof Error) {
     if (error.message === "ASSISTANT_SHARE_NOT_APPLICABLE") {
-      return "La part assistant ne s'applique pas à cette opération.";
+      return "La part anesthésiste ne s'applique pas à cette opération.";
     }
     if (error.message === "SHARE_ALREADY_PAID") {
       return "Une ou plusieurs parts sont déjà réglées.";

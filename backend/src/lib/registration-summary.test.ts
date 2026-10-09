@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ConsultationQuotaMode, DoctorCompensationType, InvoiceType, UserRole } from "@prisma/client";
+import { ConsultationQuotaMode, DoctorCompensationType, InvoiceStatus, InvoiceType, UserRole } from "@prisma/client";
 import {
   consultationShare,
   consultationTariffAmount,
@@ -13,6 +13,7 @@ import {
   ORTHO_TRAUMA_SERVICE,
   registrationExamQuantity,
   registrationLineIdentity,
+  registrationDoctorPercent,
 } from "./registration-summary.js";
 
 type ShareInvoice = Parameters<typeof operationShare>[0];
@@ -43,6 +44,46 @@ describe("parts médecin à l'export", () => {
     const share = consultationShare(invoice, 20_000);
     assert.equal(share.percent, 50);
     assert.equal(share.shareFcfa, 10_000);
+  });
+
+  it("recalcule la part du médecin affecté même si la facture est déjà encaissée", () => {
+    const previousDoctor = david();
+    const currentDoctor = david();
+    previousDoctor.employee.consultationQuotaPercent = 80;
+    currentDoctor.employee.consultationQuotaPercent = 25;
+    const invoice = {
+      type: InvoiceType.CONSULTATION,
+      amountFcfa: 20_000,
+      paidAmountFcfa: 20_000,
+      status: InvoiceStatus.PAID,
+      visit: {
+        consultationFeeFcfa: 20_000,
+        reductionFcfa: 0,
+        assignedDoctor: currentDoctor,
+        consultation: { doctor: previousDoctor },
+      },
+    } as ShareInvoice;
+
+    const billedAmount = consultationTariffAmount(invoice, invoice.amountFcfa);
+    const share = consultationShare(invoice, billedAmount);
+    assert.equal(share.percent, 25);
+    assert.equal(share.shareFcfa, 5_000);
+  });
+
+  it("n'attribue pas de quota consultation à un médecin salarié fixe", () => {
+    const doctor = david();
+    doctor.employee.doctorCompensationType = DoctorCompensationType.FIXED_SALARY;
+    const invoice = {
+      visit: { assignedDoctor: doctor, consultation: null },
+    } as ShareInvoice;
+
+    assert.deepEqual(consultationShare(invoice, 20_000), { shareFcfa: 0, percent: null });
+  });
+
+  it("calcule un taux effectif lorsque plusieurs taux sont regroupés par service", () => {
+    assert.equal(registrationDoctorPercent(17_500, 30_000), 58);
+    assert.equal(registrationDoctorPercent(15_000, 20_000), 75);
+    assert.equal(registrationDoctorPercent(0, 0), null);
   });
 
   it("applique 30 % du médecin sur le montant d'opération, pas le % du catalogue", () => {
@@ -110,6 +151,80 @@ describe("parts médecin à l'export", () => {
     const share = operationShare(invoice, 100_000);
     assert.equal(share.percent, 40);
     assert.equal(share.shareFcfa, 40_000);
+  });
+
+  it("ajoute les 11 % de l'anesthésiste à la part des médecins", () => {
+    const invoice = {
+      visit: null,
+      surgeryCase: {
+        surgeon: david(),
+        surgeonPercent: 30,
+        surgeonShareFcfa: 30_000,
+        totalCostFcfa: 100_000,
+        interventionType: {
+          surgeonPercent: 30,
+          anesthesiologistPercent: 11,
+          anesthesiologistName: "AWAD",
+          clinicService: null,
+        },
+      },
+    } as ShareInvoice;
+    const share = operationShare(invoice, 130_000);
+    assert.equal(share.percent, 41);
+    assert.equal(share.shareFcfa, 53_300);
+  });
+
+  it("reprend le % fiche de l'anesthésiste quand l'acte n'a pas de taux", () => {
+    const invoice = {
+      visit: null,
+      surgeryCase: {
+        surgeon: david(),
+        surgeonPercent: 30,
+        surgeonShareFcfa: 30_000,
+        totalCostFcfa: 100_000,
+        interventionType: {
+          surgeonPercent: 30,
+          anesthesiologistPercent: 0,
+          anesthesiologist: {
+            role: UserRole.MEDECIN,
+            firstName: "MHT",
+            lastName: "AWAD",
+            employee: {
+              isMedecin: true,
+              doctorCompensationType: DoctorCompensationType.QUOTA,
+              consultationQuotaMode: ConsultationQuotaMode.PERCENT,
+              consultationQuotaPercent: null,
+              consultationQuotaFcfa: null,
+              consultationTotalFcfa: null,
+              surgeryQuotaPercent: 11,
+            },
+          },
+          clinicService: null,
+        },
+      },
+    } as ShareInvoice;
+    const share = operationShare(invoice, 100_000);
+    assert.equal(share.percent, 41);
+    assert.equal(share.shareFcfa, 41_000);
+  });
+
+  it("ajoute l'anesthésiste du catalogue quand l'opération n'a pas de dossier bloc", () => {
+    const invoice = {
+      visit: {
+        assignedDoctor: david(),
+        consultation: { doctor: david() },
+      },
+      surgeryCase: null,
+      catalogOperation: {
+        surgeonPercent: 30,
+        anesthesiologistPercent: 11,
+        anesthesiologistName: "AWAD",
+        anesthesiologist: null,
+      },
+    } as ShareInvoice;
+    const share = operationShare(invoice, 250_000);
+    assert.equal(share.percent, 41);
+    assert.equal(share.shareFcfa, 102_500);
   });
 
   it("applique le % opération au montant encaissé, pas à la part stockée du dossier", () => {
@@ -240,9 +355,9 @@ describe("lignes d'opérations à l'export", () => {
       operationName: "Fracture",
       invoiceId: "inv-f",
     });
-    assert.equal(ORTHO_TRAUMA_SERVICE, "traumatologie&Orthopedie");
-    assert.equal(ortho.service, "traumatologie&Orthopedie");
-    assert.equal(ortho.serviceName, "traumatologie&Orthopedie");
+    assert.equal(ORTHO_TRAUMA_SERVICE, "Orthopédie & Tromatologie");
+    assert.equal(ortho.service, "Orthopédie & Tromatologie");
+    assert.equal(ortho.serviceName, "Orthopédie & Tromatologie");
     assert.equal(ortho.operationName, null);
     assert.equal(trauma.service, ortho.service);
     assert.equal(fracture.service, ortho.service);
@@ -291,6 +406,21 @@ describe("lignes d'opérations à l'export", () => {
       },
     });
     assert.equal(qty, 2);
+  });
+
+  it("ne compte que les examens déjà facturés quand la prescription en contient d'autres", () => {
+    const qty = registrationExamQuantity({
+      billingExamKind: "examen",
+      visit: {
+        consultation: {
+          clinicalNotes: [
+            "Examens prescrits (Laboratoire) : NFS, Glycémie",
+            "Examens facturés (Laboratoire) : NFS",
+          ].join("\n"),
+        },
+      },
+    });
+    assert.equal(qty, 1);
   });
 
   it("laisse une consultation hors du décompte des examens", () => {
@@ -380,5 +510,35 @@ describe("cartes d'enregistrement", () => {
       examPatients: 2,
       hospitalizationPatients: 1,
     });
+  });
+
+  it("ignore un examen qui n'est pas payé", () => {
+    const counts = registrationActivityPatientCounts([
+      invoice({
+        patientId: "pat-unpaid",
+        type: InvoiceType.LAB_EXAM,
+        status: InvoiceStatus.PENDING,
+        amountFcfa: 8_000,
+        paidAmountFcfa: 0,
+        billingExamKind: "examen",
+        surgeryCaseId: null,
+        hospitalizationId: null,
+        visit: null,
+        hospitalization: null,
+      }),
+      invoice({
+        patientId: "pat-paid",
+        type: InvoiceType.LAB_EXAM,
+        status: InvoiceStatus.PAID,
+        amountFcfa: 8_000,
+        paidAmountFcfa: 8_000,
+        billingExamKind: "examen",
+        surgeryCaseId: null,
+        hospitalizationId: null,
+        visit: null,
+        hospitalization: null,
+      }),
+    ]);
+    assert.equal(counts.examPatients, 1);
   });
 });

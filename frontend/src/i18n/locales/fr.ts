@@ -1,4 +1,4 @@
-﻿export default {
+export default {
   common: {
     logout: 'Déconnexion',
     openMenu: 'Ouvrir le menu',
@@ -513,6 +513,7 @@
       "Vue d'ensemble et enregistrement des patients",
     "Vue d'ensemble": "Vue d'ensemble",
     'Patients enregistrés': 'Patients enregistrés',
+    'Voir la liste': 'Voir la liste',
     'Liste des dossiers créés à la réception': 'Liste des dossiers créés à la réception',
     '{scope} — {date}': '{scope} — {date}',
     '{scope} — {date}{service}': '{scope} — {date}{service}',
@@ -674,7 +675,7 @@
     'Aucune part à percevoir pour cette période.':
       'Aucune part à percevoir pour cette période.',
     'Opération (chirurgien)': 'Opération (chirurgien)',
-    'Opération (assistant)': 'Opération (assistant)',
+    'Opération (assistant)': 'Opération (anesthésiste)',
     'Consult.': 'Consult.',
     'Opér.': 'Opér.',
     'En paie': 'En paie',
@@ -1353,10 +1354,10 @@
       'Tarifs et pourcentages médecin opérateur — activation rapide ci-dessous',
     "Détail de l'opération": "Détail de l'opération",
     '% Chirurgien': '% Chirurgien',
-    '% Assistant chirurgie': '% Assistant chirurgie',
+    '% Assistant chirurgie': '% Anesthésiste',
     '% Clinique': '% Clinique',
     '% Chir.': '% Chir.',
-    '% Ass.': '% Ass.',
+    '% Ass.': '% Anés.',
     '% Clin.': '% Clin.',
     'Coût total': 'Coût total',
     'Majeure (A)': 'Majeure (A)',
@@ -1497,7 +1498,7 @@
     'Tarif / nuit': 'Tarif / nuit',
     Salle: 'Salle',
     'Tarifs, médecins et répartition chirurgien / assistant chirurgie / clinique':
-      'Tarifs, médecins et répartition chirurgien / assistant chirurgie / clinique',
+      'Tarifs, médecins et répartition chirurgien / anesthésiste / clinique',
     '{n} opération(s)': '{n} opération(s)',
     'Chargement des opérations…': 'Chargement des opérations…',
     "Modifier l'opération": "Modifier l'opération",
@@ -1509,6 +1510,7 @@
     'Cette date s’affiche dans la colonne Date et sert aux filtres.':
       'Cette date s’affiche dans la colonne Date et sert aux filtres.',
     'modifié {date}': 'modifié {date}',
+    'Modifié par {name}': 'Modifié par {name}',
     'Déjà encaissé : {paid}': 'Déjà encaissé : {paid}',
     'Opération modifiée.': 'Opération modifiée.',
     'Nouvelle opération avec répartition des honoraires':
@@ -1516,7 +1518,7 @@
     'Mettre à jour les tarifs, médecins et répartitions':
       'Mettre à jour les tarifs, médecins et répartitions',
     Chirurgien: 'Chirurgien',
-    'Assistant chirurgie': 'Assistant chirurgie',
+    'Assistant chirurgie': 'Anesthésiste',
     'Coût (FCFA)': 'Coût (FCFA)',
     'Opération désactivée.': 'Opération désactivée.',
     'Opération réactivée.': 'Opération réactivée.',
@@ -1554,7 +1556,7 @@
     'Poste / fonction': 'Poste / fonction',
     'Sélectionnez un poste': 'Sélectionnez un poste',
     'Pourcentage reversé à cet assistant sur les opérations.':
-      'Pourcentage reversé à cet assistant sur les opérations.',
+      'Pourcentage reversé à cet anesthésiste sur les opérations.',
     'Profil employé': 'Profil employé',
     'Administration, technique, accueil…': 'Administration, technique, accueil…',
     'Consultations et rémunération': 'Consultations et rémunération',
@@ -2865,7 +2867,7 @@
     'Opérations effectuées': 'Opérations effectuées',
     'Enregistrer une opération': 'Enregistrer une opération',
     'Même saisie qu’un patient externe : service, prix, médecin obligatoire et assistant.':
-      'Même saisie qu’un patient externe : service, prix, médecin obligatoire et assistant.',
+      'Même saisie qu’un patient externe : service, prix, médecin obligatoire et anesthésiste.',
     'Opération enregistrée.': 'Opération enregistrée.',
     'Opération enregistrée — {invoice}.': 'Opération enregistrée — {invoice}.',
     Hospitalisation: 'Hospitalisation',
@@ -2886,11 +2888,11 @@
       'Saisissez le nom de l’opération (2 caractères min.).',
     'Indiquez le prix de l’opération.': 'Indiquez le prix de l’opération.',
     'Opération ajoutée — choisissez un assistant si besoin, puis envoyez.':
-      'Opération ajoutée — choisissez un assistant si besoin, puis envoyez.',
+      'Opération ajoutée — choisissez un anesthésiste si besoin, puis envoyez.',
     'Choisissez un assistant pour « {op} » (optionnel).':
-      'Choisissez un assistant pour « {op} » (optionnel).',
+      'Choisissez un anesthésiste pour « {op} » (optionnel).',
     'Assistant prêt — il sera enregistré à l’envoi de la prescription.':
-      'Assistant prêt — il sera enregistré à l’envoi de la prescription.',
+      'Anesthésiste prêt — il sera enregistré à l’envoi de la prescription.',
     'Déjà consulté': 'Déjà consulté',
     'En attente de labos': 'En attente de labos',
     'Résultats de labos': 'Résultats de labos',
@@ -2914,18 +2916,18 @@
     'Ajouter une opération': 'Ajouter une opération',
     'Nouvelle opération — {service}': 'Nouvelle opération — {service}',
     'vous (compte connecté)': 'vous (compte connecté)',
-    'Avec assistant chirurgie': 'Avec assistant chirurgie',
+    'Avec assistant chirurgie': 'Avec anesthésiste',
     'Part clinique': 'Part clinique',
     'Montant de l’opération': 'Montant de l’opération',
     'Prix modifiable pour « {op} » — les parts appliquent les % définis.':
       'Prix modifiable pour « {op} » — les parts appliquent les % définis.',
     'Montant (FCFA)': 'Montant (FCFA)',
     'Part chirurgien': 'Part chirurgien',
-    'Part assistant': 'Part assistant',
+    'Part assistant': 'Part anesthésiste',
     'Impossible de charger les types d’opération.': 'Impossible de charger les types d’opération.',
     'Libellé et coût total sont obligatoires.': 'Libellé et coût total sont obligatoires.',
     "Saisissez le nom de l'assistant chirurgie (2 caractères min.).":
-      "Saisissez le nom de l'assistant chirurgie (2 caractères min.).",
+      "Saisissez le nom de l'anesthésiste (2 caractères min.).",
     'Opération ajoutée à votre nomenclature.': 'Opération ajoutée à votre nomenclature.',
     'Opération mise à jour.': 'Opération mise à jour.',
     'Opération désactivée.': 'Opération désactivée.',
@@ -3066,11 +3068,13 @@
     Généraliste: 'Généraliste',
     'Médecine interne': 'Médecine interne',
     Urologie: 'Urologie',
-    Orthopédie: 'Orthopédie',
-    ORTHOPEDIE: 'ORTHOPEDIE',
+    Orthopédie: 'Orthopédie & Tromatologie',
+    'Orthopédie & Traumatologie': 'Orthopédie & Tromatologie',
+    'Orthopédie & Tromatologie': 'Orthopédie & Tromatologie',
+    ORTHOPEDIE: 'Orthopédie & Tromatologie',
     'Kinésithérapetie': 'Kinésithérapetie',
-    Tromatologie: 'Tromatologie',
-    Traumatologie: 'Traumatologie',
+    Tromatologie: 'Orthopédie & Tromatologie',
+    Traumatologie: 'Orthopédie & Tromatologie',
     Urgences: 'Urgences',
     Maternité: 'Maternité',
     Pédiatrie: 'Pédiatrie',
@@ -3120,19 +3124,21 @@
       'Aucune nomenclature liée pour l’instant. Ajoutez des examens (nomenclature médecin) ou des types d’opérations pour ce service.',
     'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.':
       'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.',
-    'Médecin et assistant': 'Médecin et assistant',
+    'Médecin et assistant': 'Médecin et anesthésiste',
     'Aucun assistant ou anesthésiste enregistré.':
-      'Aucun assistant ou anesthésiste enregistré.',
+      'Aucun anesthésiste enregistré.',
     'Choisissez un assistant ou un anesthésiste enregistré.':
-      'Choisissez un assistant ou un anesthésiste enregistré.',
+      'Choisissez un anesthésiste enregistré.',
     'Choisissez le service de l’opération, puis saisissez le prix.':
       'Choisissez le service de l’opération, puis saisissez le prix.',
     'Opération du service (optionnel)': 'Opération du service (optionnel)',
+    'Opération du service': 'Opération du service',
+    'Choisir un type d’opération': 'Choisir un type d’opération',
     'Aucune — saisir le prix librement': 'Aucune — saisir le prix librement',
     'Opération pour le service « {name} ». Saisissez le prix ci-dessous.':
       'Opération pour le service « {name} ». Saisissez le prix ci-dessous.',
     'Médecin obligatoire pour « {op} ». L’assistant est facultatif. Les % s’appliquent au montant.':
-      'Médecin obligatoire pour « {op} ». L’assistant est facultatif. Les % s’appliquent au montant.',
+      'Médecin obligatoire pour « {op} ». L’anesthésiste est facultatif. Les % s’appliquent au montant.',
     'Médecin (optionnel)': 'Médecin (optionnel)',
     'Sélectionner un médecin…': 'Sélectionner un médecin…',
     'Aucun médecin lié à ce service': 'Aucun médecin lié à ce service',
@@ -3149,6 +3155,12 @@
     "{n} consultation(s) clôturée(s) aujourd'hui": "{n} consultation(s) clôturée(s) aujourd'hui",
     '{n} patient(s) en attente de paiement': '{n} patient(s) en attente de paiement',
     'Dossier mis à jour avec succès.': 'Dossier mis à jour avec succès.',
+    'Remplacer la prescription': 'Remplacer la prescription',
+    'Enregistrer cette prescription remplace les examens déjà prescrits. Le dossier revient en attente de paiement. Si un paiement a déjà été encaissé, il est annulé et retiré du solde.':
+      'Enregistrer cette prescription remplace les examens déjà prescrits. Le dossier revient en attente de paiement. Si un paiement a déjà été encaissé, il est annulé et retiré du solde.',
+    'Remplacer et enregistrer': 'Remplacer et enregistrer',
+    'Prescription remplacée. Le dossier est de nouveau en attente de paiement. Le paiement précédent, s’il existait, a été annulé et retiré du solde.':
+      'Prescription remplacée. Le dossier est de nouveau en attente de paiement. Le paiement précédent, s’il existait, a été annulé et retiré du solde.',
     'Patients transférés au laboratoire — vous pouvez prescrire des examens complémentaires':
       'Patients transférés au laboratoire — vous pouvez prescrire des examens complémentaires',
     'Analyses en cours': 'Analyses en cours',
@@ -3184,7 +3196,7 @@
     'Réglée le {date}': 'Réglée le {date}',
     Réglée: 'Réglée',
     'En attente de règlement': 'En attente de règlement',
-    Assistant: 'Assistant',
+    Assistant: 'Anesthésiste',
     'Dossier indisponible': 'Dossier indisponible',
     'Résultats laboratoire introuvables.': 'Résultats laboratoire introuvables.',
     'Avis enregistré pour ce formulaire.': 'Avis enregistré pour ce formulaire.',
@@ -3232,7 +3244,7 @@
     'Consultation de kinésithérapie': 'Consultation de kinésithérapie',
     '— Sélectionner —': '— Sélectionner —',
     'Inclure un assistant chirurgie pour cette opération':
-      'Inclure un assistant chirurgie pour cette opération',
+      'Inclure un anesthésiste pour cette opération',
     'Encaisser l’opération': 'Encaisser l’opération',
     'Encaisser {amount}': 'Encaisser {amount}',
     'Filtrer par médecin': 'Filtrer par médecin',
@@ -3250,21 +3262,26 @@
     '{amount} encaissé — opération soldée.': '{amount} encaissé — opération soldée.',
     '{amount} encaissé — reste à payer : {rest}.':
       '{amount} encaissé — reste à payer : {rest}.',
-    'Actuel : assistant ({pct} %)': 'Actuel : assistant ({pct} %)',
+    'Actuel : assistant ({pct} %)': 'Actuel : anesthésiste ({pct} %)',
     'Actuel : {name} ({pct} %)': 'Actuel : {name} ({pct} %)',
-    'Assistant lié à cette opération.': 'Assistant lié à cette opération.',
-    'Assistant retiré de cette opération.': 'Assistant retiré de cette opération.',
+    'Assistant lié à cette opération.': 'Anesthésiste lié à cette opération.',
+    'Assistant retiré de cette opération.': 'Anesthésiste retiré de cette opération.',
     'Consultation clinique': 'Consultation clinique',
     'Déjà lié à « {op} » — vous pouvez modifier.':
       'Déjà lié à « {op} » — vous pouvez modifier.',
     'Déjà prescrite': 'Déjà prescrite',
     'Enregistrer l’assistant sur cette opération':
-      'Enregistrer l’assistant sur cette opération',
-    'Impossible de lier l’assistant.': 'Impossible de lier l’assistant.',
-    'Impossible de mettre à jour l’assistant.': 'Impossible de mettre à jour l’assistant.',
-    'Le % assistant doit être entre 1 et 99.': 'Le % assistant doit être entre 1 et 99.',
+      'Enregistrer l’anesthésiste sur cette opération',
+    'Impossible de lier l’assistant.': 'Impossible de lier l’anesthésiste.',
+    'Impossible de mettre à jour l’assistant.': 'Impossible de mettre à jour l’anesthésiste.',
+    'Le % assistant doit être entre 1 et 99.': 'Le % anesthésiste doit être entre 1 et 99.',
     'Retirer la consultation': 'Retirer la consultation',
-    'Retirer l’assistant': 'Retirer l’assistant',
+    'Retirer l’assistant': 'Retirer l’anesthésiste',
+    'Sans assistant': 'Sans anesthésiste',
+    'Sans anesthésiste': 'Sans anesthésiste',
+    'Nom de l’anesthésiste': 'Nom de l’anesthésiste',
+    "Liez un médecin ou saisissez le nom de l'anesthésiste (2 caractères min.).":
+      "Liez un médecin ou saisissez le nom de l'anesthésiste (2 caractères min.).",
     'Une consultation est déjà enregistrée sur ce dossier.':
       'Une consultation est déjà enregistrée sur ce dossier.',
     'Impossible de supprimer l’opération.': 'Impossible de supprimer l’opération.',

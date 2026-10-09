@@ -1,4 +1,4 @@
-import { PatientCategory } from "@prisma/client";
+import { InvoiceStatus, PatientCategory } from "@prisma/client";
 
 export function isExemptPatient(category: PatientCategory) {
   return category === PatientCategory.ASSOCIE || category === PatientCategory.PERSONNEL;
@@ -21,7 +21,7 @@ export function comptabilitePatientWhere() {
   return { category: { in: [PatientCategory.STANDARD, PatientCategory.ONG] } };
 }
 
-/** Dossier encore actif : un patient désactivé ou supprimé sort des totaux et du solde. */
+/** Dossiers actifs : les compteurs de patients ignorent les dossiers désactivés. */
 export function countedPatientWhere(extra?: { service?: string }) {
   return {
     ...comptabilitePatientWhere(),
@@ -30,8 +30,23 @@ export function countedPatientWhere(extra?: { service?: string }) {
   };
 }
 
+/**
+ * Recettes et solde de caisse.
+ * Un dossier désactivé ou supprimé sort des montants non encaissés,
+ * mais la somme déjà encaissée reste dans le solde.
+ */
 export function comptabiliteInvoicePatientWhere() {
-  return { patient: countedPatientWhere() };
+  const billable = comptabilitePatientWhere();
+  const collected = {
+    OR: [{ paidAmountFcfa: { gt: 0 } }, { status: InvoiceStatus.PAID }],
+  };
+  return {
+    OR: [
+      { patientId: null, ...collected },
+      { patient: { ...billable, active: true } },
+      { patient: { ...billable, active: false }, ...collected },
+    ],
+  };
 }
 
 export function resolveConsultationBilling(

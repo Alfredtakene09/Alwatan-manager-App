@@ -5,6 +5,7 @@ import {
   buildPrescribedExamsNotesByKind,
   hasExamListContent,
   hasPaidLabWorkPending,
+  paidExamLabels,
   hasUnpaidCashierQueueExams,
   isExamKindPaid,
   isOperationOnlyPrescription,
@@ -14,7 +15,9 @@ import {
   parseBilledExamLabelsByKind,
   parsePrescribedExamsByKind,
   parseRemovedExamLabelsByKind,
+  clearExamBillingMarkers,
   payableExamLabels,
+  prescribedExamSetsEqual,
   removedExamCreditFcfa,
   syncBillingForDoctorLineChange,
 } from "./lab-notes.js";
@@ -158,6 +161,30 @@ describe("file d'attente paiement examens", () => {
     );
   });
 
+  it("efface le paiement quand la nouvelle prescription remplace l'ancienne", () => {
+    const notes = [
+      "Examens prescrits (Laboratoire) : NFS, GE",
+      "Examens payés (Laboratoire) : 2026-10-06T11:18:17.845Z",
+      "Examens facturés (Laboratoire) : NFS, GE",
+      "Examens retirés (Laboratoire) : CRP",
+    ].join("\n");
+    const cleared = clearExamBillingMarkers(notes);
+    assert.equal(cleared, "Examens prescrits (Laboratoire) : NFS, GE");
+    assert.equal(isExamKindPaid(cleared, "examen"), false);
+    assert.deepEqual(payableExamLabels(cleared, "examen"), ["NFS", "GE"]);
+    assert.equal(
+      prescribedExamSetsEqual(
+        { examen: ["NFS", "GE"] },
+        { examen: ["GE", "NFS"] },
+      ),
+      true,
+    );
+    assert.equal(
+      prescribedExamSetsEqual({ examen: ["NFS"] }, { examen: ["NFS", "CRP"] }),
+      false,
+    );
+  });
+
   it("n'ajoute pas le tarif général par-dessus des champs déjà choisis", () => {
     const fbg = "Diabetic Test (Formulaire principal: FBG)";
     const merged = mergeExamsByKind(
@@ -178,6 +205,19 @@ describe("file laboratoire — examens payés", () => {
       "Examens prescrits (Examen) : NFS\nExamens payés (Examen) : 2026-09-21T07:48:58.417Z";
     assert.deepEqual(parsePrescribedExamsByKind(notes).examen, ["NFS"]);
     assert.equal(hasPaidLabWorkPending(notes, null), true);
+  });
+
+  it("ne compte ni n'affiche un examen ajouté après le paiement", () => {
+    const notes = [
+      "Examens prescrits (Laboratoire) : NFS, Glycémie",
+      "Examens facturés (Laboratoire) : NFS",
+    ].join("\n");
+    assert.deepEqual(paidExamLabels(notes, "examen"), ["NFS"]);
+    assert.equal(hasPaidLabWorkPending(notes, new Date()), true);
+    assert.equal(
+      hasPaidLabWorkPending("Examens prescrits (Laboratoire) : NFS", new Date()),
+      false,
+    );
   });
 
   it("inclut les dossiers soldés sans tampon labSentToLabAt dans le filtre SQL", () => {

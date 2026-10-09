@@ -22,6 +22,7 @@ import { formatFcfa, fullName } from '@/lib/roles'
 import { type SurgeryCaseRow, formatSurgeryDate, todayDateInputValue } from '@/lib/surgery-case'
 import {
   computeOperationShares,
+  formatAssistantLabel,
   surgeryCompletedAtIso,
 } from '@/lib/surgery-shares'
 import {
@@ -60,7 +61,16 @@ import LabExamPaymentModal, {
   type LabExamPaymentConfirmPayload,
   type LabExamPaymentItem,
 } from '@/components/comptabilite/LabExamPaymentModal.vue'
-import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
+import { compareOperationServiceGroups, operationServiceGroup } from '@/lib/operation-service-group'
+import {
+  exportBasename,
+  exportTablePdf,
+  exportTableWord,
+  exportWorkbook,
+  type ExportColumn,
+  type ExportSection,
+  type WorkbookSheetDef,
+} from '@/lib/table-export'
 
 const DATE_MODES: { id: DateFilterMode; label: string; icon: typeof CalendarDays }[] = [
   { id: 'day', label: 'Jour', icon: CalendarDays },
@@ -76,6 +86,7 @@ const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const searchQuery = ref('')
 const filterSurgeonId = ref('')
+const serviceFilter = ref('')
 const postponeModalOpen = ref(false)
 const postponeTargetId = ref<string | null>(null)
 const postponeDate = ref(todayDateInputValue())
@@ -125,9 +136,34 @@ const doctorFilteredSurgeries = computed(() => {
   return filteredSurgeries.value.filter((surgery) => surgery.surgeon.id === filterSurgeonId.value)
 })
 
+function surgeryServiceLabel(surgery: SurgeryCaseRow): string {
+  return surgery.interventionType.clinicService?.name?.trim() || 'Autre service'
+}
+
+function surgeryServiceGroup(surgery: SurgeryCaseRow) {
+  return operationServiceGroup(surgeryServiceLabel(surgery))
+}
+
+const serviceOptions = computed(() => {
+  const map = new Map<string, string>()
+  for (const surgery of doctorFilteredSurgeries.value) {
+    const group = surgeryServiceGroup(surgery)
+    map.set(group.key, group.title)
+  }
+  return [...map.entries()]
+    .map(([id, title]) => ({ id, title }))
+    .sort((a, b) => compareOperationServiceGroups({ key: a.id, title: a.title }, { key: b.id, title: b.title }))
+})
+
+const serviceFilteredSurgeries = computed(() =>
+  serviceFilter.value
+    ? doctorFilteredSurgeries.value.filter((surgery) => surgeryServiceGroup(surgery).key === serviceFilter.value)
+    : doctorFilteredSurgeries.value,
+)
+
 const displayedSurgeries = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  const base = doctorFilteredSurgeries.value
+  const base = serviceFilteredSurgeries.value
   if (!q) return base
 
   return base.filter((surgery) => {
@@ -531,13 +567,19 @@ const completedExportColumns: ExportColumn<SurgeryCaseRow>[] = [
   },
   { header: 'Code', value: (r) => r.visit.patient.code },
   { header: 'Intervention', value: (r) => r.interventionType.label },
+  { header: 'Service', value: (r) => surgeryServiceGroup(r).title },
   {
     header: 'Chirurgien',
     value: (r) => `Dr ${fullName(r.surgeon.firstName, r.surgeon.lastName)}`,
   },
-  { header: 'Montant', value: (r) => formatFcfa(r.totalCostFcfa) },
-  { header: 'Part médecin', value: (r) => formatFcfa(r.surgeonShareFcfa) },
-  { header: 'Part clinique', value: (r) => formatFcfa(r.clinicShareFcfa) },
+  { header: 'Montant', value: (r) => formatFcfa(computeOperationShares(r).totalFcfa) },
+  {
+    header: 'Anesthésiste',
+    value: (r) => formatAssistantLabel(r) ?? '—',
+  },
+  { header: 'Part médecin', value: (r) => formatFcfa(computeOperationShares(r).surgeonShareFcfa) },
+  { header: 'Part anesthésiste', value: (r) => formatFcfa(computeOperationShares(r).assistantShareFcfa) },
+  { header: 'Part clinique', value: (r) => formatFcfa(computeOperationShares(r).clinicShareFcfa) },
   { header: 'Effectuée le', value: (r) => formatSurgeryDate(r.completedAt) },
   {
     header: 'Programmée le',
@@ -547,6 +589,8 @@ const completedExportColumns: ExportColumn<SurgeryCaseRow>[] = [
 
 function completedExportShared() {
   const parts: string[] = [periodLabel.value]
+  const service = serviceOptions.value.find((item) => item.id === serviceFilter.value)
+  parts.push(`Service : ${service?.title ?? 'Tous les services'}`)
   if (filterSurgeonId.value) {
     const surgeon = surgeonOptions.value.find((s) => s.id === filterSurgeonId.value)
     if (surgeon) parts.push(`Médecin : ${surgeon.name}`)
@@ -555,22 +599,55 @@ function completedExportShared() {
   if (q) parts.push(`Recherche : ${q}`)
   return {
     captionRows: [{ label: 'Filtres', value: parts.join(' · ') }],
-    totalsRows: [
-      { label: 'Nombre d’opérations', value: String(displayedSurgeries.value.length) },
-    ],
   }
 }
 
+function completedGroupSections(rows: SurgeryCaseRow[]): ExportSection<SurgeryCaseRow>[] {
+  const buckets = new Map<string, { title: string; rows: SurgeryCaseRow[] }>()
+  for (const row of rows) {
+    const group = surgeryServiceGroup(row)
+    const bucket = buckets.get(group.key) ?? { title: group.title, rows: [] }
+    bucket.rows.push(row)
+    buckets.set(group.key, bucket)
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => compareOperationServiceGroups({ key: a[0], title: a[1].title }, { key: b[0], title: b[1].title }))
+    .map(([, group]) => ({
+      title: `${group.title} (${group.rows.length})`,
+      columns: completedExportColumns,
+      rows: group.rows,
+      totalsRows: [{ label: 'Nombre d’opérations', value: String(group.rows.length) }],
+      ownPage: true,
+    }))
+}
+
 function exportPdf() {
-  exportTablePdf('Opérations effectuées', completedExportColumns, displayedSurgeries.value, completedExportShared())
+  const rows = displayedSurgeries.value
+  exportTablePdf('Opérations effectuées', completedExportColumns, rows, {
+    ...completedExportShared(),
+    orientation: 'landscape',
+    sections: completedGroupSections(rows),
+  })
 }
 
 function exportExcel() {
-  exportTableExcel('Opérations effectuées', completedExportColumns, displayedSurgeries.value, completedExportShared())
+  const sheets: WorkbookSheetDef<SurgeryCaseRow>[] = completedGroupSections(displayedSurgeries.value).map(
+    (section) => ({
+      name: section.title,
+      columns: section.columns,
+      rows: section.rows,
+      totalsRows: section.totalsRows,
+    }),
+  )
+  exportWorkbook(exportBasename('Opérations effectuées'), sheets)
 }
 
 function exportWord() {
-  void exportTableWord('Opérations effectuées', completedExportColumns, displayedSurgeries.value, completedExportShared())
+  const rows = displayedSurgeries.value
+  void exportTableWord('Opérations effectuées', completedExportColumns, rows, {
+    ...completedExportShared(),
+    sections: completedGroupSections(rows),
+  })
 }
 
 onMounted(load)
@@ -581,7 +658,7 @@ onMounted(load)
     <section class="page-with-table__head">
       <UiPageHeader
         title="Opérations effectuées"
-        subtitle="Compte rendu journalier — répartition médecin, assistant chirurgie et clinique"
+        subtitle="Compte rendu journalier — répartition médecin, anesthésiste et clinique"
         :icon="CheckCircle2"
       />
       <UiAlert v-if="message && !postponeModalOpen && !payModalOpen && !paymentItem" :type="messageType" :message="message" />
@@ -603,7 +680,7 @@ onMounted(load)
         />
         <UiStatCard
           mini
-          label="Part assistant"
+          label="Part anesthésiste"
           :value="formatFcfa(stats.assistantShareFcfa)"
           :icon="HeartHandshake"
           variant="violet"
@@ -668,6 +745,16 @@ onMounted(load)
                 Effacer
               </button>
             </template>
+
+            <label class="filter-bar__field">
+              <span class="filter-bar__field-label">Service</span>
+              <select v-model="serviceFilter" class="filter-bar__input filter-bar__select">
+                <option value="">Tous les services</option>
+                <option v-for="service in serviceOptions" :key="service.id" :value="service.id">
+                  {{ service.title }}
+                </option>
+              </select>
+            </label>
 
             <label class="filter-bar__field">
               <span class="filter-bar__field-label">Médecin</span>

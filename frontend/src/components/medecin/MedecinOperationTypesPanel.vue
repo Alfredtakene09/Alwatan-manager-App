@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Plus, Save, Stethoscope } from '@lucide/vue'
 import api from '@/api/client'
 import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { formatFcfa } from '@/lib/roles'
 import { clinicPercentFromSplits, validateInterventionPercents } from '@/lib/intervention-splits'
 import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
+import { isLegacyEmiratesTariffLabel } from '@/i18n/translate'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -15,7 +16,6 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import StCatalogActions from '@/components/ui/StCatalogActions.vue'
-import ExportButtons from '@/components/ui/ExportButtons.vue'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import '@/assets/simple-table.css'
 
@@ -61,6 +61,10 @@ const props = defineProps<{
   serviceInfo: ServiceInfo | null
 }>()
 
+const emit = defineEmits<{
+  'export-count': [count: number]
+}>()
+
 const { uiText, localeCode } = useAppI18n()
 
 const items = ref<InterventionItem[]>([])
@@ -101,7 +105,7 @@ function doctorLabel(doctor: DoctorOption) {
 }
 
 function assistantDisplay(item: InterventionItem) {
-  if (item.anesthesiologistPercent <= 0) return uiText('Sans assistant')
+  if (item.anesthesiologistPercent <= 0) return uiText('Sans anesthésiste')
   if (item.anesthesiologist) {
     return doctorLabel(item.anesthesiologist)
   }
@@ -125,6 +129,7 @@ const filteredItems = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
   return items.value
     .filter((item) => {
+      if (isLegacyEmiratesTariffLabel(item.label, item.code)) return false
       if (!q) return true
       return [item.label, item.code, categoryLabel(item.category)].join(' ').toLowerCase().includes(q)
     })
@@ -161,39 +166,24 @@ const tableRows = computed(() => {
 
 type MedecinOpExportRow = {
   label: string
-  code: string
-  category: string
   price: string
-  splits: string
-  surgeons: string
-  assistant: string
-  statusLabel: string
+  service: string
 }
 
 const medecinOpExportColumns = computed<ExportColumn<MedecinOpExportRow>[]>(() => {
   void localeCode.value
   return [
-    { header: uiText('Libellé'), value: (r) => r.label },
-    { header: uiText('Code'), value: (r) => r.code || '—' },
-    { header: uiText('Catégorie'), value: (r) => r.category },
-    { header: uiText('Coût'), value: (r) => r.price },
-    { header: uiText('Répartition'), value: (r) => r.splits },
-    { header: uiText('Chirurgiens'), value: (r) => r.surgeons },
-    { header: uiText('Assistant'), value: (r) => r.assistant },
-    { header: uiText('Statut'), value: (r) => r.statusLabel },
+    { header: uiText('Nom'), value: (r) => r.label },
+    { header: uiText('Prix'), value: (r) => r.price },
+    { header: uiText('Service'), value: (r) => r.service },
   ]
 })
 
 const medecinOpExportRows = computed<MedecinOpExportRow[]>(() =>
-  tableRows.value.filter((row) => row.isActive).map((row) => ({
-    label: row.label,
-    code: row.code,
-    category: row.category,
-    price: row.price,
-    splits: row.splits,
-    surgeons: row.surgeons,
-    assistant: row.assistant,
-    statusLabel: row.statusLabel,
+  filteredItems.value.map((item) => ({
+    label: item.label,
+    price: formatFcfa(item.totalCostFcfa),
+    service: item.clinicService?.name || serviceName.value,
   })),
 )
 
@@ -223,6 +213,18 @@ function exportMedecinOpsExcel() {
 function exportMedecinOpsWord() {
   void exportTableWord(uiText('Types d’opérations'), medecinOpExportColumns.value, medecinOpExportRows.value, medecinOpExportShared())
 }
+
+watch(
+  medecinOpExportRows,
+  (rows) => emit('export-count', rows.length),
+  { immediate: true },
+)
+
+defineExpose({
+  exportPdf: exportMedecinOpsPdf,
+  exportExcel: exportMedecinOpsExcel,
+  exportWord: exportMedecinOpsWord,
+})
 
 function resetMessages() {
   message.value = ''
@@ -260,7 +262,9 @@ async function loadItems() {
   resetMessages()
   try {
     const { data } = await api.get<InterventionItem[]>('/consultation/operation-types')
-    items.value = Array.isArray(data) ? data : []
+    items.value = Array.isArray(data)
+      ? data.filter((item) => !isLegacyEmiratesTariffLabel(item.label, item.code))
+      : []
   } catch (error: unknown) {
     const err = error as { response?: { data?: { error?: string } } }
     message.value =
@@ -332,7 +336,7 @@ function buildPayload(form: ReturnType<typeof emptyForm>) {
     const hasName = form.assistantInputMode === 'custom' && form.anesthesiologistName.trim().length >= 2
     if (!hasDoctor && !hasName) {
       return {
-        error: uiText("Liez un médecin ou saisissez le nom de l'assistant chirurgie (2 caractères min.)."),
+        error: uiText("Liez un médecin ou saisissez le nom de l'anesthésiste (2 caractères min.)."),
       }
     }
   }
@@ -501,12 +505,6 @@ onMounted(() => {
       class="section"
     >
       <template #actions>
-        <ExportButtons
-          :disabled="loading || !medecinOpExportRows.length"
-          @pdf="exportMedecinOpsPdf"
-          @excel="exportMedecinOpsExcel"
-          @word="exportMedecinOpsWord"
-        />
         <UiButton
           variant="primary"
           size="sm"
@@ -549,7 +547,7 @@ onMounted(() => {
                     <th>Coût total</th>
                     <th>Chirurgien / Assist. / Clinique</th>
                     <th>Chirurgiens autorisés</th>
-                    <th>Assistant</th>
+                    <th>Anesthésiste</th>
                     <th>Statut</th>
                     <th class="simple-table__actions-head">Actions</th>
                   </tr>
@@ -669,7 +667,7 @@ onMounted(() => {
             <UiInput
               v-else
               v-model="newItem.anesthesiologistName"
-              :label="uiText('Nom assistant chirurgie')"
+              :label="uiText('Nom de l’anesthésiste')"
               placeholder="Nom de l'assistant"
             />
             <UiInput
@@ -765,7 +763,7 @@ onMounted(() => {
             <UiInput
               v-else
               v-model="editForm.anesthesiologistName"
-              :label="uiText('Nom assistant chirurgie')"
+              :label="uiText('Nom de l’anesthésiste')"
             />
             <UiInput
               v-model="editForm.anesthesiologistPercent"

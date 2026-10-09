@@ -145,7 +145,7 @@ function onAction(action: 'revert' | 'postpone' | 'payShares' | 'encaisser', id:
               <td>
                 <span class="st-name">{{ row.surgeonName }}</span>
                 <span v-if="row.assistantLabel" class="st-team-sub">Asst. {{ row.assistantLabel }}</span>
-                <span v-else class="st-team-sub st-muted">Sans assistant</span>
+                <span v-else class="st-team-sub st-muted">Sans anesthésiste</span>
               </td>
               <td>
                 <span class="st-amount">{{ row.totalAmount }}</span>

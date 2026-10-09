@@ -123,7 +123,7 @@ const clinicServices = ref<ClinicServiceOption[]>([])
 
 const route = useRoute()
 const auth = useAuthStore()
-const { uiText, localeCode } = useAppI18n()
+const { uiText, clinicServiceText, localeCode } = useAppI18n()
 const canExportSalaries = computed(() =>
   auth.user ? canViewEmployeeCompensation(auth.user.role) : false,
 )
@@ -421,9 +421,12 @@ function toEmployeeExportRow(employee: Employee) {
     servicesLabel: employee.isMedecin
       ? (employee.clinicServices?.length
           ? employee.clinicServices
-              .map((s) => (s.isDefault ? `${s.name} ★` : s.name))
+              .map((s) => {
+                const label = clinicServiceText(s.name)
+                return s.isDefault ? `${label} ★` : label
+              })
               .join(', ')
-          : employee.clinicService?.name || employee.service || '—')
+          : clinicServiceText(employee.clinicService?.name || employee.service || '') || '—')
       : '—',
     profileLabel: employee.isMedecin ? uiText('Médecin') : uiText('Personnel'),
     compensationLabel: canExportSalaries.value ? employeeCompensationLabel(employee) : '—',
@@ -956,7 +959,7 @@ async function saveEmployee() {
     if (!Number.isInteger(percent) || percent < 1 || percent > 99) {
       message.value = uiText(
         isSurgeryAssistantProfile.value
-          ? 'Le pourcentage assistant chirurgie doit être un entier entre 1 et 99.'
+          ? 'Le pourcentage anesthésiste doit être un entier entre 1 et 99.'
           : 'Le pourcentage chirurgie doit être un entier entre 1 et 99.',
       )
       messageType.value = 'error'
@@ -1458,7 +1461,7 @@ onMounted(async () => {
                   :checked="isClinicServiceSelected(service.id)"
                   @change="toggleClinicService(service.id)"
                 />
-                <span class="clinic-services-picker__name">{{ service.name }}</span>
+                <span class="clinic-services-picker__name">{{ clinicServiceText(service.name) }}</span>
               </label>
               <button
                 v-if="isClinicServiceSelected(service.id)"

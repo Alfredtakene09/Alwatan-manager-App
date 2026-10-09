@@ -16,6 +16,7 @@ import {
   ensureSettledSurgeryCashClaim,
   settleConsultationCash,
 } from "../lib/doctor-share-claims.js";
+import { effectiveSurgeryAssistant, resolveAssistantPercent } from "../lib/doctor-compensation.js";
 import { buildSharePaymentUpdate } from "../lib/surgery-share-payments.js";
 import { requireAuth, requireAnyModule } from "../middleware/auth.js";
 import { DIRECTION_GESTIONNAIRE_ROLES } from "../lib/roles.js";
@@ -243,13 +244,14 @@ router.post(
             businessDate,
           });
         }
-        if (body.shares.includes("assistant") && surgery.interventionType.anesthesiologistId) {
-          const percent = surgery.interventionType.anesthesiologistPercent ?? 0;
+        const assistant = effectiveSurgeryAssistant(surgery);
+        if (body.shares.includes("assistant") && assistant.id) {
+          const percent = resolveAssistantPercent(assistant.percent, null);
           await ensureSettledSurgeryCashClaim(tx, {
             surgeryCaseId: surgery.id,
             kind: DoctorShareKind.OPERATION_ASSISTANT,
             amountFcfa: Math.round((surgery.totalCostFcfa * percent) / 100),
-            doctorUserId: surgery.interventionType.anesthesiologistId,
+            doctorUserId: assistant.id,
             settledById: req.user!.id,
             businessDate,
           });

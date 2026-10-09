@@ -72,54 +72,43 @@ const phoneHint = computed(() => {
     </div>
 
     <div class="patient-identity__row patient-identity__row--age-gender">
-      <div class="age-field">
-        <span class="field-label">{{ labels.age }} <span class="field-label__req">*</span></span>
-        <div class="age-field__body">
-          <UiInput
-            v-model="age"
-            :label="''"
-            type="number"
-            min="0"
-            :max="activeAgeConfig.max"
-            :placeholder="activeAgeConfig.placeholder"
-            required
-            class="age-field__input"
-          />
-          <div class="age-units" role="group" :aria-label="labels.ageUnit">
-            <button
-              v-for="unit in ageUnits"
-              :key="unit.value"
-              type="button"
-              class="age-unit"
-              :class="{ 'age-unit--active': ageUnit === unit.value }"
-              @click="ageUnit = unit.value"
-            >
-              {{ unit.label }}
-            </button>
-          </div>
-        </div>
+      <span class="field-label field-label--inline">
+        {{ labels.age }} <span class="field-label__req">*</span>
+      </span>
+      <UiInput
+        v-model="age"
+        :label="''"
+        type="number"
+        min="0"
+        :max="activeAgeConfig.max"
+        :placeholder="activeAgeConfig.placeholder"
+        required
+        class="age-field__input"
+      />
+      <div class="age-radios" role="radiogroup" :aria-label="labels.ageUnit">
+        <label v-for="unit in ageUnits" :key="unit.value" class="age-radio">
+          <input v-model="ageUnit" type="radio" name="patient-age-unit" :value="unit.value" />
+          <span>{{ unit.label }}</span>
+        </label>
       </div>
-
-      <div class="gender-field">
-        <span class="field-label">{{ labels.gender }}</span>
-        <div class="gender-options" role="group" :aria-label="labels.gender">
-          <button
-            type="button"
-            class="gender-option"
-            :class="{ 'gender-option--active': gender === 'F' }"
-            @click="gender = 'F'"
-          >
-            {{ labels.female }}
-          </button>
-          <button
-            type="button"
-            class="gender-option"
-            :class="{ 'gender-option--active': gender === 'M' }"
-            @click="gender = 'M'"
-          >
-            {{ labels.male }}
-          </button>
-        </div>
+      <span class="field-label field-label--inline field-label--gender">{{ labels.gender }}</span>
+      <div class="gender-options" role="group" :aria-label="labels.gender">
+        <button
+          type="button"
+          class="gender-option"
+          :class="{ 'gender-option--active': gender === 'F' }"
+          @click="gender = 'F'"
+        >
+          {{ labels.female }}
+        </button>
+        <button
+          type="button"
+          class="gender-option"
+          :class="{ 'gender-option--active': gender === 'M' }"
+          @click="gender = 'M'"
+        >
+          {{ labels.male }}
+        </button>
       </div>
     </div>
   </div>
@@ -156,8 +145,10 @@ const phoneHint = computed(() => {
 }
 
 .patient-identity__row--age-gender {
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
-  align-items: start;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
 }
 
 .field-label {
@@ -168,18 +159,26 @@ const phoneHint = computed(() => {
   margin-bottom: 0.35rem;
 }
 
+.field-label--inline {
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+
+.field-label--gender {
+  margin-left: 0.35rem;
+}
+
 .field-label__req {
   color: var(--danger-500, #dc2626);
 }
 
-.age-field__body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+.age-field__input {
+  width: 5.5rem;
+  flex: 0 0 5.5rem;
 }
 
-.age-field__input {
-  width: 6.25rem;
+.age-field__input :deep(.ui-field) {
+  margin-bottom: 0;
 }
 
 .age-field__input :deep(.ui-field__label) {
@@ -187,44 +186,48 @@ const phoneHint = computed(() => {
 }
 
 .age-field__input :deep(.ui-field__input) {
-  padding-top: 0.55rem;
-  padding-bottom: 0.55rem;
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
   font-size: 0.9375rem;
   font-weight: 600;
 }
 
-.age-units {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.age-radios {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.age-radio {
+  display: inline-flex;
+  align-items: center;
   gap: 0.3rem;
-}
-
-.age-unit {
-  padding: 0.52rem 0.35rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: #fff;
-  color: var(--text-muted);
-  font-size: 0.75rem;
+  margin: 0;
+  color: var(--text);
+  font-size: 0.8125rem;
   font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
 
-.age-unit--active {
-  border-color: var(--primary-500);
-  background: var(--primary-50);
-  color: var(--primary-800);
+.age-radio input {
+  margin: 0;
+  accent-color: var(--primary-600, #2563eb);
+  width: 1rem;
+  height: 1rem;
+  cursor: pointer;
 }
 
 .gender-options {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  align-items: center;
   gap: 0.35rem;
+  margin-left: auto;
 }
 
 .gender-option {
-  padding: 0.52rem 0.4rem;
+  padding: 0.45rem 0.7rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: #fff;
@@ -242,15 +245,17 @@ const phoneHint = computed(() => {
   color: var(--primary-800);
 }
 
-@media (max-width: 480px) {
-  .patient-identity__row--name-phone,
-  .patient-identity__row--age-gender {
+@media (max-width: 640px) {
+  .patient-identity__row--name-phone {
     grid-template-columns: 1fr;
   }
 
-  .age-field__input {
-    width: 100%;
-    max-width: 7rem;
+  .patient-identity__row--age-gender {
+    flex-wrap: wrap;
+  }
+
+  .gender-options {
+    margin-left: 0;
   }
 }
 </style>

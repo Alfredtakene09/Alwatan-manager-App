@@ -50,6 +50,8 @@ export type LabExamPendingItem = {
   partialPaymentsByKind?: Partial<
     Record<ExamKindSlug, { totalFcfa: number; paidFcfa: number; remainingFcfa: number }>
   >
+  /** Réceptionnistes ayant encaissé, par type d'examen. */
+  collectorsByKind?: Partial<Record<ExamKindSlug, Array<{ id: string; name: string }>>>
   /** Cumul réellement encaissé (tranches + soldes). */
   collectedFcfa?: number
   /** Solde restant sur les types partiellement payés. */

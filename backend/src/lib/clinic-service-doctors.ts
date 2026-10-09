@@ -1,5 +1,6 @@
 import { UserRole, type Prisma } from "@prisma/client";
 import { prisma } from "./db.js";
+import { isAnesthetistStaff, isGeneralSurgeryServiceName } from "./doctor-profile.js";
 
 export const clinicServiceDoctorSelect = {
   id: true,
@@ -390,7 +391,23 @@ const transferDoctorSelect = {
   id: true,
   firstName: true,
   lastName: true,
+  employee: { select: { jobTitle: true, specialty: true } },
 } as const;
+
+function toTransferDoctor(doctor: {
+  id: string;
+  firstName: string;
+  lastName: string;
+}): TransferServiceDoctor {
+  return { id: doctor.id, firstName: doctor.firstName, lastName: doctor.lastName };
+}
+
+function withoutAnesthetistOnGeneralSurgery<
+  T extends { employee?: { jobTitle?: string | null; specialty?: string | null } | null },
+>(doctors: T[], serviceName: string | null | undefined): T[] {
+  if (!isGeneralSurgeryServiceName(serviceName)) return doctors;
+  return doctors.filter((doctor) => !isAnesthetistStaff(doctor.employee ?? {}));
+}
 
 async function listActiveTransferDoctors() {
   return prisma.user.findMany({
@@ -402,6 +419,10 @@ async function listActiveTransferDoctors() {
 
 /** Médecins avec compte actif rattachés au service (pour transfert). */
 export async function listTransferDoctorsForClinicService(clinicServiceId: string) {
+  const service = await prisma.clinicService.findUnique({
+    where: { id: clinicServiceId },
+    select: { name: true },
+  });
   const linked = await prisma.user.findMany({
     where: {
       ...transferDoctorUserWhere,
@@ -418,9 +439,14 @@ export async function listTransferDoctorsForClinicService(clinicServiceId: strin
     select: transferDoctorSelect,
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });
-  if (linked.length > 0) return linked;
+  const visible = withoutAnesthetistOnGeneralSurgery(linked, service?.name);
+  if (visible.length > 0) return visible.map(toTransferDoctor);
   // Service sans rattachement : proposer tous les médecins actifs pour ne pas bloquer le transfert.
-  return listActiveTransferDoctors();
+  const fallback = withoutAnesthetistOnGeneralSurgery(
+    await listActiveTransferDoctors(),
+    service?.name,
+  );
+  return fallback.map(toTransferDoctor);
 }
 
 export async function findSelectableDoctorInClinicService(doctorId: string, clinicServiceId: string) {

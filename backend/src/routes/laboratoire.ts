@@ -8,7 +8,7 @@ import {
   hasPaidLabWorkPending,
   labsWaitingWhere,
   labsCompletedWhere,
-  parsePrescribedExamsByKind,
+  paidExamLabels,
   formatGroupedPrescribedLabels,
   countGroupedPrescribedPanels,
 } from "../lib/lab-notes.js";
@@ -88,7 +88,7 @@ const panelSchema = z.object({
 
 /** Formulaires labo correspondant aux examens laboratoire prescrits. */
 async function resolvePrescribedPanels(clinicalNotes?: string | null) {
-  const labels = parsePrescribedExamsByKind(clinicalNotes).examen;
+  const labels = paidExamLabels(clinicalNotes, "examen");
   if (!labels.length) return [] as Array<{ slug: string; label: string; examLabel: string }>;
 
   const keys = new Set(
@@ -263,7 +263,7 @@ router.get("/alerts", async (_req, res) => {
     ) {
       continue;
     }
-    const exams = parsePrescribedExamsByKind(visit.consultation?.clinicalNotes).examen;
+    const exams = paidExamLabels(visit.consultation?.clinicalNotes, "examen");
     const examCount = countGroupedPrescribedPanels(exams);
     const sentAt = visit.consultation?.labSentToLabAt ?? null;
     const recent = Boolean(sentAt && sentAt.getTime() >= recentCutoff);

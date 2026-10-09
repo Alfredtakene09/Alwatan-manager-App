@@ -107,8 +107,12 @@ function closePrescriptionModal() {
   prescriptionVisit.value = null
 }
 
-function onPrescriptionSaved() {
-  message.value = uiText('Dossier mis à jour avec succès.')
+function onPrescriptionSaved(payload?: { examsReplaced?: boolean }) {
+  message.value = uiText(
+    payload?.examsReplaced
+      ? 'Prescription remplacée. Le dossier est de nouveau en attente de paiement. Le paiement précédent, s’il existait, a été annulé et retiré du solde.'
+      : 'Dossier mis à jour avec succès.',
+  )
   messageType.value = 'success'
   loadVisits()
 }

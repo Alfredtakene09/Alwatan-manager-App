@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { ORTHO_TRAUMA_SERVICE_NAME } from "./ortho-trauma-service.js";
 
 export const DEFAULT_CLINIC_SERVICES = [
   "Consultation",
@@ -11,7 +12,7 @@ export const DEFAULT_CLINIC_SERVICES = [
   "Bloc opératoire",
   "Pharmacie",
   "Accueil / Réception",
-  "Orthopédie",
+  ORTHO_TRAUMA_SERVICE_NAME,
   "Kinésithérapie",
 ] as const;
 

@@ -51,6 +51,12 @@ function tabFromQuery(): TabId {
 }
 
 const activeTab = ref<TabId>(tabFromQuery())
+const opsExportCount = ref(0)
+const opsPanel = ref<{
+  exportPdf: () => void
+  exportExcel: () => void
+  exportWord: () => void
+} | null>(null)
 const serviceInfo = ref<DoctorServiceInfo | null>(null)
 const items = ref<CatalogItem[]>([])
 const loading = ref(false)
@@ -125,30 +131,24 @@ const tableRows = computed(() => {
 
 type MedecinExamExportRow = {
   label: string
-  code: string
-  category: string
   price: string
-  statusLabel: string
+  service: string
 }
 
 const medecinExamExportColumns = computed<ExportColumn<MedecinExamExportRow>[]>(() => {
   void localeCode.value
   return [
-    { header: uiText('Libellé'), value: (r) => r.label },
-    { header: uiText('Code'), value: (r) => r.code || '—' },
-    { header: uiText('Catégorie'), value: (r) => r.category },
-    { header: uiText('Tarif'), value: (r) => r.price },
-    { header: uiText('Statut'), value: (r) => r.statusLabel },
+    { header: uiText('Nom'), value: (r) => r.label },
+    { header: uiText('Prix'), value: (r) => r.price },
+    { header: uiText('Service'), value: (r) => r.service },
   ]
 })
 
 const medecinExamExportRows = computed<MedecinExamExportRow[]>(() =>
-  tableRows.value.filter((row) => row.isActive).map((row) => ({
-    label: row.label,
-    code: row.code,
-    category: row.category,
-    price: row.price,
-    statusLabel: row.statusLabel,
+  filteredItems.value.map((item) => ({
+    label: examNameText(item.label),
+    price: formatFcfa(item.priceFcfa),
+    service: uiText(item.clinicService?.name || serviceName.value),
   })),
 )
 
@@ -390,7 +390,24 @@ watch(categoryOptions, (options) => {
 <template>
   <div class="page-with-table">
     <section class="page-with-table__head">
-      <UiPageHeader :title="pageTitle" :subtitle="pageSubtitle" :icon="ListChecks" />
+      <UiPageHeader :title="pageTitle" :subtitle="pageSubtitle" :icon="ListChecks">
+        <template #actions>
+          <ExportButtons
+            v-if="activeTab === 'exams'"
+            :disabled="loading || !medecinExamExportRows.length"
+            @pdf="exportMedecinExamsPdf"
+            @excel="exportMedecinExamsExcel"
+            @word="exportMedecinExamsWord"
+          />
+          <ExportButtons
+            v-else
+            :disabled="opsExportCount === 0"
+            @pdf="opsPanel?.exportPdf()"
+            @excel="opsPanel?.exportExcel()"
+            @word="opsPanel?.exportWord()"
+          />
+        </template>
+      </UiPageHeader>
       <div class="page-tabs" role="tablist" :aria-label="uiText('Sections nomenclature')">
         <button
           type="button"
@@ -428,12 +445,6 @@ watch(categoryOptions, (options) => {
         class="section"
       >
         <template #actions>
-          <ExportButtons
-            :disabled="loading || !medecinExamExportRows.length"
-            @pdf="exportMedecinExamsPdf"
-            @excel="exportMedecinExamsExcel"
-            @word="exportMedecinExamsWord"
-          />
           <UiButton
             variant="primary"
             size="sm"
@@ -591,6 +602,8 @@ watch(categoryOptions, (options) => {
 
     <MedecinOperationTypesPanel
       v-else
+      ref="opsPanel"
+      @export-count="opsExportCount = $event"
       :service-info="
         serviceInfo
           ? {

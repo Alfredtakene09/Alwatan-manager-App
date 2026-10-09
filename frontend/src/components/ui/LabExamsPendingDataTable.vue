@@ -186,6 +186,7 @@ function onPrint(row: TableRow) {
           <thead>
             <tr>
               <th class="simple-table__num">#</th>
+              <th v-if="!isPaidMode" class="simple-table__date">{{ uiText('Date') }}</th>
               <th>{{ uiText('Matricule') }}</th>
               <th class="simple-table__patient">{{ uiText('Patient') }}</th>
               <th class="simple-table__doctor">{{ uiText('Médecin') }}</th>
@@ -196,6 +197,10 @@ function onPrint(row: TableRow) {
           <tbody>
             <tr v-for="(row, index) in rows" :key="row.id">
               <td class="simple-table__num">{{ index + 1 }}</td>
+              <td v-if="!isPaidMode" class="simple-table__date">
+                <span class="st-date">{{ row.date }}</span>
+                <span class="st-sub">{{ row.time }}</span>
+              </td>
               <td>
                 <span class="st-badge">{{ row.code }}</span>
               </td>

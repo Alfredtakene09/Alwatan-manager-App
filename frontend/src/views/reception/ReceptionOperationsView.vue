@@ -41,6 +41,7 @@ import {
 } from '@/lib/exam-catalog'
 import {
   doctorMatchesClinicServiceId,
+  withoutAnesthetistForGeneralSurgery,
   type DoctorOption,
 } from '@/lib/doctor-compensation'
 import MultiExamPrescriptionPicker, {
@@ -48,7 +49,12 @@ import MultiExamPrescriptionPicker, {
 } from '@/components/MultiExamPrescriptionPicker.vue'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
 import { type SurgeryCaseRow, type SurgeryUserRef } from '@/lib/surgery-case'
-import { formatAssistantLabel, surgeryCompletedAtIso } from '@/lib/surgery-shares'
+import {
+  computeOperationShares,
+  formatAssistantLabel,
+  operationSurgeonPercent as surgeonPercentOfOperation,
+  surgeryCompletedAtIso,
+} from '@/lib/surgery-shares'
 import {
   formatPeriodLabel,
   matchesDateFilter,
@@ -61,13 +67,16 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { compareOperationServiceGroups, operationServiceGroup } from '@/lib/operation-service-group'
 import {
-  exportTableExcel,
+  exportBasename,
   exportTablePdf,
   exportTableWord,
+  exportWorkbook,
   type ExportCaptionRow,
   type ExportColumn,
   type ExportSection,
+  type WorkbookSheetDef,
 } from '@/lib/table-export'
 import '@/assets/simple-table.css'
 
@@ -96,12 +105,15 @@ type OtherOperationInvoice = {
   interventionLabel: string
   doctor?: SurgeryUserRef | null
   assistantName?: string | null
+  assistantId?: string | null
+  assistantPercent?: number | null
   serviceName?: string | null
   visit: {
     id: string
     createdAt?: string
     updatedAt?: string
     createdBy?: SurgeryUserRef | null
+    updatedBy?: SurgeryUserRef | null
     patient: { code: string; firstName: string; lastName: string }
     consultation?: { id: string } | null
   }
@@ -124,6 +136,10 @@ type OperationRow = {
   invoiceNumber: string
   payments: OperationPayment[]
   assistantName: string
+  assistantId: string
+  assistantShareFcfa: number
+  assistantPercent: number
+  clinicShareFcfa: number
   completed: boolean
   timestamp: number
   dateLabel: string
@@ -136,6 +152,8 @@ type OperationRow = {
   paymentState: PaymentState
   registeredById: string
   registeredBy: string
+  /** Dernier modificateur, seulement s’il n’est pas la personne qui a enregistré. */
+  modifiedBy: string
   collectedBy: string
   surgeonShareFcfa: number
   surgeonPercent: number
@@ -204,6 +222,7 @@ const paymentFilter = ref<PaymentFilter>('all')
 const receptionistFilter = ref('')
 const doctorFilter = ref('')
 const sourceFilter = ref<SourceFilter>('all')
+const serviceFilter = ref('')
 
 const showRegisterModal = ref(false)
 const registeringOperation = ref(false)
@@ -331,10 +350,19 @@ const editAmount = ref('')
 const editDate = ref('')
 const editServiceId = ref('')
 const editDoctorId = ref('')
+const editAssistantId = ref('')
 const editInterventionId = ref('')
 const openedInterventionId = ref('')
 const operationCatalog = ref<CatalogExam[]>([])
 const editDoctors = ref<Array<DoctorOption & { surgeryQuotaPercent?: number | null }>>([])
+const editAnesthetists = ref<
+  Array<{
+    id: string
+    firstName: string
+    lastName: string
+    surgeryQuotaPercent?: number | null
+  }>
+>([])
 const savingEdit = ref(false)
 
 const filterFrom = ref(todayDateKey())
@@ -407,13 +435,11 @@ function withoutEmiratesTariffMark(label: string) {
   return label.replace(EMIRATES_TARIFF_SUFFIX, '').trim()
 }
 
-/** (Nom de l’opération) Service. Si l'acte n'est que le nom du service, le service seul. */
-function operationPlaceLabel(name: string, service: string) {
-  const operation = withoutEmiratesTariffMark(clinicServiceText(name.trim()))
-  const place = clinicServiceText(service.trim())
-  if (operation && place && foldServiceName(operation) === foldServiceName(place)) return place
-  if (operation && place) return `(${operation}) ${place}`
-  return place || operation
+/** Colonne Service : le nom du service (Labo, Échographie, Gynécologie…), pas l’acte. */
+function serviceColumnLabel(row: Pick<OperationRow, 'serviceName' | 'intervention'>) {
+  const place = clinicServiceText(row.serviceName.trim())
+  if (place) return place
+  return withoutEmiratesTariffMark(clinicServiceText(row.intervention.trim())) || '—'
 }
 
 /** Date colonne + filtres = date d'enregistrement (créée ou dernière modification). */
@@ -421,23 +447,40 @@ function otherOperationDateIso(op: OtherOperationInvoice) {
   return op.createdAt || op.paidAt || new Date(0).toISOString()
 }
 
-/** % réellement appliqué : la part enregistrée, recollée au % catalogue si l'écart n'est qu'un arrondi. */
-function appliedSurgeonPercent(shareFcfa: number, baseFcfa: number, catalogPercent: number) {
-  if (baseFcfa <= 0 || shareFcfa <= 0) return 0
-  const derived = Math.round((shareFcfa * 100) / baseFcfa)
-  if (catalogPercent > 0 && Math.abs(derived - catalogPercent) <= 1) return catalogPercent
-  return derived
-}
-
-function otherSurgeonShare(op: OtherOperationInvoice) {
+function otherSurgeonShare(op: OtherOperationInvoice, paidFcfa: number) {
+  const wanted = withoutEmiratesTariffMark(op.interventionLabel).trim().toLowerCase()
   const catalog = operationCatalog.value.find(
-    (item) => item.label.trim().toLowerCase() === op.interventionLabel.trim().toLowerCase(),
+    (item) => withoutEmiratesTariffMark(item.label).trim().toLowerCase() === wanted,
   )
   const surgeonPercent = catalog?.surgeonPercent ?? 0
-  const billed = op.amountFcfa
+  const assistantPercent =
+    op.assistantPercent != null ? op.assistantPercent : (catalog?.anesthesiologistPercent ?? 0)
+  const collected = Math.max(0, paidFcfa)
   const surgeonShareFcfa =
-    surgeonPercent > 0 && billed > 0 ? Math.round((billed * surgeonPercent) / 100) : 0
-  return { surgeonShareFcfa, surgeonPercent }
+    surgeonPercent > 0 && collected > 0 ? Math.round((collected * surgeonPercent) / 100) : 0
+  const assistantShareFcfa =
+    assistantPercent > 0 && collected > 0 ? Math.round((collected * assistantPercent) / 100) : 0
+  return {
+    surgeonShareFcfa,
+    surgeonPercent,
+    assistantShareFcfa,
+    assistantPercent,
+    assistantId: op.assistantId || catalog?.anesthesiologistId || '',
+    clinicShareFcfa: Math.max(0, collected - surgeonShareFcfa - assistantShareFcfa),
+  }
+}
+
+function modifierName(
+  createdBy?: SurgeryUserRef | null,
+  updatedBy?: SurgeryUserRef | null,
+): string {
+  const authorId = createdBy?.id ?? ''
+  const editorId = updatedBy?.id ?? ''
+  if (!editorId || editorId === authorId) return ''
+  const editor = userName(updatedBy)
+  const author = userName(createdBy)
+  if (!editor || editor.toLocaleLowerCase('fr') === author.toLocaleLowerCase('fr')) return ''
+  return editor
 }
 
 function formatModifiedLabel(date: Date) {
@@ -461,6 +504,7 @@ function toOtherRow(op: OtherOperationInvoice): OperationRow {
   const doctor = userName(op.doctor)
   const dateLabel = date.toLocaleDateString('fr-FR')
   const modifiedAt = otherModificationDate(op)
+  const pay = paymentInfo(op.amountFcfa, op)
   return {
     id: `other-${op.id}`,
     recordId: op.id,
@@ -469,7 +513,7 @@ function toOtherRow(op: OtherOperationInvoice): OperationRow {
     consultationId: op.visit.consultation?.id ?? null,
     patientName: fullName(op.visit.patient.firstName, op.visit.patient.lastName),
     patientCode: op.visit.patient.code,
-    intervention: op.interventionLabel,
+    intervention: withoutEmiratesTariffMark(op.interventionLabel),
     serviceName: op.serviceName?.trim() || '',
     interventionTypeId: '',
     surgeonId: op.doctor?.id ?? '',
@@ -484,10 +528,11 @@ function toOtherRow(op: OtherOperationInvoice): OperationRow {
     timeLabel: date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
     // Date du libellé = jour réel de la modification (ex. aujourd’hui), pas la date d’enregistrement.
     modifiedLabel: modifiedAt ? formatModifiedLabel(modifiedAt) : null,
-    ...paymentInfo(op.amountFcfa, op),
+    ...pay,
     registeredById: op.visit.createdBy?.id ?? '',
     registeredBy: userName(op.visit.createdBy) || '—',
-    ...otherSurgeonShare(op),
+    modifiedBy: modifierName(op.visit.createdBy, op.visit.updatedBy),
+    ...otherSurgeonShare(op, pay.paidFcfa),
   }
 }
 
@@ -500,6 +545,7 @@ function toRow(surgery: SurgeryCaseRow): OperationRow {
   const wasEdited = updated > 0 && created > 0 && updated - created > 60_000
   const dateLabel = date.toLocaleDateString('fr-FR')
   const modifiedAt = wasEdited || completed ? updatedAt : null
+  const shares = computeOperationShares(surgery)
 
   return {
     id: surgery.id,
@@ -509,7 +555,7 @@ function toRow(surgery: SurgeryCaseRow): OperationRow {
     consultationId: surgery.visit.consultation?.id ?? null,
     patientName: fullName(surgery.visit.patient.firstName, surgery.visit.patient.lastName),
     patientCode: surgery.visit.patient.code,
-    intervention: surgery.interventionType.label,
+    intervention: withoutEmiratesTariffMark(surgery.interventionType.label),
     serviceName: surgeonServiceName(surgery),
     interventionTypeId: surgery.interventionType.id,
     surgeonId: surgery.surgeon.id,
@@ -518,6 +564,16 @@ function toRow(surgery: SurgeryCaseRow): OperationRow {
     invoiceNumber: surgery.invoice?.invoiceNumber ?? '',
     payments: mapPayments(surgery.invoice),
     assistantName: formatAssistantLabel(surgery) || '—',
+    assistantId:
+      surgery.anesthesiologistPercent != null || surgery.anesthesiologistId
+        ? (surgery.anesthesiologist?.id ?? '')
+        : (surgery.interventionType.anesthesiologist?.id ?? ''),
+    assistantShareFcfa: shares.assistantShareFcfa,
+    assistantPercent:
+      surgery.anesthesiologistPercent != null
+        ? surgery.anesthesiologistPercent
+        : (surgery.interventionType.anesthesiologistPercent ?? 0),
+    clinicShareFcfa: shares.clinicShareFcfa,
     completed,
     timestamp: date.getTime(),
     dateLabel,
@@ -526,12 +582,9 @@ function toRow(surgery: SurgeryCaseRow): OperationRow {
     ...paymentInfo(surgery.invoice?.amountFcfa ?? surgery.totalCostFcfa, surgery.invoice),
     registeredById: surgery.visit.createdBy?.id ?? '',
     registeredBy: userName(surgery.visit.createdBy) || '—',
-    surgeonShareFcfa: surgery.surgeonShareFcfa ?? 0,
-    surgeonPercent: appliedSurgeonPercent(
-      surgery.surgeonShareFcfa ?? 0,
-      surgery.totalCostFcfa || (surgery.invoice?.amountFcfa ?? 0),
-      surgery.interventionType.surgeonPercent ?? 0,
-    ),
+    modifiedBy: modifierName(surgery.visit.createdBy, surgery.visit.updatedBy),
+    surgeonShareFcfa: shares.surgeonShareFcfa,
+    surgeonPercent: surgeonPercentOfOperation(surgery),
   }
 }
 
@@ -577,8 +630,8 @@ const receptionistSummaries = computed((): ReceptionistSummary[] => {
 const doctorOptions = computed(() => {
   const map = new Map<string, string>()
   for (const row of periodRows.value) {
-    if (!row.surgeonId) continue
-    map.set(row.surgeonId, row.surgeonName)
+    if (row.surgeonId) map.set(row.surgeonId, row.surgeonName)
+    if (row.assistantId && row.assistantShareFcfa > 0) map.set(row.assistantId, row.assistantName)
   }
   return [...map.entries()]
     .map(([id, name]) => ({ id, name }))
@@ -593,13 +646,32 @@ const receptionistRows = computed(() =>
 
 const scopedRows = computed(() =>
   doctorFilter.value
-    ? receptionistRows.value.filter((row) => row.surgeonId === doctorFilter.value)
+    ? receptionistRows.value.filter(
+        (row) => row.surgeonId === doctorFilter.value || row.assistantId === doctorFilter.value,
+      )
     : receptionistRows.value,
+)
+
+const serviceOptions = computed(() => {
+  const map = new Map<string, string>()
+  for (const row of scopedRows.value) {
+    const group = operationExportGroup(row)
+    map.set(group.key, group.title)
+  }
+  return [...map.entries()]
+    .map(([id, title]) => ({ id, title }))
+    .sort((a, b) => compareOperationServiceGroups({ key: a.id, title: a.title }, { key: b.id, title: b.title }))
+})
+
+const serviceScopedRows = computed(() =>
+  serviceFilter.value
+    ? scopedRows.value.filter((row) => operationExportGroup(row).key === serviceFilter.value)
+    : scopedRows.value,
 )
 
 const displayedRows = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  return scopedRows.value.filter((row) => {
+  return serviceScopedRows.value.filter((row) => {
     if (paymentFilter.value !== 'all' && row.paymentState !== paymentFilter.value) return false
     if (!q) return true
     return (
@@ -607,7 +679,7 @@ const displayedRows = computed(() => {
       row.patientCode.toLowerCase().includes(q) ||
       row.intervention.toLowerCase().includes(q) ||
       row.serviceName.toLowerCase().includes(q) ||
-      operationPlaceLabel(row.intervention, row.serviceName).toLowerCase().includes(q) ||
+      serviceColumnLabel(row).toLowerCase().includes(q) ||
       row.surgeonName.toLowerCase().includes(q) ||
       row.assistantName.toLowerCase().includes(q) ||
       row.registeredBy.toLowerCase().includes(q) ||
@@ -616,12 +688,22 @@ const displayedRows = computed(() => {
   })
 })
 
-const doctorShareTotalFcfa = computed(() =>
-  displayedRows.value.reduce((sum, row) => sum + row.surgeonShareFcfa, 0),
+const surgeonShareTotalFcfa = computed(() =>
+  displayedRows.value.reduce((sum, row) => {
+    if (doctorFilter.value && row.surgeonId !== doctorFilter.value) return sum
+    return sum + row.surgeonShareFcfa
+  }, 0),
+)
+
+const assistantShareTotalFcfa = computed(() =>
+  displayedRows.value.reduce((sum, row) => {
+    if (doctorFilter.value && row.assistantId !== doctorFilter.value) return sum
+    return sum + row.assistantShareFcfa
+  }, 0),
 )
 
 const stats = computed(() => {
-  const rows = scopedRows.value
+  const rows = serviceScopedRows.value
   return {
     count: rows.length,
     billedFcfa: rows.reduce((sum, row) => sum + row.billedFcfa, 0),
@@ -649,6 +731,7 @@ async function load() {
       api.get<OtherOperationInvoice[]>('/surgeries/other-operations'),
       loadExamCatalog().catch(() => null),
       loadEditDoctors(),
+      loadAnesthetists(),
     ])
     surgeries.value = blocRes.data
     otherOperations.value = otherRes.data
@@ -681,13 +764,49 @@ async function loadEditDoctors() {
 function doctorsForService(serviceId: string) {
   const id = serviceId.trim()
   if (!id) return []
-  return editDoctors.value.filter((doctor) => doctorMatchesClinicServiceId(doctor, id))
+  const matched = editDoctors.value.filter((doctor) => doctorMatchesClinicServiceId(doctor, id))
+  const serviceName = operationServices.value.find((service) => service.id === id)?.name
+  return withoutAnesthetistForGeneralSurgery(matched, serviceName)
 }
 
 function syncEditDoctorForService(serviceId: string) {
   if (!editDoctorId.value || !serviceId.trim()) return
   if (!doctorsForService(serviceId).some((doctor) => doctor.id === editDoctorId.value)) {
     editDoctorId.value = ''
+  }
+}
+
+function isAnesthetistStaff(person: { jobTitle?: string | null; specialty?: string | null }) {
+  const fold = (value?: string | null) =>
+    (value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+  return fold(person.jobTitle).includes('anesth') || fold(person.specialty).includes('anesth')
+}
+
+async function loadAnesthetists() {
+  try {
+    const { data } = await api.get<
+      Array<{
+        id: string | null
+        firstName: string
+        lastName: string
+        jobTitle?: string | null
+        specialty?: string | null
+        surgeryQuotaPercent?: number | null
+      }>
+    >('/visits/operation-assistants')
+    editAnesthetists.value = (Array.isArray(data) ? data : [])
+      .filter((person) => person.id && isAnesthetistStaff(person))
+      .map((person) => ({
+        id: person.id as string,
+        firstName: person.firstName,
+        lastName: person.lastName,
+        surgeryQuotaPercent: person.surgeryQuotaPercent ?? null,
+      }))
+  } catch {
+    editAnesthetists.value = []
   }
 }
 
@@ -819,6 +938,25 @@ const editOperationOptions = computed(() => {
   return operationCatalog.value.filter((item) => item.clinicServiceId === serviceId)
 })
 
+const editAssistantOptions = computed(() => {
+  const list = [...editAnesthetists.value]
+  const currentId = editAssistantId.value
+  if (currentId && !list.some((person) => person.id === currentId)) {
+    const row = editRow.value
+    const name = row?.assistantName?.replace(/^dr\.?\s+/i, '').trim()
+    if (row && name && name !== '—') {
+      const [firstName, ...rest] = name.split(/\s+/)
+      list.unshift({
+        id: currentId,
+        firstName: firstName || name,
+        lastName: rest.join(' '),
+        surgeryQuotaPercent: row.assistantPercent || null,
+      })
+    }
+  }
+  return list
+})
+
 const editServiceDoctors = computed(() => {
   const list = doctorsForService(editServiceId.value)
   const currentId = editDoctorId.value
@@ -848,6 +986,7 @@ function openEdit(row: OperationRow) {
     : `${current.getFullYear()}-${month}-${day}`
   editServiceId.value = matched?.clinicServiceId?.trim() || serviceIdFromName(row.serviceName)
   editDoctorId.value = row.surgeonId
+  editAssistantId.value = row.assistantId
   editInterventionId.value = matchedId || KEEP_CURRENT_OPERATION
   openedInterventionId.value = editInterventionId.value
   message.value = ''
@@ -872,11 +1011,13 @@ function onEditIntervention(id: string) {
   if (!row) return
   if (id === openedInterventionId.value || id === KEEP_CURRENT_OPERATION) {
     editAmount.value = String(row.billedFcfa)
+    editAssistantId.value = row.assistantId
     return
   }
   const chosen = operationCatalog.value.find((item) => item.id === id)
   if (chosen) {
     editAmount.value = String(chosen.priceFcfa)
+    editAssistantId.value = chosen.anesthesiologistId ?? ''
     if (chosen.clinicServiceId && chosen.clinicServiceId !== editServiceId.value) {
       editServiceId.value = chosen.clinicServiceId
       syncEditDoctorForService(chosen.clinicServiceId)
@@ -887,20 +1028,18 @@ function onEditIntervention(id: string) {
 function closeEdit() {
   editRow.value = null
   editDoctorId.value = ''
+  editAssistantId.value = ''
   savingEdit.value = false
 }
 
 const editAmountFcfa = computed(() => Math.max(0, Math.round(Number(editAmount.value) || 0)))
 const canSaveEdit = computed(() => {
   if (!editRow.value || !editDate.value || editAmount.value.trim() === '') return false
-  if (editServiceId.value && doctorsForService(editServiceId.value).length > 0 && !editDoctorId.value) {
-    return false
-  }
+  if (!editServiceId.value) return false
+  if (doctorsForService(editServiceId.value).length > 0 && !editDoctorId.value) return false
   const chosen = selectedEditOperation.value
-  if (chosen) {
-    return !editServiceId.value || chosen.clinicServiceId === editServiceId.value
-  }
-  return editInterventionId.value === KEEP_CURRENT_OPERATION && !editServiceId.value
+  if (chosen && chosen.clinicServiceId && chosen.clinicServiceId !== editServiceId.value) return false
+  return true
 })
 
 async function submitEdit() {
@@ -919,12 +1058,14 @@ async function submitEdit() {
       (chosen.id !== row.interventionTypeId ||
         chosen.label.trim().toLowerCase() !== row.intervention.trim().toLowerCase())
     const clinicServiceId = chosen?.clinicServiceId?.trim() || editServiceId.value.trim()
+    const sendType = nameChanged || (row.source === 'other' && !!chosen)
     await api.patch(path, {
       amountFcfa: editAmountFcfa.value,
       operationDate: editDate.value,
-      ...(nameChanged && chosen ? { interventionTypeId: chosen.id } : {}),
+      ...(sendType && chosen ? { interventionTypeId: chosen.id } : {}),
       ...(clinicServiceId ? { clinicServiceId } : {}),
       ...(editDoctorId.value ? { surgeonId: editDoctorId.value } : {}),
+      anesthesiologistId: editAssistantId.value || null,
     })
     closeEdit()
     message.value = 'Opération modifiée.'
@@ -1155,10 +1296,13 @@ const exportColumns: ExportColumn<OperationRow>[] = [
   { header: uiText('Type'), value: (r) => uiText(SOURCE_LABELS[r.source]) },
   {
     header: uiText('Service'),
-    value: (r) => operationPlaceLabel(r.intervention, r.serviceName),
+    value: (r) => serviceColumnLabel(r),
   },
   { header: uiText('Médecin'), value: (r) => r.surgeonName },
   { header: uiText('Assistant'), value: (r) => r.assistantName },
+  { header: uiText('Part médecin'), value: (r) => formatFcfa(r.surgeonShareFcfa) },
+  { header: uiText('Part assistant'), value: (r) => formatFcfa(r.assistantShareFcfa) },
+  { header: uiText('Part clinique'), value: (r) => formatFcfa(r.clinicShareFcfa) },
   {
     header: uiText('Opération'),
     value: (r) =>
@@ -1176,6 +1320,40 @@ const exportColumns: ExportColumn<OperationRow>[] = [
   { header: uiText('Encaissé par'), value: (r) => r.collectedBy || '—' },
 ]
 
+/** Un nom si la même personne a enregistré et encaissé, les deux sinon. */
+function operationStaffLabel(row: OperationRow): string {
+  const names = [row.registeredBy, ...row.collectedBy.split(',')]
+    .map((name) => name.trim())
+    .filter((name) => name && name !== '—')
+  const unique: string[] = []
+  const seen = new Set<string>()
+  for (const name of names) {
+    const key = name.toLocaleLowerCase('fr')
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(name)
+  }
+  return unique.join('\n') || '—'
+}
+
+function operationPdfColumns(): ExportColumn<OperationRow>[] {
+  const hidden = new Set([
+    uiText('Code'),
+    uiText('Opération'),
+    uiText('Payé'),
+    uiText('Enregistré par'),
+    uiText('Encaissé par'),
+  ])
+  return [
+    ...exportColumns.filter((column) => !hidden.has(column.header)),
+    {
+      header: uiText('Enregistré / Encaissé'),
+      value: operationStaffLabel,
+      fontSize: 8,
+    },
+  ]
+}
+
 type DoctorRecapRow = {
   name: string
   count: number
@@ -1187,26 +1365,87 @@ type DoctorRecapRow = {
 
 function doctorRecapRows(rows: OperationRow[]): DoctorRecapRow[] {
   const map = new Map<string, DoctorRecapRow>()
-  for (const row of rows) {
-    const key = row.surgeonId || row.surgeonName || '—'
+  const ensure = (key: string, name: string) => {
     const current = map.get(key) ?? {
-      name: row.surgeonName || '—',
+      name,
       count: 0,
       billedFcfa: 0,
       paidFcfa: 0,
       remainingFcfa: 0,
       shareFcfa: 0,
     }
-    current.count += 1
-    current.billedFcfa += row.billedFcfa
-    current.paidFcfa += row.paidFcfa
-    current.remainingFcfa += row.remainingFcfa
-    current.shareFcfa += row.surgeonShareFcfa
     map.set(key, current)
+    return current
+  }
+  for (const row of rows) {
+    const surgeon = ensure(row.surgeonId || row.surgeonName || '—', row.surgeonName || '—')
+    surgeon.count += 1
+    surgeon.billedFcfa += row.billedFcfa
+    surgeon.paidFcfa += row.paidFcfa
+    surgeon.remainingFcfa += row.remainingFcfa
+    surgeon.shareFcfa += row.surgeonShareFcfa
+    if (row.assistantShareFcfa <= 0) continue
+    const assistant = ensure(
+      `assistant:${row.assistantId || row.assistantName}`,
+      row.assistantName,
+    )
+    assistant.count += 1
+    assistant.shareFcfa += row.assistantShareFcfa
   }
   return [...map.values()].sort(
-    (a, b) => b.billedFcfa - a.billedFcfa || a.name.localeCompare(b.name, 'fr'),
+    (a, b) => b.shareFcfa - a.shareFcfa || a.name.localeCompare(b.name, 'fr'),
   )
+}
+
+function operationExportGroup(row: OperationRow): { key: string; title: string } {
+  const group = operationServiceGroup(serviceColumnLabel(row))
+  return { key: group.key, title: uiText(group.title) }
+}
+
+function operationGroupSections(
+  rows: OperationRow[],
+  columns: ExportColumn<OperationRow>[],
+): ExportSection[] {
+  const buckets = new Map<string, { title: string; rows: OperationRow[] }>()
+  for (const row of rows) {
+    const group = operationExportGroup(row)
+    const bucket = buckets.get(group.key) ?? { title: group.title, rows: [] }
+    bucket.rows.push(row)
+    buckets.set(group.key, bucket)
+  }
+  return [...buckets.entries()]
+    .sort((a, b) => compareOperationServiceGroups({ key: a[0], title: a[1].title }, { key: b[0], title: b[1].title }))
+    .map(([, group]) => ({
+      title: `${group.title} (${group.rows.length})`,
+      columns,
+      rows: group.rows,
+      totalsRows: operationGroupTotals(group.rows),
+      ownPage: true,
+    }))
+}
+
+function operationGroupTotals(rows: OperationRow[]): ExportCaptionRow[] {
+  const sum = (pick: (row: OperationRow) => number) => rows.reduce((total, row) => total + pick(row), 0)
+  return [
+    { label: uiText('Nombre'), value: String(rows.length) },
+    { label: uiText('Montant'), value: formatFcfa(sum((row) => row.billedFcfa)) },
+    { label: uiText('Encaissé'), value: formatFcfa(sum((row) => row.paidFcfa)) },
+    { label: uiText('Part médecin'), value: formatFcfa(sum((row) => row.surgeonShareFcfa)) },
+    { label: uiText('Part assistant'), value: formatFcfa(sum((row) => row.assistantShareFcfa)) },
+    { label: uiText('Part clinique'), value: formatFcfa(sum((row) => row.clinicShareFcfa)) },
+  ]
+}
+
+function operationGrandTotalSection(rows: OperationRow[]): ExportSection<{ label: string; value: string }> {
+  return {
+    title: uiText('Total général'),
+    columns: [
+      { header: uiText('Libellé'), value: (row) => row.label },
+      { header: uiText('Valeur'), value: (row) => row.value },
+    ],
+    rows: operationTotals(rows),
+    ownPage: true,
+  }
 }
 
 function operationTotals(rows: OperationRow[]): ExportCaptionRow[] {
@@ -1217,30 +1456,38 @@ function operationTotals(rows: OperationRow[]): ExportCaptionRow[] {
     { label: uiText('Encaissé'), value: formatFcfa(sum((row) => row.paidFcfa)) },
     { label: uiText('Reste à payer'), value: formatFcfa(sum((row) => row.remainingFcfa)) },
     { label: uiText('Part médecin'), value: formatFcfa(sum((row) => row.surgeonShareFcfa)) },
+    { label: uiText('Part assistant'), value: formatFcfa(sum((row) => row.assistantShareFcfa)) },
+    {
+      label: uiText('Part des médecins'),
+      value: formatFcfa(sum((row) => row.surgeonShareFcfa + row.assistantShareFcfa)),
+    },
+    { label: uiText('Part clinique'), value: formatFcfa(sum((row) => row.clinicShareFcfa)) },
   ]
 }
 
 function exportShared() {
   const receptionist = receptionistSummaries.value.find((r) => r.id === receptionistFilter.value)
   const doctor = doctorOptions.value.find((item) => item.id === doctorFilter.value)
-  const rows = displayedRows.value
+  const service = serviceOptions.value.find((item) => item.id === serviceFilter.value)
+  const source = SOURCE_FILTERS.find((item) => item.id === sourceFilter.value)
+  const payment = PAYMENT_FILTERS.find((item) => item.id === paymentFilter.value)
   return {
     captionRows: [
       { label: uiText('Période'), value: periodLabel.value },
+      { label: uiText('Service'), value: service?.title ?? uiText('Tous les services') },
+      { label: uiText('Type'), value: uiText(source?.label ?? 'Toutes') },
+      { label: uiText('Paiement'), value: uiText(payment?.label ?? 'Tous') },
       ...(receptionist ? [{ label: uiText('Réceptionniste'), value: receptionist.name }] : []),
       ...(doctor ? [{ label: uiText('Médecin'), value: doctor.name }] : []),
     ],
-    totalsRows: operationTotals(rows),
   }
 }
 
 const EXPORT_TITLE = 'Opérations (bloc et autres chirurgies)'
 
-function exportPdf() {
-  const rows = displayedRows.value
+function doctorRecapSection(rows: OperationRow[]): ExportSection<DoctorRecapRow> {
   const recap = doctorRecapRows(rows)
-  const totals = operationTotals(rows)
-  const recapColumns: ExportColumn<DoctorRecapRow>[] = [
+  const columns: ExportColumn<DoctorRecapRow>[] = [
     { header: uiText('Médecin'), value: (row) => row.name },
     { header: uiText('Opérations'), value: (row) => String(row.count) },
     { header: uiText('Montant'), value: (row) => formatFcfa(row.billedFcfa) },
@@ -1248,42 +1495,64 @@ function exportPdf() {
     { header: uiText('Reste'), value: (row) => formatFcfa(row.remainingFcfa) },
     { header: uiText('Part médecin'), value: (row) => formatFcfa(row.shareFcfa) },
   ]
+  return {
+    title: uiText('Récapitulatif par médecin'),
+    columns,
+    rows: recap,
+    ownPage: true,
+    columnWidths: [12, 74, 26, 38, 38, 36, 38],
+    footRow: [
+      uiText('Total'),
+      String(recap.reduce((sum, row) => sum + row.count, 0)),
+      formatFcfa(recap.reduce((sum, row) => sum + row.billedFcfa, 0)),
+      formatFcfa(recap.reduce((sum, row) => sum + row.paidFcfa, 0)),
+      formatFcfa(recap.reduce((sum, row) => sum + row.remainingFcfa, 0)),
+      formatFcfa(recap.reduce((sum, row) => sum + row.shareFcfa, 0)),
+    ],
+  }
+}
+
+function exportPdf() {
+  const rows = displayedRows.value
+  const pdfColumns = operationPdfColumns()
   const sections: ExportSection[] = [
-    {
-      title: '',
-      columns: exportColumns,
-      rows,
-      totalsRows: totals,
-    },
-    {
-      title: uiText('Récapitulatif par médecin'),
-      columns: recapColumns,
-      rows: recap,
-      columnWidths: [12, 74, 26, 38, 38, 36, 38],
-      footRow: [
-        uiText('Total'),
-        String(recap.reduce((sum, row) => sum + row.count, 0)),
-        formatFcfa(recap.reduce((sum, row) => sum + row.billedFcfa, 0)),
-        formatFcfa(recap.reduce((sum, row) => sum + row.paidFcfa, 0)),
-        formatFcfa(recap.reduce((sum, row) => sum + row.remainingFcfa, 0)),
-        formatFcfa(recap.reduce((sum, row) => sum + row.shareFcfa, 0)),
-      ],
-    },
+    ...operationGroupSections(rows, pdfColumns),
+    operationGrandTotalSection(rows),
+    doctorRecapSection(rows),
   ]
-  const shared = exportShared()
-  exportTablePdf(uiText(EXPORT_TITLE), exportColumns, rows, {
-    captionRows: shared.captionRows,
+  exportTablePdf(uiText(EXPORT_TITLE), pdfColumns, rows, {
+    captionRows: exportShared().captionRows,
     orientation: 'landscape',
     sections,
   })
 }
 
 function exportExcel() {
-  exportTableExcel(uiText(EXPORT_TITLE), exportColumns, displayedRows.value, exportShared())
+  const rows = displayedRows.value
+  const groups = operationGroupSections(rows, exportColumns)
+  const total = operationGrandTotalSection(rows)
+  const sheets: WorkbookSheetDef[] = [
+    ...groups.map((section) => ({
+      name: section.title,
+      columns: section.columns,
+      rows: section.rows,
+      totalsRows: section.totalsRows,
+    })),
+    {
+      name: total.title,
+      columns: total.columns,
+      rows: total.rows,
+    },
+  ]
+  exportWorkbook(exportBasename(uiText(EXPORT_TITLE)), sheets)
 }
 
 function exportWord() {
-  void exportTableWord(uiText(EXPORT_TITLE), exportColumns, displayedRows.value, exportShared())
+  const rows = displayedRows.value
+  void exportTableWord(uiText(EXPORT_TITLE), exportColumns, rows, {
+    captionRows: exportShared().captionRows,
+    sections: [...operationGroupSections(rows, exportColumns), operationGrandTotalSection(rows)],
+  })
 }
 
 onMounted(load)
@@ -1332,9 +1601,16 @@ onMounted(load)
         <UiStatCard
           mini
           label="Part médecin"
-          :value="formatFcfa(doctorShareTotalFcfa)"
+          :value="formatFcfa(surgeonShareTotalFcfa)"
           :icon="Stethoscope"
           variant="amber"
+        />
+        <UiStatCard
+          mini
+          label="Part anesthésiste"
+          :value="formatFcfa(assistantShareTotalFcfa)"
+          :icon="Stethoscope"
+          variant="violet"
         />
       </div>
 
@@ -1355,6 +1631,16 @@ onMounted(load)
               <select v-model="receptionistFilter" class="filter-bar__input">
                 <option value="">{{ uiText('Tous les réceptionnistes') }}</option>
                 <option v-for="r in receptionistSummaries" :key="r.id" :value="r.id">{{ r.name }}</option>
+              </select>
+            </label>
+
+            <label class="filter-bar__field">
+              <span class="filter-bar__field-label">{{ uiText('Service') }}</span>
+              <select v-model="serviceFilter" class="filter-bar__input">
+                <option value="">{{ uiText('Tous les services') }}</option>
+                <option v-for="service in serviceOptions" :key="service.id" :value="service.id">
+                  {{ service.title }}
+                </option>
               </select>
             </label>
 
@@ -1481,7 +1767,7 @@ onMounted(load)
                       <span class="st-sub">{{ row.patientCode }}</span>
                     </td>
                     <td>
-                      <span class="st-name">{{ operationPlaceLabel(row.intervention, row.serviceName) }}</span>
+                      <span class="st-name">{{ serviceColumnLabel(row) }}</span>
                       <span
                         class="st-badge"
                         :class="row.source === 'bloc' ? 'st-badge--info' : 'st-badge--warning'"
@@ -1491,13 +1777,22 @@ onMounted(load)
                     </td>
                     <td>
                       <span class="st-name">{{ row.surgeonName }}</span>
+                      <span v-if="row.surgeonShareFcfa > 0" class="st-sub" dir="ltr">
+                        {{ formatFcfa(row.surgeonShareFcfa) }} · {{ row.surgeonPercent }} %
+                      </span>
                     </td>
                     <td>
                       <span class="st-name">{{ row.assistantName }}</span>
+                      <span v-if="row.assistantShareFcfa > 0" class="st-sub" dir="ltr">
+                        {{ formatFcfa(row.assistantShareFcfa) }} · {{ row.assistantPercent }} %
+                      </span>
                     </td>
                     <td>
                       <span class="st-name">{{ row.registeredBy }}</span>
                       <span class="st-sub">{{ uiText('Enregistré par') }}</span>
+                      <span v-if="row.modifiedBy" class="st-modified">{{
+                        translateTemplate('Modifié par {name}', { name: row.modifiedBy })
+                      }}</span>
                       <span v-if="row.collectedBy" class="st-sub">{{
                         translateTemplate('Encaissé par {name}', { name: row.collectedBy })
                       }}</span>
@@ -1621,10 +1916,6 @@ onMounted(load)
         />
       </form>
       <template #footer>
-        <p v-if="!canRegisterOperation && !registeringOperation" class="register-op-hint">
-          {{ uiText('Champs manquants') }} :
-          {{ registerOperationBlockers.join(' · ') }}
-        </p>
         <UiButton variant="ghost" type="button" @click="closeRegisterModal">
           {{ uiText('Annuler') }}
         </UiButton>
@@ -1644,51 +1935,66 @@ onMounted(load)
       title="Modifier l'opération"
       :subtitle="`${editRow.patientName} — ${clinicServiceText(editRow.intervention)}`"
       :icon="Pencil"
+      size="wide"
       @close="closeEdit"
     >
-      <UiSelect
-        :model-value="editServiceId"
-        label="Service"
-        :disabled="!operationServices.length"
-        @update:model-value="onEditService"
-      >
-        <option value="">Choisir un service</option>
-        <option v-for="service in operationServices" :key="service.id" :value="service.id">
-          {{ clinicServiceText(service.name) }}
-        </option>
-      </UiSelect>
-      <UiSelect
-        :model-value="editDoctorId"
-        label="Médecin"
-        :disabled="!editServiceId"
-        @update:model-value="editDoctorId = String($event ?? '')"
-      >
-        <option value="">
-          {{ editServiceId ? 'Choisir un médecin' : 'Choisissez d’abord un service' }}
-        </option>
-        <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
-          {{ editDoctorLabel(doctor) }}
-        </option>
-      </UiSelect>
-      <p v-if="editServiceId && !editServiceDoctors.length" class="edit-hint">
-        Aucun médecin rattaché à ce service.
-      </p>
-      <UiSelect
-        :model-value="editInterventionId"
-        label="Nom de l'opération"
-        :disabled="!operationCatalog.length"
-        @update:model-value="onEditIntervention"
-      >
-        <option value="">Choisir l'opération</option>
-        <option v-if="editKeepsCustomName && !editServiceId" :value="KEEP_CURRENT_OPERATION">
-          {{ clinicServiceText(editRow.intervention) }}
-        </option>
-        <option v-for="item in editOperationOptions" :key="item.id" :value="item.id">
-          {{ clinicServiceText(item.label) }}
-        </option>
-      </UiSelect>
-      <UiInput v-model="editAmount" label="Montant (FCFA)" type="number" required />
-      <UiInput v-model="editDate" label="Date d'enregistrement" type="date" required />
+      <div class="edit-op-grid">
+        <UiSelect
+          :model-value="editServiceId"
+          label="Service"
+          required
+          :disabled="!operationServices.length"
+          @update:model-value="onEditService"
+        >
+          <option value="">Choisir un service</option>
+          <option v-for="service in operationServices" :key="service.id" :value="service.id">
+            {{ clinicServiceText(service.name) }}
+          </option>
+        </UiSelect>
+        <UiSelect
+          :model-value="editDoctorId"
+          label="Médecin"
+          required
+          :disabled="!editServiceId"
+          @update:model-value="editDoctorId = String($event ?? '')"
+        >
+          <option value="">
+            {{ editServiceId ? 'Choisir un médecin' : 'Choisissez d’abord un service' }}
+          </option>
+          <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
+            {{ editDoctorLabel(doctor) }}
+          </option>
+        </UiSelect>
+        <p v-if="editServiceId && !editServiceDoctors.length" class="edit-hint">
+          Aucun médecin rattaché à ce service.
+        </p>
+        <UiSelect
+          :model-value="editInterventionId"
+          label="Nom de l'opération"
+          :disabled="!operationCatalog.length"
+          @update:model-value="onEditIntervention"
+        >
+          <option value="">Choisir l'opération</option>
+          <option v-if="editKeepsCustomName && !editServiceId" :value="KEEP_CURRENT_OPERATION">
+            {{ clinicServiceText(editRow.intervention) }}
+          </option>
+          <option v-for="item in editOperationOptions" :key="item.id" :value="item.id">
+            {{ clinicServiceText(item.label) }}
+          </option>
+        </UiSelect>
+        <UiSelect
+          :model-value="editAssistantId"
+          label="Anesthésiste"
+          @update:model-value="editAssistantId = String($event ?? '')"
+        >
+          <option value="">Sans anesthésiste</option>
+          <option v-for="person in editAssistantOptions" :key="person.id" :value="person.id">
+            {{ editDoctorLabel(person) }}
+          </option>
+        </UiSelect>
+        <UiInput v-model="editAmount" label="Montant (FCFA)" type="number" required />
+        <UiInput v-model="editDate" label="Date d'enregistrement" type="date" required />
+      </div>
       <p class="edit-hint">
         {{ uiText('Cette date s’affiche dans la colonne Date et sert aux filtres.') }}
       </p>
@@ -1874,12 +2180,15 @@ onMounted(load)
   gap: 1rem;
 }
 
-.register-op-hint {
-  flex: 1 1 100%;
-  margin: 0 0 0.35rem;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--danger, #b91c1c);
+.edit-op-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem 1rem;
+  align-items: start;
+}
+
+.edit-op-grid .edit-hint {
+  grid-column: 1 / -1;
 }
 
 .edit-hint {
@@ -1887,6 +2196,12 @@ onMounted(load)
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+  .edit-op-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .filter-bar {

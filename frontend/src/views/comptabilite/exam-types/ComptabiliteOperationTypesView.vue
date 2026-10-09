@@ -6,8 +6,10 @@ import { confirmAppModal, showDuplicateModalFromError } from '@/lib/api-modal-he
 import { formatFcfa, fullName } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth'
 import { clinicPercentFromSplits, validateInterventionPercents } from '@/lib/intervention-splits'
+import { withoutAnesthetistForGeneralSurgery } from '@/lib/doctor-compensation'
 import { OPERATION_KIND_CONFIG } from '@/lib/exam-catalog-kinds'
 import { invalidateExamCatalogCache } from '@/lib/exam-catalog'
+import { isLegacyEmiratesTariffLabel } from '@/i18n/translate'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -19,13 +21,24 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
-import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
+import { compareOperationServiceGroups, operationServiceGroup } from '@/lib/operation-service-group'
+import {
+  exportBasename,
+  exportTablePdf,
+  exportTableWord,
+  exportWorkbook,
+  type ExportColumn,
+  type ExportSection,
+  type WorkbookSheetDef,
+} from '@/lib/table-export'
 import '@/assets/simple-table.css'
 
 type DoctorOption = {
   id: string
   firstName: string
   lastName: string
+  jobTitle?: string | null
+  specialty?: string | null
 }
 
 type ClinicServiceOption = {
@@ -58,10 +71,21 @@ type InterventionItem = {
 
 const config = OPERATION_KIND_CONFIG
 const addButtonLabel = 'Ajout'
-const { uiText, localeCode } = useAppI18n()
+const { uiText, localeCode, clinicServiceText } = useAppI18n()
 const items = ref<InterventionItem[]>([])
 const doctors = ref<DoctorOption[]>([])
 const clinicServices = ref<ClinicServiceOption[]>([])
+const surgeonDoctors = computed(() => {
+  const serviceName =
+    clinicServices.value.find((service) => service.id === newItem.value.clinicServiceId)?.name ?? ''
+  const filtered = withoutAnesthetistForGeneralSurgery(doctors.value, serviceName)
+  const currentId = newItem.value.surgeonId
+  if (currentId && !filtered.some((doctor) => doctor.id === currentId)) {
+    const current = doctors.value.find((doctor) => doctor.id === currentId)
+    if (current) return [current, ...filtered]
+  }
+  return filtered
+})
 const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
@@ -101,6 +125,7 @@ const filteredItems = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
   const serviceId = serviceFilterId.value.trim()
   return items.value.filter((item) => {
+    if (isLegacyEmiratesTariffLabel(item.label, item.code)) return false
     const itemServiceId = item.clinicServiceId ?? item.clinicService?.id ?? ''
     if (serviceId && itemServiceId !== serviceId) return false
     if (!q) return true
@@ -156,8 +181,16 @@ const clinicPercentPreview = computed(() =>
 )
 
 const splitPreviewValid = computed(() => {
-  if (!newItem.value.surgeonPercent) return true
-  return validateInterventionPercents(surgeonPercentValue.value, anesthesiologistPercentValue.value) === null
+  const raw = newItem.value.surgeonPercent.trim()
+  if (!raw) return isEditing.value
+  const surgeon = Number(raw)
+  const assistant = anesthesiologistPercentValue.value
+  if (isEditing.value) {
+    if (!Number.isFinite(surgeon) || surgeon < 0 || surgeon > 99) return false
+    if (assistant < 0 || assistant > 99) return false
+    return surgeon + assistant <= 100
+  }
+  return validateInterventionPercents(surgeon, assistant) === null
 })
 
 const tableRows = computed(() => {
@@ -179,9 +212,9 @@ const tableRows = computed(() => {
           ? `Chir. ${item.surgeonName}`
           : null,
       item.anesthesiologist
-        ? `Ass. chir. Dr ${fullName(item.anesthesiologist.firstName, item.anesthesiologist.lastName)}`
+        ? `Anés. Dr ${fullName(item.anesthesiologist.firstName, item.anesthesiologist.lastName)}`
         : item.anesthesiologistName
-          ? `Ass. chir. ${item.anesthesiologistName}`
+          ? `Anés. ${item.anesthesiologistName}`
           : null,
     ]
       .filter(Boolean)
@@ -195,39 +228,24 @@ const tableRows = computed(() => {
 
 type OperationExportRow = {
   label: string
-  medecins: string
   service: string
   cost: string
-  surgeonPercent: string
-  anesthesiologistPercent: string
-  clinicPercent: string
-  statusLabel: string
 }
 
 const operationExportColumns = computed<ExportColumn<OperationExportRow>[]>(() => {
   void localeCode.value
   return [
-    { header: uiText('Libellé'), value: (r) => r.label },
-    { header: uiText('Médecins'), value: (r) => r.medecins },
+    { header: uiText('Nom'), value: (r) => r.label },
+    { header: uiText('Prix'), value: (r) => r.cost },
     { header: uiText('Service'), value: (r) => r.service },
-    { header: uiText('Coût'), value: (r) => r.cost },
-    { header: uiText('% Chir.'), value: (r) => r.surgeonPercent },
-    { header: uiText('% Ass.'), value: (r) => r.anesthesiologistPercent },
-    { header: uiText('% Clin.'), value: (r) => r.clinicPercent },
-    { header: uiText('Statut'), value: (r) => r.statusLabel },
   ]
 })
 
 const operationExportRows = computed<OperationExportRow[]>(() =>
-  tableRows.value.filter((row) => row.isActive).map((row) => ({
+  tableRows.value.map((row) => ({
     label: row.label,
-    medecins: row.medecins,
     service: row.service,
     cost: row.cost,
-    surgeonPercent: row.surgeonPercent,
-    anesthesiologistPercent: row.anesthesiologistPercent,
-    clinicPercent: row.clinicPercent,
-    statusLabel: row.statusLabel,
   })),
 )
 
@@ -240,6 +258,30 @@ function operationExportFilterCaption(): string {
   const q = searchQuery.value.trim()
   if (q) parts.push(`${uiText('Recherche')} : ${q}`)
   return parts.length ? parts.join(' · ') : uiText('Aucun filtre')
+}
+
+function operationExportSections(): ExportSection<OperationExportRow>[] {
+  const columns = operationExportColumns.value
+  const buckets = new Map<string, { title: string; rows: OperationExportRow[] }>()
+  for (const row of operationExportRows.value) {
+    const named = clinicServiceText(row.service) || row.service
+    const group = operationServiceGroup(named)
+    const title = uiText(group.title)
+    const bucket = buckets.get(group.key) ?? { title, rows: [] }
+    bucket.rows.push({ ...row, service: named })
+    buckets.set(group.key, bucket)
+  }
+  return [...buckets.entries()]
+    .sort((a, b) =>
+      compareOperationServiceGroups({ key: a[0], title: a[1].title }, { key: b[0], title: b[1].title }),
+    )
+    .map(([, group]) => ({
+      title: `${group.title} (${group.rows.length})`,
+      columns,
+      rows: group.rows,
+      totalsRows: [{ label: uiText('Nombre d’opérations'), value: String(group.rows.length) }],
+      ownPage: true,
+    }))
 }
 
 function operationExportShared() {
@@ -255,30 +297,30 @@ function operationExportShared() {
 }
 
 function exportOperationsPdf() {
-  exportTablePdf(
-    uiText('Types d’opérations'),
-    operationExportColumns.value,
-    operationExportRows.value,
-    operationExportShared(),
-  )
+  const sections = operationExportSections()
+  exportTablePdf(uiText('Types d’opérations'), operationExportColumns.value, operationExportRows.value, {
+    ...operationExportShared(),
+    sections,
+    orientation: 'portrait',
+  })
 }
 
 function exportOperationsExcel() {
-  exportTableExcel(
-    uiText('Types d’opérations'),
-    operationExportColumns.value,
-    operationExportRows.value,
-    operationExportShared(),
-  )
+  const sheets: WorkbookSheetDef<OperationExportRow>[] = operationExportSections().map((section) => ({
+    name: section.title,
+    columns: section.columns,
+    rows: section.rows,
+    totalsRows: section.totalsRows,
+  }))
+  exportWorkbook(exportBasename(uiText('Types d’opérations')), sheets)
 }
 
 function exportOperationsWord() {
-  void exportTableWord(
-    uiText('Types d’opérations'),
-    operationExportColumns.value,
-    operationExportRows.value,
-    operationExportShared(),
-  )
+  const sections = operationExportSections()
+  void exportTableWord(uiText('Types d’opérations'), operationExportColumns.value, operationExportRows.value, {
+    ...operationExportShared(),
+    sections,
+  })
 }
 
 const viewingSurgeonLabel = computed(() => {
@@ -463,7 +505,7 @@ async function loadItems() {
         ? (data as { items: InterventionItem[] }).items
         : null
     if (list) {
-      items.value = list
+      items.value = list.filter((item) => !isLegacyEmiratesTariffLabel(item.label, item.code))
       if (
         serviceFilterId.value &&
         !list.some(
@@ -485,28 +527,48 @@ async function loadItems() {
 }
 
 function buildOperationPayload() {
-  const surgeonPercent = Number(newItem.value.surgeonPercent)
+  const isEdit = Boolean(editingId.value)
+  const label = newItem.value.label.trim()
+  const surgeonPercentRaw = newItem.value.surgeonPercent.trim()
+  const surgeonPercent = surgeonPercentRaw === '' ? null : Number(surgeonPercentRaw)
   const anesthesiologistPercent = newItem.value.withAnesthesiologist
-    ? Number(newItem.value.anesthesiologistPercent)
+    ? Number(newItem.value.anesthesiologistPercent) || 0
     : 0
+  const surgeonName = newItem.value.surgeonName.trim()
 
   const hasSurgeon =
     surgeonInputMode.value === 'select'
       ? Boolean(newItem.value.surgeonId)
-      : Boolean(newItem.value.surgeonName.trim())
+      : Boolean(surgeonName)
 
-  if (
-    !newItem.value.label.trim() ||
-    !newItem.value.totalCostFcfa ||
-    !newItem.value.clinicServiceId.trim() ||
-    !newItem.value.surgeonPercent ||
-    !hasSurgeon
+  if (!isEdit) {
+    if (
+      !label ||
+      !newItem.value.totalCostFcfa ||
+      !newItem.value.clinicServiceId.trim() ||
+      surgeonPercent == null ||
+      !hasSurgeon
+    ) {
+      return {
+        error:
+          surgeonInputMode.value === 'select'
+            ? 'Libellé, service, coût, médecin chirurgien (liste) et % chirurgien sont obligatoires.'
+            : 'Libellé, service, coût, nom du chirurgien (saisie libre) et % chirurgien sont obligatoires.',
+      }
+    }
+  } else if (label && label.length < 2) {
+    return { error: 'Le libellé doit contenir au moins 2 caractères.' }
+  } else if (surgeonInputMode.value === 'custom' && surgeonName && surgeonName.length < 2) {
+    return { error: 'Le nom du chirurgien doit contenir au moins 2 caractères.' }
+  } else if (
+    surgeonPercent != null &&
+    (!Number.isFinite(surgeonPercent) ||
+      surgeonPercent < 0 ||
+      surgeonPercent > 99 ||
+      surgeonPercent + anesthesiologistPercent > 100)
   ) {
     return {
-      error:
-        surgeonInputMode.value === 'select'
-          ? 'Libellé, service, coût, médecin chirurgien (liste) et % chirurgien sont obligatoires.'
-          : 'Libellé, service, coût, nom du chirurgien (saisie libre) et % chirurgien sont obligatoires.',
+      error: 'La somme des pourcentages chirurgien et anesthésiste ne peut pas dépasser 100 %.',
     }
   }
 
@@ -520,46 +582,57 @@ function buildOperationPayload() {
       return {
         error:
           assistantInputMode.value === 'select'
-            ? 'Sélectionnez un assistant chirurgie (liste) et son pourcentage.'
-            : 'Saisissez le nom de l\'assistant chirurgie et son pourcentage.',
+            ? 'Sélectionnez un anesthésiste (liste) et son pourcentage.'
+            : 'Saisissez le nom de l\'anesthésiste et son pourcentage.',
       }
     }
   }
 
-  const percentError = validateInterventionPercents(surgeonPercent, anesthesiologistPercent)
-  if (percentError) {
-    return { error: percentError }
+  if (!isEdit && surgeonPercent != null) {
+    const percentError = validateInterventionPercents(surgeonPercent, anesthesiologistPercent)
+    if (percentError) return { error: percentError }
   }
 
-  return {
-    payload: {
-      label: newItem.value.label.trim(),
-      category: newItem.value.category || 'MOYENNE_B',
-      totalCostFcfa: Number(newItem.value.totalCostFcfa),
-      clinicServiceId: newItem.value.clinicServiceId.trim() || null,
-      surgeonId: surgeonInputMode.value === 'select' ? newItem.value.surgeonId : null,
-      surgeonName: surgeonInputMode.value === 'custom' ? newItem.value.surgeonName.trim() : null,
-      anesthesiologistId:
-        newItem.value.withAnesthesiologist && assistantInputMode.value === 'select'
-          ? newItem.value.anesthesiologistId
-          : null,
-      anesthesiologistName:
-        newItem.value.withAnesthesiologist && assistantInputMode.value === 'custom'
-          ? newItem.value.anesthesiologistName.trim()
-          : null,
-      surgeonPercent,
-      anesthesiologistPercent,
-      surgeonIds:
-        surgeonInputMode.value === 'select'
-          ? [
-              ...new Set([
-                ...newItem.value.surgeonIds,
-                ...(newItem.value.surgeonId ? [newItem.value.surgeonId] : []),
-              ]),
-            ]
-          : newItem.value.surgeonIds,
-    },
+  const payload: {
+    label?: string
+    category: 'MAJEURE_A' | 'MOYENNE_B' | 'PETITE_C'
+    totalCostFcfa?: number
+    clinicServiceId: string | null
+    surgeonId: string | null
+    surgeonName: string | null
+    anesthesiologistId: string | null
+    anesthesiologistName: string | null
+    surgeonPercent?: number
+    anesthesiologistPercent: number
+    surgeonIds: string[]
+  } = {
+    category: newItem.value.category || 'MOYENNE_B',
+    clinicServiceId: newItem.value.clinicServiceId.trim() || null,
+    surgeonId: surgeonInputMode.value === 'select' ? newItem.value.surgeonId || null : null,
+    surgeonName: surgeonInputMode.value === 'custom' ? surgeonName || null : null,
+    anesthesiologistId:
+      newItem.value.withAnesthesiologist && assistantInputMode.value === 'select'
+        ? newItem.value.anesthesiologistId
+        : null,
+    anesthesiologistName:
+      newItem.value.withAnesthesiologist && assistantInputMode.value === 'custom'
+        ? newItem.value.anesthesiologistName.trim()
+        : null,
+    anesthesiologistPercent,
+    surgeonIds:
+      surgeonInputMode.value === 'select'
+        ? [
+            ...new Set([
+              ...newItem.value.surgeonIds,
+              ...(newItem.value.surgeonId ? [newItem.value.surgeonId] : []),
+            ]),
+          ]
+        : newItem.value.surgeonIds,
   }
+  if (label) payload.label = label
+  if (newItem.value.totalCostFcfa) payload.totalCostFcfa = Number(newItem.value.totalCostFcfa)
+  if (surgeonPercent != null) payload.surgeonPercent = surgeonPercent
+  return { payload }
 }
 
 async function saveItem() {
@@ -695,7 +768,16 @@ onMounted(async () => {
 
 <template>
   <div>
-    <UiPageHeader :title="config.title" :subtitle="config.subtitle" :icon="config.icon" />
+    <UiPageHeader :title="config.title" :subtitle="config.subtitle" :icon="config.icon">
+      <template #actions>
+        <ExportButtons
+          :disabled="loading || !operationExportRows.length"
+          @pdf="exportOperationsPdf"
+          @excel="exportOperationsExcel"
+          @word="exportOperationsWord"
+        />
+      </template>
+    </UiPageHeader>
 
     <UiAlert v-if="message && !showAddModal && !viewModalOpen" :type="messageType" :message="message" />
 
@@ -707,12 +789,6 @@ onMounted(async () => {
       class="section"
     >
       <template #actions>
-        <ExportButtons
-          :disabled="loading || !operationExportRows.length"
-          @pdf="exportOperationsPdf"
-          @excel="exportOperationsExcel"
-          @word="exportOperationsWord"
-        />
         <UiButton variant="primary" size="sm" :icon="Plus" ui-action="catalog.operation_types" @click="openAddModal">
           {{ uiText(addButtonLabel) }}
         </UiButton>
@@ -758,7 +834,7 @@ onMounted(async () => {
                     <th>Service</th>
                     <th>Coût</th>
                     <th>% Chir.</th>
-                    <th>% Ass.</th>
+                    <th>% Anés.</th>
                     <th>% Clin.</th>
                     <th>Statut</th>
                     <th class="simple-table__actions-head">Actions</th>
@@ -824,7 +900,7 @@ onMounted(async () => {
           <dd>{{ viewingSurgeonLabel }}</dd>
         </div>
         <div class="operation-detail__row">
-          <dt>Assistant chirurgie</dt>
+          <dt>Anesthésiste</dt>
           <dd>{{ viewingAnesthesiologistLabel }}</dd>
         </div>
         <div class="operation-detail__row">
@@ -832,7 +908,7 @@ onMounted(async () => {
           <dd>{{ viewingItem.surgeonPercent }}%</dd>
         </div>
         <div class="operation-detail__row">
-          <dt>% Assistant chirurgie</dt>
+          <dt>% Anesthésiste</dt>
           <dd>{{ viewingItem.anesthesiologistPercent > 0 ? `${viewingItem.anesthesiologistPercent}%` : '—' }}</dd>
         </div>
         <div class="operation-detail__row">
@@ -865,7 +941,7 @@ onMounted(async () => {
       <section class="form-panel">
         <div class="form-grid-2">
           <UiInput v-model="newItem.label" label="Libellé" placeholder="Chirurgie moyenne" />
-          <UiSelect v-model="newItem.clinicServiceId" label="Service" required>
+          <UiSelect v-model="newItem.clinicServiceId" label="Service" :required="!isEditing">
             <option value="">— Sélectionner un service —</option>
             <option v-for="service in clinicServices" :key="service.id" :value="service.id">
               {{ service.name }}
@@ -897,7 +973,7 @@ onMounted(async () => {
                   @click="medecinRole = 'anesthesiologist'; newItem.withAnesthesiologist = true"
                 >
                   <Syringe :size="15" />
-                  Assistant chirurgie
+                  Anesthésiste
                 </button>
               </div>
 
@@ -928,7 +1004,7 @@ onMounted(async () => {
                     @update:model-value="onPrimarySurgeonChange"
                   >
                     <option value="">— Sélectionner —</option>
-                    <option v-for="doctor in doctors" :key="doctor.id" :value="doctor.id">
+                    <option v-for="doctor in surgeonDoctors" :key="doctor.id" :value="doctor.id">
                       Dr {{ fullName(doctor.firstName, doctor.lastName) }}
                     </option>
                   </UiSelect>
@@ -952,7 +1028,7 @@ onMounted(async () => {
                     Cochez les médecins qui pourront utiliser cette opération (en plus du chirurgien principal).
                   </p>
                   <label
-                    v-for="doctor in doctors"
+                    v-for="doctor in surgeonDoctors"
                     :key="`auth-${doctor.id}`"
                     class="surgeon-check"
                   >
@@ -973,10 +1049,10 @@ onMounted(async () => {
                     :checked="newItem.withAnesthesiologist"
                     @change="onWithAnesthesiologistChange(($event.target as HTMLInputElement).checked)"
                   />
-                  <span>Inclure un assistant chirurgie pour cette opération</span>
+                  <span>Inclure un anesthésiste pour cette opération</span>
                 </label>
                 <template v-if="newItem.withAnesthesiologist">
-                  <div class="surgeon-mode" role="tablist" aria-label="Mode de saisie assistant chirurgie">
+                  <div class="surgeon-mode" role="tablist" aria-label="Mode de saisie anesthésiste">
                     <button
                       type="button"
                       class="surgeon-mode__btn"
@@ -998,7 +1074,7 @@ onMounted(async () => {
                     <UiSelect
                       v-if="assistantInputMode === 'select'"
                       v-model="newItem.anesthesiologistId"
-                      label="Assistant chirurgie"
+                      label="Anesthésiste"
                     >
                       <option value="">— Sélectionner —</option>
                       <option
@@ -1012,12 +1088,12 @@ onMounted(async () => {
                     <UiInput
                       v-else
                       v-model="newItem.anesthesiologistName"
-                      label="Assistant chirurgie"
+                      label="Anesthésiste"
                       placeholder="Ex. Dr Amadou Ba"
                     />
                     <UiInput
                       v-model="newItem.anesthesiologistPercent"
-                      label="% Assistant chirurgie"
+                      label="% Anesthésiste"
                       type="number"
                       min="1"
                       max="99"
@@ -1033,7 +1109,7 @@ onMounted(async () => {
           <strong>{{ surgeonPercentValue || 0 }}%</strong>
         </div>
         <div>
-          <span>% Assistant chirurgie</span>
+          <span>% Anesthésiste</span>
           <strong>{{ anesthesiologistPercentValue }}%</strong>
         </div>
         <div>

@@ -15,10 +15,14 @@ import {
   computeSurgeryShares,
   doctorUsesFixedSalary,
   doctorUsesQuota,
+  effectiveSurgeryAssistant,
+  resolveAssistantPercent,
   serializeDoctorFields,
+  surgeryCaseAssistantWhere,
   type DoctorProfile,
 } from "./doctor-compensation.js";
 import { currentPayrollPeriod } from "./admin-payroll.js";
+import { collectedAmountFcfa } from "./surgery-cost-shares.js";
 
 export type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -232,8 +236,7 @@ export async function buildDoctorReceivable(
       OR: [
         { surgeonId: doctorUserId, surgeonPaidAt: null },
         {
-          interventionType: { anesthesiologistId: doctorUserId },
-          assistantPaidAt: null,
+          AND: [surgeryCaseAssistantWhere(doctorUserId), { assistantPaidAt: null }],
         },
       ],
     },
@@ -242,7 +245,11 @@ export async function buildDoctorReceivable(
       completedAt: true,
       surgeonId: true,
       surgeonShareFcfa: true,
+      surgeonPercent: true,
       totalCostFcfa: true,
+      anesthesiologistId: true,
+      anesthesiologistPercent: true,
+      invoice: { select: { paidAmountFcfa: true, amountFcfa: true, status: true } },
       interventionType: {
         select: {
           label: true,
@@ -256,15 +263,16 @@ export async function buildDoctorReceivable(
 
   for (const surgery of surgeries) {
     const businessDate = (surgery.completedAt ?? period.from).toISOString().slice(0, 10);
+    const collected = collectedAmountFcfa(surgery.invoice ?? {});
     if (
       surgery.surgeonId === doctorUserId &&
       !claimedSurgery.has(`${surgery.id}:${DoctorShareKind.OPERATION_SURGEON}`)
     ) {
-      const amount = computeSurgeryShares(
-        surgery.totalCostFcfa,
-        surgery.interventionType.surgeonPercent,
-        profile,
-      ).surgeonShareFcfa;
+      const surgeonRate =
+        surgery.surgeonPercent != null && surgery.surgeonPercent > 0
+          ? surgery.surgeonPercent
+          : surgery.interventionType.surgeonPercent;
+      const amount = Math.round((collected * Math.max(0, surgeonRate)) / 100);
       if (amount > 0) {
         items.push({
           key: `op-surgeon-${surgery.id}`,
@@ -276,14 +284,14 @@ export async function buildDoctorReceivable(
         });
       }
     }
+    const assistant = effectiveSurgeryAssistant(surgery);
+    const assistantPct = resolveAssistantPercent(assistant.percent, profile);
     if (
-      surgery.interventionType.anesthesiologistId === doctorUserId &&
-      (surgery.interventionType.anesthesiologistPercent ?? 0) > 0 &&
+      assistant.id === doctorUserId &&
+      assistantPct > 0 &&
       !claimedSurgery.has(`${surgery.id}:${DoctorShareKind.OPERATION_ASSISTANT}`)
     ) {
-      const amount = Math.round(
-        (surgery.totalCostFcfa * (surgery.interventionType.anesthesiologistPercent ?? 0)) / 100,
-      );
+      const amount = Math.round((collected * assistantPct) / 100);
       if (amount > 0) {
         items.push({
           key: `op-assistant-${surgery.id}`,
@@ -291,7 +299,7 @@ export async function buildDoctorReceivable(
           amountFcfa: amount,
           businessDate,
           surgeryCaseId: surgery.id,
-          label: `${surgery.interventionType.label} (assistant)`,
+          label: `${surgery.interventionType.label} (anesthésiste)`,
         });
       }
     }
@@ -312,8 +320,7 @@ export async function buildDoctorReceivable(
           OR: [
             { surgeonId: doctorUserId, surgeonPaidAt: null },
             {
-              interventionType: { anesthesiologistId: doctorUserId },
-              assistantPaidAt: null,
+              AND: [surgeryCaseAssistantWhere(doctorUserId), { assistantPaidAt: null }],
             },
           ],
         },
@@ -331,6 +338,9 @@ export async function buildDoctorReceivable(
           select: {
             id: true,
             surgeonId: true,
+            surgeonPercent: true,
+            anesthesiologistId: true,
+            anesthesiologistPercent: true,
             interventionType: {
               select: {
                 label: true,
@@ -374,11 +384,14 @@ export async function buildDoctorReceivable(
         !claimedSurgery.has(`${surgery.id}:${DoctorShareKind.OPERATION_SURGEON}`)
       ) {
         const surgeonProfile = doctorProfileFromUser(surgery.surgeon);
-        const amount = computeSurgeryShares(
-          collected,
-          surgery.interventionType.surgeonPercent,
-          surgeonProfile,
-        ).surgeonShareFcfa;
+        const amount =
+          surgery.surgeonPercent != null
+            ? Math.round((collected * Math.max(0, surgery.surgeonPercent)) / 100)
+            : computeSurgeryShares(
+                collected,
+                surgery.interventionType.surgeonPercent,
+                surgeonProfile,
+              ).surgeonShareFcfa;
         if (amount > 0) {
           items.push({
             key: `op-surgeon-partial-${surgery.id}`,
@@ -392,9 +405,10 @@ export async function buildDoctorReceivable(
         }
       }
 
-      const anesthPct = surgery.interventionType.anesthesiologistPercent ?? 0;
+      const assistant = effectiveSurgeryAssistant(surgery);
+      const anesthPct = resolveAssistantPercent(assistant.percent, profile);
       if (
-        surgery.interventionType.anesthesiologistId === doctorUserId &&
+        assistant.id === doctorUserId &&
         anesthPct > 0 &&
         !claimedSurgery.has(`${surgery.id}:${DoctorShareKind.OPERATION_ASSISTANT}`)
       ) {
@@ -664,6 +678,7 @@ export async function syncPaidOperationSurgeonCashShare(
           id: true,
           surgeonId: true,
           surgeonShareFcfa: true,
+          surgeonPercent: true,
           totalCostFcfa: true,
           surgeonPaidMethod: true,
         },
@@ -677,12 +692,20 @@ export async function syncPaidOperationSurgeonCashShare(
   if (!isOperation || invoice.status === InvoiceStatus.CANCELLED) return null;
   if (surgery.surgeonPaidMethod === SharePaymentMethod.PAYROLL) return null;
 
-  const amountFcfa = paidSurgeonShareFcfa({
-    surgeonShareFcfa: surgery.surgeonShareFcfa,
-    totalCostFcfa: surgery.totalCostFcfa,
-    invoiceAmountFcfa: invoice.amountFcfa,
+  const collected = collectedAmountFcfa({
     paidAmountFcfa: invoice.paidAmountFcfa,
+    amountFcfa: invoice.amountFcfa,
+    status: invoice.status,
   });
+  const amountFcfa =
+    surgery.surgeonPercent != null && surgery.surgeonPercent > 0
+      ? Math.round((collected * surgery.surgeonPercent) / 100)
+      : paidSurgeonShareFcfa({
+          surgeonShareFcfa: surgery.surgeonShareFcfa,
+          totalCostFcfa: surgery.totalCostFcfa,
+          invoiceAmountFcfa: invoice.amountFcfa,
+          paidAmountFcfa: invoice.paidAmountFcfa,
+        });
   if (amountFcfa <= 0) return null;
 
   const existing = await tx.doctorShareClaim.findFirst({

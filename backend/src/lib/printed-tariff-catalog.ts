@@ -1,6 +1,7 @@
 import { ExamCatalogKind, InterventionCategory } from "@prisma/client";
 import { prisma } from "./db.js";
 import { examCatalogServiceScopeKey, isKinesitherapieServiceName } from "./clinic-service-exam.js";
+import { isOrthoTraumaServiceName, ORTHO_TRAUMA_SERVICE_NAME } from "./ortho-trauma-service.js";
 import { findDuplicateExamCatalogItem, findDuplicateIntervention } from "./duplicate-detection.js";
 import { ensureKinesitherapieCatalogItems } from "./kinesitherapie-catalog.js";
 
@@ -10,10 +11,24 @@ import { ensureKinesitherapieCatalogItems } from "./kinesitherapie-catalog.js";
  */
 export const PRINTED_TARIFF_EMIRATES_SUFFIX = " (émiraties)";
 
+/** Ancien 2ᵉ tarif : ne plus le renvoyer dans les listes catalogue. */
+export function excludeLegacyEmiratesTariffWhere() {
+  return {
+    NOT: {
+      OR: [
+        { code: { endsWith: "-EM" } },
+        { label: { endsWith: PRINTED_TARIFF_EMIRATES_SUFFIX } },
+        { label: { endsWith: " (Emirates)" } },
+        { label: { endsWith: " (الإمارات)" } },
+      ],
+    },
+  };
+}
+
 const EMIRATES_LABEL_SUFFIX_RE = /\s*\((?:émiraties|emirates|الإمارات)\)\s*$/iu;
 
 /** Services créés s’ils n’existent pas encore (additif). */
-export const PRINTED_TARIFF_SERVICES = ["Orthopédie", "Kinésithérapie"] as const;
+export const PRINTED_TARIFF_SERVICES = [ORTHO_TRAUMA_SERVICE_NAME, "Kinésithérapie"] as const;
 
 export const PRINTED_TARIFF_OPERATIONS = [
   {
@@ -50,7 +65,7 @@ export const PRINTED_TARIFF_OPERATIONS = [
     totalCostFcfa: 750_000,
     emiratesCostFcfa: 600_000,
     surgeonPercent: 60,
-    serviceNames: ["Orthopédie"],
+    serviceNames: [ORTHO_TRAUMA_SERVICE_NAME],
   },
   {
     code: "OP-ORTHO-BASSIN",
@@ -59,7 +74,7 @@ export const PRINTED_TARIFF_OPERATIONS = [
     totalCostFcfa: 900_000,
     emiratesCostFcfa: 750_000,
     surgeonPercent: 60,
-    serviceNames: ["Orthopédie"],
+    serviceNames: [ORTHO_TRAUMA_SERVICE_NAME],
   },
   {
     code: "OP-ORTHO-BRAS",
@@ -68,7 +83,7 @@ export const PRINTED_TARIFF_OPERATIONS = [
     totalCostFcfa: 500_000,
     emiratesCostFcfa: 400_000,
     surgeonPercent: 60,
-    serviceNames: ["Orthopédie"],
+    serviceNames: [ORTHO_TRAUMA_SERVICE_NAME],
   },
   {
     code: "OP-ORTHO-JAMBE",
@@ -77,7 +92,7 @@ export const PRINTED_TARIFF_OPERATIONS = [
     totalCostFcfa: 600_000,
     emiratesCostFcfa: 500_000,
     surgeonPercent: 60,
-    serviceNames: ["Orthopédie"],
+    serviceNames: [ORTHO_TRAUMA_SERVICE_NAME],
   },
 ] as const;
 
@@ -191,13 +206,12 @@ async function findBlocOperatoireServiceId(): Promise<string | null> {
 }
 
 async function findOrthopedieServiceId(): Promise<string | null> {
-  const named = await findClinicServiceId(["Orthopédie", "Orthopedie"]);
-  if (named) return named;
-  const fuzzy = await prisma.clinicService.findFirst({
-    where: { name: { contains: "orthop", mode: "insensitive" } },
-    select: { id: true },
+  const services = await prisma.clinicService.findMany({
+    select: { id: true, name: true, active: true },
   });
-  return fuzzy?.id ?? null;
+  const active = services.find((service) => service.active && isOrthoTraumaServiceName(service.name));
+  if (active) return active.id;
+  return services.find((service) => isOrthoTraumaServiceName(service.name))?.id ?? null;
 }
 
 async function findKinesitherapieServiceId(): Promise<string | null> {
@@ -231,7 +245,8 @@ export async function ensureClinicServiceByName(name: string): Promise<string> {
 
 export async function ensurePrintedTariffServices() {
   const ids: string[] = [];
-  const orthoId = (await findOrthopedieServiceId()) ?? (await ensureClinicServiceByName("Orthopédie"));
+  const orthoId =
+    (await findOrthopedieServiceId()) ?? (await ensureClinicServiceByName(ORTHO_TRAUMA_SERVICE_NAME));
   const kineId = (await findKinesitherapieServiceId()) ?? (await ensureClinicServiceByName("Kinésithérapie"));
   ids.push(orthoId, kineId);
   return ids;

@@ -12,6 +12,7 @@ import {
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorWhere } from "../lib/doctor-compensation.js";
 import { recalculateSurgeriesForIntervention } from "../lib/recalculate-employee-compensation.js";
+import { excludeLegacyEmiratesTariffWhere } from "../lib/printed-tariff-catalog.js";
 import {
   authorizedSurgeonsInclude,
   resolveAuthorizedSurgeonIds,
@@ -197,13 +198,13 @@ const interventionSchema = interventionBaseSchema.superRefine((body, ctx) => {
     if (!anesthesiologistId && !anesthesiologistName) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Sélectionnez un assistant chirurgie ou saisissez son nom.",
+        message: "Sélectionnez un anesthésiste ou saisissez son nom.",
       });
     }
     if (anesthesiologistName && anesthesiologistName.length < 2) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Le nom de l'assistant chirurgie doit contenir au moins 2 caractères.",
+        message: "Le nom de l'anesthésiste doit contenir au moins 2 caractères.",
       });
     }
   }
@@ -213,23 +214,31 @@ const interventionSchema = interventionBaseSchema.superRefine((body, ctx) => {
   ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Indiquez le pourcentage assistant chirurgie.",
+      message: "Indiquez le pourcentage anesthésiste.",
     });
   }
 });
 
-const interventionUpdateSchema = interventionBaseSchema.partial().superRefine((body, ctx) => {
-  if (body.surgeonPercent === undefined && body.anesthesiologistPercent === undefined) return;
-  const surgeonPercent = body.surgeonPercent ?? 0;
-  const anesthesiologistPercent = body.anesthesiologistPercent ?? 0;
-  const error = validateInterventionPercents(
-    surgeonPercent > 0 ? surgeonPercent : 1,
-    anesthesiologistPercent,
-  );
-  if (error && body.surgeonPercent !== undefined) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: error });
-  }
-});
+const interventionUpdateSchema = interventionBaseSchema
+  .partial()
+  .extend({
+    surgeonPercent: z.number().int().min(0).max(99).optional(),
+  })
+  .superRefine((body, ctx) => {
+    if (body.surgeonPercent === undefined && body.anesthesiologistPercent === undefined) return;
+    const surgeonPercent = body.surgeonPercent ?? 0;
+    const anesthesiologistPercent = body.anesthesiologistPercent ?? 0;
+    if (
+      anesthesiologistPercent < 0 ||
+      anesthesiologistPercent > 99 ||
+      surgeonPercent + anesthesiologistPercent > 100
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "La somme des pourcentages chirurgien et anesthésiste ne peut pas dépasser 100 %.",
+      });
+    }
+  });
 
 const interventionInclude = {
   surgeon: { select: { id: true, firstName: true, lastName: true } },
@@ -469,7 +478,7 @@ router.get("/catalog-by-service/:clinicServiceId", async (req, res) => {
   }
 
   const items = await prisma.examCatalogItem.findMany({
-    where: examCatalogWhereForServiceTab(service),
+    where: { AND: [examCatalogWhereForServiceTab(service), excludeLegacyEmiratesTariffWhere()] },
     orderBy: [{ kind: "asc" }, { sortOrder: "asc" }, { label: "asc" }],
     select: examCatalogSelect,
   });
@@ -493,8 +502,10 @@ router.get("/catalog/:kindSlug", async (req, res) => {
 
   const items = await prisma.examCatalogItem.findMany({
     where: {
-      kind,
-      ...(clinicServiceId ? { clinicServiceId } : {}),
+      AND: [
+        { kind, ...(clinicServiceId ? { clinicServiceId } : {}) },
+        excludeLegacyEmiratesTariffWhere(),
+      ],
     },
     orderBy: [{ sortOrder: "asc" }, { label: "asc" }],
     select: examCatalogSelect,
@@ -689,14 +700,28 @@ router.delete("/catalog/:kindSlug/:id", async (req, res) => {
 router.get("/operations/doctors", async (_req, res) => {
   const doctors = await prisma.user.findMany({
     where: selectableDoctorWhere,
-    select: { id: true, firstName: true, lastName: true },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      employee: { select: { jobTitle: true, specialty: true } },
+    },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });
-  return res.json(doctors);
+  return res.json(
+    doctors.map((doctor) => ({
+      id: doctor.id,
+      firstName: doctor.firstName,
+      lastName: doctor.lastName,
+      jobTitle: doctor.employee?.jobTitle ?? null,
+      specialty: doctor.employee?.specialty ?? null,
+    })),
+  );
 });
 
 router.get("/operations", async (_req, res) => {
   const items = await prisma.interventionType.findMany({
+    where: excludeLegacyEmiratesTariffWhere(),
     include: interventionInclude,
     orderBy: [{ label: "asc" }, { category: "asc" }],
   });
@@ -778,6 +803,18 @@ router.post("/operations", async (req, res) => {
 router.put("/operations/:id", async (req, res) => {
   try {
     const body = interventionUpdateSchema.parse(req.body);
+    const existingPercents = await prisma.interventionType.findUnique({
+      where: { id: String(req.params.id) },
+      select: { surgeonPercent: true, anesthesiologistPercent: true },
+    });
+    if (!existingPercents) return res.status(404).json({ error: "Opération introuvable" });
+    const nextSurgeonPercent = body.surgeonPercent ?? existingPercents.surgeonPercent;
+    const nextAssistantPercent = body.anesthesiologistPercent ?? existingPercents.anesthesiologistPercent;
+    if (nextSurgeonPercent + nextAssistantPercent > 100) {
+      return res.status(400).json({
+        error: "La somme des pourcentages chirurgien et anesthésiste ne peut pas dépasser 100 %.",
+      });
+    }
     const nextAnesthesiologistPercent = body.anesthesiologistPercent;
     const surgeon =
       body.surgeonId !== undefined || body.surgeonName !== undefined

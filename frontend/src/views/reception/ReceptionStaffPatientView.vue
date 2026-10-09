@@ -16,6 +16,7 @@ import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
 import {
   doctorMatchesService,
   doctorMatchesClinicServiceId,
+  withoutAnesthetistForGeneralSurgery,
   preferredDoctorId,
   sortDoctorsForReception,
   type DoctorOption,
@@ -77,18 +78,16 @@ const filteredDoctors = computed(() => {
   if (!form.value.service) return sortedDoctors.value
   const svc = services.value.find((service) => service.name === form.value.service)
   const linkedIds = svc?.doctorUserIds?.filter(Boolean) ?? []
+  let matched = sortedDoctors.value
   if (linkedIds.length) {
     const idSet = new Set(linkedIds)
-    return sortDoctorsForReception(sortedDoctors.value.filter((doctor) => idSet.has(doctor.id)))
+    matched = sortedDoctors.value.filter((doctor) => idSet.has(doctor.id))
+  } else if (svc?.id) {
+    matched = sortedDoctors.value.filter((doctor) => doctorMatchesClinicServiceId(doctor, svc.id))
+  } else {
+    matched = sortedDoctors.value.filter((doctor) => doctorMatchesService(doctor, form.value.service))
   }
-  if (svc?.id) {
-    return sortDoctorsForReception(
-      sortedDoctors.value.filter((doctor) => doctorMatchesClinicServiceId(doctor, svc.id)),
-    )
-  }
-  return sortDoctorsForReception(
-    sortedDoctors.value.filter((doctor) => doctorMatchesService(doctor, form.value.service)),
-  )
+  return sortDoctorsForReception(withoutAnesthetistForGeneralSurgery(matched, form.value.service))
 })
 
 const canRegister = computed(() => {

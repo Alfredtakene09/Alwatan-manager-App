@@ -12,11 +12,8 @@ import {
   sumRegisteredPatientsEntriesFcfa,
 } from "../lib/revenue-stats.js";
 import { buildRegistrationReport, buildRegistrationSummary } from "../lib/registration-summary.js";
-import {
-  applyOpenClosureAdjustments,
-  listPatientClosureAmounts,
-  sumExpensesForCashierBetween,
-} from "../lib/cashier-personal-stats.js";
+import { applyDoctorSharesToVisit } from "../lib/recalculate-employee-compensation.js";
+import { sumExpensesForCashierBetween } from "../lib/cashier-personal-stats.js";
 import { CASH_COLLECTOR_ROLES } from "../lib/cash-shift.js";
 import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
 import {
@@ -50,7 +47,7 @@ import {
 } from "../lib/merge-patients.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere, resolveDoctorConsultationAmount } from "../lib/doctor-compensation.js";
-import { requireAuth, requireModule, requireUiAction } from "../middleware/auth.js";
+import { isUiActionPermitted, requireAuth, requireModule, requireUiAction } from "../middleware/auth.js";
 import { isAllowedReceptionReduction } from "../lib/reception-reduction.js";
 import {
   canAccessModule,
@@ -450,6 +447,7 @@ async function syncWaitingVisit(
         billing.billableAmountFcfa,
         issuedById,
       );
+      if (doctorId) await applyDoctorSharesToVisit(tx, visit.id, doctorId);
       return;
     }
 
@@ -479,12 +477,14 @@ async function syncWaitingVisit(
         existingInvoice.status === InvoiceStatus.PARTIALLY_PAID)
     ) {
       await syncPaidConsultationAmount(tx, existingInvoice, 0, issuedById);
+      if (doctorId) await applyDoctorSharesToVisit(tx, visit.id, doctorId);
       return;
     }
     if (existingInvoice) {
       await tx.invoice.delete({ where: { id: existingInvoice.id } });
     }
   }
+  if (doctorId) await applyDoctorSharesToVisit(tx, visit.id, doctorId);
 }
 
 /** Ligne examen / externe : garder le service, le médecin et appliquer la réduction sur la facture. */
@@ -562,7 +562,6 @@ async function syncExamRegistrationLine(
       },
     });
   }
-
   const currentTotal = currentNet > 0 ? currentNet : labInvoices.length;
   let allocated = 0;
   for (let index = 0; index < labInvoices.length; index += 1) {
@@ -580,6 +579,10 @@ async function syncExamRegistrationLine(
         data: { amountFcfa: share },
       });
     }
+  }
+
+  if (nextDoctorId) {
+    await applyDoctorSharesToVisit(tx, visit.id, nextDoctorId);
   }
 
   return true;
@@ -602,6 +605,14 @@ router.get("/", async (req, res) => {
   const createdById = String(req.query.createdById ?? "").trim();
   const service = String(req.query.service ?? "").trim();
   const doctorId = String(req.query.doctorId ?? "").trim();
+  const requestedIds = [
+    ...new Set(
+      String(req.query.ids ?? "")
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
+  ].slice(0, 2000);
   const terms = q.split(/\s+/).filter(Boolean);
   if (!canFullList && terms.length === 0) {
     return res.json([]);
@@ -661,13 +672,18 @@ router.get("/", async (req, res) => {
   }
 
   const patients = await prisma.patient.findMany({
-    where: {
-      ...ownScope,
-      ...(category ? { category: category as PatientCategory } : {}),
-      ...(service ? { service } : {}),
-      ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
-      ...(andFilters.length > 0 ? { AND: andFilters } : {}),
-    },
+    where: requestedIds.length
+      ? {
+          id: { in: requestedIds },
+          ...ownScope,
+        }
+      : {
+          ...ownScope,
+          ...(category ? { category: category as PatientCategory } : {}),
+          ...(service ? { service } : {}),
+          ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
+          ...(andFilters.length > 0 ? { AND: andFilters } : {}),
+        },
     include: {
       treatingDoctor: { select: treatingDoctorSelect },
       createdBy: { select: { id: true, firstName: true, lastName: true } },
@@ -690,7 +706,7 @@ router.get("/", async (req, res) => {
       },
     },
     orderBy: [{ createdAt: "desc" }, { code: "desc" }],
-    take: createdAtFilter ? 500 : 50,
+    ...(requestedIds.length || createdAtFilter ? {} : { take: 50 }),
   });
 
   const lockedIds = await findPatientIdsDeletionLocked(patients.map((p) => p.id));
@@ -776,7 +792,13 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     ...(service ? { service } : {}),
     ...(doctorPatientWhere ? { AND: [doctorPatientWhere] } : {}),
   };
+  const patientCashScope = {
+    ...ownScope,
+    ...(service ? { service } : {}),
+    ...(doctorPatientWhere ? { AND: [doctorPatientWhere] } : {}),
+  };
   const patientPeriodScope = { ...patientScope, createdAt: createdAtRange };
+  const patientCashPeriodScope = { ...patientCashScope, createdAt: createdAtRange };
   const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
   const scopedReceptionistId = isReceptionist ? user.id : createdById || null;
   const revenueOptions = {
@@ -789,7 +811,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     user.role !== UserRole.ADMIN && CASH_COLLECTOR_ROLES.includes(user.role);
 
   const [
-    registeredToday,
+    registeredRows,
     femalePatients,
     malePatients,
     visitsToday,
@@ -800,8 +822,10 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     myExpensesToday,
     registration,
   ] = await Promise.all([
-    prisma.patient.count({
+    prisma.patient.findMany({
       where: patientPeriodScope,
+      select: { id: true },
+      orderBy: [{ createdAt: "desc" }, { code: "desc" }],
     }),
     prisma.patient.count({ where: { ...patientPeriodScope, gender: "F" } }),
     prisma.patient.count({ where: { ...patientPeriodScope, gender: "M" } }),
@@ -847,8 +871,8 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
       },
     }),
     aggregateCollectedBetween(rangeStart, rangeEndExclusive, revenueOptions),
-    sumRegisteredPatientsConsultationsFcfa(patientPeriodScope, rangeStart, rangeEndExclusive),
-    sumRegisteredPatientsEntriesFcfa(patientPeriodScope, rangeStart, rangeEndExclusive),
+    sumRegisteredPatientsConsultationsFcfa(patientCashPeriodScope, rangeStart, rangeEndExclusive),
+    sumRegisteredPatientsEntriesFcfa(patientCashPeriodScope, rangeStart, rangeEndExclusive),
     personalCashScope && !service && !doctorId
       ? sumExpensesForCashierBetween(user.id, rangeStart, rangeEndExclusive)
       : Promise.resolve({ totalFcfa: 0, count: 0, rows: [] }),
@@ -873,13 +897,18 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
   } = registration.activity;
 
   return res.json({
-    registeredToday,
+    registeredToday: registeredRows.length,
+    registeredPatientIds: registeredRows.map((patient) => patient.id),
     femalePatients,
     malePatients,
     examPatientsCount,
     hospitalizationPatientsCount,
     consultationPatientsCount,
     surgeryPatientsCount,
+    examPatientIds: registration.activityPatientIds.exam,
+    hospitalizationPatientIds: registration.activityPatientIds.hospitalization,
+    consultationPatientIds: registration.activityPatientIds.consultation,
+    operationPatientIds: registration.activityPatientIds.operation,
     visitsToday,
     externalPatientsToday,
     revenueTodayFcfa: collectedToday.totalFcfa,
@@ -1500,11 +1529,18 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
   }
 });
 
-router.patch(
-  "/:id/active",
-  requireModule("reception"),
-  requireUiAction("reception.delete_patient"),
-  async (req, res) => {
+router.patch("/:id/active", requireModule("reception"), async (req, res) => {
+    const role = req.user!.role;
+    const canDeactivate =
+      role === "RECEPTIONNISTE" || (await isUiActionPermitted(req, "reception.delete_patient"));
+    if (!canDeactivate) {
+      return res.status(403).json({
+        error: "Action masquée pour ce compte",
+        code: "UI_ACTION_HIDDEN",
+        action: "reception.delete_patient",
+      });
+    }
+
     const parsed = z.object({ active: z.boolean() }).safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Données invalides" });
 
@@ -1515,16 +1551,40 @@ router.patch(
     });
     if (!existing) return res.status(404).json({ error: "Patient introuvable" });
 
-    const adjustments = await listPatientClosureAmounts(patientId);
     const patient = await prisma.patient.update({
       where: { id: patientId },
       data: { active: parsed.data.active },
       select: { id: true, code: true, active: true },
     });
-    await applyOpenClosureAdjustments(adjustments, parsed.data.active ? 1 : -1);
     return res.json(patient);
-  },
-);
+});
+
+/** Garde les factures déjà encaissées pour qu'elles restent dans le solde après suppression du dossier. */
+async function detachCollectedInvoices(patientId: string) {
+  const invoices = await prisma.invoice.findMany({
+    where: {
+      patientId,
+      OR: [{ paidAmountFcfa: { gt: 0 } }, { status: InvoiceStatus.PAID }],
+    },
+    select: { id: true },
+  });
+  const invoiceIds = invoices.map((row) => row.id);
+  if (!invoiceIds.length) return;
+
+  await prisma.doctorShareClaim.updateMany({
+    where: { invoiceId: { in: invoiceIds } },
+    data: { surgeryCaseId: null },
+  });
+  await prisma.invoice.updateMany({
+    where: { id: { in: invoiceIds } },
+    data: {
+      patientId: null,
+      visitId: null,
+      surgeryCaseId: null,
+      hospitalizationId: null,
+    },
+  });
+}
 
 router.delete("/:id", requireModule("reception"), requireUiAction("reception.delete_patient"), async (req, res) => {
   try {
@@ -1537,9 +1597,8 @@ router.delete("/:id", requireModule("reception"), requireUiAction("reception.del
     if (!isDirectionOrGestionnaire(req.user!.role as AppUserRole)) {
       await assertPatientDeletable(patientId);
     }
-    const adjustments = await listPatientClosureAmounts(patientId);
+    await detachCollectedInvoices(patientId);
     await forceDeletePatientCascade(patientId);
-    await applyOpenClosureAdjustments(adjustments, -1);
 
     return res.json({ success: true });
   } catch (error) {

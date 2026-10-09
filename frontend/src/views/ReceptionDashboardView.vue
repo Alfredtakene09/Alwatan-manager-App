@@ -48,6 +48,7 @@ import {
   doctorNeedsConsultationAmountInput,
   doctorQuotaHint,
   doctorMatchesService,
+  withoutAnesthetistForGeneralSurgery,
   doctorShowsFixedConsultationPrice,
   resolveConsultationAmountForDoctor,
   showDoctorConsultationBilling,
@@ -99,6 +100,11 @@ type ReceptionStats = {
   surgeryTodayFcfa?: number
   hospitalizationTodayFcfa?: number
   doctorShareFcfa?: number
+  examPatientIds?: string[]
+  hospitalizationPatientIds?: string[]
+  consultationPatientIds?: string[]
+  operationPatientIds?: string[]
+  registeredPatientIds?: string[]
 }
 
 type Patient = {
@@ -215,6 +221,20 @@ function selectReceptionTab(next: ReceptionPageTab) {
   persistReceptionTab(next)
 }
 
+function openRegisteredPatientsList() {
+  document.getElementById('patients-registered-list')?.scrollIntoView({
+    behavior: 'smooth',
+    block: 'start',
+  })
+}
+
+const selectedActivityCard = ref('')
+
+function openDashboardStat(id: string) {
+  selectedActivityCard.value = selectedActivityCard.value === id ? '' : id
+  openRegisteredPatientsList()
+}
+
 const receptionTabs = computed(() => {
   void localeCode.value
   const tabs: Array<{ id: ReceptionPageTab; label: string; icon: typeof UserPlus }> = [
@@ -285,8 +305,10 @@ const sortedDoctors = computed(() =>
   }),
 )
 function filteredDoctorsByService(serviceName: string) {
-  if (!serviceName) return sortedDoctors.value
-  return sortedDoctors.value.filter((doctor) => doctorMatchesService(doctor, serviceName))
+  const matched = !serviceName
+    ? sortedDoctors.value
+    : sortedDoctors.value.filter((doctor) => doctorMatchesService(doctor, serviceName))
+  return withoutAnesthetistForGeneralSurgery(matched, serviceName)
 }
 const formServiceDoctors = computed(() => filteredDoctorsByService(form.value.service))
 const editServiceDoctors = computed(() => {
@@ -587,10 +609,78 @@ function collectReconsultValidationErrors(): string[] {
   return issues
 }
 
+const activityPatientIds = computed(() => {
+  switch (selectedActivityCard.value) {
+    case 'lab':
+      return stats.value.examPatientIds ?? []
+    case 'hospitalization':
+      return stats.value.hospitalizationPatientIds ?? []
+    case 'consultations':
+      return stats.value.consultationPatientIds ?? []
+    case 'surgery':
+      return stats.value.operationPatientIds ?? []
+    default:
+      return stats.value.registeredPatientIds ?? null
+  }
+})
+
+const activityPatients = ref<Patient[]>([])
+const loadingActivityPatients = ref(false)
+let activityPatientsRequest = 0
+
+function patientMatchesSearch(patient: Patient, query: string) {
+  const haystack = [patient.code, patient.firstName, patient.lastName, patient.phone ?? '']
+    .join(' ')
+    .toLowerCase()
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((term) => haystack.includes(term))
+}
+
+const visiblePatients = computed(() => {
+  const ids = activityPatientIds.value
+  const source = ids ? activityPatients.value : patients.value
+  const query = search.value.trim()
+  if (!ids || !query) return source
+  return source.filter((patient) => patientMatchesSearch(patient, query))
+})
+
+async function loadActivityPatients() {
+  const ids = activityPatientIds.value
+  const request = ++activityPatientsRequest
+  if (!ids?.length) {
+    activityPatients.value = []
+    loadingActivityPatients.value = false
+    return
+  }
+  loadingActivityPatients.value = true
+  try {
+    const { data } = await api.get<Patient[]>('/patients', {
+      params: { ids: ids.join(',') },
+    })
+    if (request !== activityPatientsRequest) return
+    const order = new Map(ids.map((id, index) => [id, index]))
+    activityPatients.value = (Array.isArray(data) ? data : []).sort(
+      (a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0),
+    )
+  } catch {
+    if (request !== activityPatientsRequest) return
+    activityPatients.value = []
+  } finally {
+    if (request === activityPatientsRequest) loadingActivityPatients.value = false
+  }
+}
+
+watch(activityPatientIds, () => {
+  void loadActivityPatients()
+})
+
 const searchLabel = computed(() =>
   search.value.trim()
-    ? translateTemplate('{n} résultat(s)', { n: patients.value.length })
-    : translateTemplate('{n} dossier(s) affiché(s)', { n: patients.value.length }),
+    ? translateTemplate('{n} résultat(s)', { n: visiblePatients.value.length })
+    : translateTemplate('{n} dossier(s) affiché(s)', { n: visiblePatients.value.length }),
 )
 
 const listDateLabel = computed(() => {
@@ -615,8 +705,19 @@ const listDateLabel = computed(() => {
 })
 
 const patientsPanelSubtitle = computed(() => {
-  const scope =
-    auth.user?.role === 'RECEPTIONNISTE'
+  const cardLabel =
+    selectedActivityCard.value === 'lab'
+      ? uiText('Laboratoire')
+      : selectedActivityCard.value === 'hospitalization'
+        ? uiText('Hospitalisation')
+        : selectedActivityCard.value === 'consultations'
+          ? uiText('Consultations')
+          : selectedActivityCard.value === 'surgery'
+            ? uiText('Opérations')
+            : ''
+  const scope = cardLabel
+    ? cardLabel
+    : auth.user?.role === 'RECEPTIONNISTE'
       ? uiText('Vos dossiers créés à la réception')
       : selectedReceptionistName.value
         ? translateTemplate('Dossiers enregistrés par {name}', { name: selectedReceptionistName.value })
@@ -655,7 +756,7 @@ function patientExportCaptionRows() {
       ? [{ label: uiText('Service'), value: clinicServiceText(serviceFilter.value.trim()) }]
       : []),
     ...(search.value.trim() ? [{ label: uiText('Recherche'), value: search.value.trim() }] : []),
-    { label: uiText('Nombre de patients'), value: String(patients.value.filter((patient) => patient.active !== false).length) },
+    { label: uiText('Nombre de patients'), value: String(visiblePatients.value.filter((patient) => patient.active !== false).length) },
   ]
 }
 
@@ -676,14 +777,13 @@ type RegistrationSummaryLine = {
 
 function registrationDetailLabel(row: RegistrationSummaryLine): string {
   const serviceSource = (row.serviceName || row.service).trim()
-  const service =
-    serviceSource === 'traumatologie&Orthopedie' ? serviceSource : clinicServiceText(serviceSource)
+  const service = clinicServiceText(serviceSource)
   const operation =
     row.group === 'operation' && row.operationName?.trim()
       ? clinicServiceText(row.operationName.trim())
       : ''
   const doctors =
-    row.group === 'operation'
+    row.group === 'operation' || row.group === 'consultation'
       ? (row.doctorNames ?? [])
           .map((name) => name.trim().replace(/^dr\.?\s+/i, ''))
           .filter(Boolean)
@@ -695,7 +795,9 @@ function registrationDetailLabel(row: RegistrationSummaryLine): string {
 
 function doctorShareLabel(row: RegistrationSummaryLine): string {
   if (row.doctorShareFcfa <= 0) return '—'
-  return formatFcfa(row.doctorShareFcfa)
+  const amount = formatFcfa(row.doctorShareFcfa)
+  const percent = row.group === 'operation' ? row.operationPercent : row.doctorPercent
+  return percent != null && percent > 0 ? `${amount} (${percent} %)` : amount
 }
 
 function clinicShareLabel(row: RegistrationSummaryLine): string {
@@ -869,42 +971,47 @@ const dashboardStats = computed(() => {
     icon: CalendarDays,
     variant: 'amber' as const,
     money: false,
+    clickable: true,
   },
   {
     id: 'lab',
     label: 'Laboratoire',
     value: stats.value.examPatientsCount ?? 0,
-    hint: 'Patients',
+    hint: periodLabel,
     icon: FlaskConical,
     variant: 'teal' as const,
     money: false,
+    clickable: true,
   },
   {
     id: 'hospitalization',
     label: 'Hospitalisation',
     value: stats.value.hospitalizationPatientsCount ?? 0,
-    hint: 'Patients',
+    hint: periodLabel,
     icon: BedDouble,
     variant: 'rose' as const,
     money: false,
+    clickable: true,
   },
   {
     id: 'consultations',
     label: 'Consultations',
     value: stats.value.consultationPatientsCount ?? 0,
-    hint: 'Patients',
+    hint: periodLabel,
     icon: Stethoscope,
     variant: 'blue' as const,
     money: false,
+    clickable: true,
   },
   {
     id: 'surgery',
     label: 'Opérations',
     value: stats.value.surgeryPatientsCount ?? 0,
-    hint: 'Patients',
+    hint: periodLabel,
     icon: Scissors,
     variant: 'amber' as const,
     money: false,
+    clickable: true,
   },
   {
     id: 'revenue',
@@ -914,6 +1021,7 @@ const dashboardStats = computed(() => {
     icon: Banknote,
     variant: 'violet' as const,
     money: true,
+    clickable: false,
   },
   {
     id: 'doctor-share',
@@ -923,6 +1031,7 @@ const dashboardStats = computed(() => {
     icon: Percent,
     variant: 'green' as const,
     money: true,
+    clickable: false,
   },
 ]
 })
@@ -1045,8 +1154,6 @@ async function loadPatients() {
     }
     const { data } = await api.get('/patients', {
       params: {
-        q: search.value.trim() || undefined,
-        excludeExternalExams: '1',
         from,
         to,
         createdById: canFilterByReceptionist.value
@@ -1421,6 +1528,32 @@ function printPatientReceipt(patient: Patient) {
     .finally(() => {
       printingPatientId.value = null
     })
+}
+
+async function deletePatient(patient: Patient) {
+  const patientName = fullName(patient.firstName, patient.lastName)
+  const confirmed = await confirmAppModal({
+    type: 'DELETE',
+    title: uiText('Supprimer le patient (admin)'),
+    message: translateTemplate(
+      'Supprimer le dossier {code} — {name} ? Visites, consultations et documents liés seront supprimés. La somme déjà encaissée reste dans le solde. Cette action est irréversible.',
+      { code: patient.code, name: patientName },
+    ),
+    confirmLabel: uiText('Supprimer'),
+  })
+  if (!confirmed) return
+
+  togglingPatientId.value = patient.id
+  clearAlert()
+  try {
+    await api.delete(`/patients/${patient.id}`)
+    showAlert(translateTemplate('Dossier {code} supprimé.', { code: patient.code }))
+    await refreshAll()
+  } catch (error: unknown) {
+    await showApiErrorModal(error, 'Impossible de supprimer ce patient.')
+  } finally {
+    togglingPatientId.value = null
+  }
 }
 
 async function togglePatientActive(patient: Patient) {
@@ -1813,11 +1946,21 @@ onUnmounted(clearAlert)
       <UiAlert v-if="message" :type="messageType" :message="message" class="page-alert" />
 
       <div class="stats-grid" :class="{ 'stats-grid--loading': loadingStats }">
-        <article
+        <component
+          :is="item.clickable ? 'button' : 'article'"
           v-for="item in dashboardStats"
           :key="item.id"
           class="dash-stat card-accent card-accent--green"
-          :class="`dash-stat--${item.variant}`"
+          :class="[
+            `dash-stat--${item.variant}`,
+            {
+              'dash-stat--link': item.clickable,
+              'dash-stat--active': item.clickable && selectedActivityCard === item.id,
+            },
+          ]"
+          :type="item.clickable ? 'button' : undefined"
+          :title="item.clickable ? uiText('Voir la liste') : undefined"
+          @click="item.clickable ? openDashboardStat(item.id) : undefined"
         >
           <div class="dash-stat__icon">
             <component :is="item.icon" :size="14" />
@@ -1830,7 +1973,7 @@ onUnmounted(clearAlert)
             </strong>
             <span class="dash-stat__hint">{{ uiText(item.hint) }}</span>
           </div>
-        </article>
+        </component>
       </div>
 
       <div class="patients-panel-sticky">
@@ -1949,23 +2092,26 @@ onUnmounted(clearAlert)
 
     <section
       v-if="activeReceptionTab === 'enregistrement'"
+      id="patients-registered-list"
       class="dashboard-body"
     >
       <div class="patients-table-card">
         <div class="table-wrap">
           <PatientsDataTable
             fill
-            :patients="patients"
-            :loading="loadingPatients || !!togglingPatientId"
+            :patients="visiblePatients"
+            :loading="loadingPatients || loadingActivityPatients || !!togglingPatientId"
             :service-options="serviceFilterOptions"
             v-model:service-filter="serviceFilter"
             :show-receptionist="canFilterByReceptionist"
             show-print
+            show-admin-delete
             :printing-patient-id="printingPatientId"
             @print="printPatientReceipt"
             @edit="openEditModal"
             @reconsult="openReconsultModal"
             @toggle-active="togglePatientActive"
+            @delete="deletePatient"
           />
         </div>
       </div>
@@ -2444,6 +2590,30 @@ onUnmounted(clearAlert)
   min-width: 0;
   border-radius: var(--radius-sm);
   overflow: hidden;
+}
+
+button.dash-stat {
+  width: 100%;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.dash-stat--link:focus-visible {
+  outline: 2px solid var(--primary-600);
+  outline-offset: 2px;
+}
+
+.dash-stat--active {
+  box-shadow:
+    var(--shadow-md),
+    0 0 0 2px var(--primary-600);
+}
+
+#patients-registered-list {
+  scroll-margin-top: 1rem;
 }
 
 .dash-stat__icon {

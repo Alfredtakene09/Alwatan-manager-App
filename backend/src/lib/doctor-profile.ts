@@ -56,14 +56,29 @@ export function isSurgeryAssistantJobTitle(jobTitle?: string | null): boolean {
   return normalized.includes("assistant") && normalized.includes("chirurgie");
 }
 
-/** Médecin ou employé enregistré comme assistant ou anesthésiste. */
-export function isOperationAssistantStaff(profile: {
+/** Médecin anesthésiste (poste ou spécialité). */
+export function isAnesthetistStaff(profile: {
   jobTitle?: string | null;
   specialty?: string | null;
 }): boolean {
   const title = normalizeStaffLabel(profile.jobTitle);
   const specialty = normalizeStaffLabel(profile.specialty);
-  if (title.includes("anesth") || specialty.includes("anesth")) return true;
+  return title.includes("anesth") || specialty.includes("anesth");
+}
+
+/** Chirurgie générale : l’anesthésiste n’est pas proposé comme médecin opératoire. */
+export function isGeneralSurgeryServiceName(name?: string | null): boolean {
+  const folded = normalizeStaffLabel(name);
+  return folded.includes("chirurgie") && folded.includes("general");
+}
+
+/** Médecin ou employé enregistré comme assistant ou anesthésiste. */
+export function isOperationAssistantStaff(profile: {
+  jobTitle?: string | null;
+  specialty?: string | null;
+}): boolean {
+  if (isAnesthetistStaff(profile)) return true;
+  const title = normalizeStaffLabel(profile.jobTitle);
   return /(^|[^a-z])assistant([^a-z]|$)/.test(title);
 }
 
@@ -228,6 +243,7 @@ async function clearOptionalUserLinks(
     tx.patient.updateMany({ where: { createdById: userId }, data: { createdById: null } }),
     tx.patient.updateMany({ where: { updatedById: userId }, data: { updatedById: null } }),
     tx.visit.updateMany({ where: { assignedDoctorId: userId }, data: { assignedDoctorId: null } }),
+    tx.visit.updateMany({ where: { updatedById: userId }, data: { updatedById: null } }),
     tx.consultation.updateMany({ where: { doctorId: userId }, data: { doctorId: null } }),
     tx.consultation.updateMany({ where: { labApprovedById: userId }, data: { labApprovedById: null } }),
     tx.consultation.updateMany({ where: { labRecordedById: userId }, data: { labRecordedById: null } }),

@@ -265,6 +265,7 @@ model User {
   clinicSharePayments   SurgeryCase[]       @relation("ClinicPayer")
   interventionsAsSurgeon          InterventionType[] @relation("InterventionSurgeon")
   interventionsAsAnesthesiologist InterventionType[] @relation("InterventionAnesthesiologist")
+  surgeriesAsAnesthesiologist     SurgeryCase[]      @relation("SurgeryCaseAnesthesiologist")
   interventionTypeAuthorizations  InterventionTypeSurgeon[] @relation("InterventionAuthorizedSurgeons")
   hospitalizations      Hospitalization[]   @relation("HospitalizationAccountant")
   invoices              Invoice[]
@@ -273,6 +274,7 @@ model User {
   auditLogs             AuditLog[]
   assignedVisits        Visit[]             @relation("VisitAssignedDoctor")
   createdVisits         Visit[]             @relation("VisitCreatedBy")
+  updatedVisits         Visit[]             @relation("VisitUpdatedBy")
   labApprovals          Consultation[]      @relation("LabApprovedBy")
   labRecordings         Consultation[]      @relation("LabRecordedBy")
   uploadedDocuments     PatientDocument[]
@@ -401,12 +403,15 @@ model Visit {
   notes                   String?
   /// Utilisateur (réception) ayant enregistré la visite.
   createdById             String?
+  /// Dernier utilisateur ayant modifié l’opération ou la visite. Le filtre reste sur createdById.
+  updatedById             String?
   createdAt               DateTime    @default(now())
   updatedAt               DateTime    @updatedAt
 
   patient               Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
   assignedDoctor        User?            @relation("VisitAssignedDoctor", fields: [assignedDoctorId], references: [id])
   createdBy             User?            @relation("VisitCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy             User?            @relation("VisitUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   assignedClinicService  ClinicService?   @relation(fields: [assignedClinicServiceId], references: [id], onDelete: SetNull)
   vitalSigns            VitalSign[]
   consultation          Consultation?
@@ -422,6 +427,7 @@ model Visit {
   @@index([createdAt])
   @@index([status, createdAt])
   @@index([assignedClinicServiceId, status])
+  @@index([updatedById])
 }
 
 model VitalSign {
@@ -594,6 +600,10 @@ model SurgeryCase {
   visitId            String        @unique
   interventionTypeId String
   surgeonId          String
+  /// Anesthésiste choisi pour cette opération. Vide = celui du type d'intervention.
+  anesthesiologistId String?
+  /// % anesthésiste retenu pour cette opération. Null = celui du type d'intervention.
+  anesthesiologistPercent Int?
   accountantId       String?
   totalCostFcfa      Int
   surgeonShareFcfa   Int
@@ -621,6 +631,7 @@ model SurgeryCase {
   visit            Visit            @relation(fields: [visitId], references: [id], onDelete: Cascade)
   interventionType InterventionType @relation(fields: [interventionTypeId], references: [id])
   surgeon          User             @relation("SurgeonCases", fields: [surgeonId], references: [id])
+  anesthesiologist User?            @relation("SurgeryCaseAnesthesiologist", fields: [anesthesiologistId], references: [id], onDelete: SetNull)
   accountant       User?            @relation("SurgeryAccountant", fields: [accountantId], references: [id])
   surgeonPaidBy    User?            @relation("SurgeonPayer", fields: [surgeonPaidById], references: [id])
   assistantPaidBy  User?            @relation("AssistantPayer", fields: [assistantPaidById], references: [id])

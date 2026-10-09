@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { ExamCatalogKind } from "@prisma/client";
 import { prisma } from "./db.js";
+import { isOrthoTraumaServiceName } from "./ortho-trauma-service.js";
 
 /** Services dont les examens restent visibles pour tous les médecins. */
 export const GLOBAL_EXAM_SERVICE_NAMES = ["Laboratoire", "Hospitalisation"] as const;
@@ -24,16 +25,28 @@ export async function resolveClinicServiceById(
 type ClinicServiceNameLookup = {
   clinicService: {
     findFirst: Prisma.TransactionClient["clinicService"]["findFirst"];
+    findMany: Prisma.TransactionClient["clinicService"]["findMany"];
   };
 };
 
-/** Service clinique dont le nom correspond exactement (casse ignorée). Aucun autre service n'est substitué. */
+/**
+ * Service clinique dont le nom correspond (casse ignorée).
+ * Orthopédie et Tromatologie désignent le service fusionné.
+ */
 export async function resolveActiveClinicServiceByName(
   db: ClinicServiceNameLookup,
   serviceName: string | null | undefined,
 ): Promise<ClinicServiceRef | null> {
   const name = serviceName?.trim() ?? "";
   if (!name) return null;
+  if (isOrthoTraumaServiceName(name)) {
+    const services = await db.clinicService.findMany({
+      where: { active: true },
+      select: { id: true, name: true },
+    });
+    const merged = services.find((service) => isOrthoTraumaServiceName(service.name));
+    if (merged) return merged;
+  }
   const service = await db.clinicService.findFirst({
     where: { active: true, name: { equals: name, mode: "insensitive" } },
     select: { id: true, name: true },

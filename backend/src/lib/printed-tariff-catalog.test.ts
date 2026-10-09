@@ -47,6 +47,6 @@ describe("catalogue tarifaire papier", () => {
     assert.equal(new Set(codes).size, codes.length);
     assert.ok(codes.every((code) => !code.endsWith("-EM")));
     assert.equal(PRINTED_TARIFF_EMIRATES_SUFFIX, " (émiraties)");
-    assert.deepEqual([...PRINTED_TARIFF_SERVICES], ["Orthopédie", "Kinésithérapie"]);
+    assert.deepEqual([...PRINTED_TARIFF_SERVICES], ["Orthopédie & Tromatologie", "Kinésithérapie"]);
   });
 });

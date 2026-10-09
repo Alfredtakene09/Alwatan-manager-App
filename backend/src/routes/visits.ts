@@ -181,6 +181,7 @@ router.get("/doctors", async (req, res) => {
           consultationValidityDays: true,
           consultationRenewalPolicy: true,
           surgeryQuotaPercent: true,
+          jobTitle: true,
           service: true,
           clinicServiceId: true,
           clinicService: { select: { id: true, name: true } },
@@ -222,6 +223,7 @@ router.get("/doctors", async (req, res) => {
         lastName: doctor.lastName,
         acceptingPatients: doctor.acceptingPatients,
         specialty: doctor.employee?.specialty ?? null,
+        jobTitle: doctor.employee?.jobTitle ?? null,
         availabilitySlots: doctor.employee?.availabilitySlots ?? null,
         clinicServiceId: clinicService?.id ?? doctor.employee?.clinicServiceId ?? null,
         service: serviceName,
@@ -252,6 +254,7 @@ router.get("/operation-assistants", async (req, res) => {
       jobTitle: true,
       specialty: true,
       isMedecin: true,
+      surgeryQuotaPercent: true,
       user: {
         select: { id: true, active: true, firstName: true, lastName: true },
       },
@@ -273,6 +276,7 @@ router.get("/operation-assistants", async (req, res) => {
       isMedecin: employee.isMedecin,
       jobTitle: employee.jobTitle,
       specialty: employee.specialty,
+      surgeryQuotaPercent: employee.surgeryQuotaPercent,
     }));
 
   return res.json(assistants);
@@ -1474,7 +1478,11 @@ async function syncReceptionOperationCase(
     });
   }
 
-  const shares = computeInterventionCostShares(params.totalCostFcfa, surgeonPercent);
+  const shares = computeInterventionCostShares(
+    params.totalCostFcfa,
+    surgeonPercent,
+    assistantPercent,
+  );
 
   const surgery = await tx.surgeryCase.upsert({
     where: { visitId: params.visitId },
@@ -1884,7 +1892,7 @@ router.patch(
       }
       if (error instanceof Error && error.message === "ASSISTANT_NOT_ALLOWED") {
         return res.status(400).json({
-          error: "L’assistant doit être un médecin ou un employé enregistré comme assistant ou anesthésiste.",
+          error: "L’anesthésiste doit être un médecin ou un employé enregistré comme anesthésiste.",
         });
       }
       console.error("[visits] patch external-queue:", error);
@@ -2367,7 +2375,7 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
       }
       if (error.message === "ASSISTANT_NOT_ALLOWED") {
         return res.status(400).json({
-          error: "L’assistant doit être un médecin ou un employé enregistré comme assistant ou anesthésiste.",
+          error: "L’anesthésiste doit être un médecin ou un employé enregistré comme anesthésiste.",
         });
       }
     }

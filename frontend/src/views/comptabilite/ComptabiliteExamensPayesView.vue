@@ -36,9 +36,11 @@ const canDeletePaid = computed(() => auth.user?.role === 'ADMIN')
 const deletingPaid = ref(false)
 
 const paidItems = ref<LabExamPendingItem[]>([])
+const receptionists = ref<{ id: string; name: string }[]>([])
 const listFrom = ref(todayDateKey())
 const listTo = ref(todayDateKey())
 const kindFilter = ref<'' | ExamKindSlug>('')
+const receptionistFilter = ref('')
 const kindOptions = LAB_BILLABLE_EXAM_KINDS
 const loading = ref(false)
 const message = ref('')
@@ -74,6 +76,10 @@ function kindsInSelection(item: LabExamPendingItem): ExamKindSlug[] {
   const end = from && to && from > to ? from : to
   return paidKindsOf(item).filter((kind) => {
     if (kindFilter.value && kind !== kindFilter.value) return false
+    if (receptionistFilter.value) {
+      const collectors = item.collectorsByKind?.[kind] ?? []
+      if (!collectors.some((person) => person.id === receptionistFilter.value)) return false
+    }
     const key = paidDateKey(item, kind)
     if (!key) return !start && !end
     if (start && key < start) return false
@@ -149,6 +155,25 @@ function clearDates() {
   listTo.value = ''
 }
 
+const receptionistOptions = computed(() => {
+  const byId = new Map<string, string>()
+  for (const person of receptionists.value) byId.set(person.id, person.name)
+  for (const item of paidItems.value) {
+    for (const list of Object.values(item.collectorsByKind ?? {})) {
+      for (const person of list ?? []) {
+        if (!byId.has(person.id)) byId.set(person.id, person.name)
+      }
+    }
+  }
+  return [...byId.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+})
+
+const selectedReceptionistName = computed(
+  () => receptionistOptions.value.find((person) => person.id === receptionistFilter.value)?.name ?? '',
+)
+
 const paidExportRows = computed(() =>
   toLabExamListExportRows(filteredItems.value, 'paid', isArabic.value ? 'ar-TD' : 'fr-FR'),
 )
@@ -158,6 +183,9 @@ function paidExportShared() {
   return {
     totalsRows: [
       { label: uiText('Nombre de dossiers'), value: String(paidExportRows.value.length) },
+      ...(selectedReceptionistName.value
+        ? [{ label: uiText('Réceptionniste'), value: selectedReceptionistName.value }]
+        : []),
     ],
   }
 }
@@ -203,6 +231,15 @@ function resolvePrintStatus(item: LabExamPendingItem): string {
     )
   if (remaining > 0) return 'Payé partiellement'
   return 'Payé'
+}
+
+async function loadReceptionists() {
+  try {
+    const { data } = await api.get<{ id: string; name: string }[]>('/patients/receptionists')
+    receptionists.value = Array.isArray(data) ? data : []
+  } catch {
+    receptionists.value = []
+  }
 }
 
 async function load() {
@@ -324,7 +361,10 @@ async function deletePaidExams(id: string) {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void loadReceptionists()
+  void load()
+})
 </script>
 
 <template>
@@ -406,6 +446,20 @@ onMounted(load)
               <option value="">{{ uiText('Tous') }}</option>
               <option v-for="kind in kindOptions" :key="kind" :value="kind">
                 {{ uiText(EXAM_KIND_LABELS[kind]) }}
+              </option>
+            </select>
+          </label>
+
+          <label class="date-filter">
+            <span class="date-filter__label">{{ uiText('Réceptionniste') }}</span>
+            <select
+              v-model="receptionistFilter"
+              class="date-filter__input date-filter__input--receptionist"
+              :aria-label="uiText('Réceptionniste')"
+            >
+              <option value="">{{ uiText('Tous les réceptionnistes') }}</option>
+              <option v-for="person in receptionistOptions" :key="person.id" :value="person.id">
+                {{ person.name }}
               </option>
             </select>
           </label>
@@ -499,6 +553,10 @@ onMounted(load)
 
 .date-filter__input--kind {
   width: 11rem;
+}
+
+.date-filter__input--receptionist {
+  width: 14rem;
 }
 
 .date-filter__today {

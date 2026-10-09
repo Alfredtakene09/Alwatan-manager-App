@@ -1,11 +1,12 @@
 import { Router } from "express";
 import {
   computeSurgeryShares,
+  effectiveSurgeryAssistant,
   resolveSurgeonPercent,
   selectableDoctorByIdWhere,
   selectableDoctorWhere,
 } from "../lib/doctor-compensation.js";
-import { computeInterventionCostShares } from "../lib/surgery-cost-shares.js";
+import { collectedAmountFcfa, computeInterventionCostShares } from "../lib/surgery-cost-shares.js";
 import { z } from "zod";
 import {
   ExamReclamationReason,
@@ -314,7 +315,10 @@ function mapLabExamPaid(consultation: {
       type: InvoiceType;
       createdAt: Date;
       paidAt?: Date | null;
-      issuedBy?: { firstName: string; lastName: string } | null;
+      issuedBy?: { id: string; firstName: string; lastName: string } | null;
+      payments?: Array<{
+        recordedBy?: { id: string; firstName: string; lastName: string } | null;
+      }>;
     }>;
   };
   doctor: { firstName: string; lastName: string } | null;
@@ -354,6 +358,7 @@ function mapLabExamPaid(consultation: {
   let remainingFcfa = 0;
   let latestInvoiceAt: Date | null = null;
   let cashierName: string | null = null;
+  const collectorsByKind: Partial<Record<ExamKindSlug, Array<{ id: string; name: string }>>> = {};
 
   for (const invoice of labInvoices) {
     const kind = (invoice.billingExamKind ?? null) as ExamKindSlug | null;
@@ -368,6 +373,7 @@ function mapLabExamPaid(consultation: {
     if (!cashierName && invoice.issuedBy) {
       cashierName = `${invoice.issuedBy.firstName} ${invoice.issuedBy.lastName}`.trim();
     }
+    rememberExamCollectors(collectorsByKind, kind, invoice);
     if (!kind) continue;
 
     const sheet = sheetByKind.get(kind);
@@ -432,6 +438,7 @@ function mapLabExamPaid(consultation: {
         if (!cashierName && invoice.issuedBy) {
           cashierName = `${invoice.issuedBy.firstName} ${invoice.issuedBy.lastName}`.trim();
         }
+        rememberExamCollectors(collectorsByKind, sheet.kind, invoice);
       }
     });
   }
@@ -507,7 +514,43 @@ function mapLabExamPaid(consultation: {
     collectedFcfa,
     remainingFcfa,
     cashierName,
+    collectorsByKind,
   };
+}
+
+function collectorDisplayName(user: { firstName: string; lastName: string } | null | undefined) {
+  return `${user?.firstName ?? ""} ${user?.lastName ?? ""}`.trim();
+}
+
+function addExamCollector(
+  list: Array<{ id: string; name: string }>,
+  user: { id: string; firstName: string; lastName: string } | null | undefined,
+) {
+  if (!user?.id) return;
+  if (list.some((row) => row.id === user.id)) return;
+  const name = collectorDisplayName(user);
+  if (!name) return;
+  list.push({ id: user.id, name });
+}
+
+function rememberExamCollectors(
+  bucket: Partial<Record<ExamKindSlug, Array<{ id: string; name: string }>>>,
+  kind: ExamKindSlug | null,
+  invoice: {
+    issuedBy?: { id: string; firstName: string; lastName: string } | null;
+    payments?: Array<{
+      recordedBy?: { id: string; firstName: string; lastName: string } | null;
+    }>;
+  },
+) {
+  if (!kind) return;
+  const list = bucket[kind] ?? [];
+  const payments = invoice.payments ?? [];
+  if (payments.length) {
+    for (const payment of payments) addExamCollector(list, payment.recordedBy);
+  }
+  if (!list.length) addExamCollector(list, invoice.issuedBy);
+  bucket[kind] = list;
 }
 
 /** Retire les opérations du payload examens payés (elles restent sur l’écran Opérations). */
@@ -518,6 +561,7 @@ function stripOperationFromPaidExam<T extends {
   invoicesByKind?: Partial<Record<ExamKindSlug, { paidFcfa?: number; netFcfa?: number; remainingFcfa?: number }>>
   reductionsByKind?: Partial<Record<ExamKindSlug, number>>
   paidAtByKind?: Partial<Record<ExamKindSlug, string>>
+  collectorsByKind?: Partial<Record<ExamKindSlug, Array<{ id: string; name: string }>>>
   paidKinds?: ExamKindSlug[]
   unpaidKinds?: ExamKindSlug[]
   collectedFcfa?: number
@@ -530,11 +574,13 @@ function stripOperationFromPaidExam<T extends {
   const invoicesByKind = { ...(row.invoicesByKind ?? {}) };
   const reductionsByKind = { ...(row.reductionsByKind ?? {}) };
   const paidAtByKind = { ...(row.paidAtByKind ?? {}) };
+  const collectorsByKind = { ...(row.collectorsByKind ?? {}) };
   delete examsByKind.operation;
   delete allExamsByKind.operation;
   delete invoicesByKind.operation;
   delete reductionsByKind.operation;
   delete paidAtByKind.operation;
+  delete collectorsByKind.operation;
 
   const collectedFcfa = Object.values(invoicesByKind).reduce((sum, inv) => {
     if (!inv) return sum;
@@ -553,6 +599,7 @@ function stripOperationFromPaidExam<T extends {
     invoicesByKind,
     reductionsByKind,
     paidAtByKind,
+    collectorsByKind,
     paidKinds: (row.paidKinds ?? []).filter((kind) => kind !== "operation"),
     unpaidKinds: (row.unpaidKinds ?? []).filter((kind) => kind !== "operation"),
     grossFcfa: examLines.reduce((sum, line) => sum + line.unitPriceFcfa, 0),
@@ -876,7 +923,13 @@ router.get("/paid-exams", cashierAccess, async (req, res) => {
               type: true,
               createdAt: true,
               paidAt: true,
-              issuedBy: { select: { firstName: true, lastName: true } },
+              issuedBy: { select: { id: true, firstName: true, lastName: true } },
+              payments: {
+                select: {
+                  recordedBy: { select: { id: true, firstName: true, lastName: true } },
+                },
+                orderBy: { paidAt: "asc" },
+              },
             },
             orderBy: { createdAt: "asc" },
           },
@@ -1136,7 +1189,12 @@ router.post("/", cashierAccess, async (req, res) => {
         const billedCost =
           current.totalCostFcfa > 0 ? current.totalCostFcfa : intervention.totalCostFcfa;
         const { surgeonShareFcfa: billedSurgeonShare, clinicShareFcfa: billedClinicShare } =
-          computeSurgeryShares(billedCost, surgeonPercent, surgeon ?? { role: "MEDECIN" });
+          computeSurgeryShares(
+            billedCost,
+            surgeonPercent,
+            surgeon ?? { role: "MEDECIN" },
+            intervention.anesthesiologistPercent,
+          );
 
         const surgery = await tx.surgeryCase.update({
           where: { id: data.surgeryCaseId },
@@ -1317,7 +1375,13 @@ router.post("/", cashierAccess, async (req, res) => {
         ? await prisma.surgeryCase.findUnique({
             where: { visitId: existing.visitId },
             include: {
-              interventionType: { select: { surgeonPercent: true, anesthesiologistPercent: true } },
+              interventionType: {
+                select: {
+                  surgeonPercent: true,
+                  anesthesiologistPercent: true,
+                  anesthesiologistId: true,
+                },
+              },
               surgeon: {
                 select: {
                   role: true,
@@ -1557,37 +1621,52 @@ router.post("/", cashierAccess, async (req, res) => {
           labKindsFullyPaid &&
           prescriptionRequiresLabWork(parsePrescribedExamsByKind(updatedNotes));
 
-        if (operationFullyPaid && surgeryCase) {
-          // Parts calculées sur le cumul réellement encaissé (somme des tranches au solde).
-          const paidNet =
-            invoicesByKind.operation?.paidFcfa ??
-            invoicesByKind.operation?.netFcfa ??
-            surgeryCase.totalCostFcfa;
-          const surgeonPercent = surgeryCase.surgeon
-            ? resolveSurgeonPercent(
-                surgeryCase.interventionType?.surgeonPercent ?? 0,
-                surgeryCase.surgeon,
-              )
-            : (surgeryCase.interventionType?.surgeonPercent ?? 0);
-          const shares = surgeryCase.surgeon
-            ? computeSurgeryShares(paidNet, surgeonPercent, surgeryCase.surgeon)
-            : computeInterventionCostShares(paidNet, surgeonPercent);
+        if (surgeryCase && invoicesByKind.operation) {
+          // Parts calculées sur le cumul réellement encaissé, y compris une tranche.
+          const paidNet = collectedAmountFcfa({
+            paidAmountFcfa: invoicesByKind.operation.paidFcfa,
+            amountFcfa: invoicesByKind.operation.netFcfa,
+            status: operationFullyPaid ? "PAID" : invoicesByKind.operation.remainingFcfa <= 0 ? "PAID" : null,
+          });
+          const surgeonPercent = surgeryCase.surgeonPercent
+            ?? (surgeryCase.surgeon
+              ? resolveSurgeonPercent(
+                  surgeryCase.interventionType?.surgeonPercent ?? 0,
+                  surgeryCase.surgeon,
+                )
+              : (surgeryCase.interventionType?.surgeonPercent ?? 0));
+          const assistantPercent = effectiveSurgeryAssistant({
+            anesthesiologistId: surgeryCase.anesthesiologistId,
+            anesthesiologistPercent: surgeryCase.anesthesiologistPercent,
+            interventionType: {
+              anesthesiologistId: surgeryCase.interventionType?.anesthesiologistId ?? null,
+              anesthesiologistPercent: surgeryCase.interventionType?.anesthesiologistPercent ?? 0,
+            },
+          }).percent;
+          const shares = computeInterventionCostShares(paidNet, surgeonPercent, assistantPercent);
           await tx.surgeryCase.update({
             where: { id: surgeryCase.id },
             data: {
-              accountantId: user.id,
-              status: SurgeryStatus.PAID,
-              paidAt,
-              authorizedAt: paidAt,
-              totalCostFcfa: paidNet,
+              surgeonPercent,
               surgeonShareFcfa: shares.surgeonShareFcfa,
               clinicShareFcfa: shares.clinicShareFcfa,
+              ...(operationFullyPaid
+                ? {
+                    accountantId: user.id,
+                    status: SurgeryStatus.PAID,
+                    paidAt,
+                    authorizedAt: paidAt,
+                    totalCostFcfa: paidNet,
+                  }
+                : {}),
             },
           });
-          await tx.visit.update({
-            where: { id: existing.visitId },
-            data: { status: VisitStatus.IN_TREATMENT },
-          });
+          if (operationFullyPaid) {
+            await tx.visit.update({
+              where: { id: existing.visitId },
+              data: { status: VisitStatus.IN_TREATMENT },
+            });
+          }
         }
 
         if (hospitalisationFullyPaid && hospRecord) {

@@ -3,6 +3,7 @@ export type SurgeryCaseRow = {
   status: string
   totalCostFcfa: number
   surgeonShareFcfa: number
+  surgeonPercent?: number | null
   clinicShareFcfa: number
   paidAt?: string | null
   authorizedAt?: string | null
@@ -31,6 +32,13 @@ export type SurgeryCaseRow = {
     } | null
     clinicService?: { id: string; name: string } | null
   }
+  anesthesiologistId?: string | null
+  anesthesiologistPercent?: number | null
+  anesthesiologist?: {
+    id: string
+    firstName: string
+    lastName: string
+  } | null
   surgeon: {
     id: string
     firstName: string
@@ -44,6 +52,7 @@ export type SurgeryCaseRow = {
   visit: {
     id: string
     createdBy?: SurgeryUserRef | null
+    updatedBy?: SurgeryUserRef | null
     patient: {
       code: string
       firstName: string

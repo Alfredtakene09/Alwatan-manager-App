@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { ChevronDown, Pencil, RefreshCw, Ban, Check, Banknote, Printer } from '@lucide/vue'
+import { ChevronDown, Pencil, RefreshCw, Ban, Check, Banknote, Printer, Trash2 } from '@lucide/vue'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import { fullName, formatFcfa, isDirectionOrGestionnaire } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth'
 import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
@@ -42,6 +43,8 @@ const props = withDefaults(
     loading?: boolean
     fill?: boolean
     showToggleActive?: boolean
+    /** Suppression définitive — affichée seulement pour l’administrateur. */
+    showAdminDelete?: boolean
     showReceptionist?: boolean
     /** Si omis : visible pour admin / gestionnaire / direction, masqué pour les réceptionnistes. */
     showPay?: boolean
@@ -54,6 +57,7 @@ const props = withDefaults(
   }>(),
   {
     showToggleActive: true,
+    showAdminDelete: false,
     showReceptionist: false,
     showPrint: false,
     printingPatientId: null,
@@ -66,6 +70,7 @@ const emit = defineEmits<{
   edit: [patient: PatientRow]
   reconsult: [patient: PatientRow]
   'toggle-active': [patient: PatientRow]
+  delete: [patient: PatientRow]
   pay: [patient: PatientRow]
   print: [patient: PatientRow]
   'update:serviceFilter': [service: string]
@@ -81,8 +86,15 @@ const showPayButton = computed(() =>
 const showPrintButton = computed(() => props.showPrint)
 const showEditButton = computed(() => canSeeUiAction('reception.edit_patient'))
 const showReconsultButton = computed(() => canSeeUiAction('reception.reconsult'))
-const allowToggleActive = computed(
-  () => props.showToggleActive && canSeeUiAction('reception.delete_patient'),
+const allowToggleActive = computed(() => {
+  if (!props.showToggleActive || !auth.user) return false
+  const role = auth.user.role
+  if (role === 'ADMIN') return false
+  if (role === 'RECEPTIONNISTE') return true
+  return canSeeUiAction('reception.delete_patient')
+})
+const allowAdminDelete = computed(
+  () => props.showAdminDelete && auth.user?.role === 'ADMIN',
 )
 
 const serviceMenuOpen = ref(false)
@@ -115,16 +127,27 @@ const rows = computed(() =>
     phone: p.phone || '',
     gender: p.gender,
     createdAt: formatDate(p.createdAt),
-    receptionistName: (() => {
-      const person = p.updatedBy ?? p.createdBy
-      return person ? fullName(person.firstName, person.lastName) : ''
-    })(),
+    receptionistName: p.createdBy ? fullName(p.createdBy.firstName, p.createdBy.lastName) : '',
+    modifiedByName: modifierLabel(p.createdBy, p.updatedBy),
     active: p.active !== false,
     payable: Boolean(p.consultationPayment?.payable),
     paid: p.consultationPayment?.status === 'PAID',
     payment: consultationPaymentMark(p.consultationPayment),
   })),
 )
+
+function modifierLabel(
+  createdBy?: { id: string; firstName: string; lastName: string } | null,
+  updatedBy?: { id: string; firstName: string; lastName: string } | null,
+) {
+  const editorId = updatedBy?.id ?? ''
+  const authorId = createdBy?.id ?? ''
+  if (!editorId || editorId === authorId) return ''
+  const editor = fullName(updatedBy!.firstName, updatedBy!.lastName)
+  const author = createdBy ? fullName(createdBy.firstName, createdBy.lastName) : ''
+  if (!editor || editor.toLocaleLowerCase('fr') === author.toLocaleLowerCase('fr')) return ''
+  return editor
+}
 
 function consultationPaymentMark(payment: ConsultationPaymentInfo | null | undefined) {
   if (!payment) {
@@ -339,8 +362,11 @@ onUnmounted(() => {
                 <span class="st-date">{{ row.createdAt }}</span>
               </td>
               <td v-if="showReceptionist">
-                <span v-if="row.receptionistName" class="st-date">{{ row.receptionistName }}</span>
+                <span v-if="row.receptionistName" class="st-name">{{ row.receptionistName }}</span>
                 <span v-else class="st-muted">—</span>
+                <span v-if="row.modifiedByName" class="st-sub">{{
+                  translateTemplate('Modifié par {name}', { name: row.modifiedByName })
+                }}</span>
               </td>
               <td>
                 <span class="st-badge" :class="`st-badge--${row.payment.variant}`">
@@ -411,6 +437,18 @@ onUnmounted(() => {
                       <Check v-else :size="15" />
                     </button>
                   </template>
+                  <template v-if="allowAdminDelete">
+                    <span class="st-sep" aria-hidden="true" />
+                    <button
+                      type="button"
+                      class="st-btn st-btn--danger"
+                      :title="uiText('Supprimer')"
+                      :aria-label="uiText('Supprimer')"
+                      @click="emit('delete', row.patient)"
+                    >
+                      <Trash2 :size="15" />
+                    </button>
+                  </template>
                 </div>
               </td>
             </tr>
@@ -424,6 +462,18 @@ onUnmounted(() => {
 <style scoped>
 .st-row--inactive td:not(.simple-table__actions) {
   opacity: 0.55;
+}
+
+.st-btn--danger {
+  color: #b91c1c;
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.st-btn--danger:hover:not(:disabled) {
+  color: #fff;
+  border-color: #dc2626;
+  background: #dc2626;
 }
 
 .st-inactive-badge {

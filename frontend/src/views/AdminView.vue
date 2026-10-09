@@ -5,6 +5,7 @@ import { Settings, Scissors, Eye, ExternalLink } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { clinicPercentFromSplits } from '@/lib/intervention-splits'
+import { isLegacyEmiratesTariffLabel } from '@/i18n/translate'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -35,7 +36,9 @@ function categoryLabel(category: string) {
 
 const interventionRows = computed(() => {
   localeCode.value
-  return interventions.value.map((item) => ({
+  return interventions.value
+    .filter((item) => !isLegacyEmiratesTariffLabel(item.label, item.code ?? ''))
+    .map((item) => ({
     id: item.id,
     label: item.label,
     category: categoryLabel(item.category),
@@ -190,7 +193,7 @@ onMounted(load)
             <dd>{{ viewingIntervention.surgeonPercent }}%</dd>
           </div>
           <div class="operation-detail__row">
-            <dt>% Assistant chirurgie</dt>
+            <dt>% Anesthésiste</dt>
             <dd>
               {{
                 (viewingIntervention.anesthesiologistPercent ?? 0) > 0

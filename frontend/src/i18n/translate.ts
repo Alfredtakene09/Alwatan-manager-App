@@ -32,6 +32,12 @@ export function stripEmiratesTariffSuffix(text: string): string {
   return text.replace(EMIRATES_TARIFF_SUFFIX_RE, '').trim()
 }
 
+/** Ancien 2ᵉ tarif catalogue, à ne plus lister. */
+export function isLegacyEmiratesTariffLabel(label: string, code = ''): boolean {
+  if (/-EM$/i.test(code.trim())) return true
+  return EMIRATES_TARIFF_SUFFIX_RE.test(label.trim())
+}
+
 function normalizeKey(text: string): string {
   return stripEmiratesTariffSuffix(
     text
@@ -160,11 +166,17 @@ const CLINIC_SERVICE_ALIASES: Record<string, string> = {
   'medecine interne': 'Médecine interne',
   odontologie: 'Odontologie',
   ophtalmologie: 'Ophtalmologie',
-  orthopedie: 'Orthopédie',
+  orthopedie: 'Orthopédie & Tromatologie',
+  'orthopedie traumatologie': 'Orthopédie & Tromatologie',
+  'orthopedie tromatologie': 'Orthopédie & Tromatologie',
+  'traumatologie orthopedie': 'Orthopédie & Tromatologie',
+  'tromatologie orthopedie': 'Orthopédie & Tromatologie',
+  ortopedie: 'Orthopédie & Tromatologie',
   pediatrie: 'Pédiatrie',
   pharmacie: 'Pharmacie',
-  traumatologie: 'Traumatologie',
-  tromatologie: 'Traumatologie',
+  traumatologie: 'Orthopédie & Tromatologie',
+  tromatologie: 'Orthopédie & Tromatologie',
+  tromotologie: 'Orthopédie & Tromatologie',
   urgences: 'Urgences',
   urologie: 'Urologie',
 }

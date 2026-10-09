@@ -20,7 +20,9 @@ const labelText = computed(() => {
 
 <template>
   <label class="ui-field" :class="{ 'ui-field--disabled': disabled }">
-    <span class="ui-field__label">{{ labelText }}</span>
+    <span class="ui-field__label">
+      {{ labelText }}<abbr v-if="required && labelText" class="ui-field__req" title="obligatoire">*</abbr>
+    </span>
     <select
       class="ui-select"
       :value="modelValue"
@@ -49,6 +51,13 @@ const labelText = computed(() => {
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text);
+}
+
+.ui-field__req {
+  margin-left: 0.2rem;
+  color: #dc2626;
+  font-weight: 700;
+  text-decoration: none;
 }
 
 .ui-select {

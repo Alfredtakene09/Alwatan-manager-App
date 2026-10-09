@@ -148,7 +148,7 @@ describe("classifyInvoiceForDayClosure", () => {
       },
       hospitalization: null,
     });
-    assert.deepEqual(line, { label: "Traumatologie", group: "operation" });
+    assert.deepEqual(line, { label: "Orthopédie & Tromatologie", group: "operation" });
   });
 
   it("corrige un acte nommé Ophtalmologie quand le dossier est Gynécologie", () => {
@@ -312,7 +312,7 @@ describe("assembleDayClosureReceiptLines", () => {
       summary.serviceLines.map((line) => ({ label: line.label, qty: line.qty, totalFcfa: line.totalFcfa })),
       [
         { label: "Consultation — Généraliste", qty: 2, totalFcfa: 9000 },
-        { label: "Opération — Orthopédie", qty: 2, totalFcfa: 120000 },
+        { label: "Opération — Orthopédie & Tromatologie", qty: 2, totalFcfa: 120000 },
       ],
     );
     assert.equal(summary.collectedFcfa, 129000);
@@ -349,7 +349,7 @@ describe("assembleDayClosureReceiptLines", () => {
 
     assert.deepEqual(
       summary.serviceLines.map((line) => line.label),
-      ["Consultation — Orthopédie", "Opération — Orthopédie"],
+      ["Consultation — Orthopédie & Tromatologie", "Opération — Orthopédie & Tromatologie"],
     );
   });
 });

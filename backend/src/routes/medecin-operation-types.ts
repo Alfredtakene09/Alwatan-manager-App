@@ -10,6 +10,7 @@ import { clinicPercentFromSplits, validateInterventionPercents } from "../lib/in
 import { findDuplicateIntervention } from "../lib/duplicate-detection.js";
 import { duplicateErrorResponse } from "../lib/duplicate-error.js";
 import { selectableDoctorByIdWhere, selectableDoctorWhere } from "../lib/doctor-compensation.js";
+import { isAnesthetistStaff, isGeneralSurgeryServiceName } from "../lib/doctor-profile.js";
 import { recalculateSurgeriesForIntervention } from "../lib/recalculate-employee-compensation.js";
 import {
   authorizedSurgeonsInclude,
@@ -17,6 +18,7 @@ import {
   serializeAuthorizedSurgeons,
   syncInterventionAuthorizedSurgeons,
 } from "../lib/intervention-authorized-surgeons.js";
+import { excludeLegacyEmiratesTariffWhere } from "../lib/printed-tariff-catalog.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -112,7 +114,7 @@ const interventionSchema = interventionBaseSchema.superRefine((body, ctx) => {
     if (!hasId && name.length < 2) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Liez un médecin ou saisissez le nom de l'assistant chirurgie (2 caractères min.).",
+        message: "Liez un médecin ou saisissez le nom de l'anesthésiste (2 caractères min.).",
       });
     }
   }
@@ -144,7 +146,7 @@ const interventionUpdateSchema = interventionBaseSchema.partial().superRefine((b
     if (!hasId && name.length < 2 && body.anesthesiologistName !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Liez un médecin ou saisissez le nom de l'assistant chirurgie (2 caractères min.).",
+        message: "Liez un médecin ou saisissez le nom de l'anesthésiste (2 caractères min.).",
       });
     }
   }
@@ -201,8 +203,11 @@ router.get("/service-doctors", async (req, res) => {
       },
     },
     select: {
+      clinicService: { select: { name: true } },
       employee: {
         select: {
+          jobTitle: true,
+          specialty: true,
           user: { select: { id: true } },
         },
       },
@@ -212,6 +217,11 @@ router.get("/service-doctors", async (req, res) => {
   const userIds = [
     ...new Set(
       links
+        .filter(
+          (link) =>
+            !isGeneralSurgeryServiceName(link.clinicService.name) ||
+            !isAnesthetistStaff(link.employee),
+        )
         .map((link) => link.employee.user?.id)
         .filter((id): id is string => Boolean(id)),
     ),
@@ -231,7 +241,12 @@ router.get("/", async (req, res) => {
   if (!ctx) return;
 
   const items = await prisma.interventionType.findMany({
-    where: interventionVisibleForServicesWhere(ctx.ids, { doctorUserId: ctx.userId }),
+    where: {
+      AND: [
+        interventionVisibleForServicesWhere(ctx.ids, { doctorUserId: ctx.userId }),
+        excludeLegacyEmiratesTariffWhere(),
+      ],
+    },
     include: interventionInclude,
     orderBy: [{ label: "asc" }, { category: "asc" }],
   });
@@ -276,7 +291,7 @@ router.post("/", async (req, res) => {
         select: { id: true },
       });
       if (!doctor) {
-        return res.status(400).json({ error: "Assistant chirurgie introuvable." });
+        return res.status(400).json({ error: "Anesthésiste introuvable." });
       }
     }
 
@@ -389,7 +404,7 @@ router.put("/:id", async (req, res) => {
           !(assistantData.anesthesiologistName && assistantData.anesthesiologistName.length >= 2)
         ) {
           return res.status(400).json({
-            error: "Liez un médecin ou saisissez le nom de l'assistant chirurgie (2 caractères min.).",
+            error: "Liez un médecin ou saisissez le nom de l'anesthésiste (2 caractères min.).",
           });
         }
         if (assistantData.anesthesiologistId) {
@@ -398,7 +413,7 @@ router.put("/:id", async (req, res) => {
             select: { id: true },
           });
           if (!doctor) {
-            return res.status(400).json({ error: "Assistant chirurgie introuvable." });
+            return res.status(400).json({ error: "Anesthésiste introuvable." });
           }
         }
       }

@@ -15,6 +15,7 @@ import {
   EXTERNAL_PATIENT_VISIT_NOTE,
   extractExternalPatientService,
 } from "./visit-external.js";
+import { canonicalClinicServiceName } from "./ortho-trauma-service.js";
 
 /** Famille de prestation (consultation, opération, examen…). Le ticket ne les imprime plus en sections. */
 export type DayClosureLineGroup =
@@ -100,6 +101,8 @@ export type DayClosureInvoice = {
 function normalizeDayClosureLabel(label: string): string {
   const trimmed = label.trim();
   if (!trimmed) return "Autres";
+  const service = canonicalClinicServiceName(trimmed);
+  if (service !== trimmed) return service;
   return DAY_CLOSURE_LABEL_ALIASES[trimmed] ?? trimmed;
 }
 

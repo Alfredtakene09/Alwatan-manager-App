@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import {
+  HospitalizationStatus,
   SurgeryStatus,
   VisitStatus,
   PatientCategory,
@@ -19,7 +20,9 @@ import {
   labsResultsWhere,
   labsWaitingWhere,
   mergeExamsByKind,
+  clearExamBillingMarkers,
   countNewExamsInAppend,
+  prescribedExamSetsEqual,
   syncBillingForDoctorLineChange,
   parseLatestLabResultAt,
   parsePrescribedExamsByKind,
@@ -72,6 +75,7 @@ import {
 } from "../lib/manual-service-operation.js";
 import { computeInterventionCostShares } from "../lib/surgery-cost-shares.js";
 import { ensureVisitPatientMergedByPhone } from "../lib/merge-patients.js";
+import { voidReplacedExamPayments } from "../lib/void-replaced-exam-payment.js";
 import { requireAuth, requireModule } from "../middleware/auth.js";
 
 const DEFAULT_SURGEON_PERCENT = 70;
@@ -315,7 +319,11 @@ async function syncPrescribedProcedures(
         : fichePercent != null && fichePercent > 0
           ? fichePercent
           : intervention.surgeonPercent;
-    const shares = computeInterventionCostShares(totalCostFcfa, appliedSurgeonPercent);
+    const shares = computeInterventionCostShares(
+      totalCostFcfa,
+      appliedSurgeonPercent,
+      assistantPercent,
+    );
     const existing = await tx.surgeryCase.findUnique({ where: { visitId } });
     const keepPaidStatuses = new Set<SurgeryStatus>([
       SurgeryStatus.PAID,
@@ -766,7 +774,18 @@ router.post("/prescribe-exams", async (req, res) => {
         examsByKind ?? (legacyExams?.length ? { examen: legacyExams } : null),
       );
 
-      if (hasExams && examsByKind) {
+      const nextExamSet =
+        examsByKind ?? (legacyExams?.length ? { examen: legacyExams } : null);
+      const prescriptionReplaced =
+        hasExams &&
+        !hasResults &&
+        hasExamsPrescribed(existingNotes) &&
+        !prescribedExamSetsEqual(parsePrescribedExamsByKind(existingNotes), nextExamSet);
+
+      if (prescriptionReplaced) {
+        await voidReplacedExamPayments(tx, { visitId: body.visitId, userId: user.id });
+        existingNotes = clearExamBillingMarkers(existingNotes);
+      } else if (hasExams && examsByKind) {
         existingNotes = syncBillingForDoctorLineChange(
           existingNotes,
           examsByKind,
@@ -817,11 +836,16 @@ router.post("/prescribe-exams", async (req, res) => {
                 ...(diagnosisFromComment ? { diagnosis: diagnosisFromComment } : {}),
               }
             : {}),
-          ...(shouldCreateImmediateInvoice(visit.patient.category) &&
-          hasExams &&
-          requiresLabWork &&
-          !body.append
-            ? { labSentToLabAt: null, labApprovedById: null }
+          ...((prescriptionReplaced ||
+            (shouldCreateImmediateInvoice(visit.patient.category) &&
+              hasExams &&
+              requiresLabWork &&
+              !body.append))
+            ? {
+                labSentToLabAt: null,
+                labApprovedById: null,
+                ...(prescriptionReplaced ? { labExamReductionFcfa: 0 } : {}),
+              }
             : {}),
         },
         create: {
@@ -846,6 +870,38 @@ router.post("/prescribe-exams", async (req, res) => {
           body.operationSurgeonPercent,
           body.operationServiceId,
         );
+      }
+
+      if (prescriptionReplaced && !(examsByKind?.operation?.length ?? 0)) {
+        await tx.surgeryCase.updateMany({
+          where: {
+            visitId: body.visitId,
+            status: {
+              in: [
+                SurgeryStatus.NOTIFIED,
+                SurgeryStatus.QUOTED,
+                SurgeryStatus.PAID,
+                SurgeryStatus.AUTHORIZED,
+              ],
+            },
+          },
+          data: {
+            status: SurgeryStatus.CANCELLED,
+            paidAt: null,
+            authorizedAt: null,
+            accountantId: null,
+          },
+        });
+      }
+
+      if (prescriptionReplaced && !(examsByKind?.hospitalisation?.length ?? 0)) {
+        await tx.hospitalization.updateMany({
+          where: {
+            visitId: body.visitId,
+            status: { in: [HospitalizationStatus.REQUESTED, HospitalizationStatus.RESERVED] },
+          },
+          data: { status: HospitalizationStatus.CANCELLED, paidAt: null },
+        });
       }
 
       const directClinical =
@@ -892,8 +948,11 @@ router.post("/prescribe-exams", async (req, res) => {
         return completed;
       }
 
-      // Réouverture si le médecin ajoute examens / opération après une clôture « Consultation ».
-      if (visit.status === VisitStatus.COMPLETED) {
+      // Réouverture si le médecin remplace la prescription ou ajoute après une clôture « Consultation ».
+      if (
+        visit.status !== VisitStatus.CANCELLED &&
+        (visit.status === VisitStatus.COMPLETED || prescriptionReplaced)
+      ) {
         const hasOperation = (examsByKind?.operation?.length ?? 0) > 0;
         let nextStatus: VisitStatus = VisitStatus.IN_CONSULTATION;
         if (hasOperation) nextStatus = VisitStatus.NEEDS_SURGERY;
@@ -941,6 +1000,16 @@ router.post("/prescribe-exams", async (req, res) => {
         error: "Sélectionnez au moins un nouvel examen à ajouter.",
       });
     }
+    if (error instanceof Error && error.message === "SURGERY_LOCKED") {
+      return res.status(409).json({
+        error: "Impossible de modifier : l'opération est déjà en cours ou effectuée.",
+      });
+    }
+    if (error instanceof Error && error.message === "HOSPITALIZATION_LOCKED") {
+      return res.status(409).json({
+        error: "Impossible de modifier : l'hospitalisation est déjà en cours ou terminée.",
+      });
+    }
     if (error instanceof Error && error.message === "ALREADY_SENT_TO_LAB") {
       return res.status(409).json({
         error:
@@ -963,11 +1032,11 @@ router.post("/prescribe-exams", async (req, res) => {
       });
     }
     if (error instanceof Error && error.message === "ASSISTANT_INVALID") {
-      return res.status(400).json({ error: "Assistant chirurgie introuvable." });
+      return res.status(400).json({ error: "Anesthésiste introuvable." });
     }
     if (error instanceof Error && error.message === "ASSISTANT_REQUIRED") {
       return res.status(400).json({
-        error: "Choisissez un assistant ou saisissez son nom (2 caractères min.).",
+        error: "Choisissez un anesthésiste ou saisissez son nom (2 caractères min.).",
       });
     }
     return res.status(400).json({ error: "Données invalides" });
@@ -1022,26 +1091,28 @@ router.post("/", async (req, res) => {
           orderBy: { category: "asc" },
         });
         if (defaultIntervention) {
-          const surgeonShare = Math.round(
-            (defaultIntervention.totalCostFcfa * defaultIntervention.surgeonPercent) / 100,
+          const defaultShares = computeInterventionCostShares(
+            defaultIntervention.totalCostFcfa,
+            defaultIntervention.surgeonPercent,
+            defaultIntervention.anesthesiologistPercent,
           );
           await tx.surgeryCase.upsert({
             where: { visitId: body.visitId },
             update: {
               interventionTypeId: defaultIntervention.id,
               surgeonId: user.id,
-              totalCostFcfa: defaultIntervention.totalCostFcfa,
-              surgeonShareFcfa: surgeonShare,
-              clinicShareFcfa: defaultIntervention.totalCostFcfa - surgeonShare,
+              totalCostFcfa: defaultShares.totalCostFcfa,
+              surgeonShareFcfa: defaultShares.surgeonShareFcfa,
+              clinicShareFcfa: defaultShares.clinicShareFcfa,
               status: SurgeryStatus.NOTIFIED,
             },
             create: {
               visitId: body.visitId,
               interventionTypeId: defaultIntervention.id,
               surgeonId: user.id,
-              totalCostFcfa: defaultIntervention.totalCostFcfa,
-              surgeonShareFcfa: surgeonShare,
-              clinicShareFcfa: defaultIntervention.totalCostFcfa - surgeonShare,
+              totalCostFcfa: defaultShares.totalCostFcfa,
+              surgeonShareFcfa: defaultShares.surgeonShareFcfa,
+              clinicShareFcfa: defaultShares.clinicShareFcfa,
               status: SurgeryStatus.NOTIFIED,
             },
           });

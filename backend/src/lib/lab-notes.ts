@@ -856,6 +856,28 @@ export function removedExamCreditFcfa(
   return examLabelPriceSum(parseRemovedExamLabelsByKind(notes)[kind] ?? [], priceOf);
 }
 
+/**
+ * Examens déjà encaissés d'un type.
+ * S'il existe une liste facturée, seuls ces libellés comptent.
+ * Sinon, un type marqué payé reprend toute la prescription de ce type.
+ */
+export function paidExamLabels(
+  notes: string | null | undefined,
+  kind: ExamKindSlug,
+): string[] {
+  const prescribed = uniqueExamLabels(
+    filterCashierBillableExamLabels(parsePrescribedExamsByKind(notes)[kind]),
+  );
+  const billed = uniqueExamLabels(parseBilledExamLabelsByKind(notes)[kind]);
+  if (billed.length) {
+    const billedSet = new Set(billed);
+    const matched = prescribed.filter((label) => billedSet.has(label));
+    return matched.length ? matched : billed;
+  }
+  if (isExamKindPaid(notes, kind)) return prescribed;
+  return [];
+}
+
 /** Libellés encore à encaisser. Vide si le type est déjà soldé sans ajout. */
 export function payableExamLabels(
   notes: string | null | undefined,
@@ -969,24 +991,12 @@ export function hasAnyPaidExamKind(notes?: string | null): boolean {
   return Object.keys(parsePaidExamKindsByKind(notes)).length > 0;
 }
 
-/** Dossier avec examens labo/radio/écho/odonto prescrits et déjà payés ou envoyés au labo. */
+/** Dossier avec au moins un examen labo/radio/écho/odonto déjà payé. */
 export function hasPaidLabWorkPending(
   notes?: string | null,
-  labSentToLabAt?: Date | null,
+  _labSentToLabAt?: Date | null,
 ): boolean {
-  const prescribed = parsePrescribedExamsByKind(notes);
-  const hasQueueExams = LAB_QUEUE_EXAM_KINDS.some(
-    (kind) => (prescribed[kind]?.length ?? 0) > 0,
-  );
-  if (!hasQueueExams) return false;
-
-  const paid = parsePaidExamKindsByKind(notes);
-  if (LAB_QUEUE_EXAM_KINDS.some((kind) => (prescribed[kind]?.length ?? 0) > 0 && paid[kind])) {
-    return true;
-  }
-
-  // Paiement direct à la réception (patient externe) : labSentToLabAt sans marqueurs par type.
-  return !!labSentToLabAt;
+  return LAB_QUEUE_EXAM_KINDS.some((kind) => paidExamLabels(notes, kind).length > 0);
 }
 
 export function appendPaidExamKindMarker(
@@ -1002,6 +1012,37 @@ export function appendPaidExamKindMarker(
   });
   const trimmed = filtered.join("\n").trim();
   return trimmed ? `${trimmed}\n${marker}` : marker;
+}
+
+/** Retire les marqueurs payé / facturé / retiré pour qu’une nouvelle prescription reparte à zéro. */
+export function clearExamBillingMarkers(notes?: string | null): string {
+  return (notes ?? "")
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      if (trimmed.startsWith(`${EXAMS_PAID_PREFIX} (`)) return false;
+      if (trimmed.startsWith(`${EXAMS_BILLED_PREFIX} (`)) return false;
+      if (trimmed.startsWith(`${EXAMS_REMOVED_PREFIX} (`)) return false;
+      return true;
+    })
+    .join("\n")
+    .trim();
+}
+
+/** Vrai si les deux listes d’examens prescrits contiennent les mêmes libellés, par type. */
+export function prescribedExamSetsEqual(
+  left: Partial<Record<ExamKindSlug, string[]>> | null | undefined,
+  right: Partial<Record<ExamKindSlug, string[]>> | null | undefined,
+): boolean {
+  for (const kind of EXAM_KIND_ORDER) {
+    const a = uniqueExamLabels(left?.[kind]);
+    const b = uniqueExamLabels(right?.[kind]);
+    if (a.length !== b.length) return false;
+    const rightSet = new Set(b);
+    if (!a.every((label) => rightSet.has(label))) return false;
+  }
+  return true;
 }
 
 export function removePaidExamKindMarker(

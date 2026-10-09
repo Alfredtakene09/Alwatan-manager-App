@@ -2,12 +2,15 @@
 import { computed, ref, watch } from 'vue'
 import { FlaskConical, HeartPulse, Save, Plus, X, PillBottle, PenLine, Pencil } from '@lucide/vue'
 import api from '@/api/client'
+import { confirmAppModal } from '@/lib/api-modal-helper'
 import { fullName } from '@/lib/roles'
 import { formatAppDateTime } from '@/i18n/locale-format'
 import {
   countNewExamsInAppend,
+  EXAMS_PRESCRIBED_PREFIX,
   hasClinicalConsultationSelected,
   hasLabResults,
+  mergeExamsByKind,
   parsePrescribedExamsByKind,
   parsePrescribedExamCommentsByKind,
   parsePrescribedHospitalisationDays,
@@ -24,6 +27,7 @@ import {
   emptyExamsByKind,
   emptyExamCommentsByKind,
   EXAM_KIND_LABELS,
+  HOSPITALISATION_PRESCRIPTION_LABEL,
   EXAM_KIND_ORDER,
   INVOICE_EXAM_COMMENT_KINDS,
   filterInvoiceExamComments,
@@ -79,7 +83,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   close: []
-  saved: []
+  saved: [payload?: { examsReplaced: boolean }]
 }>()
 
 const auth = useAuthStore()
@@ -156,6 +160,37 @@ const newExamsCount = computed(() =>
 )
 
 const selectedInPickerCount = computed(() => countExamsByKind(selectedExamsByKind.value))
+
+function fullExamSet(source: Partial<ExamsByKind> | ExamsByKind): ExamsByKind {
+  const base = emptyExamsByKind()
+  for (const kind of EXAM_KIND_ORDER) {
+    const labels = [...new Set((source[kind] ?? []).map((label) => label.trim()).filter(Boolean))]
+    base[kind] =
+      kind === 'hospitalisation' && labels.length ? [HOSPITALISATION_PRESCRIPTION_LABEL] : labels
+  }
+  return base
+}
+
+function sameExamLabels(left: ExamsByKind, right: ExamsByKind) {
+  return EXAM_KIND_ORDER.every((kind) => {
+    const labels = left[kind] ?? []
+    const other = new Set(right[kind] ?? [])
+    return labels.length === other.size && labels.every((label) => other.has(label))
+  })
+}
+
+function willReplacePreviousPrescription() {
+  const notes = sessionVisit.value?.consultation?.clinicalNotes
+  if (!notes?.includes(EXAMS_PRESCRIBED_PREFIX) || isLabLocked.value) return false
+  if (selectedInPickerCount.value <= 0) return false
+  const previous = fullExamSet(parsePrescribedExamsByKind(notes))
+  const upcoming = fullExamSet(
+    workingMode.value === 'append'
+      ? mergeExamsByKind(previous, selectedExamsByKind.value)
+      : selectedExamsByKind.value,
+  )
+  return !sameExamLabels(previous, upcoming)
+}
 
 const pharmacyCatalogCount = computed(
   () => pharmacyOrdonnance.value.filter((line) => isPharmacyCatalogLine(line)).length,
@@ -434,6 +469,19 @@ async function submit() {
     return
   }
 
+  const examsReplaced = willReplacePreviousPrescription()
+  if (examsReplaced) {
+    const ok = await confirmAppModal({
+      title: uiText('Remplacer la prescription'),
+      message: uiText(
+        'Enregistrer cette prescription remplace les examens déjà prescrits. Le dossier revient en attente de paiement. Si un paiement a déjà été encaissé, il est annulé et retiré du solde.',
+      ),
+      confirmLabel: uiText('Remplacer et enregistrer'),
+      type: 'CONFIRM',
+    })
+    if (!ok) return
+  }
+
   submitting.value = true
   errorMessage.value = ''
   try {
@@ -488,7 +536,7 @@ async function submit() {
       ),
     })
     if ((selectedExamsByKind.value.operation?.length ?? 0) > 0) invalidateExamCatalogCache()
-    emit('saved')
+    emit('saved', { examsReplaced })
     emit('close')
   } catch (error: unknown) {
     const apiMessage =

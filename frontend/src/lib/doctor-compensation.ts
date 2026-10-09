@@ -10,6 +10,7 @@ export type DoctorOption = {
   lastName: string
   acceptingPatients?: boolean
   specialty?: string | null
+  jobTitle?: string | null
   service?: string | null
   clinicServiceId?: string | null
   clinicService?: { id: string; name: string } | null
@@ -224,6 +225,34 @@ export function doctorMatchesService(
 ) {
   if (!serviceName) return true
   return doctorClinicServiceNames(doctor).some((name) => name === serviceName)
+}
+
+function foldStaffLabel(value?: string | null) {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+}
+
+/** Poste ou spécialité anesthésiste. */
+export function isAnesthetistDoctor(person: {
+  jobTitle?: string | null
+  specialty?: string | null
+}) {
+  return foldStaffLabel(person.jobTitle).includes('anesth') || foldStaffLabel(person.specialty).includes('anesth')
+}
+
+export function isGeneralSurgeryServiceName(name?: string | null) {
+  const folded = foldStaffLabel(name)
+  return folded.includes('chirurgie') && folded.includes('general')
+}
+
+/** Chirurgie générale : l’anesthésiste reste hors du champ Médecin. */
+export function withoutAnesthetistForGeneralSurgery<
+  T extends { jobTitle?: string | null; specialty?: string | null },
+>(doctors: T[], serviceName: string | null | undefined): T[] {
+  if (!isGeneralSurgeryServiceName(serviceName)) return doctors
+  return doctors.filter((doctor) => !isAnesthetistDoctor(doctor))
 }
 
 /** Filtre médecins par id de service clinique (défaut + services liés). */

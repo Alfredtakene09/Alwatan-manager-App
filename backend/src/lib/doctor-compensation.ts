@@ -137,18 +137,27 @@ export function computeSurgeryShares(
   totalCostFcfa: number,
   surgeonPercent: number,
   surgeon: DoctorProfile,
+  assistantPercent = 0,
 ) {
   const fichePercent = doctorSurgeryQuotaPercent(surgeon);
   const percent =
     fichePercent ??
     (doctorUsesQuota(surgeon) ? surgeonPercent : 0);
-  if (percent <= 0 || totalCostFcfa <= 0) {
-    return { surgeonShareFcfa: 0, clinicShareFcfa: totalCostFcfa };
+  const total = Math.max(0, Math.round(Number(totalCostFcfa) || 0));
+  const assistantRate = Math.min(100, Math.max(0, Math.round(Number(assistantPercent) || 0)));
+  const assistantShareFcfa = Math.round((total * assistantRate) / 100);
+  if (percent <= 0 || total <= 0) {
+    return {
+      surgeonShareFcfa: 0,
+      assistantShareFcfa,
+      clinicShareFcfa: Math.max(0, total - assistantShareFcfa),
+    };
   }
-  const surgeonShareFcfa = Math.round((totalCostFcfa * percent) / 100);
+  const surgeonShareFcfa = Math.round((total * percent) / 100);
   return {
     surgeonShareFcfa,
-    clinicShareFcfa: totalCostFcfa - surgeonShareFcfa,
+    assistantShareFcfa,
+    clinicShareFcfa: Math.max(0, total - surgeonShareFcfa - assistantShareFcfa),
   };
 }
 
@@ -160,6 +169,61 @@ export function resolveSurgeonPercent(
   if (fichePercent != null) return fichePercent;
   if (!doctorUsesQuota(surgeon)) return 0;
   return interventionSurgeonPercent;
+}
+
+/**
+ * % anesthésiste : le taux enregistré sur l'acte prime.
+ * Sinon on reprend le % chirurgie de sa fiche (ex. AWAD, 11 %).
+ */
+export function resolveAssistantPercent(
+  recordedPercent: number | null | undefined,
+  assistant?: DoctorProfile | null,
+) {
+  const recorded = Math.round(Number(recordedPercent) || 0);
+  if (recorded > 0) return Math.min(99, recorded);
+  return doctorSurgeryQuotaPercent(assistant) ?? 0;
+}
+
+type SurgeryAssistantSource = {
+  anesthesiologistId?: string | null;
+  anesthesiologistPercent?: number | null;
+  interventionType: {
+    anesthesiologistId: string | null;
+    anesthesiologistPercent: number;
+  };
+};
+
+/** Anesthésiste de l'opération : la saisie de la fiche prime sur le type d'intervention. */
+export function effectiveSurgeryAssistant(surgery: SurgeryAssistantSource) {
+  if (surgery.anesthesiologistId != null || surgery.anesthesiologistPercent != null) {
+    const percent = Math.max(0, Math.round(surgery.anesthesiologistPercent ?? 0));
+    return {
+      id: percent > 0 ? (surgery.anesthesiologistId ?? null) : null,
+      percent,
+    };
+  }
+  const percent = Math.max(0, Math.round(surgery.interventionType.anesthesiologistPercent || 0));
+  return {
+    id: percent > 0 ? surgery.interventionType.anesthesiologistId : null,
+    percent,
+  };
+}
+
+/** Opérations dont cet anesthésiste doit être payé (saisie de la fiche, sinon le type). */
+export function surgeryCaseAssistantWhere(userId: string): Prisma.SurgeryCaseWhereInput {
+  return {
+    OR: [
+      { anesthesiologistId: userId, anesthesiologistPercent: { gt: 0 } },
+      {
+        anesthesiologistId: null,
+        anesthesiologistPercent: null,
+        interventionType: {
+          anesthesiologistId: userId,
+          anesthesiologistPercent: { gt: 0 },
+        },
+      },
+    ],
+  };
 }
 
 export const DOCTOR_COMPENSATION_LABELS: Record<DoctorCompensationType, string> = {

@@ -17,10 +17,15 @@ import { computeConsultationAmounts } from "./consultation-amounts.js";
 import {
   computeConsultationShares,
   computeSurgeryShares,
+  doctorSurgeryQuotaPercent,
+  isMedecin,
+  resolveAssistantPercent,
   resolveDoctorConsultationAmount,
+  resolveSurgeonPercent,
   type DoctorProfile,
 } from "./doctor-compensation.js";
 import { computeOvertimeAmountFcfa } from "./doctor-overtime.js";
+import { collectedAmountFcfa } from "./surgery-cost-shares.js";
 import { nextConsultationInvoiceState, scaledPaymentAmounts } from "./recorded-tariff.js";
 
 export type CompensationRecalcSummary = {
@@ -123,17 +128,109 @@ function doctorProfileFromEmployee(employee: {
   };
 }
 
-const OPEN_CLAIM_STATUSES = [
-  DoctorShareClaimStatus.PENDING_PAYROLL,
-  DoctorShareClaimStatus.SETTLED_CASH,
-  DoctorShareClaimStatus.SETTLED_PAYROLL,
-];
+const OPEN_CLAIM_STATUSES = [DoctorShareClaimStatus.PENDING_PAYROLL];
 
 /**
  * Recalcule toutes les consultations et opérations déjà enregistrées
  * après un changement de prix de consultation ou de % chirurgie.
  * La paie déjà versée et les heures sup. déjà réglées restent en l'état.
  */
+/**
+ * Le médecin d'une ligne vient de changer : ses opérations et les parts encore ouvertes
+ * reprennent le % actuel de sa fiche.
+ */
+export async function applyDoctorSharesToVisit(
+  tx: Prisma.TransactionClient,
+  visitId: string,
+  doctorUserId: string,
+) {
+  const user = await tx.user.findUnique({
+    where: { id: doctorUserId },
+    select: {
+      role: true,
+      employee: { select: employeeRecalcSelect },
+    },
+  });
+  const employee = user?.employee;
+  if (!user || !employee) return;
+
+  const profile = doctorProfileFromEmployee({
+    ...employee,
+    user: { role: user.role },
+  });
+  if (!isMedecin(profile)) return;
+  const surgeries = await tx.surgeryCase.findMany({
+    where: { visitId, status: { not: SurgeryStatus.CANCELLED } },
+    select: {
+      id: true,
+      totalCostFcfa: true,
+      anesthesiologistPercent: true,
+      interventionType: { select: { surgeonPercent: true, anesthesiologistPercent: true } },
+      invoice: { select: { paidAmountFcfa: true, amountFcfa: true, status: true } },
+    },
+  });
+  for (const surgery of surgeries) {
+    const surgeonPercent = resolveSurgeonPercent(surgery.interventionType.surgeonPercent, profile);
+    const assistantPercent =
+      surgery.anesthesiologistPercent ?? surgery.interventionType.anesthesiologistPercent ?? 0;
+    const collected = collectedAmountFcfa(surgery.invoice ?? {});
+    const base = collected > 0 ? collected : surgery.totalCostFcfa;
+    const shares = computeSurgeryShares(base, surgeonPercent, profile, assistantPercent);
+    await tx.surgeryCase.update({
+      where: { id: surgery.id },
+      data: {
+        surgeonId: doctorUserId,
+        surgeonPercent,
+        surgeonShareFcfa: shares.surgeonShareFcfa,
+        clinicShareFcfa: shares.clinicShareFcfa,
+      },
+    });
+    await tx.doctorShareClaim.updateMany({
+      where: {
+        surgeryCaseId: surgery.id,
+        kind: DoctorShareKind.OPERATION_SURGEON,
+        status: DoctorShareClaimStatus.PENDING_PAYROLL,
+      },
+      data: {
+        employeeId: employee.id,
+        doctorUserId,
+        amountFcfa: shares.surgeonShareFcfa,
+      },
+    });
+  }
+
+  const consultationInvoices = await tx.invoice.findMany({
+    where: {
+      visitId,
+      type: InvoiceType.CONSULTATION,
+      status: { not: InvoiceStatus.CANCELLED },
+    },
+    select: { id: true, amountFcfa: true, paidAmountFcfa: true },
+  });
+  for (const invoice of consultationInvoices) {
+    const gross = invoice.paidAmountFcfa > 0 ? invoice.paidAmountFcfa : invoice.amountFcfa;
+    const share = computeConsultationShares(
+      gross,
+      employee.consultationQuotaPercent ?? 0,
+      employee.consultationQuotaFcfa,
+      employee.consultationQuotaMode,
+      profile,
+    );
+    await tx.doctorShareClaim.updateMany({
+      where: {
+        invoiceId: invoice.id,
+        kind: DoctorShareKind.CONSULTATION,
+        status: DoctorShareClaimStatus.PENDING_PAYROLL,
+      },
+      data: {
+        employeeId: employee.id,
+        doctorUserId,
+        amountFcfa: share.doctorShareFcfa,
+      },
+    });
+  }
+}
+
 export async function recalculateAfterEmployeeFicheChange(
   employeeId: string,
 ): Promise<CompensationRecalcSummary> {
@@ -238,32 +335,72 @@ export async function recalculateAfterEmployeeFicheChange(
           select: {
             id: true,
             totalCostFcfa: true,
+            surgeonPercent: true,
             surgeonShareFcfa: true,
             clinicShareFcfa: true,
-            interventionType: { select: { surgeonPercent: true } },
+            anesthesiologistPercent: true,
+            interventionType: { select: { surgeonPercent: true, anesthesiologistPercent: true } },
           },
         });
 
+        const ficheSurgeonPercent = doctorSurgeryQuotaPercent(profile);
         for (const surgery of unpaidSurgeries) {
           const shares = computeSurgeryShares(
             surgery.totalCostFcfa,
             surgery.interventionType.surgeonPercent,
             profile,
+            surgery.anesthesiologistPercent ?? surgery.interventionType.anesthesiologistPercent ?? 0,
           );
+          const nextSurgeonPercent = ficheSurgeonPercent ?? surgery.surgeonPercent;
           if (
             shares.surgeonShareFcfa === surgery.surgeonShareFcfa &&
-            shares.clinicShareFcfa === surgery.clinicShareFcfa
+            shares.clinicShareFcfa === surgery.clinicShareFcfa &&
+            nextSurgeonPercent === surgery.surgeonPercent
           ) {
             continue;
           }
           await tx.surgeryCase.update({
             where: { id: surgery.id },
             data: {
+              ...(ficheSurgeonPercent != null ? { surgeonPercent: ficheSurgeonPercent } : {}),
               surgeonShareFcfa: shares.surgeonShareFcfa,
               clinicShareFcfa: shares.clinicShareFcfa,
             },
           });
           summary.unpaidSurgeryShares += 1;
+        }
+
+        if (ficheSurgeonPercent != null) {
+          const assisted = await tx.surgeryCase.findMany({
+            where: {
+              anesthesiologistId: doctorUserId,
+              status: { not: SurgeryStatus.CANCELLED },
+            },
+            select: {
+              id: true,
+              totalCostFcfa: true,
+              surgeonShareFcfa: true,
+              anesthesiologistPercent: true,
+              clinicShareFcfa: true,
+              interventionType: { select: { anesthesiologistPercent: true } },
+            },
+          });
+          for (const surgery of assisted) {
+            const nextPercent = resolveAssistantPercent(
+              surgery.interventionType.anesthesiologistPercent,
+              profile,
+            );
+            if (nextPercent === (surgery.anesthesiologistPercent ?? 0)) continue;
+            const assistantShareFcfa = Math.round((surgery.totalCostFcfa * nextPercent) / 100);
+            await tx.surgeryCase.update({
+              where: { id: surgery.id },
+              data: {
+                anesthesiologistPercent: nextPercent,
+                clinicShareFcfa: Math.max(0, surgery.totalCostFcfa - surgery.surgeonShareFcfa - assistantShareFcfa),
+              },
+            });
+            summary.unpaidSurgeryShares += 1;
+          }
         }
       }
 
@@ -305,34 +442,20 @@ export async function recalculateAfterEmployeeFicheChange(
             where: { id: claim.surgeryCaseId },
             select: {
               surgeonShareFcfa: true,
+              surgeonPercent: true,
               totalCostFcfa: true,
               status: true,
               interventionType: { select: { surgeonPercent: true } },
-              invoice: { select: { paidAmountFcfa: true } },
+              invoice: { select: { paidAmountFcfa: true, amountFcfa: true, status: true } },
             },
           });
           if (surgery) {
-            if (surgery.status === SurgeryStatus.COMPLETED) {
-              nextAmount = computeSurgeryShares(
-                surgery.totalCostFcfa,
-                surgery.interventionType.surgeonPercent,
-                profile,
-              ).surgeonShareFcfa;
-            } else {
-              const collected = surgery.invoice?.paidAmountFcfa ?? 0;
-              nextAmount =
-                collected > 0
-                  ? computeSurgeryShares(
-                      collected,
-                      surgery.interventionType.surgeonPercent,
-                      profile,
-                    ).surgeonShareFcfa
-                  : computeSurgeryShares(
-                      surgery.totalCostFcfa,
-                      surgery.interventionType.surgeonPercent,
-                      profile,
-                    ).surgeonShareFcfa;
-            }
+            const collected = collectedAmountFcfa(surgery.invoice ?? {});
+            nextAmount = computeSurgeryShares(
+              collected,
+              surgery.surgeonPercent ?? surgery.interventionType.surgeonPercent,
+              profile,
+            ).surgeonShareFcfa;
           }
         } else if (claim.kind === DoctorShareKind.OPERATION_ASSISTANT && claim.surgeryCaseId) {
           const surgery = await tx.surgeryCase.findUnique({
@@ -340,17 +463,18 @@ export async function recalculateAfterEmployeeFicheChange(
             select: {
               totalCostFcfa: true,
               status: true,
+              anesthesiologistPercent: true,
               interventionType: { select: { anesthesiologistPercent: true } },
-              invoice: { select: { paidAmountFcfa: true } },
+              invoice: { select: { paidAmountFcfa: true, amountFcfa: true, status: true } },
             },
           });
           if (surgery) {
-            const pct = surgery.interventionType.anesthesiologistPercent ?? 0;
-            const base =
-              surgery.status === SurgeryStatus.COMPLETED
-                ? surgery.totalCostFcfa
-                : (surgery.invoice?.paidAmountFcfa ?? surgery.totalCostFcfa);
-            nextAmount = Math.round((base * pct) / 100);
+            const pct = resolveAssistantPercent(
+              surgery.anesthesiologistPercent ?? surgery.interventionType.anesthesiologistPercent,
+              profile,
+            );
+            const collected = collectedAmountFcfa(surgery.invoice ?? {});
+            nextAmount = Math.round((collected * pct) / 100);
           }
         }
 
@@ -496,6 +620,7 @@ export async function recalculateSurgeriesForIntervention(interventionTypeId: st
       surgeonShareFcfa: true,
       clinicShareFcfa: true,
       status: true,
+      anesthesiologistPercent: true,
       interventionType: {
         select: { surgeonPercent: true, anesthesiologistPercent: true },
       },
@@ -517,6 +642,7 @@ export async function recalculateSurgeriesForIntervention(interventionTypeId: st
           surgery.totalCostFcfa,
           surgery.interventionType.surgeonPercent,
           profile,
+          surgery.anesthesiologistPercent ?? surgery.interventionType.anesthesiologistPercent ?? 0,
         );
         if (
           shares.surgeonShareFcfa !== surgery.surgeonShareFcfa ||
@@ -545,7 +671,12 @@ export async function recalculateSurgeriesForIntervention(interventionTypeId: st
           profile,
         ).surgeonShareFcfa;
         const assistantAmount = Math.round(
-          (base * (surgery.interventionType.anesthesiologistPercent ?? 0)) / 100,
+          (base *
+            resolveAssistantPercent(
+              surgery.anesthesiologistPercent ?? surgery.interventionType.anesthesiologistPercent,
+              null,
+            )) /
+            100,
         );
 
         const claims = await tx.doctorShareClaim.findMany({

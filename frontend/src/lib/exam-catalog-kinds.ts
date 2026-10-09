@@ -84,7 +84,7 @@ export const OPERATION_KIND_CONFIG: ExamCatalogKindConfig = {
   slug: 'operation',
   label: 'Types opérations',
   title: 'Types opérations',
-  subtitle: 'Tarifs et répartition chirurgien / assistant / clinique',
+  subtitle: 'Tarifs et répartition chirurgien / anesthésiste / clinique',
   icon: Scissors,
   iconVariant: 'rose',
 }

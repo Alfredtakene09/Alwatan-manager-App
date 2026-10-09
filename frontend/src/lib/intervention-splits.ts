@@ -7,10 +7,10 @@ export function validateInterventionPercents(surgeonPercent: number, anesthesiol
     return 'Le pourcentage chirurgien doit être entre 1 et 99.'
   }
   if (anesthesiologistPercent < 0 || anesthesiologistPercent > 99) {
-    return 'Le pourcentage assistant chirurgie doit être entre 0 et 99.'
+    return 'Le pourcentage anesthésiste doit être entre 0 et 99.'
   }
   if (surgeonPercent + anesthesiologistPercent > 100) {
-    return 'La somme chirurgien + assistant chirurgie ne peut pas dépasser 100 %.'
+    return 'La somme chirurgien + anesthésiste ne peut pas dépasser 100 %.'
   }
   return null
 }
