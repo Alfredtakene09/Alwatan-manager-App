@@ -15,7 +15,11 @@ import {
   EXTERNAL_PATIENT_VISIT_NOTE,
   extractExternalPatientService,
 } from "./visit-external.js";
-import { canonicalClinicServiceName } from "./ortho-trauma-service.js";
+import {
+  canonicalClinicServiceName,
+  foldClinicServiceName,
+  isOrthoTraumaServiceName,
+} from "./ortho-trauma-service.js";
 
 /** Famille de prestation (consultation, opération, examen…). Le ticket ne les imprime plus en sections. */
 export type DayClosureLineGroup =
@@ -88,6 +92,13 @@ export type DayClosureInvoice = {
     patient: { service: string | null } | null;
     consultation: { clinicalNotes: string | null } | null;
     notes?: string | null;
+    assignedDoctor?: {
+      id?: string | null;
+      employee?: {
+        clinicService?: { name: string } | null;
+        clinicServiceLinks?: { isDefault: boolean; clinicService: { name: string } | null }[];
+      } | null;
+    } | null;
   } | null;
   hospitalization: { reductionFcfa: number } | null;
   surgeryCase?: {
@@ -165,6 +176,76 @@ function recordedClosureService(invoice: DayClosureInvoice): string {
   );
 }
 
+type DoctorServiceSource = {
+  employee?: {
+    clinicService?: { name: string } | null;
+    clinicServiceLinks?: { isDefault: boolean; clinicService: { name: string } | null }[];
+  } | null;
+} | null | undefined;
+
+function sameClinicService(left: string, right: string): boolean {
+  if (!left || !right) return false;
+  if (foldClinicServiceName(left) === foldClinicServiceName(right)) return true;
+  return isOrthoTraumaServiceName(left) && isOrthoTraumaServiceName(right);
+}
+
+function doctorServiceNames(doctor: DoctorServiceSource): string[] {
+  const employee = doctor?.employee;
+  if (!employee) return [];
+  const names = new Set<string>();
+  const own = employee.clinicService?.name?.trim();
+  if (own) names.add(own);
+  for (const link of employee.clinicServiceLinks ?? []) {
+    const name = link.clinicService?.name?.trim();
+    if (name) names.add(name);
+  }
+  return [...names];
+}
+
+function doctorClinicServiceName(doctor: DoctorServiceSource): string {
+  const employee = doctor?.employee;
+  if (!employee) return "";
+  const links = employee.clinicServiceLinks ?? [];
+  const preferred =
+    links.find((link) => link.isDefault)?.clinicService?.name ||
+    links[0]?.clinicService?.name ||
+    employee.clinicService?.name ||
+    "";
+  return preferred.trim();
+}
+
+/**
+ * Service de cette consultation, le même sur le reçu des cumuls et l'export.
+ * La visite prime, puis le service du médecin : modifier le dossier ne doit
+ * pas laisser le montant dans l'ancien service pendant que la quantité bouge.
+ * Le dossier ne sert que s'il n'y a ni visite ni médecin.
+ */
+export function consultationServiceName(invoice: {
+  visit?: {
+    assignedClinicService?: { name: string } | null;
+    patient?: { service: string | null } | null;
+    notes?: string | null;
+    assignedDoctor?: {
+      employee?: {
+        clinicService?: { name: string } | null;
+        clinicServiceLinks?: { isDefault: boolean; clinicService: { name: string } | null }[];
+      } | null;
+    } | null;
+  } | null;
+}): string {
+  const assigned = invoice.visit?.assignedClinicService?.name?.trim() || "";
+  if (assigned) return assigned;
+  const dossier =
+    invoice.visit?.patient?.service?.trim() ||
+    extractExternalPatientService(invoice.visit?.notes) ||
+    "";
+  const names = doctorServiceNames(invoice.visit?.assignedDoctor);
+  if (dossier && names.some((name) => sameClinicService(name, dossier))) return dossier;
+  const doctorService = doctorClinicServiceName(invoice.visit?.assignedDoctor);
+  if (doctorService) return doctorService;
+  return dossier;
+}
+
 /**
  * Service de l'opération : celui de l'acte, sauf si l'acte n'est que le nom
  * d'un autre service (ex. « Ophtalmologie ») alors que le dossier est gynécologie.
@@ -195,7 +276,7 @@ export function classifyInvoiceForDayClosure(
   invoice: DayClosureInvoice,
 ): DayClosureClassification {
   if (invoice.type === InvoiceType.CONSULTATION) {
-    const serviceName = recordedClosureService(invoice);
+    const serviceName = consultationServiceName(invoice);
     return {
       label: normalizeDayClosureLabel(serviceName || "Consultations"),
       group: "consultation",
@@ -269,6 +350,19 @@ const dayClosureInvoiceSelect = {
       reductionFcfa: true,
       consultationFeeFcfa: true,
       assignedClinicService: { select: { name: true } },
+      assignedDoctor: {
+        select: {
+          id: true,
+          employee: {
+            select: {
+              clinicService: { select: { name: true } },
+              clinicServiceLinks: {
+                select: { isDefault: true, clinicService: { select: { name: true } } },
+              },
+            },
+          },
+        },
+      },
       patient: { select: { service: true } },
       notes: true,
       consultation: { select: { clinicalNotes: true } },
@@ -369,7 +463,26 @@ export function assembleDayClosureReceiptLines(
   let reductionFcfa = 0;
   const reductionVisitIds = new Set<string>();
 
-  for (const { invoice, collectedFcfa: paidGross } of entries) {
+  const consultationSlot = new Map<string, number>();
+  const counted: typeof entries = [];
+  for (const entry of entries) {
+    if (entry.invoice.type !== InvoiceType.CONSULTATION) {
+      counted.push(entry);
+      continue;
+    }
+    const service = consultationServiceName(entry.invoice);
+    const doctorId = entry.invoice.visit?.assignedDoctor?.id ?? "";
+    const key = `${entry.invoice.patientId ?? entry.invoice.id}\0${service}\0${doctorId}`;
+    const slot = consultationSlot.get(key);
+    if (slot == null) {
+      consultationSlot.set(key, counted.length);
+      counted.push(entry);
+    } else {
+      counted[slot] = entry;
+    }
+  }
+
+  for (const { invoice, collectedFcfa: paidGross } of counted) {
     const paid = dayClosureCountedFcfa(invoice, paidGross);
     if (paid <= 0) continue;
     collectedFcfa += paid;

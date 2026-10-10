@@ -22,8 +22,10 @@ export const useAuthStore = defineStore('auth', {
         try {
           const { data } = await api.get<SessionUser>('/auth/me')
           this.user = data
-        } catch {
-          this.user = null
+        } catch (error: unknown) {
+          const status = (error as { response?: { status?: number } })?.response?.status
+          // Une coupure réseau ne ferme pas la session : le cookie est encore valable.
+          if (status === 401 || status === 403) this.user = null
         } finally {
           fetchMePromise = null
         }

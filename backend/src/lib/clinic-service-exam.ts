@@ -215,6 +215,38 @@ export async function resolveDoctorClinicServiceId(
   return service?.id ?? null;
 }
 
+/**
+ * Service à poser sur une nouvelle visite.
+ * Si le médecin exerce dans le service déjà choisi sur le dossier, on le garde.
+ * Sinon on prend le service du médecin, pour que le cumul ne reste pas sur l'ancien.
+ */
+export async function resolveVisitClinicServiceId(
+  doctorUserId: string | null | undefined,
+  dossierServiceName: string | null | undefined,
+): Promise<string | null> {
+  const resolved = await resolveDoctorClinicServices(doctorUserId);
+  if (!resolved) return null;
+  const dossier = dossierServiceName?.trim() || "";
+  if (dossier) {
+    const match = resolved.all.find((service) => {
+      const left = service.name.trim();
+      if (!left) return false;
+      const fold = (value: string) =>
+        value
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, " ")
+          .trim();
+      if (fold(left) === fold(dossier)) return true;
+      const ortho = /orthop|ortoped|traumat|tromato|tromoto/;
+      return ortho.test(fold(left)) && ortho.test(fold(dossier));
+    });
+    if (match) return match.id;
+  }
+  return resolved.default.id;
+}
+
 export async function resolveDoctorClinicService(
   doctorUserId: string | null | undefined,
 ): Promise<ClinicServiceRef | null> {

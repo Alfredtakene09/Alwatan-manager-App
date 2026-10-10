@@ -2,6 +2,7 @@ import { ConsultationQuotaMode, InvoiceStatus, InvoiceType, Prisma } from "@pris
 import { prisma } from "./db.js";
 import {
   classifyInvoiceForDayClosure,
+  consultationServiceName,
   type DayClosureLineGroup,
 } from "./day-closure-sales.js";
 import {
@@ -49,10 +50,14 @@ const compensationSelect = {
   consultationQuotaPercent: true,
   consultationQuotaFcfa: true,
   surgeryQuotaPercent: true,
+  clinicService: { select: { name: true } },
+  clinicServiceLinks: {
+    select: { isDefault: true, clinicService: { select: { name: true } } },
+  },
 } satisfies Prisma.EmployeeSelect;
 
 const doctorSelect = {
-  select: { firstName: true, lastName: true, role: true, employee: { select: compensationSelect } },
+  select: { id: true, firstName: true, lastName: true, role: true, employee: { select: compensationSelect } },
 } as const;
 
 const summaryInvoiceSelect = {
@@ -62,6 +67,7 @@ const summaryInvoiceSelect = {
   amountFcfa: true,
   paidAmountFcfa: true,
   status: true,
+  createdAt: true,
   billingExamKind: true,
   surgeryCaseId: true,
   hospitalizationId: true,
@@ -116,7 +122,7 @@ type CatalogOperation = Prisma.InterventionTypeGetPayload<{ select: typeof catal
 /** Facture d'opération hors bloc : le type d'acte porte le % anesthésiste. */
 type PricedInvoice = SummaryInvoice & { catalogOperation?: CatalogOperation | null };
 
-/** Montant actuel de la ligne, même déjà encaissée : le prix facturé, pas le solde restant. */
+/** Montant actuel de la ligne : le prix facturé, pas un encaissement antérieur. */
 function summaryAmountFcfa(invoice: SummaryInvoice): number {
   return Math.max(0, invoice.amountFcfa);
 }
@@ -238,6 +244,14 @@ export function consultationShare(invoice: SummaryInvoice, amountFcfa: number): 
 
   const quotaMode = doctor.employee?.consultationQuotaMode ?? ConsultationQuotaMode.PERCENT;
   const quotaPercent = doctor.employee?.consultationQuotaPercent ?? 0;
+  if (quotaMode === ConsultationQuotaMode.PERCENT && quotaPercent > 0) {
+    return {
+      shareFcfa: Math.round((amountFcfa * quotaPercent) / 100),
+      percent: quotaPercent,
+    };
+  }
+  if (!doctorUsesQuota(doctor)) return NO_SHARE;
+
   const { doctorShareFcfa } = computeConsultationShares(
     amountFcfa,
     quotaPercent,
@@ -245,14 +259,7 @@ export function consultationShare(invoice: SummaryInvoice, amountFcfa: number): 
     quotaMode,
     doctor,
   );
-  if (doctorShareFcfa <= 0) return NO_SHARE;
-  return {
-    shareFcfa: doctorShareFcfa,
-    percent:
-      quotaMode === ConsultationQuotaMode.PERCENT && doctorUsesQuota(doctor)
-        ? quotaPercent
-        : null,
-  };
+  return { shareFcfa: doctorShareFcfa, percent: null };
 }
 
 function operationSurgeon(invoice: SummaryInvoice): DoctorProfile | null {
@@ -352,20 +359,14 @@ function invoiceShare(
 
 type Accumulator = Omit<RegistrationSummaryLine, "doctorNames" | "doctorPercent" | "operationPercent"> & {
   patientIds: Set<string>;
+  doctorPercents: Set<number>;
   operationPercents: Set<number>;
   doctorNameSet: Set<string>;
-  percentageDoctorShareFcfa: number;
-  percentageDoctorBaseFcfa: number;
 };
 
 /** Un seul taux dans la ligne : on l'affiche ; sinon la colonne reste vide. */
 function uniquePercent(percents: Set<number>): number | null {
   return percents.size === 1 ? [...percents][0] : null;
-}
-
-export function registrationDoctorPercent(doctorShareFcfa: number, doctorBaseFcfa: number): number | null {
-  if (doctorBaseFcfa <= 0 || doctorShareFcfa <= 0) return null;
-  return Math.round((doctorShareFcfa * 100) / doctorBaseFcfa);
 }
 
 export type RegistrationSummaryOptions = {
@@ -628,10 +629,33 @@ function operationAssistantName(invoice: PricedInvoice): string {
   );
 }
 
+/**
+ * Une modification ne doit pas ajouter une deuxième consultation du même
+ * médecin dans le même service. On garde la plus récente : quantité et montant
+ * restent alignés (3 patients à 10 000 F = 30 000 F, pas 50 000 F).
+ */
+function consultationsToCount(invoices: PricedInvoice[]): PricedInvoice[] {
+  const best = new Map<string, PricedInvoice>();
+  const others: PricedInvoice[] = [];
+  for (const invoice of invoices) {
+    if (invoice.type !== InvoiceType.CONSULTATION) {
+      others.push(invoice);
+      continue;
+    }
+    const service = consultationServiceName(invoice);
+    const doctorId = invoice.visit?.assignedDoctor?.id ?? invoice.visit?.consultation?.doctor?.id ?? "";
+    const key = `${invoice.patientId ?? invoice.id}\0${service}\0${doctorId}`;
+    const current = best.get(key);
+    const at = invoice.createdAt?.getTime() ?? 0;
+    if (!current || at >= (current.createdAt?.getTime() ?? -1)) best.set(key, invoice);
+  }
+  return [...others, ...best.values()];
+}
+
 function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationSummaryLine[] {
   const grouped = new Map<string, Accumulator>();
 
-  for (const invoice of invoices) {
+  for (const invoice of consultationsToCount(invoices)) {
     const collectedFcfa = summaryAmountFcfa(invoice);
     const amountFcfa = consultationTariffAmount(invoice, collectedFcfa);
     if (amountFcfa <= 0) continue;
@@ -641,12 +665,15 @@ function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationS
       group === "exam" || (group === "other" && invoice.type === InvoiceType.LAB_EXAM);
     if (isExamLine && !isCollectedExamInvoice(invoice)) continue;
     const operationName = group === "operation" ? operationActName(invoice) : null;
-    const serviceLabel = exactRegistrationService({
-      group,
-      classifiedLabel: registrationServiceLabel(group, label, invoice.visit?.patient?.service),
-      recordedService: recordedRegistrationService(invoice),
-      operationName,
-    });
+    const serviceLabel =
+      group === "consultation"
+        ? displayServiceName(consultationServiceName(invoice) || label)
+        : exactRegistrationService({
+            group,
+            classifiedLabel: registrationServiceLabel(group, label, invoice.visit?.patient?.service),
+            recordedService: recordedRegistrationService(invoice),
+            operationName,
+          });
     const identity = registrationLineIdentity({
       group,
       serviceLabel,
@@ -663,10 +690,9 @@ function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationS
       amountFcfa: 0,
       doctorShareFcfa: 0,
       patientIds: new Set<string>(),
+      doctorPercents: new Set<number>(),
       operationPercents: new Set<number>(),
       doctorNameSet: new Set<string>(),
-      percentageDoctorShareFcfa: 0,
-      percentageDoctorBaseFcfa: 0,
     };
     if (group === "operation") {
       const doctorName = lineDoctorName(invoice, group);
@@ -699,23 +725,18 @@ function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationS
     row.doctorShareFcfa += share.shareFcfa;
     if (share.percent != null) {
       if (group === "operation") row.operationPercents.add(share.percent);
-      else if (group === "consultation") {
-        row.percentageDoctorShareFcfa += share.shareFcfa;
-        row.percentageDoctorBaseFcfa += amountFcfa;
-      }
+      else row.doctorPercents.add(share.percent);
     }
 
     grouped.set(key, row);
   }
 
   return [...grouped.values()]
-    .map(({ patientIds: _patientIds, operationPercents, doctorNameSet, percentageDoctorShareFcfa, percentageDoctorBaseFcfa, ...line }) => {
-      return {
-        ...line,
-        doctorNames: [...doctorNameSet].sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base" })),
-        doctorPercent: registrationDoctorPercent(percentageDoctorShareFcfa, percentageDoctorBaseFcfa),
-        operationPercent: uniquePercent(operationPercents),
-      };
-    })
+    .map(({ patientIds: _patientIds, doctorPercents, operationPercents, doctorNameSet, ...line }) => ({
+      ...line,
+      doctorNames: [...doctorNameSet].sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base" })),
+      doctorPercent: uniquePercent(doctorPercents),
+      operationPercent: uniquePercent(operationPercents),
+    }))
     .sort((a, b) => a.service.localeCompare(b.service, "fr", { sensitivity: "base" }));
 }

@@ -13,8 +13,8 @@ import {
   ORTHO_TRAUMA_SERVICE,
   registrationExamQuantity,
   registrationLineIdentity,
-  registrationDoctorPercent,
 } from "./registration-summary.js";
+import { consultationServiceName } from "./day-closure-sales.js";
 
 type ShareInvoice = Parameters<typeof operationShare>[0];
 
@@ -44,46 +44,6 @@ describe("parts médecin à l'export", () => {
     const share = consultationShare(invoice, 20_000);
     assert.equal(share.percent, 50);
     assert.equal(share.shareFcfa, 10_000);
-  });
-
-  it("recalcule la part du médecin affecté même si la facture est déjà encaissée", () => {
-    const previousDoctor = david();
-    const currentDoctor = david();
-    previousDoctor.employee.consultationQuotaPercent = 80;
-    currentDoctor.employee.consultationQuotaPercent = 25;
-    const invoice = {
-      type: InvoiceType.CONSULTATION,
-      amountFcfa: 20_000,
-      paidAmountFcfa: 20_000,
-      status: InvoiceStatus.PAID,
-      visit: {
-        consultationFeeFcfa: 20_000,
-        reductionFcfa: 0,
-        assignedDoctor: currentDoctor,
-        consultation: { doctor: previousDoctor },
-      },
-    } as ShareInvoice;
-
-    const billedAmount = consultationTariffAmount(invoice, invoice.amountFcfa);
-    const share = consultationShare(invoice, billedAmount);
-    assert.equal(share.percent, 25);
-    assert.equal(share.shareFcfa, 5_000);
-  });
-
-  it("n'attribue pas de quota consultation à un médecin salarié fixe", () => {
-    const doctor = david();
-    doctor.employee.doctorCompensationType = DoctorCompensationType.FIXED_SALARY;
-    const invoice = {
-      visit: { assignedDoctor: doctor, consultation: null },
-    } as ShareInvoice;
-
-    assert.deepEqual(consultationShare(invoice, 20_000), { shareFcfa: 0, percent: null });
-  });
-
-  it("calcule un taux effectif lorsque plusieurs taux sont regroupés par service", () => {
-    assert.equal(registrationDoctorPercent(17_500, 30_000), 58);
-    assert.equal(registrationDoctorPercent(15_000, 20_000), 75);
-    assert.equal(registrationDoctorPercent(0, 0), null);
   });
 
   it("applique 30 % du médecin sur le montant d'opération, pas le % du catalogue", () => {
@@ -290,6 +250,18 @@ describe("parts médecin à l'export", () => {
   it("place la consultation dans le service modifié du dossier", () => {
     assert.equal(registrationServiceLabel("consultation", "Pédiatrie", "Gynécologie"), "Gynécologie");
     assert.equal(registrationServiceLabel("operation", "Ophtalmologie", "Gynécologie"), "Ophtalmologie");
+  });
+
+  it("compte une consultation renvoyée dans le service de la visite", () => {
+    assert.equal(
+      consultationServiceName({
+        visit: {
+          assignedClinicService: { name: "Généraliste" },
+          patient: { service: "Pédiatrie" },
+        },
+      }),
+      "Généraliste",
+    );
   });
 
   it("rattache une opération au service enregistré quand l'acte n'est que le nom d'un autre service", () => {

@@ -89,14 +89,20 @@ function head(columns: ExportColumn<any>[]): string[] {
   return ['#', ...columns.map((col) => col.header)]
 }
 
-function body<T>(columns: ExportColumn<T>[], rows: T[]): string[][] {
+function body<T>(columns: ExportColumn<T>[], rows: T[], compactLines = false): string[][] {
   if (!rows.length) return [[translateUi('Aucune donnée')]]
-  return rows.map((row, index) => [String(index + 1), ...columns.map((col) => cellText(col.value(row)))])
+  return rows.map((row, index) => [
+    String(index + 1),
+    ...columns.map((col) => {
+      const text = cellText(col.value(row))
+      return compactLines ? text.replace(/\s*\n\s*/g, ' · ') : text
+    }),
+  ])
 }
 
-function drawCaptions(doc: jsPDF, captionRows: ExportCaptionRow[], y: number): number {
+function drawCaptions(doc: jsPDF, captionRows: ExportCaptionRow[], y: number, density: PdfDensity): number {
   doc.setFont('helvetica', 'normal')
-  doc.setFontSize(10.5)
+  doc.setFontSize(density.caption)
   doc.setTextColor(51, 65, 85)
   let cursor = y
   for (const row of captionRows) {
@@ -107,7 +113,7 @@ function drawCaptions(doc: jsPDF, captionRows: ExportCaptionRow[], y: number): n
     const labelWidth = doc.getTextWidth(label)
     doc.setFont(fontFor(value), 'normal')
     doc.text(value, 14 + labelWidth, cursor)
-    cursor += 5.8
+    cursor += density.captionStep
   }
   return cursor
 }
@@ -115,6 +121,42 @@ function drawCaptions(doc: jsPDF, captionRows: ExportCaptionRow[], y: number): n
 type PdfLogo = { dataUrl: string; width: number; height: number }
 
 const LOGO_MAX_MM = 26
+
+type PdfDensity = {
+  fontSize: number
+  padding: number
+  sectionTitle: number
+  headerTitle: number
+  clinicName: number
+  caption: number
+  captionStep: number
+  sectionGap: number
+  lineStep: number
+  compactLines: boolean
+  logoMm: number
+}
+
+const PDF_DENSITY: PdfDensity = {
+  fontSize: 9.5,
+  padding: 1.8,
+  sectionTitle: 12.5,
+  headerTitle: 14,
+  clinicName: 16,
+  caption: 10.5,
+  captionStep: 5.8,
+  sectionGap: 8,
+  lineStep: 5,
+  compactLines: false,
+  logoMm: LOGO_MAX_MM,
+}
+
+/** Plus le cumul déborde, plus on resserre pour rester sur une page A4. */
+const PDF_DENSITIES: PdfDensity[] = [
+  PDF_DENSITY,
+  { fontSize: 8, padding: 1.1, sectionTitle: 10.5, headerTitle: 12, clinicName: 13, caption: 8.5, captionStep: 4.2, sectionGap: 4, lineStep: 3.8, compactLines: true, logoMm: 18 },
+  { fontSize: 7, padding: 0.7, sectionTitle: 9, headerTitle: 10.5, clinicName: 11, caption: 7.5, captionStep: 3.4, sectionGap: 2.5, lineStep: 3.2, compactLines: true, logoMm: 14 },
+  { fontSize: 6.2, padding: 0.45, sectionTitle: 8, headerTitle: 9.5, clinicName: 10, caption: 7, captionStep: 3, sectionGap: 1.5, lineStep: 2.8, compactLines: true, logoMm: 12 },
+]
 
 /** Passe par un canvas pour obtenir un PNG quel que soit le format source (jpeg, webp…). */
 async function loadClinicLogo(): Promise<PdfLogo | null> {
@@ -138,38 +180,42 @@ async function loadClinicLogo(): Promise<PdfLogo | null> {
   }
 }
 
-function drawClinicHeader(doc: jsPDF, title: string, logo: PdfLogo | null): number {
+function drawClinicHeader(doc: jsPDF, title: string, logo: PdfLogo | null, density: PdfDensity): number {
   const pageWidth = doc.internal.pageSize.getWidth()
   let logoBottom = 0
   if (logo) {
     const ratio = logo.width / logo.height
-    const w = ratio >= 1 ? LOGO_MAX_MM : LOGO_MAX_MM * ratio
-    const h = ratio >= 1 ? LOGO_MAX_MM / ratio : LOGO_MAX_MM
+    const w = ratio >= 1 ? density.logoMm : density.logoMm * ratio
+    const h = ratio >= 1 ? density.logoMm / ratio : density.logoMm
     doc.addImage(logo.dataUrl, 'PNG', 14, 8, w, h)
     logoBottom = 8 + h
   }
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(16)
+  doc.setFontSize(density.clinicName)
   doc.setTextColor(15, 118, 110)
   doc.text(CLINIC.nameFr, pageWidth / 2, 15, { align: 'center' })
   doc.setFont('helvetica', 'normal')
-  doc.setFontSize(10.5)
+  doc.setFontSize(Math.max(7, density.caption - 0.5))
   doc.setTextColor(51, 65, 85)
   let y = 22
-  const lines = [CLINIC.fullAddress, CLINIC.phoneLabel, CLINIC.email ? `${translateUi('Email :')} ${CLINIC.email}` : '', clinicTaxLine(), CLINIC.printFooter].filter(
-    Boolean,
-  )
+  const lines = [
+    CLINIC.fullAddress,
+    CLINIC.phoneLabel,
+    density.compactLines ? '' : CLINIC.email ? `${translateUi('Email :')} ${CLINIC.email}` : '',
+    density.compactLines ? '' : clinicTaxLine(),
+    density.compactLines ? '' : CLINIC.printFooter,
+  ].filter(Boolean)
   for (const line of lines) {
     doc.text(line, pageWidth / 2, y, { align: 'center' })
-    y += 5
+    y += density.lineStep
   }
-  y = Math.max(y + 3, logoBottom + 6)
+  y = Math.max(y + 2, logoBottom + 4)
   const cleanTitle = pdfText(title)
   doc.setFont(fontFor(cleanTitle), 'bold')
-  doc.setFontSize(14)
+  doc.setFontSize(density.headerTitle)
   doc.setTextColor(15, 69, 74)
   doc.text(cleanTitle, pageWidth / 2, y, { align: 'center' })
-  y += 9
+  y += density.compactLines ? 5 : 9
   return y
 }
 
@@ -206,28 +252,33 @@ function drawTable<T>(
   gridLines = false,
   footRow?: ExportCell[],
   columnWidths?: number[],
+  density: PdfDensity = PDF_DENSITY,
 ) {
   let y = startY
   if (title) {
     const cleanTitle = pdfText(title)
     doc.setFont(fontFor(cleanTitle), 'bold')
-    doc.setFontSize(12.5)
+    doc.setFontSize(density.sectionTitle)
     doc.setTextColor(15, 69, 74)
     doc.text(cleanTitle, 14, y)
-    y += 6
+    y += density.compactLines ? 4.2 : 6
+  }
+  const tableBody = body(columns, rows, density.compactLines)
+  if (footRow?.length && density.compactLines) {
+    footRow = footRow.map((cell) => (typeof cell === 'string' ? cell.replace(/\s*\n\s*/g, ' · ') : cell))
   }
   autoTable(doc, {
     startY: y,
     head: [head(columns)],
-    body: body(columns, rows),
+    body: tableBody,
     ...(footRow?.length
       ? { foot: [['', ...footRow.map((cell) => pdfText(cellText(cell)))]], showFoot: 'lastPage' as const }
       : {}),
     theme: gridLines ? 'grid' : 'striped',
     styles: {
       font: 'helvetica',
-      fontSize: 9.5,
-      cellPadding: 1.8,
+      fontSize: density.fontSize,
+      cellPadding: density.padding,
       overflow: 'linebreak',
       ...(gridLines ? { lineColor: [100, 116, 139], lineWidth: 0.2, textColor: [30, 41, 59] } : {}),
     },
@@ -248,7 +299,7 @@ function drawTable<T>(
     startY: tableY + 4,
     body: totalsRows.map((row) => [pdfText(row.label), pdfText(row.value)]),
     theme: 'plain',
-    styles: { font: 'helvetica', fontSize: 10.5, fontStyle: 'bold', cellPadding: 1.8 },
+    styles: { font: 'helvetica', fontSize: density.caption, fontStyle: 'bold', cellPadding: density.padding },
     tableWidth: 130,
     columnStyles: { 0: { cellWidth: 72 }, 1: { cellWidth: 58, halign: 'right' } },
     margin: { left: 14, right: 14, bottom: 16 },
@@ -262,44 +313,28 @@ function lastTableY(doc: jsPDF, fallback: number): number {
   return ext.lastAutoTable?.finalY ?? fallback
 }
 
-export async function createReportPdf(
+function renderReportPdf(
+  doc: jsPDF,
   title: string,
   columns: ExportColumn<any>[],
   rows: any[],
-  options?: {
+  options: {
     captionRows?: ExportCaptionRow[]
-    /** Date de génération, affichée en pied de page (les filtres restent en en-tête). */
     footerLabel?: string
     totalsRows?: ExportCaptionRow[]
     sections?: ExportSection[]
     orientation?: 'portrait' | 'landscape'
     gridLines?: boolean
-  },
-): Promise<jsPDF> {
-  const doc = new jsPDF({ orientation: options?.orientation ?? 'portrait', unit: 'mm', format: 'a4' })
-  const [fontReady, logo] = await Promise.all([registerArabicFont(doc), loadClinicLogo()])
-  arabicFontReady = fontReady
+  } | undefined,
+  logo: PdfLogo | null,
+  density: PdfDensity,
+): jsPDF {
   const pageHeight = doc.internal.pageSize.getHeight()
-  const pageCount = () => doc.getNumberOfPages()
   const footerLabel = pdfText(options?.footerLabel ?? '')
-  const drawFooter = () => {
-    const total = pageCount()
-    for (let i = 1; i <= total; i++) {
-      doc.setPage(i)
-      doc.setFontSize(8)
-      doc.setTextColor(100, 116, 139)
-      if (footerLabel) {
-        doc.setFont(fontFor(footerLabel), 'normal')
-        doc.text(footerLabel, 14, pageHeight - 8)
-      }
-      doc.setFont('helvetica', 'normal')
-      doc.text(`${i} / ${total}`, doc.internal.pageSize.getWidth() - 14, pageHeight - 8, { align: 'right' })
-    }
-  }
 
-  let y = drawClinicHeader(doc, title, logo)
+  let y = drawClinicHeader(doc, title, logo, density)
   if (options?.captionRows?.length) {
-    y = drawCaptions(doc, options.captionRows, y) + 3
+    y = drawCaptions(doc, options.captionRows, y, density) + (density.compactLines ? 1.5 : 3)
   }
 
   const sections = options?.sections?.length
@@ -311,7 +346,7 @@ export async function createReportPdf(
     if (index > 0 && (section.ownPage || previous?.ownPage)) {
       doc.addPage()
       y = 16
-    } else if (index > 0 && y > pageHeight - 40) {
+    } else if (index > 0 && y > pageHeight - (density.compactLines ? 24 : 40)) {
       doc.addPage()
       y = 16
     }
@@ -326,14 +361,49 @@ export async function createReportPdf(
         options?.gridLines,
         section.footRow,
         section.columnWidths,
-      ) + 8
+        density,
+      ) + density.sectionGap
   })
 
-  if (options?.totalsRows?.length && !options?.sections?.length) {
-    /* already drawn with the single table */
+  const total = doc.getNumberOfPages()
+  for (let i = 1; i <= total; i++) {
+    doc.setPage(i)
+    doc.setFontSize(density.compactLines ? 7 : 8)
+    doc.setTextColor(100, 116, 139)
+    if (footerLabel) {
+      doc.setFont(fontFor(footerLabel), 'normal')
+      doc.text(footerLabel, 14, pageHeight - 8)
+    }
+    doc.setFont('helvetica', 'normal')
+    doc.text(`${i} / ${total}`, doc.internal.pageSize.getWidth() - 14, pageHeight - 8, { align: 'right' })
   }
+  return doc
+}
 
-  drawFooter()
+export async function createReportPdf(
+  title: string,
+  columns: ExportColumn<any>[],
+  rows: any[],
+  options?: {
+    captionRows?: ExportCaptionRow[]
+    /** Date de génération, affichée en pied de page (les filtres restent en en-tête). */
+    footerLabel?: string
+    totalsRows?: ExportCaptionRow[]
+    sections?: ExportSection[]
+    orientation?: 'portrait' | 'landscape'
+    gridLines?: boolean
+    fitSinglePage?: boolean
+  },
+): Promise<jsPDF> {
+  const logo = await loadClinicLogo()
+  const densities = options?.fitSinglePage ? PDF_DENSITIES : [PDF_DENSITY]
+  let doc!: jsPDF
+  for (const density of densities) {
+    doc = new jsPDF({ orientation: options?.orientation ?? 'portrait', unit: 'mm', format: 'a4' })
+    arabicFontReady = await registerArabicFont(doc)
+    renderReportPdf(doc, title, columns, rows, options, logo, density)
+    if (!options?.fitSinglePage || doc.getNumberOfPages() <= 1) break
+  }
   return doc
 }
 
@@ -349,6 +419,7 @@ export async function saveReportPdfFile(
     filename?: string
     orientation?: 'portrait' | 'landscape'
     gridLines?: boolean
+    fitSinglePage?: boolean
   },
 ): Promise<void> {
   const doc = await createReportPdf(title, columns, rows, options)

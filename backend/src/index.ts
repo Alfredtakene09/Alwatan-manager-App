@@ -476,6 +476,13 @@ function startServer() {
     }
   };
 
+  const tune = (server: http.Server) => {
+    // Le LAN cabinet coupe souvent quelques secondes : garder les connexions
+    // ouvertes plus longtemps que le délai par défaut de Node (5 s).
+    server.keepAliveTimeout = 75_000;
+    server.headersTimeout = 80_000;
+  };
+
   if (useTls) {
     const server = https.createServer(
       {
@@ -484,6 +491,7 @@ function startServer() {
       },
       app,
     );
+    tune(server);
     server.listen(port, host, () => onListen("https"));
     return;
   }
@@ -494,7 +502,9 @@ function startServer() {
     );
   }
 
-  http.createServer(app).listen(port, host, () => onListen("http"));
+  const server = http.createServer(app);
+  tune(server);
+  server.listen(port, host, () => onListen("http"));
 }
 
 startServer();

@@ -22,6 +22,7 @@ export function useSessionIdle(enabled: Ref<boolean> | (() => boolean)) {
   const auth = useAuthStore()
   const router = useRouter()
   let timer: ReturnType<typeof setTimeout> | undefined
+  let onlineTimer: ReturnType<typeof setTimeout> | undefined
   let lastMark = 0
   let wakeCheckInFlight = false
 
@@ -89,7 +90,12 @@ export function useSessionIdle(enabled: Ref<boolean> | (() => boolean)) {
   }
 
   function onOnline() {
-    void resumeAfterWake()
+    // Le Wi-Fi / Ethernet clignote : attendre que le lien tienne avant de revérifier.
+    if (onlineTimer) clearTimeout(onlineTimer)
+    onlineTimer = setTimeout(() => {
+      onlineTimer = undefined
+      void resumeAfterWake()
+    }, 1500)
   }
 
   function start() {
@@ -108,6 +114,10 @@ export function useSessionIdle(enabled: Ref<boolean> | (() => boolean)) {
     if (timer) {
       clearTimeout(timer)
       timer = undefined
+    }
+    if (onlineTimer) {
+      clearTimeout(onlineTimer)
+      onlineTimer = undefined
     }
     for (const event of ACTIVITY_EVENTS) {
       window.removeEventListener(event, resetTimer)

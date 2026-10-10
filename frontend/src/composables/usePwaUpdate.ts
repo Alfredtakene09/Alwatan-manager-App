@@ -6,6 +6,7 @@ const needRefresh = ref(false)
 let updateServiceWorker: ((reloadPage?: boolean) => Promise<void>) | null = null
 let started = false
 let applying = false
+let mismatchStreak = 0
 
 /** Vite dev (5173) : pas de bundle `assets/index-*.js` — évite la boucle de rechargement. */
 function isDevFrontend() {
@@ -110,12 +111,16 @@ async function checkServerBuild() {
   if (isDevFrontend()) return
 
   const buildId = await fetchServerBuildId()
-  if (!buildId || buildId === 'dev' || buildId === 'unknown') return
+  if (!buildId || buildId === 'dev' || buildId === 'unknown') {
+    mismatchStreak = 0
+    return
+  }
 
   const loaded = loadedBundleId()
   const loadedMatchesServer = Boolean(loaded && buildId.includes(loaded))
 
   if (loadedMatchesServer) {
+    mismatchStreak = 0
     try {
       localStorage.setItem(BUILD_KEY, buildId)
     } catch {
@@ -133,6 +138,9 @@ async function checkServerBuild() {
   }
 
   if (stored === buildId && loadedMatchesServer) return
+
+  mismatchStreak += 1
+  if (mismatchStreak < 2) return
 
   needRefresh.value = true
   void requestServiceWorkerUpdate()
@@ -164,14 +172,14 @@ function ensureStarted() {
       void registration.update()
       setInterval(() => {
         void registration.update()
-      }, 8_000)
+      }, 60_000)
     },
   })
 
   void checkServerBuild()
   setInterval(() => {
     void checkServerBuild()
-  }, 8_000)
+  }, 60_000)
 
   window.addEventListener('focus', () => {
     void checkServerBuild()
@@ -202,10 +210,22 @@ export function usePwaUpdate() {
 }
 
 export function useNetworkStatus() {
-  const offline = ref(typeof navigator !== 'undefined' ? !navigator.onLine : false)
+  const offline = ref(false)
+  let offlineTimer: ReturnType<typeof setTimeout> | undefined
 
   function sync() {
-    offline.value = !navigator.onLine
+    const down = typeof navigator !== 'undefined' && !navigator.onLine
+    if (offlineTimer) {
+      clearTimeout(offlineTimer)
+      offlineTimer = undefined
+    }
+    if (!down) {
+      offline.value = false
+      return
+    }
+    offlineTimer = setTimeout(() => {
+      offline.value = typeof navigator !== 'undefined' && !navigator.onLine
+    }, 2500)
   }
 
   onMounted(() => {
@@ -215,6 +235,7 @@ export function useNetworkStatus() {
   })
 
   onUnmounted(() => {
+    if (offlineTimer) clearTimeout(offlineTimer)
     window.removeEventListener('offline', sync)
     window.removeEventListener('online', sync)
   })

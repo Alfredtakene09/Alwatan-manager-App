@@ -4,6 +4,7 @@ import { InvoiceType } from "@prisma/client";
 import {
   assembleDayClosureReceiptLines,
   classifyInvoiceForDayClosure,
+  consultationServiceName,
   dayClosureCountedFcfa,
   type DayClosureInvoice,
 } from "./day-closure-sales.js";
@@ -29,6 +30,67 @@ describe("classifyInvoiceForDayClosure", () => {
       hospitalization: null,
     });
     assert.deepEqual(line, { label: "Généraliste", group: "consultation" });
+  });
+
+  it("laisse le second passage dans le service du médecin, pas dans l'ancien dossier", () => {
+    const line = classifyInvoiceForDayClosure({
+      id: "1b",
+      patientId: "p1",
+      type: InvoiceType.CONSULTATION,
+      amountFcfa: 10000,
+      paidAmountFcfa: 10000,
+      billingExamKind: null,
+      surgeryCaseId: null,
+      hospitalizationId: null,
+      visit: {
+        reductionFcfa: 0,
+        consultationFeeFcfa: 10000,
+        assignedClinicService: { name: "Généraliste" },
+        patient: { service: "Pédiatrie" },
+        consultation: { clinicalNotes: null },
+      },
+      hospitalization: null,
+    });
+    assert.deepEqual(line, { label: "Généraliste", group: "consultation" });
+    assert.equal(
+      consultationServiceName({
+        visit: {
+          assignedClinicService: null,
+          patient: { service: "Pédiatrie" },
+        },
+      }),
+      "Pédiatrie",
+    );
+    assert.equal(
+      consultationServiceName({
+        visit: {
+          assignedClinicService: null,
+          patient: { service: "Pédiatrie" },
+          assignedDoctor: {
+            employee: { clinicService: { name: "Généraliste" } },
+          },
+        },
+      }),
+      "Généraliste",
+    );
+    assert.equal(
+      consultationServiceName({
+        visit: {
+          assignedClinicService: null,
+          patient: { service: "Généraliste" },
+          assignedDoctor: {
+            employee: {
+              clinicService: { name: "Orthopédie" },
+              clinicServiceLinks: [
+                { isDefault: true, clinicService: { name: "Orthopédie" } },
+                { isDefault: false, clinicService: { name: "Généraliste" } },
+              ],
+            },
+          },
+        },
+      }),
+      "Généraliste",
+    );
   });
 
   it("réserve la section « Examens » au laboratoire", () => {
@@ -257,6 +319,7 @@ describe("assembleDayClosureReceiptLines", () => {
         collectedFcfa: 5000,
         invoice: receiptInvoice({
           id: "c1",
+          patientId: "p-c1",
           type: InvoiceType.CONSULTATION,
           visit: {
             reductionFcfa: 0,
@@ -271,6 +334,7 @@ describe("assembleDayClosureReceiptLines", () => {
         collectedFcfa: 4000,
         invoice: receiptInvoice({
           id: "c2",
+          patientId: "p-c2",
           type: InvoiceType.CONSULTATION,
           visit: {
             reductionFcfa: 0,
@@ -350,6 +414,124 @@ describe("assembleDayClosureReceiptLines", () => {
     assert.deepEqual(
       summary.serviceLines.map((line) => line.label),
       ["Consultation — Orthopédie & Tromatologie", "Opération — Orthopédie & Tromatologie"],
+    );
+  });
+
+  it("sépare quantité et montant quand le patient change de service", () => {
+    const summary = assembleDayClosureReceiptLines([
+      {
+        collectedFcfa: 10000,
+        invoice: receiptInvoice({
+          id: "pedia",
+          patientId: "pat-1",
+          type: InvoiceType.CONSULTATION,
+          amountFcfa: 10000,
+          paidAmountFcfa: 10000,
+          visit: {
+            reductionFcfa: 0,
+            consultationFeeFcfa: 10000,
+            assignedClinicService: { name: "Pédiatrie" },
+            patient: { service: "Pédiatrie" },
+            consultation: null,
+          },
+        }),
+      },
+      {
+        collectedFcfa: 10000,
+        invoice: receiptInvoice({
+          id: "general",
+          patientId: "pat-1",
+          type: InvoiceType.CONSULTATION,
+          amountFcfa: 10000,
+          paidAmountFcfa: 10000,
+          visit: {
+            reductionFcfa: 0,
+            consultationFeeFcfa: 10000,
+            assignedClinicService: null,
+            patient: { service: "Pédiatrie" },
+            consultation: null,
+            assignedDoctor: {
+              employee: { clinicService: { name: "Ophtalmologie" } },
+            },
+          },
+        }),
+      },
+      {
+        collectedFcfa: 10000,
+        invoice: receiptInvoice({
+          id: "other",
+          patientId: "pat-2",
+          type: InvoiceType.CONSULTATION,
+          amountFcfa: 10000,
+          paidAmountFcfa: 10000,
+          visit: {
+            reductionFcfa: 0,
+            consultationFeeFcfa: 10000,
+            assignedClinicService: { name: "Pédiatrie" },
+            patient: { service: "Pédiatrie" },
+            consultation: null,
+          },
+        }),
+      },
+    ]);
+
+    assert.deepEqual(
+      summary.serviceLines.map((line) => ({ label: line.label, qty: line.qty, totalFcfa: line.totalFcfa })),
+      [
+        { label: "Consultation — Pédiatrie", qty: 2, totalFcfa: 20000 },
+        { label: "Consultation — Ophtalmologie", qty: 1, totalFcfa: 10000 },
+      ],
+    );
+  });
+
+  it("ne compte qu'une fois la consultation modifiée du même médecin", () => {
+    const visit = {
+      reductionFcfa: 0,
+      consultationFeeFcfa: 10000,
+      assignedClinicService: { name: "Orthopédie & Tromatologie" },
+      patient: { service: "Orthopédie & Tromatologie" },
+      consultation: null,
+      assignedDoctor: { id: "dr-yakhoub" },
+    };
+    const summary = assembleDayClosureReceiptLines([
+      {
+        collectedFcfa: 10000,
+        invoice: receiptInvoice({
+          id: "first",
+          patientId: "pat-ortho",
+          type: InvoiceType.CONSULTATION,
+          amountFcfa: 10000,
+          paidAmountFcfa: 10000,
+          visit,
+        }),
+      },
+      {
+        collectedFcfa: 10000,
+        invoice: receiptInvoice({
+          id: "second",
+          patientId: "pat-ortho",
+          type: InvoiceType.CONSULTATION,
+          amountFcfa: 10000,
+          paidAmountFcfa: 10000,
+          visit,
+        }),
+      },
+      {
+        collectedFcfa: 10000,
+        invoice: receiptInvoice({
+          id: "other",
+          patientId: "pat-other",
+          type: InvoiceType.CONSULTATION,
+          amountFcfa: 10000,
+          paidAmountFcfa: 10000,
+          visit: { ...visit, assignedDoctor: { id: "dr-yakhoub" } },
+        }),
+      },
+    ]);
+
+    assert.deepEqual(
+      summary.serviceLines.map((line) => ({ label: line.label, qty: line.qty, totalFcfa: line.totalFcfa })),
+      [{ label: "Consultation — Orthopédie & Tromatologie", qty: 2, totalFcfa: 20000 }],
     );
   });
 });

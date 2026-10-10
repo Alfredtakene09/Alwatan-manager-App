@@ -69,6 +69,7 @@ import {
 } from "../lib/reception-scope.js";
 import {
   resolveActiveClinicServiceByName,
+  resolveVisitClinicServiceId,
   resolveDoctorClinicServices,
 } from "../lib/clinic-service-exam.js";
 
@@ -342,8 +343,26 @@ async function syncVisitClinicService(
   serviceName: string | null,
 ) {
   const clinicService = await resolveActiveClinicServiceByName(tx, serviceName);
+  const patient = await tx.patient.findUnique({
+    where: { id: patientId },
+    select: { service: true },
+  });
+  const previousName = patient?.service?.trim() || "";
+  const previousService = previousName
+    ? await resolveActiveClinicServiceByName(tx, previousName)
+    : null;
+
+  // Les visites déjà ouvertes dans un autre service (réorientation) gardent
+  // leur service. Sinon la quantité et le montant des cumuls se séparent.
   await tx.visit.updateMany({
-    where: { patientId, status: { not: VisitStatus.CANCELLED } },
+    where: {
+      patientId,
+      status: { not: VisitStatus.CANCELLED },
+      OR: [
+        { assignedClinicServiceId: null },
+        ...(previousService ? [{ assignedClinicServiceId: previousService.id }] : []),
+      ],
+    },
     data: { assignedClinicServiceId: clinicService?.id ?? null },
   });
   if (clinicService) {
@@ -1089,6 +1108,9 @@ router.post(
       ? await resolveActiveClinicServiceByName(prisma, requestedService)
       : null;
     const serviceName = clinicService?.name ?? (requestedService || null);
+    const doctorServiceId = clinicService
+      ? null
+      : await resolveVisitClinicServiceId(body.doctorId, existingPatient?.service ?? serviceName);
 
     const result = await prisma.$transaction(async (tx) => {
       if (existingPatient && reconsultPlan) {
@@ -1141,7 +1163,11 @@ router.post(
                   status: VisitStatus.WAITING_CONSULTATION,
                   createdById: req.user!.id,
                   assignedDoctorId: body.doctorId,
-                  ...(clinicService ? { assignedClinicServiceId: clinicService.id } : {}),
+                  ...(clinicService
+                    ? { assignedClinicServiceId: clinicService.id }
+                    : doctorServiceId
+                      ? { assignedClinicServiceId: doctorServiceId }
+                      : {}),
                   consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
                   reductionFcfa: billing.reductionFcfa,
                 },

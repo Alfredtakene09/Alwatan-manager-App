@@ -667,7 +667,6 @@ async function loadActivityPatients() {
     )
   } catch {
     if (request !== activityPatientsRequest) return
-    activityPatients.value = []
   } finally {
     if (request === activityPatientsRequest) loadingActivityPatients.value = false
   }
@@ -911,6 +910,7 @@ async function exportPatients(format: 'pdf' | 'excel' | 'word') {
       sections,
       orientation: 'portrait' as const,
       gridLines: true,
+      fitSinglePage: true,
     }
     const title = uiText(PATIENT_EXPORT_TITLE)
     if (format === 'excel') exportTableExcel(title, [], [], options)

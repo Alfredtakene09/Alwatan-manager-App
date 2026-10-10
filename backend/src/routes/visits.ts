@@ -24,6 +24,7 @@ import {
 import {
   interventionVisibleForServicesWhere,
   resolveActiveClinicServiceByName,
+  resolveVisitClinicServiceId,
   resolveDoctorClinicServices,
 } from "../lib/clinic-service-exam.js";
 import { computeInterventionCostShares } from "../lib/surgery-cost-shares.js";
@@ -887,6 +888,9 @@ router.post("/", requireModule("reception"), requireUiAction("reception.reconsul
       consultationAmountFcfa,
       body.reductionFcfa ?? 0,
     );
+    const doctorServiceId = body.doctorId
+      ? await resolveVisitClinicServiceId(body.doctorId, patient.service)
+      : null;
 
     const visit = await prisma.$transaction(async (tx) => {
       if (plan.action === "create" && plan.archiveVisitIds.length) {
@@ -963,6 +967,7 @@ router.post("/", requireModule("reception"), requireUiAction("reception.reconsul
           status: VisitStatus.WAITING_CONSULTATION,
           createdById: req.user!.id,
           assignedDoctorId: body.doctorId,
+          ...(doctorServiceId ? { assignedClinicServiceId: doctorServiceId } : {}),
           consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
           reductionFcfa: billing.reductionFcfa,
           notes: body.notes,

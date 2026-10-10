@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { User, Lock } from '@lucide/vue'
 import { useAuthStore } from '@/stores/auth'
+import { getDefaultRoute } from '@/lib/roles'
 import { CLINIC } from '@/lib/clinic'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -59,7 +60,17 @@ async function submit() {
   }
 }
 
+async function restoreSession() {
+  await auth.fetchMe()
+  if (auth.user) router.replace(getDefaultRoute(auth.user.role))
+}
+
+function onOnline() {
+  void restoreSession()
+}
+
 onMounted(async () => {
+  window.addEventListener('online', onOnline)
   sessionStorage.removeItem('alwatan-auth-redirect')
   const params = new URLSearchParams(window.location.search)
   const sessionReason = params.get('session')
@@ -78,7 +89,12 @@ onMounted(async () => {
     window.history.replaceState({}, '', next)
   }
   await nextTick()
+  if (!sessionReason) void restoreSession()
   usernameInputRef.value?.focus()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('online', onOnline)
 })
 </script>
 

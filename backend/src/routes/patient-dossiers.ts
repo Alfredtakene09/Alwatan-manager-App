@@ -44,6 +44,7 @@ import {
   planReconsultation,
 } from "../lib/reconsultation.js";
 import { generateInvoiceNumber } from "../lib/patient-code.js";
+import { resolveVisitClinicServiceId } from "../lib/clinic-service-exam.js";
 import {
   consultationInvoiceCreateData,
   consultationInvoiceUpdateData,
@@ -276,7 +277,7 @@ router.post("/:patientId/reconsult", requireAnyModule(...DOSSIER_MODULES), async
 
   const patient = await prisma.patient.findUnique({
     where: { id: patientId },
-    select: { id: true, category: true },
+    select: { id: true, category: true, service: true },
   });
   if (!patient) return res.status(404).json({ error: "Patient introuvable" });
 
@@ -327,6 +328,7 @@ router.post("/:patientId/reconsult", requireAnyModule(...DOSSIER_MODULES), async
       requestedAmount: null,
     });
     const billing = resolveConsultationBilling(patient.category, renewal.amountFcfa, 0);
+    const doctorServiceId = await resolveVisitClinicServiceId(doctorId, patient.service);
 
     const visit = await prisma.$transaction(async (tx) => {
       if (plan.action === "create" && plan.archiveVisitIds.length) {
@@ -375,6 +377,7 @@ router.post("/:patientId/reconsult", requireAnyModule(...DOSSIER_MODULES), async
           status: VisitStatus.IN_CONSULTATION,
           createdById: req.user!.id,
           assignedDoctorId: doctorId,
+          ...(doctorServiceId ? { assignedClinicServiceId: doctorServiceId } : {}),
           consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
           reductionFcfa: billing.reductionFcfa,
         },

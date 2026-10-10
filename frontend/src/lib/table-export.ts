@@ -38,6 +38,8 @@ export type TableExportOptions = {
   orientation?: 'portrait' | 'landscape'
   /** PDF uniquement : bordures visibles sur toutes les cellules. */
   gridLines?: boolean
+  /** PDF uniquement : réduit les textes pour tenir sur une seule page. */
+  fitSinglePage?: boolean
 }
 
 export type WorkbookSheetDef<T = any> = {
@@ -175,6 +177,7 @@ export function exportTablePdf<T>(
       filename: options?.filename ?? exportBasename(title),
       orientation: options?.orientation,
       gridLines: options?.gridLines,
+      fitSinglePage: options?.fitSinglePage,
     }),
   )
 }
