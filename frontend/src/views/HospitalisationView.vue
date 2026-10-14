@@ -271,8 +271,12 @@ function hospDoctorName(row: HospRow) {
   return doctor ? `Dr ${fullName(doctor.firstName, doctor.lastName)}` : ''
 }
 
+function stayReceivedFcfa(row: HospRow) {
+  return Math.max(0, row.paidFcfa ?? 0, row.depositFcfa ?? 0)
+}
+
 function stayBalanceFcfa(row: HospRow) {
-  return Math.max(0, (row.totalDueFcfa ?? 0) - Math.max(0, row.paidFcfa ?? row.depositFcfa ?? 0))
+  return Math.max(0, (row.totalDueFcfa ?? 0) - stayReceivedFcfa(row))
 }
 
 function isUnpaidStay(row: HospRow) {
@@ -569,18 +573,26 @@ async function confirmDeposit(payload: { hospitalizationId: string; amountFcfa: 
       hospitalizationId: payload.hospitalizationId,
       amountFcfa: payload.amountFcfa,
     })
+    hosp.depositFcfa = res.depositFcfa
+    hosp.paidFcfa = Math.max(stayReceivedFcfa(hosp), res.depositFcfa)
+    if (res.balanceFcfa <= 0) hosp.paidAt = new Date().toISOString()
     if (payload.print) {
       printHospitalizationAdmission(
-        receiptForm(hosp, { depositFcfa: res.depositFcfa, balancePosted: false }),
+        receiptForm(hosp, {
+          depositFcfa: res.depositFcfa,
+          balancePosted: res.balanceFcfa <= 0,
+        }),
         { autoPrint: true },
       )
     }
-    message.value = uiText("Acompte enregistré — hors solde. Le solde sera encaissé à la validation finale.")
+    message.value = uiText('Hospitalisation encaissée — {amount} passé en caisse et sur le reçu.')
+      .replace('{amount}', formatFcfa(payload.amountFcfa))
     messageType.value = 'success'
+    emit('collected')
     closeDeposit()
     await load()
   } catch (error: unknown) {
-    await showApiErrorModal(error, uiText("Impossible d'enregistrer l'acompte."))
+    await showApiErrorModal(error, uiText("Impossible d'encaisser l'hospitalisation."))
   } finally {
     depositSubmitting.value = false
   }

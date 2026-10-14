@@ -32,8 +32,8 @@ export function countedPatientWhere(extra?: { service?: string }) {
 
 /**
  * Recettes et solde de caisse.
- * Un dossier désactivé ou supprimé sort des montants non encaissés,
- * mais la somme déjà encaissée reste dans le solde.
+ * Un dossier désactivé sort des montants non encaissés, mais sa somme déjà
+ * encaissée reste. Une suppression de dossier retire aussi ses encaissements.
  */
 export function comptabiliteInvoicePatientWhere() {
   const billable = comptabilitePatientWhere();
@@ -67,6 +67,26 @@ export function resolveConsultationBilling(
     reductionFcfa: reduction,
     billableAmountFcfa: shouldCreateImmediateInvoice(category) ? billableAmountFcfa : 0,
   };
+}
+
+/**
+ * Changement de médecin à la réception : l'ancien montant est retiré.
+ * On reprend le tarif de la nouvelle fiche, sauf si un autre montant a été saisi.
+ */
+export function resolveEditedConsultationAmount(input: {
+  doctorChanged: boolean;
+  configuredAmount: number;
+  requestedAmount?: number | null;
+  previousFee: number;
+}): number | undefined {
+  const requested =
+    input.requestedAmount == null ? undefined : Math.max(0, Math.round(input.requestedAmount));
+  if (!input.doctorChanged) return requested;
+  const previous = Math.max(0, Math.round(input.previousFee || 0));
+  const stale = requested == null || requested === previous;
+  const configured = Math.max(0, Math.round(input.configuredAmount || 0));
+  if (stale && configured > 0) return configured;
+  return requested;
 }
 
 export const PATIENT_CATEGORY_LABELS: Record<PatientCategory, string> = {

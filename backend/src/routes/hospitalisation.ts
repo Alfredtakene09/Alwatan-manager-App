@@ -19,6 +19,7 @@ import {
 } from "../lib/hospitalization-referral.js";
 import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.js";
 import { immediatePaidInvoiceData } from "../lib/invoice-paid.js";
+import { recordInvoiceInstallment } from "../lib/patient-invoice-payments.js";
 import {
   assertRoomAvailableForAdmission,
   computeRoomTypeAvailability,
@@ -55,7 +56,10 @@ async function paidHospitalizationAmounts(ids: string[]) {
   if (!ids.length) return new Map<string, number>();
   const rows = await prisma.invoice.groupBy({
     by: ["hospitalizationId"],
-    where: { hospitalizationId: { in: ids }, status: InvoiceStatus.PAID },
+    where: {
+      hospitalizationId: { in: ids },
+      status: { in: [InvoiceStatus.PAID, InvoiceStatus.PARTIALLY_PAID] },
+    },
     _sum: { paidAmountFcfa: true },
   });
   return new Map(
@@ -67,7 +71,10 @@ async function paidHospitalizationAmounts(ids: string[]) {
 
 async function sumPaidHospitalizationFcfa(tx: Prisma.TransactionClient, hospitalizationId: string) {
   const paid = await tx.invoice.aggregate({
-    where: { hospitalizationId, status: InvoiceStatus.PAID },
+    where: {
+      hospitalizationId,
+      status: { in: [InvoiceStatus.PAID, InvoiceStatus.PARTIALLY_PAID] },
+    },
     _sum: { paidAmountFcfa: true },
   });
   return paid._sum.paidAmountFcfa ?? 0;
@@ -693,6 +700,7 @@ router.post("/actions", async (req, res) => {
       const result = await prisma.$transaction(async (tx) => {
         const hospitalization = await tx.hospitalization.findUnique({
           where: { id: body.hospitalizationId },
+          include: { visit: { select: { patientId: true } } },
         });
         if (!hospitalization) throw new Error("NOT_FOUND");
         if (
@@ -701,26 +709,72 @@ router.post("/actions", async (req, res) => {
         ) {
           throw new Error("STAY_FINISHED");
         }
-        if (hospitalization.paidAt) throw new Error("ALREADY_PAID");
         const totalDueFcfa = Math.max(0, hospitalization.totalDueFcfa);
         const already = Math.max(0, hospitalization.depositFcfa ?? 0);
         const remaining = Math.max(0, totalDueFcfa - already);
+        if (hospitalization.paidAt && remaining <= 0) throw new Error("ALREADY_PAID");
         if (remaining <= 0) throw new Error("NOTHING_TO_COLLECT");
-        if (body.amountFcfa > remaining) throw new Error("AMOUNT_EXCEEDS_BALANCE");
+        const amountFcfa =
+          body.amountFcfa > remaining && body.amountFcfa === totalDueFcfa
+            ? remaining
+            : body.amountFcfa;
+        if (amountFcfa > remaining) throw new Error("AMOUNT_EXCEEDS_BALANCE");
 
-        const depositFcfa = already + body.amountFcfa;
+        const openInvoice = await tx.invoice.findFirst({
+          where: {
+            hospitalizationId: hospitalization.id,
+            status: { in: [InvoiceStatus.PENDING, InvoiceStatus.PARTIALLY_PAID] },
+            type: { in: [InvoiceType.HOSPITALIZATION_FINAL, InvoiceType.HOSPITALIZATION_DEPOSIT] },
+          },
+          orderBy: { createdAt: "desc" },
+        });
+
+        if (openInvoice) {
+          const invoiceRemaining = Math.max(0, openInvoice.amountFcfa - openInvoice.paidAmountFcfa);
+          if (amountFcfa > invoiceRemaining) {
+            await tx.invoice.update({
+              where: { id: openInvoice.id },
+              data: { amountFcfa: openInvoice.paidAmountFcfa + amountFcfa },
+            });
+          }
+          await recordInvoiceInstallment(tx, {
+            invoiceId: openInvoice.id,
+            amountFcfa,
+            recordedById: user.id,
+            note: "Encaissement hospitalisation",
+          });
+        } else {
+          await tx.invoice.create({
+            data: {
+              invoiceNumber: await generateInvoiceNumber(tx),
+              patientId: hospitalization.visit.patientId,
+              visitId: hospitalization.visitId,
+              hospitalizationId: hospitalization.id,
+              type: InvoiceType.HOSPITALIZATION_FINAL,
+              issuedById: user.id,
+              ...immediatePaidInvoiceData(amountFcfa, user.id),
+            },
+          });
+        }
+
+        const depositFcfa = already + amountFcfa;
+        const fullyPaid = depositFcfa >= totalDueFcfa;
         const updated = await tx.hospitalization.update({
           where: { id: hospitalization.id },
-          data: { depositFcfa, accountantId: user.id },
+          data: {
+            depositFcfa,
+            accountantId: user.id,
+            paidAt: fullyPaid ? new Date() : null,
+          },
           include: hospitalizationInclude,
         });
 
         return {
           hospitalization: updated,
-          amountFcfa: body.amountFcfa,
+          amountFcfa,
           depositFcfa,
           balanceFcfa: Math.max(0, totalDueFcfa - depositFcfa),
-          postedToCash: false,
+          postedToCash: true,
         };
       });
       return res.json(result);
@@ -995,6 +1049,12 @@ router.post("/actions", async (req, res) => {
       return res.status(400).json({ error: "Aucun montant à encaisser." });
     }
     if (error instanceof Error && error.message === "AMOUNT_EXCEEDS_BALANCE") {
+      return res.status(400).json({ error: "Le montant dépasse le solde restant." });
+    }
+    if (error instanceof Error && error.message === "INVOICE_NOT_PAYABLE") {
+      return res.status(409).json({ error: "Cette hospitalisation n'est plus encaissable." });
+    }
+    if (error instanceof Error && error.message === "INVALID_INSTALLMENT_AMOUNT") {
       return res.status(400).json({ error: "Le montant dépasse le solde restant." });
     }
     if (error instanceof Error && error.message === "STAY_FINISHED") {

@@ -484,7 +484,7 @@ describe("assembleDayClosureReceiptLines", () => {
     );
   });
 
-  it("ne compte qu'une fois la consultation modifiée du même médecin", () => {
+  it("garde chaque encaissement et ne compte le patient qu'une fois", () => {
     const visit = {
       reductionFcfa: 0,
       consultationFeeFcfa: 10000,
@@ -531,7 +531,53 @@ describe("assembleDayClosureReceiptLines", () => {
 
     assert.deepEqual(
       summary.serviceLines.map((line) => ({ label: line.label, qty: line.qty, totalFcfa: line.totalFcfa })),
-      [{ label: "Consultation — Orthopédie & Tromatologie", qty: 2, totalFcfa: 20000 }],
+      [{ label: "Consultation — Orthopédie & Tromatologie", qty: 2, totalFcfa: 30000 }],
+    );
+  });
+
+  it("compte une seule fois le patient vu par deux médecins du même service", () => {
+    const summary = assembleDayClosureReceiptLines([
+      {
+        collectedFcfa: 5000,
+        invoice: receiptInvoice({
+          id: "dombel",
+          patientId: "pat-1385",
+          type: InvoiceType.CONSULTATION,
+          amountFcfa: 5000,
+          paidAmountFcfa: 5000,
+          visit: {
+            reductionFcfa: 0,
+            consultationFeeFcfa: 5000,
+            assignedClinicService: { name: "Généraliste" },
+            patient: { service: "Généraliste" },
+            consultation: null,
+            assignedDoctor: { id: "dr-dombel" },
+          },
+        }),
+      },
+      {
+        collectedFcfa: 10000,
+        invoice: receiptInvoice({
+          id: "yakhoub",
+          patientId: "pat-1385",
+          type: InvoiceType.CONSULTATION,
+          amountFcfa: 10000,
+          paidAmountFcfa: 10000,
+          visit: {
+            reductionFcfa: 0,
+            consultationFeeFcfa: 10000,
+            assignedClinicService: { name: "Généraliste" },
+            patient: { service: "Généraliste" },
+            consultation: null,
+            assignedDoctor: { id: "dr-yakhoub" },
+          },
+        }),
+      },
+    ]);
+
+    assert.deepEqual(
+      summary.serviceLines.map((line) => ({ label: line.label, qty: line.qty, totalFcfa: line.totalFcfa })),
+      [{ label: "Consultation — Généraliste", qty: 1, totalFcfa: 15000 }],
     );
   });
 });

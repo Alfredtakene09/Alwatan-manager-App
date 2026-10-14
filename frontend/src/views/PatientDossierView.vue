@@ -511,7 +511,7 @@ async function deletePatientDossier() {
     type: 'DELETE',
     title: uiText('Supprimer le patient (admin)'),
     message: translateTemplate(
-      'Supprimer le dossier {code} — {name} même s’il a déjà été consulté ? Visites, consultations, factures et documents liés seront aussi supprimés. Cette action est irréversible.',
+      'Supprimer le dossier {code} — {name} même s’il a déjà été consulté ? Visites, consultations, factures et documents liés seront aussi supprimés. La somme déjà encaissée sera retirée du solde. Cette action est irréversible.',
       { code: patient.code, name: patientName },
     ),
     confirmLabel: uiText('Supprimer'),

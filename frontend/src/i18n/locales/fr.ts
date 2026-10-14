@@ -629,6 +629,11 @@ export default {
     Observations: 'Observations',
     Commentaire: 'Commentaire',
     'Total à payer': 'Total à payer',
+    'Prix net à payer': 'Prix net à payer',
+    'Ce montant est le prix net à payer. Réduisez-le pour un paiement partiel.':
+      'Ce montant est le prix net à payer. Réduisez-le pour un paiement partiel.',
+    'Paiement partiel : il restera {amount} après cet encaissement.':
+      'Paiement partiel : il restera {amount} après cet encaissement.',
     "Vue d'ensemble, finances, caisses et supervision de la clinique":
       "Vue d'ensemble, finances, caisses et supervision de la clinique",
     'Recettes du mois': 'Recettes du mois',

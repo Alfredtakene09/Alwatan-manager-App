@@ -14,11 +14,20 @@ import {
 } from "./doctor-compensation.js";
 import { collectedAmountFcfa } from "./surgery-cost-shares.js";
 import { paidExamLabels, parsePrescribedExamsByKind, type ExamKindSlug } from "./lab-notes.js";
-import { registrationSummaryReceptionistWhere } from "./reception-scope.js";
-import { COLLECTED_INVOICE_TYPES } from "./revenue-stats.js";
+import { registrationSummaryInvoiceWhere } from "./reception-scope.js";
 import { extractExternalPatientService } from "./visit-external.js";
 
 import { canonicalClinicServiceName, isOrthoTraumaServiceName, ORTHO_TRAUMA_SERVICE_NAME } from "./ortho-trauma-service.js";
+import { formatBusinessDate } from "./cash-shift.js";
+
+/**
+ * Cumuls déjà imprimés du 14 sept. au 10 oct. 2026, part de Faiza comprise.
+ * Le calcul encaissé (sans facture impayée, part clinique = argent reçu)
+ * commence le 10 oct. pour Monera, puis pour tout le monde le 11 oct.
+ */
+const MONERA_RECEPTIONIST_ID = "cms68f3cz00g7u9y0eo6otc4j";
+const COLLECTED_RULES_FOR_MONERA_FROM = "2026-10-10";
+const COLLECTED_RULES_FOR_EVERYONE_FROM = "2026-10-11";
 
 /** Orthopédie et traumatologie (y compris la graphie « Tromatologie ») sont un seul service. */
 export const ORTHO_TRAUMA_SERVICE = ORTHO_TRAUMA_SERVICE_NAME;
@@ -37,6 +46,8 @@ export type RegistrationSummaryLine = {
   qty: number;
   amountFcfa: number;
   doctorShareFcfa: number;
+  /** Reste clinique : montant de la ligne moins la part des médecins. */
+  clinicShareFcfa: number;
   /** null quand les factures de la ligne n'ont pas toutes le même taux. */
   doctorPercent: number | null;
   operationPercent: number | null;
@@ -68,9 +79,12 @@ const summaryInvoiceSelect = {
   paidAmountFcfa: true,
   status: true,
   createdAt: true,
+  paidAt: true,
+  issuedById: true,
   billingExamKind: true,
   surgeryCaseId: true,
   hospitalizationId: true,
+  patient: { select: { createdAt: true, createdById: true } },
   visit: {
     select: {
       reductionFcfa: true,
@@ -122,9 +136,53 @@ type CatalogOperation = Prisma.InterventionTypeGetPayload<{ select: typeof catal
 /** Facture d'opération hors bloc : le type d'acte porte le % anesthésiste. */
 type PricedInvoice = SummaryInvoice & { catalogOperation?: CatalogOperation | null };
 
-/** Montant actuel de la ligne : le prix facturé, pas un encaissement antérieur. */
+type RegistrationRuleInvoice = {
+  type?: InvoiceType | null;
+  billingExamKind?: string | null;
+  createdAt?: Date | null;
+  paidAt?: Date | null;
+  issuedById?: string | null;
+  patient?: { createdAt?: Date | null; createdById?: string | null } | null;
+};
+
+function registrationRuleDay(invoice: RegistrationRuleInvoice): string | null {
+  const followsPayment =
+    invoice.type === InvoiceType.SURGERY || invoice.billingExamKind === "operation";
+  const at = followsPayment
+    ? invoice.paidAt ?? invoice.patient?.createdAt ?? invoice.createdAt
+    : invoice.patient?.createdAt ?? invoice.createdAt;
+  if (!at || Number.isNaN(at.getTime())) return null;
+  return formatBusinessDate(at);
+}
+
+/** true : encaissement réel et part clinique = somme reçue. false : cumul déjà imprimé. */
+export function usesCollectedRegistrationRules(invoice: RegistrationRuleInvoice): boolean {
+  const day = registrationRuleDay(invoice);
+  if (!day) return false;
+  if (day >= COLLECTED_RULES_FOR_EVERYONE_FROM) return true;
+  if (day < COLLECTED_RULES_FOR_MONERA_FROM) return false;
+  const owner = invoice.patient?.createdById ?? "";
+  const cashier = invoice.issuedById ?? "";
+  return owner === MONERA_RECEPTIONIST_ID || cashier === MONERA_RECEPTIONIST_ID;
+}
+
+/**
+ * Montant de la ligne.
+ * À partir du 10 oct. pour Monera, puis du 11 oct. pour tous : uniquement le payé.
+ * Avant : le montant facturé, comme sur les cumuls déjà imprimés.
+ */
 function summaryAmountFcfa(invoice: SummaryInvoice): number {
-  return Math.max(0, invoice.amountFcfa);
+  const billed = Math.max(0, invoice.amountFcfa ?? 0);
+  if (!usesCollectedRegistrationRules(invoice)) return billed;
+  const paid = Math.max(0, invoice.paidAmountFcfa ?? 0);
+  if (invoice.status === InvoiceStatus.CANCELLED) return 0;
+  if (
+    invoice.status === InvoiceStatus.PENDING ||
+    invoice.status === InvoiceStatus.PARTIALLY_PAID
+  ) {
+    return paid;
+  }
+  return billed > 0 ? billed : paid;
 }
 
 /**
@@ -231,6 +289,11 @@ export function exactRegistrationService(input: {
     return displayServiceName(recorded);
   }
   return input.classifiedLabel;
+}
+
+/** Reste après la part des médecins. Les deux parts totalisent le montant. */
+export function clinicRemainderFcfa(amountFcfa: number, doctorShareFcfa: number): number {
+  return Math.max(0, amountFcfa - Math.max(0, doctorShareFcfa));
 }
 
 type ShareResult = { shareFcfa: number; percent: number | null };
@@ -374,6 +437,11 @@ export type RegistrationSummaryOptions = {
   patientWhere: Prisma.PatientWhereInput;
   /** Une réception : ses factures seulement, sans reprendre celles d'une autre caisse. */
   receptionistId?: string | null;
+  /**
+   * Jour exporté. Les opérations encaissées par une réception y entrent
+   * à la date du paiement, pas à la date d'ouverture du dossier.
+   */
+  period?: { from: Date; to: Date } | null;
 };
 
 function foldServiceKey(label: string): string {
@@ -568,14 +636,8 @@ async function withCatalogOperations(invoices: SummaryInvoice[]): Promise<Priced
 }
 
 async function loadRegistrationInvoices(options: RegistrationSummaryOptions) {
-  const receptionistId = options.receptionistId?.trim() || "";
   return prisma.invoice.findMany({
-    where: {
-      type: { in: COLLECTED_INVOICE_TYPES },
-      status: { not: InvoiceStatus.CANCELLED },
-      patient: options.patientWhere,
-      ...(receptionistId ? registrationSummaryReceptionistWhere(receptionistId) : {}),
-    },
+    where: registrationSummaryInvoiceWhere(options),
     select: summaryInvoiceSelect,
   });
 }
@@ -630,15 +692,15 @@ function operationAssistantName(invoice: PricedInvoice): string {
 }
 
 /**
- * Une modification ne doit pas ajouter une deuxième consultation du même
- * médecin dans le même service. On garde la plus récente : quantité et montant
- * restent alignés (3 patients à 10 000 F = 30 000 F, pas 50 000 F).
+ * Avant le 11 oct. (et le 10 oct. hors Monera), une seconde consultation du
+ * même médecin dans le même service ne s'ajoute pas : on garde la plus récente,
+ * comme sur les feuilles déjà imprimées.
  */
-function consultationsToCount(invoices: PricedInvoice[]): PricedInvoice[] {
+function consultationsForSummary(invoices: PricedInvoice[]): PricedInvoice[] {
   const best = new Map<string, PricedInvoice>();
   const others: PricedInvoice[] = [];
   for (const invoice of invoices) {
-    if (invoice.type !== InvoiceType.CONSULTATION) {
+    if (invoice.type !== InvoiceType.CONSULTATION || usesCollectedRegistrationRules(invoice)) {
       others.push(invoice);
       continue;
     }
@@ -655,7 +717,7 @@ function consultationsToCount(invoices: PricedInvoice[]): PricedInvoice[] {
 function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationSummaryLine[] {
   const grouped = new Map<string, Accumulator>();
 
-  for (const invoice of consultationsToCount(invoices)) {
+  for (const invoice of consultationsForSummary(invoices)) {
     const collectedFcfa = summaryAmountFcfa(invoice);
     const amountFcfa = consultationTariffAmount(invoice, collectedFcfa);
     if (amountFcfa <= 0) continue;
@@ -689,6 +751,7 @@ function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationS
       qty: 0,
       amountFcfa: 0,
       doctorShareFcfa: 0,
+      clinicShareFcfa: 0,
       patientIds: new Set<string>(),
       doctorPercents: new Set<number>(),
       operationPercents: new Set<number>(),
@@ -723,6 +786,8 @@ function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationS
         : amountFcfa;
     const share = invoiceShare(invoice, group, shareBase);
     row.doctorShareFcfa += share.shareFcfa;
+    // Reste clinique : part médecins + part clinique = montant de la ligne.
+    row.clinicShareFcfa += clinicRemainderFcfa(amountFcfa, share.shareFcfa);
     if (share.percent != null) {
       if (group === "operation") row.operationPercents.add(share.percent);
       else row.doctorPercents.add(share.percent);

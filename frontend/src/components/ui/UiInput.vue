@@ -50,6 +50,10 @@ defineExpose({
   focus() {
     inputRef.value?.focus()
   },
+  select() {
+    inputRef.value?.focus()
+    inputRef.value?.select()
+  },
 })
 </script>
 

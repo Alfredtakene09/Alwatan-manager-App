@@ -2244,8 +2244,10 @@ export type DayClosureReceiptData = {
   saleFcfa?: number
   /** Filtres appliqués (libellé i18n + valeur), imprimés sous la période. */
   filterLines?: { label: string; value: string }[]
-  /** Présent sur le cumul des enregistrements : part médecins, le reste est pour la clinique. */
+  /** Présent sur le cumul des enregistrements : part médecins. */
   doctorShareFcfa?: number | null
+  /** Part clinique imprimée. Absente : encaissé moins la part médecins. */
+  clinicShareFcfa?: number | null
 }
 
 function formatDayClosureShortDate(isoDate: string): string {
@@ -2391,18 +2393,30 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
   const doctorShareFcfa =
     data.doctorShareFcfa == null ? null : Math.max(0, Math.round(Number(data.doctorShareFcfa) || 0))
   const clinicShareFcfa =
-    doctorShareFcfa == null ? null : Math.max(0, collectedFcfa - doctorShareFcfa)
+    data.clinicShareFcfa != null
+      ? Math.max(0, Math.round(Number(data.clinicShareFcfa) || 0))
+      : doctorShareFcfa == null
+        ? null
+        : Math.max(0, collectedFcfa - doctorShareFcfa)
+  const doctorPercent =
+    doctorShareFcfa != null && collectedFcfa > 0
+      ? Math.round((doctorShareFcfa * 100) / collectedFcfa)
+      : null
+  const shareAmount = (share: number, percent: number | null) =>
+    percent == null || share <= 0
+      ? formatDayClosureAmount(share)
+      : `${formatDayClosureAmount(share)} (${percent} %)`
   const shareBlock =
     doctorShareFcfa == null
       ? ''
       : `
     <p class="day-closure__totals-line day-closure__totals-line--share">
       <span>${escapeHtml(fr('Part des médecins'))} :</span>
-      <strong>${escapeHtml(formatDayClosureAmount(doctorShareFcfa))}</strong>
+      <strong>${escapeHtml(shareAmount(doctorShareFcfa, doctorPercent))}</strong>
     </p>
     <p class="day-closure__totals-line">
       <span>${escapeHtml(fr('Part clinique'))} :</span>
-      <strong>${escapeHtml(formatDayClosureAmount(clinicShareFcfa ?? 0))}</strong>
+      <strong>${escapeHtml(shareAmount(clinicShareFcfa ?? 0, doctorPercent == null ? null : Math.max(0, 100 - doctorPercent)))}</strong>
     </p>`
   const title = fr('Cumul vente du {from} au {to}')
     .replace('{from}', dateShort)

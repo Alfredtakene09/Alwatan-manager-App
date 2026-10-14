@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { ConsultationQuotaMode, DoctorCompensationType, InvoiceStatus, InvoiceType, UserRole } from "@prisma/client";
 import {
+  clinicRemainderFcfa,
   consultationShare,
   consultationTariffAmount,
   exactRegistrationService,
@@ -9,6 +10,7 @@ import {
   operationLineLabel,
   registrationActivityPatientCounts,
   registrationServiceLabel,
+  usesCollectedRegistrationRules,
   operationShare,
   ORTHO_TRAUMA_SERVICE,
   registrationExamQuantity,
@@ -482,6 +484,84 @@ describe("cartes d'enregistrement", () => {
       examPatients: 2,
       hospitalizationPatients: 1,
     });
+  });
+
+  it("ignore une hospitalisation facturée mais pas encore encaissée à partir du 11 octobre", () => {
+    const counts = registrationActivityPatientCounts([
+      invoice({
+        patientId: "pat-hosp",
+        type: InvoiceType.HOSPITALIZATION_FINAL,
+        status: InvoiceStatus.PENDING,
+        amountFcfa: 50_000,
+        paidAmountFcfa: 0,
+        billingExamKind: null,
+        surgeryCaseId: null,
+        hospitalizationId: "stay-pending",
+        visit: null,
+        hospitalization: { reductionFcfa: 0 },
+        patient: { createdAt: new Date("2026-10-11T08:00:00+01:00"), createdById: "faiza" },
+      }),
+    ]);
+    assert.equal(counts.hospitalizationPatients, 0);
+  });
+
+  it("garde une hospitalisation facturée non payée sur un cumul déjà imprimé", () => {
+    const counts = registrationActivityPatientCounts([
+      invoice({
+        patientId: "pat-hosp",
+        type: InvoiceType.HOSPITALIZATION_FINAL,
+        status: InvoiceStatus.PENDING,
+        amountFcfa: 50_000,
+        paidAmountFcfa: 0,
+        billingExamKind: null,
+        surgeryCaseId: null,
+        hospitalizationId: "stay-old",
+        visit: null,
+        hospitalization: { reductionFcfa: 0 },
+        patient: { createdAt: new Date("2026-10-09T08:00:00+01:00"), createdById: "faiza" },
+      }),
+    ]);
+    assert.equal(counts.hospitalizationPatients, 1);
+  });
+
+  it("applique le nouveau calcul le 10 octobre seulement pour Monera", () => {
+    const monera = "cms68f3cz00g7u9y0eo6otc4j";
+    const day = new Date("2026-10-10T12:00:00+01:00");
+    assert.equal(
+      usesCollectedRegistrationRules({
+        patient: { createdAt: day, createdById: "faiza" },
+        issuedById: "faiza",
+      }),
+      false,
+    );
+    assert.equal(
+      usesCollectedRegistrationRules({
+        patient: { createdAt: day, createdById: monera },
+      }),
+      true,
+    );
+    assert.equal(
+      usesCollectedRegistrationRules({
+        patient: { createdAt: new Date("2026-10-11T08:00:00+01:00"), createdById: "faiza" },
+      }),
+      true,
+    );
+    assert.equal(
+      usesCollectedRegistrationRules({
+        patient: { createdAt: new Date("2026-09-14T08:00:00+01:00"), createdById: monera },
+      }),
+      false,
+    );
+  });
+
+  it("fait totaliser 100 % la part médecins, la part clinique et le reste", () => {
+    const amount = 500_000;
+    const doctors = Math.round((amount * 30) / 100);
+    const clinic = clinicRemainderFcfa(amount, doctors);
+    assert.equal(doctors, 150_000);
+    assert.equal(clinic, 350_000);
+    assert.equal(doctors + clinic, amount);
+    assert.equal(clinicRemainderFcfa(10_000, 12_000), 0);
   });
 
   it("ignore un examen qui n'est pas payé", () => {

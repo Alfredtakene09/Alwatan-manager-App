@@ -460,7 +460,7 @@ const showFormConsultationBilling = computed(
     !formBillingExempt.value &&
     showDoctorConsultationBilling(formDoctor.value),
 )
-/** Modification : montant enregistré + réduction, même si le médecin a un tarif fixe. */
+/** Modification : montant du médecin choisi (tarif et %), réduction comprise. */
 const showEditConsultationFields = computed(
   () =>
     editHasConsultation.value &&
@@ -770,6 +770,7 @@ type RegistrationSummaryLine = {
   qty: number
   amountFcfa: number
   doctorShareFcfa: number
+  clinicShareFcfa: number
   doctorPercent: number | null
   operationPercent: number | null
 }
@@ -792,15 +793,41 @@ function registrationDetailLabel(row: RegistrationSummaryLine): string {
   return lines.join('\n')
 }
 
+function storedDoctorPercent(row: RegistrationSummaryLine): number | null {
+  const percent = row.group === 'operation' ? row.operationPercent : row.doctorPercent
+  return percent != null && percent > 0 ? percent : null
+}
+
+/** % médecins et % clinique d'une ligne : les deux font 100. */
+function splitPercents(row: RegistrationSummaryLine): { doctor: number; clinic: number } | null {
+  if (row.doctorShareFcfa <= 0 || row.amountFcfa <= 0) return null
+  const stored = storedDoctorPercent(row)
+  const doctor = stored ?? Math.round((row.doctorShareFcfa * 100) / row.amountFcfa)
+  return { doctor, clinic: Math.max(0, 100 - doctor) }
+}
+
 function doctorShareLabel(row: RegistrationSummaryLine): string {
   if (row.doctorShareFcfa <= 0) return '—'
   const amount = formatFcfa(row.doctorShareFcfa)
-  const percent = row.group === 'operation' ? row.operationPercent : row.doctorPercent
-  return percent != null && percent > 0 ? `${amount} (${percent} %)` : amount
+  const split = splitPercents(row)
+  return split ? `${amount} (${split.doctor} %)` : amount
 }
 
 function clinicShareLabel(row: RegistrationSummaryLine): string {
-  return formatFcfa(Math.max(0, row.amountFcfa - row.doctorShareFcfa))
+  const clinic = Math.max(0, row.clinicShareFcfa ?? row.amountFcfa - row.doctorShareFcfa)
+  const amount = formatFcfa(clinic)
+  const split = splitPercents(row)
+  return split ? `${amount} (${split.clinic} %)` : amount
+}
+
+function footShareLabel(partFcfa: number, totalFcfa: number, complement: boolean): string {
+  const amount = formatFcfa(partFcfa)
+  if (partFcfa <= 0 || totalFcfa <= 0) return amount
+  const doctorPercent = Math.round(
+    ((complement ? totalFcfa - partFcfa : partFcfa) * 100) / totalFcfa,
+  )
+  const percent = complement ? Math.max(0, 100 - doctorPercent) : doctorPercent
+  return `${amount} (${percent} %)`
 }
 
 const registrationExportColumns: ExportColumn<RegistrationSummaryLine>[] = [
@@ -815,12 +842,16 @@ function registrationSectionFootRow(rows: RegistrationSummaryLine[]): ExportCell
   const qty = rows.reduce((sum, row) => sum + row.qty, 0)
   const amountFcfa = rows.reduce((sum, row) => sum + row.amountFcfa, 0)
   const doctorShareFcfa = rows.reduce((sum, row) => sum + row.doctorShareFcfa, 0)
+  const clinicShareFcfa = rows.reduce(
+    (sum, row) => sum + (row.clinicShareFcfa ?? row.amountFcfa),
+    0,
+  )
   return [
     uiText('Sous-total'),
     qty,
     formatFcfa(amountFcfa),
-    formatFcfa(doctorShareFcfa),
-    formatFcfa(Math.max(0, amountFcfa - doctorShareFcfa)),
+    footShareLabel(doctorShareFcfa, amountFcfa, false),
+    footShareLabel(clinicShareFcfa, amountFcfa, true),
   ]
 }
 
@@ -862,6 +893,7 @@ function registrationExportSections(
           qty: lines.reduce((sum, row) => sum + row.qty, 0),
           amountFcfa: lines.reduce((sum, row) => sum + row.amountFcfa, 0),
           doctorShareFcfa: lines.reduce((sum, row) => sum + row.doctorShareFcfa, 0),
+          clinicShareFcfa: lines.reduce((sum, row) => sum + (row.clinicShareFcfa ?? row.amountFcfa), 0),
           doctorPercent: null,
           operationPercent: null,
         },
@@ -1107,6 +1139,10 @@ async function printRegistrationCumul() {
     const lines = await loadRegistrationSummary()
     const totalFcfa = lines.reduce((sum, line) => sum + line.amountFcfa, 0)
     const doctorShareFcfa = lines.reduce((sum, line) => sum + line.doctorShareFcfa, 0)
+    const clinicShareFcfa = lines.reduce(
+      (sum, line) => sum + (line.clinicShareFcfa ?? line.amountFcfa),
+      0,
+    )
     const qty = lines.reduce((sum, line) => sum + line.qty, 0)
     openPrintDocument(
       'Cumul',
@@ -1131,6 +1167,7 @@ async function printRegistrationCumul() {
         })),
         filterLines: cumulFilterLines(),
         doctorShareFcfa,
+        clinicShareFcfa,
       }),
       { pageSize: '80mm', thermalTight: true },
     )
@@ -1302,8 +1339,17 @@ function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
   if (target === 'edit') {
     if (selectedPatient.value?.waitingVisit?.billingKind === 'exam') return
     const doctor = findDoctor(editForm.value.doctorId)
-    if (!doctor) return
-    const doctorChanged = doctor.id !== lastPricedEditDoctorId
+    const pricedId = doctor?.id ?? ''
+    const doctorChanged = pricedId !== lastPricedEditDoctorId
+    if (!doctor) {
+      if (doctorChanged) {
+        editForm.value.consultationAmount = ''
+        editForm.value.reduction = '0'
+        editReductionPercent.value = ''
+        lastPricedEditDoctorId = ''
+      }
+      return
+    }
     if (!doctorChanged && editForm.value.consultationAmount.trim()) return
     lastPricedEditDoctorId = doctor.id
     if (isExemptCategory(editForm.value.category)) {
@@ -1315,7 +1361,11 @@ function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
     if (doctorShowsFixedConsultationPrice(doctor)) {
       editForm.value.consultationAmount = String(defaultConsultationAmountForDoctor(doctor))
     } else if (doctorNeedsConsultationAmountInput(doctor)) {
-      if (doctorChanged) editForm.value.consultationAmount = ''
+      if (doctorChanged) {
+        editForm.value.consultationAmount = ''
+        editForm.value.reduction = '0'
+        editReductionPercent.value = ''
+      }
     } else {
       editForm.value.consultationAmount = '0'
       editForm.value.reduction = '0'
@@ -1325,6 +1375,8 @@ function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
     if ((Number(editForm.value.reduction) || 0) > nextAmount) {
       editForm.value.reduction = '0'
       editReductionPercent.value = ''
+    } else if (doctorChanged) {
+      syncEditReductionPercent()
     }
     return
   }
@@ -1536,7 +1588,7 @@ async function deletePatient(patient: Patient) {
     type: 'DELETE',
     title: uiText('Supprimer le patient (admin)'),
     message: translateTemplate(
-      'Supprimer le dossier {code} — {name} ? Visites, consultations et documents liés seront supprimés. La somme déjà encaissée reste dans le solde. Cette action est irréversible.',
+      'Supprimer le dossier {code} — {name} ? Visites, consultations et documents liés seront supprimés. La somme déjà encaissée sera aussi retirée du solde. Cette action est irréversible.',
       { code: patient.code, name: patientName },
     ),
     confirmLabel: uiText('Supprimer'),

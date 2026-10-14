@@ -463,26 +463,10 @@ export function assembleDayClosureReceiptLines(
   let reductionFcfa = 0;
   const reductionVisitIds = new Set<string>();
 
-  const consultationSlot = new Map<string, number>();
-  const counted: typeof entries = [];
-  for (const entry of entries) {
-    if (entry.invoice.type !== InvoiceType.CONSULTATION) {
-      counted.push(entry);
-      continue;
-    }
-    const service = consultationServiceName(entry.invoice);
-    const doctorId = entry.invoice.visit?.assignedDoctor?.id ?? "";
-    const key = `${entry.invoice.patientId ?? entry.invoice.id}\0${service}\0${doctorId}`;
-    const slot = consultationSlot.get(key);
-    if (slot == null) {
-      consultationSlot.set(key, counted.length);
-      counted.push(entry);
-    } else {
-      counted[slot] = entry;
-    }
-  }
-
-  for (const { invoice, collectedFcfa: paidGross } of counted) {
+  // Chaque versement reste dans le total : un second enregistrement du même
+  // patient a été encaissé, il est dans la caisse. La quantité compte le patient une fois.
+  const consultationPatients = new Set<string>();
+  for (const { invoice, collectedFcfa: paidGross } of entries) {
     const paid = dayClosureCountedFcfa(invoice, paidGross);
     if (paid <= 0) continue;
     collectedFcfa += paid;
@@ -495,7 +479,14 @@ export function assembleDayClosureReceiptLines(
       qty: 0,
       totalFcfa: 0,
     };
-    row.qty += 1;
+    const patientKey =
+      invoice.type === InvoiceType.CONSULTATION
+        ? `${invoice.patientId ?? invoice.id}\0${consultationServiceName(invoice)}`
+        : invoice.id;
+    if (!consultationPatients.has(patientKey)) {
+      consultationPatients.add(patientKey);
+      row.qty += 1;
+    }
     row.totalFcfa += paid;
     grouped.set(key, row);
 

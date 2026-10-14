@@ -614,6 +614,11 @@ export default {
     Observations: 'ملاحظات',
     Commentaire: 'تعليق',
     'Total à payer': 'المبلغ المستحق',
+    'Prix net à payer': 'الصافي المطلوب',
+    'Ce montant est le prix net à payer. Réduisez-le pour un paiement partiel.':
+      'هذا المبلغ هو الصافي المطلوب. خفّضه لتحصيل جزء فقط.',
+    'Paiement partiel : il restera {amount} après cet encaissement.':
+      'دفع جزئي: سيتبقى {amount} بعد هذا التحصيل.',
     "Vue d'ensemble, finances, caisses et supervision de la clinique":
       'نظرة عامة، المالية، الصناديق والإشراف على العيادة',
     'Recettes du mois': 'إيرادات الشهر',

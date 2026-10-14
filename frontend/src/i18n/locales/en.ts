@@ -614,6 +614,11 @@ export default {
     Observations: 'Notes',
     Commentaire: 'Comment',
     'Total à payer': 'Total due',
+    'Prix net à payer': 'Net amount due',
+    'Ce montant est le prix net à payer. Réduisez-le pour un paiement partiel.':
+      'This amount is the net price due. Lower it for a partial payment.',
+    'Paiement partiel : il restera {amount} après cet encaissement.':
+      'Partial payment: {amount} will remain after this collection.',
     "Vue d'ensemble, finances, caisses et supervision de la clinique":
       'Overview, finances, cash registers and clinic supervision',
     'Recettes du mois': 'Monthly revenue',

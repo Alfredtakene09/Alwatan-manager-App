@@ -5,7 +5,11 @@ import { prisma } from "../lib/db.js";
 import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.js";
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
 import { ageUnitSchema, refinePatientAge } from "../lib/patient-age.js";
-import { resolveConsultationBilling, shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
+import {
+  resolveConsultationBilling,
+  resolveEditedConsultationAmount,
+  shouldCreateImmediateInvoice,
+} from "../lib/patient-billing.js";
 import {
   aggregateCollectedBetween,
   sumRegisteredPatientsConsultationsFcfa,
@@ -341,25 +345,24 @@ async function syncVisitClinicService(
   tx: Prisma.TransactionClient,
   patientId: string,
   serviceName: string | null,
+  previousServiceName?: string | null,
 ) {
   const clinicService = await resolveActiveClinicServiceByName(tx, serviceName);
-  const patient = await tx.patient.findUnique({
-    where: { id: patientId },
-    select: { service: true },
-  });
-  const previousName = patient?.service?.trim() || "";
+  const previousName = previousServiceName?.trim() || "";
   const previousService = previousName
     ? await resolveActiveClinicServiceByName(tx, previousName)
     : null;
 
-  // Les visites déjà ouvertes dans un autre service (réorientation) gardent
-  // leur service. Sinon la quantité et le montant des cumuls se séparent.
+  // Le service choisi à la réception suit sur la visite en cours et sur
+  // celles encore rattachées à l'ancien service du dossier. Une visite déjà
+  // terminée dans un autre service (réorientation) garde le sien.
   await tx.visit.updateMany({
     where: {
       patientId,
       status: { not: VisitStatus.CANCELLED },
       OR: [
         { assignedClinicServiceId: null },
+        { status: { in: [VisitStatus.WAITING_CONSULTATION, VisitStatus.IN_CONSULTATION] } },
         ...(previousService ? [{ assignedClinicServiceId: previousService.id }] : []),
       ],
     },
@@ -386,23 +389,6 @@ async function syncWaitingVisit(
   const patient = await tx.patient.findUnique({ where: { id: patientId } });
   if (!patient) return;
 
-  let resolvedAmount = consultationAmountFcfa;
-  if (doctorId) {
-    const doctor = await tx.user.findFirst({
-      where: selectableDoctorByIdWhere(doctorId),
-      include: { employee: true },
-    });
-    if (doctor) {
-      resolvedAmount = resolveDoctorConsultationAmount(doctor, consultationAmountFcfa);
-    }
-  }
-
-  const billing = resolveConsultationBilling(
-    patient.category,
-    resolvedAmount,
-    reductionFcfa ?? 0,
-  );
-
   let visit = await tx.visit.findFirst({
     where: {
       patientId,
@@ -417,6 +403,32 @@ async function syncWaitingVisit(
       orderBy: { createdAt: "desc" },
     });
   }
+
+  let resolvedAmount = consultationAmountFcfa;
+  if (doctorId) {
+    const doctor = await tx.user.findFirst({
+      where: selectableDoctorByIdWhere(doctorId),
+      include: { employee: true },
+    });
+    if (doctor) {
+      const previousDoctorId = visit?.assignedDoctorId ?? null;
+      const editedAmount = resolveEditedConsultationAmount({
+        doctorChanged: Boolean(previousDoctorId && doctorId !== previousDoctorId),
+        configuredAmount: resolveDoctorConsultationAmount(doctor),
+        requestedAmount: consultationAmountFcfa,
+        previousFee: visit?.consultationFeeFcfa ?? 0,
+      });
+      resolvedAmount = resolveDoctorConsultationAmount(doctor, editedAmount);
+    }
+  }
+
+  const nextReduction =
+    resolvedAmount != null && (reductionFcfa ?? 0) > resolvedAmount ? 0 : reductionFcfa;
+  const billing = resolveConsultationBilling(
+    patient.category,
+    resolvedAmount,
+    nextReduction ?? 0,
+  );
 
   if (!visit) {
     if (!doctorId && consultationAmountFcfa === undefined) return;
@@ -903,6 +915,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
         ...(doctorPatientWhere ? { AND: [doctorPatientWhere] } : {}),
       },
       receptionistId: receptionistScopeUserId(user, createdById),
+      period: { from: rangeStart, to: rangeEndExclusive },
     }),
   ]);
 
@@ -989,6 +1002,7 @@ router.get("/registration-summary", requireModule("reception"), async (req, res)
     const lines = await buildRegistrationSummary({
       patientWhere,
       receptionistId: receptionistScopeUserId(user, createdById),
+      period: { from: rangeStart, to: rangeEndExclusive },
     });
     return res.json({ lines });
   } catch (error) {
@@ -1516,7 +1530,7 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
         }
       });
       if (body.service !== undefined) {
-        await syncVisitClinicService(tx, updated.id, body.service);
+        await syncVisitClinicService(tx, updated.id, body.service, existing.service);
         const canonical = await resolveActiveClinicServiceByName(tx, body.service);
         if (canonical) updated.service = canonical.name;
       }
@@ -1585,33 +1599,6 @@ router.patch("/:id/active", requireModule("reception"), async (req, res) => {
     return res.json(patient);
 });
 
-/** Garde les factures déjà encaissées pour qu'elles restent dans le solde après suppression du dossier. */
-async function detachCollectedInvoices(patientId: string) {
-  const invoices = await prisma.invoice.findMany({
-    where: {
-      patientId,
-      OR: [{ paidAmountFcfa: { gt: 0 } }, { status: InvoiceStatus.PAID }],
-    },
-    select: { id: true },
-  });
-  const invoiceIds = invoices.map((row) => row.id);
-  if (!invoiceIds.length) return;
-
-  await prisma.doctorShareClaim.updateMany({
-    where: { invoiceId: { in: invoiceIds } },
-    data: { surgeryCaseId: null },
-  });
-  await prisma.invoice.updateMany({
-    where: { id: { in: invoiceIds } },
-    data: {
-      patientId: null,
-      visitId: null,
-      surgeryCaseId: null,
-      hospitalizationId: null,
-    },
-  });
-}
-
 router.delete("/:id", requireModule("reception"), requireUiAction("reception.delete_patient"), async (req, res) => {
   try {
     const patientId = String(req.params.id);
@@ -1623,7 +1610,6 @@ router.delete("/:id", requireModule("reception"), requireUiAction("reception.del
     if (!isDirectionOrGestionnaire(req.user!.role as AppUserRole)) {
       await assertPatientDeletable(patientId);
     }
-    await detachCollectedInvoices(patientId);
     await forceDeletePatientCascade(patientId);
 
     return res.json({ success: true });

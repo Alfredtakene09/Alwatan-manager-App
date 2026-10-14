@@ -117,10 +117,11 @@ const rows = computed(() => {
             ? `${formatFcfa(item.dailyRateFcfa)}/${uiText('nuit')}`
             : '—'
 
-      const due = item.totalDueFcfa ?? 0
-      const received = Math.max(0, item.paidFcfa ?? item.depositFcfa ?? 0)
+      const due = Math.max(0, item.totalDueFcfa ?? 0)
+      const received = Math.max(0, item.paidFcfa ?? 0, item.depositFcfa ?? 0)
       const unfinished = item.status !== 'DISCHARGED' && item.status !== 'CANCELLED'
-      const unpaid = unfinished && due > received && Boolean(item.startDate)
+      const alreadyCollected = due > 0 && received >= due
+      const unpaid = unfinished && due > received && !alreadyCollected && Boolean(item.startDate)
       const statusFr = unpaid
         ? 'En attente de paiement'
         : (HOSPITALIZATION_STATUS_LABELS[item.status] ?? item.status)
@@ -242,8 +243,8 @@ const rows = computed(() => {
                     v-if="row.canCollect"
                     type="button"
                     class="st-btn st-btn--pay"
-                    :title="uiText('Acompte (hors solde)')"
-                    :aria-label="uiText('Acompte (hors solde)')"
+                    :title="uiText('Encaisser')"
+                    :aria-label="uiText('Encaisser')"
                     @click="emit('collect', row.id)"
                   >
                     <Banknote :size="15" />

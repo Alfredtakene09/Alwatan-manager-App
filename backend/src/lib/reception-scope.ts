@@ -1,4 +1,5 @@
-import { UserRole, type Prisma } from "@prisma/client";
+import { InvoiceStatus, UserRole, type Prisma } from "@prisma/client";
+import { COLLECTED_INVOICE_TYPES } from "./revenue-stats.js";
 
 export type ReceptionScopeUser = { id: string; role: string };
 
@@ -60,6 +61,84 @@ export function registrationSummaryReceptionistWhere(
       },
     ],
   };
+}
+
+const operationInvoiceWhere: Prisma.InvoiceWhereInput = {
+  OR: [{ type: "SURGERY" }, { billingExamKind: "operation" }],
+};
+
+function patientWhereWithoutRegistrationDay(
+  where: Prisma.PatientWhereInput,
+): Prisma.PatientWhereInput {
+  const { createdAt: _createdAt, ...rest } = where;
+  return rest;
+}
+
+/**
+ * Cumul des enregistrements.
+ * Les opérations encaissées par une réception sortent du jour d'ouverture du
+ * dossier : elles vont au réceptionniste qui a encaissé, le jour du paiement.
+ * Le médecin peut les avoir enregistrées ; ça ne change pas la caisse.
+ */
+export function registrationSummaryInvoiceWhere(options: {
+  patientWhere: Prisma.PatientWhereInput;
+  receptionistId?: string | null;
+  period?: { from: Date; to: Date } | null;
+}): Prisma.InvoiceWhereInput {
+  const receptionistId = options.receptionistId?.trim() || "";
+  // Ne pas écrire NOT (kind = operation) : un kind vide est NULL en SQL
+  // et ferait disparaître les consultations déjà encaissées.
+  const staysOnRegistrationDay: Prisma.InvoiceWhereInput = {
+    OR: [
+      {
+        type: { not: "SURGERY" },
+        OR: [{ billingExamKind: null }, { billingExamKind: { not: "operation" } }],
+      },
+      { payments: { none: { recordedBy: { role: UserRole.RECEPTIONNISTE } } } },
+    ],
+  };
+  const registeredFilters = [
+    ...(options.period ? [staysOnRegistrationDay] : []),
+    ...(receptionistId ? [registrationSummaryReceptionistWhere(receptionistId)] : []),
+  ];
+  const registered: Prisma.InvoiceWhereInput = {
+    type: { in: COLLECTED_INVOICE_TYPES },
+    status: { not: InvoiceStatus.CANCELLED },
+    patient: options.patientWhere,
+    ...(registeredFilters.length ? { AND: registeredFilters } : {}),
+  };
+  if (!options.period) return registered;
+
+  const cashierPayment: Prisma.InvoicePaymentWhereInput = {
+    recordedBy: { role: UserRole.RECEPTIONNISTE },
+    ...(receptionistId ? { recordedById: receptionistId } : {}),
+  };
+  const collectedOperation: Prisma.InvoiceWhereInput = {
+    type: { in: COLLECTED_INVOICE_TYPES },
+    status: { not: InvoiceStatus.CANCELLED },
+    patient: patientWhereWithoutRegistrationDay(options.patientWhere),
+    AND: [
+      operationInvoiceWhere,
+      {
+        OR: [
+          {
+            paidAt: { gte: options.period.from, lt: options.period.to },
+            payments: { some: cashierPayment },
+          },
+          {
+            paidAt: null,
+            payments: {
+              some: {
+                ...cashierPayment,
+                paidAt: { gte: options.period.from, lt: options.period.to },
+              },
+            },
+          },
+        ],
+      },
+    ],
+  };
+  return { OR: [registered, collectedOperation] };
 }
 
 /** Réceptionniste : uniquement ses dossiers. Direction / gestionnaire / admin : tout, ou un réceptionniste choisi. */
