@@ -42,8 +42,13 @@ import {
   type PatientCategory,
 } from '@/lib/patient-category'
 import {
+  computeDoctorConsultationShares,
   defaultConsultationAmountForDoctor,
+  defaultKineSessionPriceForDoctor,
   doctorConsultationBillingValid,
+  doctorUsesQuotaCompensation,
+  formatDoctorQuotaShare,
+  isKinesitherapieServiceName,
   doctorIsFixedSalary,
   doctorNeedsConsultationAmountInput,
   doctorQuotaHint,
@@ -395,6 +400,8 @@ const form = ref({
   treatingDoctorId: '',
   consultationAmount: '',
   reduction: '0',
+  sessionsCount: '1',
+  sessionPrice: '',
 })
 
 const formParsedName = computed(() => splitPatientFullName(form.value.fullName))
@@ -404,8 +411,12 @@ const editAge = computed(() => parsePatientAge(editForm.value.age, editForm.valu
 
 const formAmount = computed(() => Number(form.value.consultationAmount) || 0)
 const formReduction = computed(() => Math.max(0, Number(form.value.reduction) || 0))
+const formIsKine = computed(() => isKinesitherapieServiceName(form.value.service))
+const formSessionsCount = computed(() => Math.max(0, Math.floor(Number(form.value.sessionsCount) || 0)))
+const formSessionPrice = computed(() => Math.max(0, Number(form.value.sessionPrice) || 0))
 const formEffectiveAmount = computed(() => {
   if (formBillingExempt.value) return 0
+  if (formIsKine.value) return formSessionsCount.value * formSessionPrice.value
   return resolveConsultationAmountForDoctor(formDoctor.value, formAmount.value)
 })
 const formTotal = computed(() => Math.max(0, formEffectiveAmount.value - formReduction.value))
@@ -458,8 +469,17 @@ const showFormConsultationBilling = computed(
   () =>
     showConsultationBillingSummary(form.value.category) &&
     !formBillingExempt.value &&
-    showDoctorConsultationBilling(formDoctor.value),
+    (formIsKine.value || showDoctorConsultationBilling(formDoctor.value)),
 )
+/** Kiné : % et part du médecin calculés sur le montant net des séances. */
+const formKineShare = computed(() => {
+  const doctor = formDoctor.value
+  if (!formIsKine.value || !doctor || !doctorUsesQuotaCompensation(doctor)) return null
+  return {
+    quotaLabel: formatDoctorQuotaShare(doctor),
+    doctorShareFcfa: computeDoctorConsultationShares(formTotal.value, doctor).doctorShareFcfa,
+  }
+})
 /** Modification : montant du médecin choisi (tarif et %), réduction comprise. */
 const showEditConsultationFields = computed(
   () =>
@@ -523,7 +543,17 @@ function collectNewPatientValidationErrors(): string[] {
     issues.push('Sélectionnez un médecin.')
   }
 
-  if (
+  if (!formBillingExempt.value && formIsKine.value) {
+    if (formSessionsCount.value < 1) {
+      issues.push('Indiquez au moins 1 séance.')
+    } else if (formSessionPrice.value <= 0) {
+      issues.push('Indiquez le prix d’une séance.')
+    } else if (formReduction.value > formEffectiveAmount.value) {
+      issues.push('La réduction ne peut pas dépasser le montant des séances.')
+    } else if (formTotal.value <= 0) {
+      issues.push('Le total à payer doit être supérieur à 0.')
+    }
+  } else if (
     !formBillingExempt.value &&
     showDoctorConsultationBilling(formDoctor.value)
   ) {
@@ -767,6 +797,7 @@ type RegistrationSummaryLine = {
   serviceName?: string
   operationName?: string | null
   doctorNames?: string[]
+  doctorShares?: { name: string; shareFcfa: number; percent: number | null }[]
   qty: number
   amountFcfa: number
   doctorShareFcfa: number
@@ -808,6 +839,17 @@ function splitPercents(row: RegistrationSummaryLine): { doctor: number; clinic: 
 
 function doctorShareLabel(row: RegistrationSummaryLine): string {
   if (row.doctorShareFcfa <= 0) return '—'
+  const shares = (row.doctorShares ?? []).filter((entry) => entry.shareFcfa > 0)
+  if (row.group === 'operation' && shares.length > 1) {
+    return shares
+      .map((entry) => {
+        const name = entry.name.trim().replace(/^dr\.?\s+/i, '')
+        const amount = formatFcfa(entry.shareFcfa)
+        const share = entry.percent != null && entry.percent > 0 ? `${amount} (${entry.percent} %)` : amount
+        return name ? `Dr ${name} : ${share}` : share
+      })
+      .join('\n')
+  }
   const amount = formatFcfa(row.doctorShareFcfa)
   const split = splitPercents(row)
   return split ? `${amount} (${split.doctor} %)` : amount
@@ -1264,6 +1306,8 @@ function resetForm() {
     treatingDoctorId: '',
     consultationAmount: '',
     reduction: '0',
+    sessionsCount: '1',
+    sessionPrice: '',
   }
   formReductionPercent.value = ''
   syncDoctorForService('form')
@@ -1321,6 +1365,11 @@ function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
       form.value.consultationAmount = '0'
       form.value.reduction = '0'
       formReductionPercent.value = ''
+      return
+    }
+    if (formIsKine.value) {
+      form.value.sessionPrice = String(defaultKineSessionPriceForDoctor(doctor))
+      if (!form.value.sessionsCount.trim()) form.value.sessionsCount = '1'
       return
     }
     if (doctorShowsFixedConsultationPrice(doctor)) {
@@ -1515,6 +1564,12 @@ async function createPatientAndVisit() {
       treatingDoctorId: form.value.treatingDoctorId || null,
       consultationAmountFcfa: formBillingExempt.value ? 0 : amount,
       reductionFcfa: reduction,
+      ...(formIsKine.value
+        ? {
+            sessionsCount: formSessionsCount.value,
+            sessionPriceFcfa: formBillingExempt.value ? 0 : formSessionPrice.value,
+          }
+        : {}),
     })
 
     const patient = data.patient
@@ -2226,7 +2281,37 @@ onUnmounted(clearAlert)
           <RouterLink to="/admin/employes">{{ uiText('Employés') }}</RouterLink>
         </p>
 
-        <div class="form-grid-2">
+        <div v-if="formIsKine && !formBillingExempt" class="form-grid-2">
+          <UiInput
+            v-model="form.sessionsCount"
+            label="Nombre de séances"
+            type="number"
+            min="1"
+            step="1"
+            required
+          />
+          <UiInput
+            v-model="form.sessionPrice"
+            label="Prix par séance (FCFA)"
+            type="number"
+            min="0"
+            placeholder="5000"
+            :icon="Banknote"
+            required
+          />
+        </div>
+        <p v-if="formIsKine && formKineShare" class="doctor-hint doctor-hint--compact">
+          {{
+            translateTemplate('{sessions} séance(s) × {price} — part médecin {quota} : {share}', {
+              sessions: formSessionsCount,
+              price: formatFcfa(formSessionPrice),
+              quota: formKineShare.quotaLabel,
+              share: formatFcfa(formKineShare.doctorShareFcfa),
+            })
+          }}
+        </p>
+
+        <div v-if="!formIsKine" class="form-grid-2">
           <UiInput
             v-if="!formBillingExempt && doctorNeedsConsultationAmountInput(formDoctor)"
             v-model="form.consultationAmount"
@@ -2246,8 +2331,8 @@ onUnmounted(clearAlert)
           </div>
         </div>
 
-        <p v-if="formDoctorQuotaHint" class="doctor-hint doctor-hint--compact">{{ formDoctorQuotaHint }}</p>
-        <p v-else-if="doctorIsFixedSalary(formDoctor)" class="doctor-hint doctor-hint--compact">
+        <p v-if="!formIsKine && formDoctorQuotaHint" class="doctor-hint doctor-hint--compact">{{ formDoctorQuotaHint }}</p>
+        <p v-else-if="!formIsKine && doctorIsFixedSalary(formDoctor)" class="doctor-hint doctor-hint--compact">
           {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
         </p>
 
@@ -2258,7 +2343,7 @@ onUnmounted(clearAlert)
           :amount-fcfa="formEffectiveAmount"
         >
           <div class="total-preview total-preview--compact">
-            <span>{{ uiText('Total à payer') }}</span>
+            <span>{{ uiText(formIsKine ? 'Montant à encaisser' : 'Total à payer') }}</span>
             <strong>{{ formatFcfa(formTotal) }}</strong>
           </div>
         </ReceptionReductionFields>
@@ -2624,7 +2709,7 @@ onUnmounted(clearAlert)
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.75rem), 1fr));
   gap: 0.4rem;
   margin: 0;
 }
@@ -3202,10 +3287,6 @@ button.dash-stat {
 }
 
 @media (max-width: 1100px) {
-  .stats-grid {
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-  }
-
   .table-toolbar__title h3 {
     font-size: 0.8125rem;
   }
@@ -3256,9 +3337,10 @@ button.dash-stat {
   }
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1199px) {
   .reception-dashboard {
     height: auto;
+    overflow: visible;
   }
 
   .dash-stat__hint {
@@ -3271,7 +3353,6 @@ button.dash-stat {
   }
 
   .stats-grid {
-    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 0.3rem;
   }
 

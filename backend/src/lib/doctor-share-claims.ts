@@ -448,6 +448,7 @@ export async function buildDoctorReceivable(
         paidAmountFcfa: true,
         paidAt: true,
         invoiceNumber: true,
+        visit: { select: { sessionsCount: true } },
       },
     });
 
@@ -468,7 +469,9 @@ export async function buildDoctorReceivable(
         amountFcfa: doctorShareFcfa,
         businessDate: (invoice.paidAt ?? period.from).toISOString().slice(0, 10),
         invoiceId: invoice.id,
-        label: `Consultation ${invoice.invoiceNumber}`,
+        label: invoice.visit?.sessionsCount
+          ? `Kinésithérapie ${invoice.visit.sessionsCount} séance(s) ${invoice.invoiceNumber}`
+          : `Consultation ${invoice.invoiceNumber}`,
       });
     }
   }

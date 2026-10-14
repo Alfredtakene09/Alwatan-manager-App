@@ -551,6 +551,16 @@ export default {
     Féminin: 'أنثى',
     Masculin: 'ذكر',
     'Personnes enregistrées': 'الأشخاص المسجلون',
+    'Nombre de séances': 'عدد الجلسات',
+    'Prix par séance (FCFA)': 'سعر الجلسة (فرنك)',
+    'Montant à encaisser': 'المبلغ المطلوب تحصيله',
+    '{n} séance(s)': '{n} جلسة',
+    '{sessions} séance(s) × {price} — part médecin {quota} : {share}':
+      '{sessions} جلسة × {price} — حصة الطبيب {quota} : {share}',
+    'Indiquez au moins 1 séance.': 'أدخل جلسة واحدة على الأقل.',
+    'Indiquez le prix d’une séance.': 'أدخل سعر الجلسة.',
+    'La réduction ne peut pas dépasser le montant des séances.':
+      'لا يمكن أن يتجاوز التخفيض مبلغ الجلسات.',
     'Féminin / Masculin': 'أنثى / ذكر',
     'Patients examens': 'مرضى الفحوصات',
     'Ont reçu des examens': 'تلقّوا فحوصات',
@@ -624,6 +634,8 @@ export default {
     'Recettes du mois': 'إيرادات الشهر',
     'Recettes de la période': 'إيرادات الفترة',
     'Dépenses du mois': 'مصاريف الشهر',
+    'Entrée : {amount}': 'إيراد: {amount}',
+    'Sortie : {amount}': 'صرف: {amount}',
     'Bénéfice net': 'صافي الربح',
     'Masse salariale': 'الكتلة الأجرية',
     'Salaires à jour des fiches employés': 'الرواتب المحدّثة في ملفات الموظفين',
@@ -1253,6 +1265,9 @@ export default {
     'Liste des dépenses enregistrées pour {period}':
       'قائمة المصاريف المسجلة لـ {period}',
     'Nouvelle dépense': 'مصروف جديد',
+    'Nouvelle saisie': 'قيد جديد',
+    'Aucune ligne pour cette date. Cliquez sur « Nouvelle saisie » pour enregistrer une dépense ou une entrée.':
+      'لا توجد بنود في هذا التاريخ. انقر « قيد جديد » لتسجيل مصروف أو إيراد.',
     'Aucune dépense pour cette date. Cliquez sur « Nouvelle dépense » pour enregistrer une sortie de caisse.':
       'لا توجد مصاريف لهذا التاريخ. انقر على «مصروف جديد» لتسجيل صرف من الصندوق.',
     'Chargement des dépenses…': 'جاري تحميل المصاريف…',

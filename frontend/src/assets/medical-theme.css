@@ -243,7 +243,7 @@ select option,
   grid-template-columns: repeat(3, 1fr);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 900px) {
   .form-grid-2,
   .form-grid-3 {
     grid-template-columns: 1fr;
@@ -467,11 +467,45 @@ select option,
   }
 }
 
-@media (max-width: 767px) {
+@media (max-width: 1199px) {
   .stats-grid,
   .stats-row,
-  .kpi-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  .kpi-grid,
+  .medecin-stats,
+  .ops-stats,
+  .compta-stats,
+  .supervision-grid,
+  .clinical-cards,
+  .cash-settlement-stats,
+  .dashboard-cards,
+  .dashboard-cards-skeleton,
+  .finance-entry-cards {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 11.25rem), 1fr)) !important;
+  }
+
+  .stats-grid > *,
+  .stats-row > *,
+  .kpi-grid > *,
+  .medecin-stats > *,
+  .ops-stats > *,
+  .compta-stats > *,
+  .supervision-grid > *,
+  .clinical-cards > *,
+  .cash-settlement-stats > *,
+  .dashboard-cards > *,
+  .dashboard-cards-skeleton > *,
+  .finance-entry-cards > * {
+    min-width: 0 !important;
+    width: auto !important;
+  }
+
+  .stat-card__label,
+  .stat-card__detail,
+  .stat-card__trend,
+  .dash-stat__label,
+  .dash-stat__hint {
+    white-space: normal !important;
   }
 
   .table-scroll-x,
@@ -510,6 +544,6 @@ select option,
   .page-header__actions > *,
   .ui-card__actions > .ui-btn {
     flex: 1 1 auto;
-    min-width: 0;
+    max-width: 100%;
   }
 }

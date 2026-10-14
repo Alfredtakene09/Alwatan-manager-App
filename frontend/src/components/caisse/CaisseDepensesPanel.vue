@@ -16,7 +16,12 @@ import UiFormModal from '@/components/ui/UiFormModal.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import type { ExpenseIndiceOption } from '@/lib/expense-indices'
-import { fetchExpenseIndices, toActiveIndiceOptions } from '@/lib/expense-indices'
+import {
+  categoryCodeFromIndiceName,
+  EXPENSE_CATEGORY_CODE_LABELS,
+  fetchExpenseIndices,
+  toActiveIndiceOptions,
+} from '@/lib/expense-indices'
 import '@/assets/simple-table.css'
 
 const props = withDefaults(
@@ -101,7 +106,10 @@ type ExpenseRow = {
   id: string
   businessDate?: string
   amountFcfa: number
+  flow?: 'SORTIE' | 'ENTREE'
   label: string
+  category?: string
+  categoryLabel?: string
   comment: string | null
   createdAt: string
 }
@@ -115,16 +123,29 @@ const indices = computed(() => props.activeIndices ?? internalIndices.value)
 
 const form = ref({
   businessDate: '',
+  flow: 'SORTIE' as 'SORTIE' | 'ENTREE',
   indiceId: '',
   label: '',
   amountFcfa: '',
   comment: '',
 })
 
+const indicesForFlow = computed(() =>
+  indices.value.filter((item) => (item.flow === 'ENTREE') === (form.value.flow === 'ENTREE')),
+)
+
 const indiceOptions = computed(() => [
   { value: '', label: uiText('— Sélectionner un indice —') },
-  ...indices.value.map((item) => ({ value: item.id, label: item.name })),
+  ...indicesForFlow.value.map((item) => ({ value: item.id, label: item.name })),
 ])
+
+const indicatedCodeLabel = computed(() => {
+  const selected = indices.value.find((item) => item.id === form.value.indiceId)
+  if (!selected) return null
+  return EXPENSE_CATEGORY_CODE_LABELS[categoryCodeFromIndiceName(selected.name)]
+})
+
+const isCashEntry = computed(() => form.value.flow === 'ENTREE')
 
 function formatDisplayDate(iso: string) {
   void localeCode.value
@@ -202,15 +223,18 @@ function emitSummary() {
 
 const isEditing = computed(() => editingId.value !== null)
 
-const expenseFormTitle = computed(() =>
-  isEditing.value ? uiText('Modifier la dépense') : uiText('Nouvelle dépense'),
-)
+const expenseFormTitle = computed(() => {
+  if (isEditing.value) return uiText('Modifier la dépense')
+  return uiText('Nouvelle saisie')
+})
 
-const expenseFormSubtitle = computed(() =>
-  isEditing.value
-    ? uiText('Corrigez le libellé, le montant ou le commentaire')
-    : uiText("Enregistrement d'une dépense clinique payée en caisse"),
-)
+const expenseFormSubtitle = computed(() => {
+  if (isEditing.value) return uiText('Corrigez le libellé, le montant ou le commentaire')
+  if (isCashEntry.value) {
+    return uiText('Le montant saisi est ajouté au solde selon l\'indice indiqué')
+  }
+  return uiText("Enregistrement d'une dépense clinique payée en caisse")
+})
 
 function formatTime(iso: string) {
   void localeCode.value
@@ -227,9 +251,10 @@ const tableRows = computed(() =>
     time: formatTime(row.createdAt),
     timeSort: new Date(row.createdAt).getTime(),
     label: row.label,
+    flow: row.flow,
     comment: row.comment?.trim() || '—',
     hasComment: Boolean(row.comment?.trim()),
-    amountLabel: formatFcfa(row.amountFcfa),
+    amountLabel: `${row.flow === 'ENTREE' ? '+ ' : ''}${formatFcfa(row.amountFcfa)}`,
     amountSort: row.amountFcfa,
   })),
 )
@@ -316,15 +341,17 @@ async function load() {
 
 function resetForm() {
   form.value.businessDate = expenseBusinessDate.value
+  form.value.flow = 'SORTIE'
   form.value.indiceId = ''
   form.value.label = ''
   form.value.amountFcfa = ''
   form.value.comment = ''
 }
 
-function openCreateModal() {
+function openCreateModal(flow: 'SORTIE' | 'ENTREE' = 'SORTIE') {
   editingId.value = null
   resetForm()
+  form.value.flow = flow
   message.value = ''
   modalOpen.value = true
 }
@@ -335,6 +362,7 @@ function openEditModal(id: string) {
   editingId.value = id
   form.value = {
     businessDate: (row.businessDate ?? expenseBusinessDate.value).slice(0, 10),
+    flow: row.flow === 'ENTREE' ? 'ENTREE' : 'SORTIE',
     indiceId: '',
     label: row.label,
     amountFcfa: String(row.amountFcfa),
@@ -380,6 +408,8 @@ async function submit() {
       businessDate: form.value.businessDate || expenseBusinessDate.value,
       label,
       amountFcfa: amount,
+      flow: form.value.flow,
+      indiceId: form.value.indiceId || undefined,
       comment: form.value.comment.trim() || undefined,
     }
 
@@ -459,6 +489,14 @@ watch(() => props.activeIndices, () => {
 })
 watch(() => form.value.indiceId, applySelectedIndice)
 
+watch(() => form.value.flow, () => {
+  if (isEditing.value) return
+  if (!indicesForFlow.value.some((item) => item.id === form.value.indiceId)) {
+    form.value.indiceId = ''
+    form.value.label = ''
+  }
+})
+
 onMounted(async () => {
   await loadIndices()
   await load()
@@ -503,13 +541,13 @@ onMounted(async () => {
     >
       <template #actions>
         <ExportButtons :disabled="loading || !tableRows.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-        <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal">
-          {{ uiText('Nouvelle dépense') }}
+        <UiButton variant="primary" size="sm" :icon="Plus" @click="openCreateModal()">
+          {{ uiText('Nouvelle saisie') }}
         </UiButton>
       </template>
 
       <p v-if="!rows.length && !loading" class="empty">
-        {{ uiText('Aucune dépense pour cette date. Cliquez sur « Nouvelle dépense » pour enregistrer une sortie de caisse.') }}
+        {{ uiText('Aucune ligne pour cette date. Cliquez sur « Nouvelle saisie » pour enregistrer une dépense ou une entrée.') }}
       </p>
 
       <template v-else>
@@ -539,7 +577,10 @@ onMounted(async () => {
                   <tr v-for="(row, index) in tableRows" :key="row.id">
                     <td class="simple-table__num">{{ index + 1 }}</td>
                     <td><span class="st-date">{{ row.time }}</span></td>
-                    <td><span class="st-name">{{ row.label }}</span></td>
+                    <td>
+                      <span class="st-name">{{ row.label }}</span>
+                      <span v-if="row.flow === 'ENTREE'" class="st-muted"> · {{ uiText('Entrée') }}</span>
+                    </td>
                     <td>
                       <span v-if="row.hasComment">{{ row.comment }}</span>
                       <span v-else class="st-muted">{{ row.comment }}</span>
@@ -641,11 +682,21 @@ onMounted(async () => {
       <form class="expense-form" @submit.prevent="submit">
         <UiInput
           v-model="form.businessDate"
-          :label="uiText('Date de la dépense')"
+          :label="uiText(isCashEntry ? 'Date de l\'entrée' : 'Date de la dépense')"
           type="date"
           required
           class="expense-form__full"
         />
+        <UiSelect
+          v-if="!isEditing"
+          v-model="form.flow"
+          :label="uiText('Type')"
+          required
+          class="expense-form__full"
+        >
+          <option value="SORTIE">{{ uiText('Dépense') }}</option>
+          <option value="ENTREE">{{ uiText('Entrée') }}</option>
+        </UiSelect>
         <UiSelect
           v-if="!isEditing"
           v-model="form.indiceId"
@@ -657,6 +708,13 @@ onMounted(async () => {
             {{ opt.label }}
           </option>
         </UiSelect>
+        <p v-if="!isEditing && !indicesForFlow.length" class="expense-form__hint">
+          {{
+            isCashEntry
+              ? uiText('Aucun indice d\'entrée. Créez-en un avec le type Entrée.')
+              : uiText('Aucun indice de dépense. Créez-en un avec le type Dépense.')
+          }}
+        </p>
         <UiInput
           v-else
           v-model="form.label"
@@ -673,6 +731,14 @@ onMounted(async () => {
           required
           class="expense-form__full"
         />
+        <p v-if="!isEditing && indicatedCodeLabel" class="expense-form__hint">
+          {{ uiText('Code') }} : {{ indicatedCodeLabel }}.
+          {{
+            isCashEntry
+              ? uiText('Le montant saisi entre dans le solde.')
+              : uiText('Le montant saisi sort du solde.')
+          }}
+        </p>
         <UiInput
           v-model="form.comment"
           :label="uiText('Commentaire')"
@@ -717,6 +783,12 @@ onMounted(async () => {
 
 .expense-form__full {
   grid-column: 1 / -1;
+}
+
+.expense-form__hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted, #78716c);
 }
 
 .expense-summary-card__body {

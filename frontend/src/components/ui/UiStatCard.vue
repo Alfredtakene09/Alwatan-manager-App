@@ -8,6 +8,7 @@ const props = defineProps<{
   value: number | string
   icon: Component
   trend?: string
+  detail?: string
   variant?: 'green' | 'teal' | 'blue' | 'amber' | 'rose' | 'violet' | 'cyan'
   compact?: boolean
   mini?: boolean
@@ -31,11 +32,19 @@ const labelText = computed(() => {
   >
     <template v-if="compact || mini">
       <strong class="stat-card__value">{{ value }}</strong>
-      <div class="stat-card__top">
+      <span v-if="detail && !mini" class="stat-card__detail">{{ detail }}</span>
+      <div v-if="labelText" class="stat-card__top">
         <span class="stat-card__label">{{ labelText }}</span>
         <div class="stat-card__icon" :class="`stat-card__icon--${variant ?? 'green'}`">
           <component :is="icon" :size="14" />
         </div>
+      </div>
+      <div
+        v-else
+        class="stat-card__icon stat-card__icon--float"
+        :class="`stat-card__icon--${variant ?? 'green'}`"
+      >
+        <component :is="icon" :size="14" />
       </div>
       <span v-if="trend && !mini" class="stat-card__trend">{{ trend }}</span>
     </template>
@@ -47,6 +56,7 @@ const labelText = computed(() => {
         </div>
       </div>
       <strong class="stat-card__value">{{ value }}</strong>
+      <span v-if="detail" class="stat-card__detail">{{ detail }}</span>
       <span v-if="trend" class="stat-card__trend">{{ trend }}</span>
     </template>
   </div>
@@ -54,9 +64,27 @@ const labelText = computed(() => {
 
 <style scoped>
 .stat-card {
+  position: relative;
   border-radius: var(--radius);
   padding: 1.25rem 1.35rem;
   overflow: hidden;
+}
+
+.stat-card__icon--float {
+  position: absolute;
+  top: 0.28rem;
+  inset-inline-end: 0.28rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 5px;
+}
+
+.stat-card--direct:has(.stat-card__icon--float) .stat-card__value,
+.stat-card--direct:has(.stat-card__icon--float) .stat-card__detail {
+  padding-inline-end: 1.2rem;
+  font-size: 0.62rem;
+  letter-spacing: -0.02em;
+  text-overflow: clip;
 }
 
 .stat-card__top {
@@ -96,6 +124,14 @@ const labelText = computed(() => {
   font-weight: 700;
   letter-spacing: -0.03em;
   line-height: 1;
+}
+
+.stat-card__detail {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #166534;
 }
 
 .stat-card__trend {
@@ -148,13 +184,24 @@ const labelText = computed(() => {
   margin: 0;
 }
 
-.stat-card--direct .stat-card__top {
+.stat-card--direct .stat-card__detail {
   order: 1;
+  margin-top: 0.1rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stat-card--direct .stat-card__top {
+  order: 2;
   margin-bottom: 0;
 }
 
 .stat-card--direct .stat-card__trend {
-  order: 2;
+  order: 3;
   margin-top: 0;
   font-size: 0.65rem;
   line-height: 1.2;

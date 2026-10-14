@@ -60,6 +60,7 @@ const errorText = computed(() => {
         :icon="card.icon"
         :variant="card.variant"
         :trend="card.trend"
+        :detail="card.detail"
         compact
       />
     </div>

@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { Wallet, Save } from '@lucide/vue'
 import { formatFcfa } from '@/lib/roles'
 import type { ExpenseIndiceOption } from '@/lib/expense-indices'
+import { categoryCodeFromIndiceName, EXPENSE_CATEGORY_CODE_LABELS } from '@/lib/expense-indices'
 import type { AdminExpenseCategory } from '@/lib/admin-dashboard'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -18,6 +19,8 @@ export type AdminExpenseFormPayload = {
   label: string
   amountFcfa: number
   category: AdminExpenseCategory
+  flow: 'SORTIE' | 'ENTREE'
+  indiceId?: string
   status: ClinicExpenseStatus
   comment?: string
   rejectionReason?: string
@@ -29,6 +32,7 @@ export type AdminExpenseEdit = {
   label: string
   amountFcfa: number
   categoryCode?: AdminExpenseCategory
+  flow?: 'SORTIE' | 'ENTREE'
   comment?: string | null
   status: ClinicExpenseStatus
   rejectionReason?: string | null
@@ -42,6 +46,8 @@ const props = defineProps<{
   indices: ExpenseIndiceOption[]
   /** Date utilisée à la création (filtre actif ou jour courant). */
   defaultBusinessDate?: string
+  /** ENTREE ajoute le montant au solde. SORTIE le retire. */
+  defaultFlow?: 'SORTIE' | 'ENTREE'
 }>()
 
 const emit = defineEmits<{
@@ -60,6 +66,7 @@ function todayIso() {
 function createEmptyForm() {
   return {
     businessDate: (props.defaultBusinessDate || '').slice(0, 10) || todayIso(),
+    flow: (props.defaultFlow === 'ENTREE' ? 'ENTREE' : 'SORTIE') as 'SORTIE' | 'ENTREE',
     indiceId: '',
     label: '',
     amountFcfa: '',
@@ -69,14 +76,26 @@ function createEmptyForm() {
 
 const form = ref(createEmptyForm())
 
+const entryFlow = computed(() => form.value.flow === 'ENTREE')
+
+const indicesForFlow = computed(() =>
+  props.indices.filter((item) => (item.flow === 'ENTREE') === entryFlow.value),
+)
+
 const indiceOptions = computed(() => [
   { value: '', label: '— Sélectionner un indice —' },
-  ...props.indices.map((item) => ({ value: item.id, label: item.name })),
+  ...indicesForFlow.value.map((item) => ({ value: item.id, label: item.name })),
 ])
 
 const selectedIndice = computed(() =>
-  props.indices.find((item) => item.id === form.value.indiceId) ?? null,
+  indicesForFlow.value.find((item) => item.id === form.value.indiceId) ?? null,
 )
+
+const indicatedCodeLabel = computed(() => {
+  if (!selectedIndice.value) return null
+  const code = categoryCodeFromIndiceName(selectedIndice.value.name)
+  return EXPENSE_CATEGORY_CODE_LABELS[code]
+})
 
 function applySelectedIndice() {
   if (!form.value.indiceId || props.editing?.id) return
@@ -103,6 +122,7 @@ watch(
     }
     form.value = {
       businessDate: (editing.businessDate ?? '').slice(0, 10) || todayIso(),
+      flow: editing.flow === 'ENTREE' ? 'ENTREE' : 'SORTIE',
       indiceId: '',
       label: editing.label,
       amountFcfa: String(editing.amountFcfa),
@@ -111,11 +131,22 @@ watch(
   },
 )
 
+watch(() => form.value.flow, () => {
+  if (props.editing?.id) return
+  if (!indicesForFlow.value.some((item) => item.id === form.value.indiceId)) {
+    form.value.indiceId = ''
+    form.value.label = ''
+  }
+})
+
 watch(() => form.value.indiceId, applySelectedIndice)
 
 const expenseModalSubtitle = computed(() => {
   const label = resolveLabel()
   if (label) return label
+  if (entryFlow.value) {
+    return 'Entrée de caisse — le montant saisi est ajouté au solde selon l\'indice indiqué'
+  }
   return 'Sortie de caisse — choisissez un indice et renseignez le montant'
 })
 
@@ -143,11 +174,16 @@ const amountPreview = computed(() => {
 function submit() {
   if (!canSubmit.value) return
   const status = props.editing?.status ?? 'VALIDATED'
+  const code = selectedIndice.value
+    ? categoryCodeFromIndiceName(selectedIndice.value.name)
+    : (props.editing?.categoryCode ?? 'AUTRE')
   emit('submit', {
     businessDate: form.value.businessDate,
     label: resolveLabel(),
     amountFcfa: Number(form.value.amountFcfa),
-    category: props.editing?.categoryCode ?? 'AUTRE',
+    category: code,
+    flow: entryFlow.value ? 'ENTREE' : 'SORTIE',
+    indiceId: form.value.indiceId || undefined,
     status,
     comment: form.value.comment.trim() || undefined,
     rejectionReason:
@@ -160,7 +196,7 @@ function submit() {
   <UiFormModal
     v-if="open"
     title-id="admin-expense-modal-title"
-    :title="isEditing ? 'Modifier la dépense' : 'Nouvelle dépense'"
+    :title="isEditing ? 'Modifier la saisie' : 'Nouvelle saisie'"
     :subtitle="expenseModalSubtitle"
     :icon="Wallet"
     size="wide"
@@ -168,26 +204,38 @@ function submit() {
   >
     <section class="form-panel">
       <UiAlert
-        v-if="!isEditing && !indices.length"
+        v-if="!isEditing && !indicesForFlow.length"
         type="warning"
-        message="Aucun indice actif. Créez des motifs dans l'onglet Indices de cette page."
+        :message="entryFlow
+          ? 'Aucun indice d\'entrée. Créez-en un dans l\'onglet Indices, avec le type Entrée.'
+          : 'Aucun indice de dépense. Créez-en un dans l\'onglet Indices, avec le type Dépense.'"
         class="expense-form__full"
       />
 
       <div class="form-grid-2">
         <UiInput
           v-model="form.businessDate"
-          label="Date de la dépense"
+          :label="entryFlow ? 'Date de l\'entrée' : 'Date de la dépense'"
           type="date"
           required
         />
 
         <UiSelect
           v-if="!isEditing"
+          v-model="form.flow"
+          label="Type"
+          required
+        >
+          <option value="SORTIE">Dépense</option>
+          <option value="ENTREE">Entrée</option>
+        </UiSelect>
+
+        <UiSelect
+          v-if="!isEditing"
           v-model="form.indiceId"
           label="Indice / motif"
           required
-          :disabled="!indices.length"
+          :disabled="!indicesForFlow.length"
         >
           <option v-for="opt in indiceOptions" :key="opt.value || 'empty'" :value="opt.value">
             {{ opt.label }}
@@ -223,8 +271,12 @@ function submit() {
             <span>Indice sélectionné</span>
             <strong>{{ selectedIndice.name }}</strong>
           </div>
+          <div v-if="indicatedCodeLabel && !isEditing" class="expense-preview__row">
+            <span>Code</span>
+            <strong>{{ indicatedCodeLabel }}</strong>
+          </div>
           <div class="expense-preview__row expense-preview__row--amount">
-            <span>Montant saisi</span>
+            <span>{{ entryFlow ? 'Montant ajouté au solde' : 'Montant saisi' }}</span>
             <strong>{{ amountPreview }}</strong>
           </div>
         </div>
@@ -233,7 +285,7 @@ function submit() {
 
     <template #footer>
       <UiButton
-        v-if="!isEditing && !indices.length"
+        v-if="!isEditing && !indicesForFlow.length"
         variant="ghost"
         @click="emit('go-to-indices')"
       >
@@ -241,7 +293,7 @@ function submit() {
       </UiButton>
       <UiButton variant="ghost" @click="emit('close')">Annuler</UiButton>
       <UiButton variant="primary" :icon="Save" :disabled="saving || !canSubmit" @click="submit">
-        {{ saving ? 'Enregistrement…' : isEditing ? 'Mettre à jour' : 'Enregistrer la dépense' }}
+        {{ saving ? 'Enregistrement…' : isEditing ? 'Mettre à jour' : entryFlow ? 'Enregistrer l\'entrée' : 'Enregistrer la dépense' }}
       </UiButton>
     </template>
   </UiFormModal>

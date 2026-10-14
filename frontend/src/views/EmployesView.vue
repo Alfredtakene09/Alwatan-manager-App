@@ -8,7 +8,6 @@ import { formatFcfa, formatFcfaPlain, fullName, canViewEmployeeCompensation } fr
 import { useAuthStore } from '@/stores/auth'
 import {
   CONSULTATION_QUOTA_MODE_OPTIONS,
-  CONSULTATION_RENEWAL_POLICY_OPTIONS,
   CONSULTATION_VALIDITY_OPTIONS,
   DOCTOR_COMPENSATION_OPTIONS,
   computeDoctorConsultationShares,
@@ -266,17 +265,11 @@ const quotaPreviewHint = computed(() => {
   return doctorQuotaHint(previewDoctor.value, Number(form.value.consultationTotalFcfa) || undefined)
 })
 
-const renewalPolicyHint = computed(
-  () =>
-    CONSULTATION_RENEWAL_POLICY_OPTIONS.find((item) => item.value === form.value.consultationRenewalPolicy)
-      ?.hint ?? '',
-)
-
-const payrollStepNumber = computed(() => (isMedecinProfile.value ? 5 : 3))
+const payrollStepNumber = computed(() => (isMedecinProfile.value ? 4 : 3))
 
 const salaryStepNumber = computed(() => {
   if (showPayrollSection.value) return payrollStepNumber.value
-  return isMedecinProfile.value ? 5 : 3
+  return isMedecinProfile.value ? 4 : 3
 })
 
 const salaryPreview = computed(() => {
@@ -1416,13 +1409,6 @@ onMounted(async () => {
           <Stethoscope :size="15" />
           Spécialité &amp; services
         </h3>
-        <p class="form-panel__intro">
-          {{ uiText('Spécialité affichée à la réception et pourcentage appliqué si ce médecin est choisi pour une opération.') }}
-        </p>
-        <UiAlert
-          type="info"
-          message="Pour apparaître dans les listes Médecin à la réception, ce médecin doit aussi avoir un compte utilisateur (rôle Médecin) dans Utilisateurs."
-        />
         <p v-if="!editingId || (editingId && !employeesById.get(editingId)?.hasUserAccount)" class="form-panel__hint">
           Après enregistrement,
           <RouterLink to="/admin/utilisateurs">créez le compte utilisateur</RouterLink>
@@ -1500,27 +1486,6 @@ onMounted(async () => {
       </section>
 
       <section v-if="isMedecinProfile" class="form-panel form-panel--accent">
-        <h3 class="form-panel__title">
-          <span class="form-panel__step">4</span>
-          <Banknote :size="15" />
-          Rémunération consultations
-        </h3>
-        <p class="form-panel__intro">
-          Définit le tarif affiché à la réception et la part reversée au médecin.
-        </p>
-
-        <UiInput
-          v-model="form.overtimeHourlyRateFcfa"
-          label="Taux horaire heures supplémentaires (FCFA)"
-          type="number"
-          min="0"
-          step="100"
-          placeholder="Ex. 5000"
-        />
-        <p class="form-panel__hint">
-          Utilisé par le gestionnaire pour calculer les heures supp. saisies par le médecin.
-        </p>
-
         <div class="comp-type-picker" role="radiogroup" aria-label="Type de rémunération">
           <button
             v-for="option in DOCTOR_COMPENSATION_OPTIONS"
@@ -1617,20 +1582,6 @@ onMounted(async () => {
               </option>
             </UiSelect>
           </div>
-
-          <div class="form-grid-compact form-grid-compact--2">
-            <UiSelect v-model="form.consultationRenewalPolicy" label="Après expiration">
-              <option
-                v-for="option in CONSULTATION_RENEWAL_POLICY_OPTIONS"
-                :key="option.value"
-                :value="option.value"
-              >
-                {{ option.label }}
-              </option>
-            </UiSelect>
-          </div>
-
-          <p v-if="renewalPolicyHint" class="form-panel__hint">{{ renewalPolicyHint }}</p>
 
           <div v-if="compensationSplit" class="comp-preview">
             <div class="comp-preview__row">

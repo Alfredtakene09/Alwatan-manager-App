@@ -7,4 +7,6 @@ export type SummaryStat = {
   icon: Component
   variant: 'green' | 'teal' | 'blue' | 'amber' | 'rose' | 'violet' | 'cyan'
   trend?: string
+  /** Ligne affichée juste sous le montant principal. */
+  detail?: string
 }

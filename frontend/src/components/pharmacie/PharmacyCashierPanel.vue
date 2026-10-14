@@ -2354,22 +2354,39 @@ watch(
   }
 }
 
-/* Empilement (panier sous le catalogue) réservé aux mobiles. */
-@media (max-width: 620px) {
+/* Tablette portrait et mobile : catalogue puis panier, chacun visible. */
+@media (max-width: 900px) {
   .cashier__grid {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-    overflow: auto;
+    grid-template-rows: auto auto;
+    overflow: visible;
+    height: auto;
+  }
+
+  .cashier-panel {
+    height: auto;
+    min-height: 16rem;
+    overflow: visible;
+  }
+
+  .cashier__recette {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .catalog-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 620px) {
   .external-client-row {
     grid-template-columns: 1fr;
+  }
+
+  .catalog-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

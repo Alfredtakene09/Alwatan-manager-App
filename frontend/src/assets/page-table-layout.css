@@ -422,35 +422,142 @@
   flex-shrink: 0;
 }
 
-@media (max-width: 768px) {
-  .page-with-table {
-    height: auto;
-    min-height: 0;
-    overflow: visible;
+@media (max-width: 1199px) {
+  .page-with-table,
+  .reception-dashboard,
+  .etat-page,
+  .pharmacy-caisse-page,
+  .journal-page.page-with-table {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
   }
 
   .page-with-table__body,
   .page-with-table .ui-card--table-panel,
-  .page-with-table .ui-card--table-panel .ui-card__body {
-    overflow: visible;
+  .page-with-table .ui-card--table-panel .ui-card__body,
+  .page-with-table__head,
+  .dashboard-body,
+  .patients-table-card,
+  .journal-page__body,
+  .journal-page__head,
+  .cashier,
+  .cashier__grid {
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
   }
 
   .page-with-table__head {
     max-height: none;
-    overflow: visible;
   }
 
-  .page-with-table__body {
-    flex: none;
+  .page-with-table__body,
+  .dashboard-body,
+  .patients-table-card {
+    flex: none !important;
     min-height: auto;
+  }
+
+  .page-with-table__head .page-header,
+  .page-with-table__head .page-header__actions,
+  .page-header,
+  .page-header__actions,
+  .ui-card__header,
+  .ui-card__actions,
+  .table-toolbar__top,
+  .table-toolbar__filters,
+  .table-toolbar__actions,
+  .date-range-filter,
+  .cashier__head,
+  .cashier__head-actions {
+    flex-wrap: wrap !important;
+    max-width: 100%;
+  }
+
+  .page-header__actions,
+  .ui-card__actions,
+  .table-toolbar__actions,
+  .page-create-bar {
+    position: relative;
+    z-index: 2;
+    width: 100%;
+    margin-inline-start: 0 !important;
+    margin-left: 0 !important;
+    justify-content: flex-start !important;
+  }
+
+  .page-header__actions > .ui-btn,
+  .ui-card__actions > .ui-btn,
+  .table-toolbar__actions .ui-btn {
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .dashboard-period {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+
+  .page-create-bar {
+    width: auto;
+    justify-content: flex-end !important;
+  }
+
+  .table-toolbar__search,
+  .receptionist-filter,
+  .receptionist-filter__select,
+  .date-filter,
+  .date-filter__input,
+  .search-compact,
+  .export-buttons,
+  .table-toolbar__actions > * {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    flex: 1 1 100%;
+  }
+
+  .export-buttons {
+    width: auto !important;
+    flex: 1 1 auto;
+  }
+
+  .etat-sticky,
+  .dashboard-sticky,
+  .journal-page__head {
+    position: static !important;
   }
 
   .page-with-table .ui-card--table-panel {
     min-height: min(55dvh, 520px);
   }
 
-  .page-with-table .ui-card--table-panel .simple-table-shell--fill {
-    min-height: min(48dvh, 480px);
+  .page-with-table .ui-card--table-panel .ui-card__body {
+    flex: 1 1 auto;
+    min-height: 12rem;
+    overflow: auto !important;
+  }
+
+  .page-with-table .ui-card--table-panel .simple-table-shell,
+  .page-with-table .ui-card--table-panel .simple-table-shell--fill,
+  .simple-table-shell,
+  .simple-table-shell--fill {
+    height: auto !important;
+    max-height: none !important;
+    min-height: 12rem;
+    overflow: visible !important;
+  }
+
+  .simple-table-scroll,
+  .patients-table-card .table-wrap,
+  .table-wrap,
+  .catalog-grid-wrap,
+  .cart-table-wrap {
+    max-height: 70dvh;
+    overflow: auto !important;
+    -webkit-overflow-scrolling: touch;
   }
 
   .stats-grid,

@@ -32,6 +32,13 @@ const COLLECTED_RULES_FOR_EVERYONE_FROM = "2026-10-11";
 /** Orthopédie et traumatologie (y compris la graphie « Tromatologie ») sont un seul service. */
 export const ORTHO_TRAUMA_SERVICE = ORTHO_TRAUMA_SERVICE_NAME;
 
+export type RegistrationDoctorShare = {
+  name: string;
+  shareFcfa: number;
+  /** null quand les opérations de la ligne n'ont pas toutes le même taux pour ce médecin. */
+  percent: number | null;
+};
+
 /** Une ligne du PDF des enregistrements : un service, ou une opération. */
 export type RegistrationSummaryLine = {
   group: DayClosureLineGroup;
@@ -43,6 +50,8 @@ export type RegistrationSummaryLine = {
   operationName: string | null;
   /** Médecins de la ligne, sans le préfixe « Dr ». */
   doctorNames: string[];
+  /** Opération : part de chaque médecin (chirurgien, anesthésiste), dans l'ordre de doctorNames. */
+  doctorShares: RegistrationDoctorShare[];
   qty: number;
   amountFcfa: number;
   doctorShareFcfa: number;
@@ -420,12 +429,24 @@ function invoiceShare(
   return NO_SHARE;
 }
 
-type Accumulator = Omit<RegistrationSummaryLine, "doctorNames" | "doctorPercent" | "operationPercent"> & {
+type Accumulator = Omit<
+  RegistrationSummaryLine,
+  "doctorNames" | "doctorShares" | "doctorPercent" | "operationPercent"
+> & {
   patientIds: Set<string>;
   doctorPercents: Set<number>;
   operationPercents: Set<number>;
   doctorNameSet: Set<string>;
+  doctorShareMap: Map<string, { shareFcfa: number; percents: Set<number> }>;
 };
+
+function addDoctorShare(row: Accumulator, name: string, share: ShareResult) {
+  if (!name || share.shareFcfa <= 0) return;
+  const entry = row.doctorShareMap.get(name) ?? { shareFcfa: 0, percents: new Set<number>() };
+  entry.shareFcfa += share.shareFcfa;
+  if (share.percent != null) entry.percents.add(share.percent);
+  row.doctorShareMap.set(name, entry);
+}
 
 /** Un seul taux dans la ligne : on l'affiche ; sinon la colonne reste vide. */
 function uniquePercent(percents: Set<number>): number | null {
@@ -756,13 +777,12 @@ function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationS
       doctorPercents: new Set<number>(),
       operationPercents: new Set<number>(),
       doctorNameSet: new Set<string>(),
+      doctorShareMap: new Map(),
     };
-    if (group === "operation") {
-      const doctorName = lineDoctorName(invoice, group);
-      if (doctorName) row.doctorNameSet.add(doctorName);
-      const assistantName = operationAssistantName(invoice);
-      if (assistantName) row.doctorNameSet.add(assistantName);
-    }
+    const surgeonName = group === "operation" ? lineDoctorName(invoice, group) : "";
+    const assistantName = group === "operation" ? operationAssistantName(invoice) : "";
+    if (surgeonName) row.doctorNameSet.add(surgeonName);
+    if (assistantName) row.doctorNameSet.add(assistantName);
 
     const examQty = registrationExamQuantity(invoice);
     if (examQty != null) {
@@ -786,6 +806,10 @@ function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationS
         : amountFcfa;
     const share = invoiceShare(invoice, group, shareBase);
     row.doctorShareFcfa += share.shareFcfa;
+    if (group === "operation") {
+      addDoctorShare(row, surgeonName, surgeonOperationShare(invoice, shareBase));
+      addDoctorShare(row, assistantName, assistantOperationShare(invoice, shareBase));
+    }
     // Reste clinique : part médecins + part clinique = montant de la ligne.
     row.clinicShareFcfa += clinicRemainderFcfa(amountFcfa, share.shareFcfa);
     if (share.percent != null) {
@@ -797,11 +821,31 @@ function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationS
   }
 
   return [...grouped.values()]
-    .map(({ patientIds: _patientIds, doctorPercents, operationPercents, doctorNameSet, ...line }) => ({
-      ...line,
-      doctorNames: [...doctorNameSet].sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base" })),
-      doctorPercent: uniquePercent(doctorPercents),
-      operationPercent: uniquePercent(operationPercents),
-    }))
+    .map(
+      ({
+        patientIds: _patientIds,
+        doctorPercents,
+        operationPercents,
+        doctorNameSet,
+        doctorShareMap,
+        ...line
+      }) => {
+        const doctorNames = [...doctorNameSet].sort((a, b) =>
+          a.localeCompare(b, "fr", { sensitivity: "base" }),
+        );
+        return {
+          ...line,
+          doctorNames,
+          doctorShares: doctorNames.flatMap((name) => {
+            const entry = doctorShareMap.get(name);
+            return entry
+              ? [{ name, shareFcfa: entry.shareFcfa, percent: uniquePercent(entry.percents) }]
+              : [];
+          }),
+          doctorPercent: uniquePercent(doctorPercents),
+          operationPercent: uniquePercent(operationPercents),
+        };
+      },
+    )
     .sort((a, b) => a.service.localeCompare(b.service, "fr", { sensitivity: "base" }));
 }

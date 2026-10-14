@@ -168,7 +168,11 @@ async function attachExpensesToCashiers(
       );
       bucket.expensesTotalFcfa = summary.totalFcfa;
       bucket.expenses = summary.rows;
-      bucket.netTotalFcfa = netAfterExpenses(bucket.systemTotalFcfa, summary.totalFcfa);
+      bucket.netTotalFcfa = netAfterExpenses(
+        bucket.systemTotalFcfa,
+        summary.totalFcfa,
+        summary.inflowFcfa,
+      );
     }),
   );
 }
@@ -327,6 +331,7 @@ router.get("/pending", async (req, res) => {
           dayNetFcfa: netAfterExpenses(
             personalCollected.totalFcfa,
             personalExpenses?.totalFcfa ?? 0,
+            personalExpenses?.inflowFcfa ?? 0,
           ),
         }
       : null,
@@ -540,7 +545,11 @@ router.post("/disburse", async (req, res) => {
       });
     }
 
-    const netDisbursementFcfa = netAfterExpenses(systemTotalFcfa, expenseSummary.totalFcfa);
+    const netDisbursementFcfa = netAfterExpenses(
+      systemTotalFcfa,
+      expenseSummary.totalFcfa,
+      expenseSummary.inflowFcfa,
+    );
     const expenseNote =
       expenseSummary.totalFcfa > 0
         ? `Dépenses déduites : ${expenseSummary.totalFcfa.toLocaleString("fr-FR")} FCFA`

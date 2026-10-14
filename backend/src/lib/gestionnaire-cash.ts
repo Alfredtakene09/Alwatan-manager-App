@@ -140,7 +140,11 @@ async function enrichBatchNet(
     batch.businessDate,
     batch.shiftSlot,
   );
-  const netTotalFcfa = netAfterExpenses(systemTotalFcfa, expenseSummary.totalFcfa);
+  const netTotalFcfa = netAfterExpenses(
+    systemTotalFcfa,
+    expenseSummary.totalFcfa,
+    expenseSummary.inflowFcfa,
+  );
   return {
     ...batch,
     systemTotalFcfa,

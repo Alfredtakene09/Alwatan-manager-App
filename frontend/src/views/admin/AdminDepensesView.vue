@@ -53,6 +53,7 @@ const rows = ref<AdminExpenseRow[]>([])
 const loading = ref(false)
 const showExpenseModal = ref(false)
 const editingExpense = ref<AdminExpenseEdit | null>(null)
+const createFlow = ref<'SORTIE' | 'ENTREE'>('SORTIE')
 const expenseSaving = ref(false)
 
 const expenseSummary = ref({
@@ -133,8 +134,9 @@ function onDateRangeChange() {
   }
 }
 
-function openCreateExpense() {
+function openCreateExpense(flow: 'SORTIE' | 'ENTREE' = 'SORTIE') {
   loadIndices()
+  createFlow.value = flow
   editingExpense.value = null
   showExpenseModal.value = true
 }
@@ -147,6 +149,7 @@ function openEditExpense(row: AdminExpenseRow) {
     label: row.label ?? row.description,
     amountFcfa: row.amountFcfa,
     categoryCode: row.categoryCode,
+    flow: row.flow,
     status: row.status,
     comment: row.comment ?? '',
     rejectionReason: row.rejectionReason ?? '',
@@ -193,7 +196,7 @@ const expensePeriodLabel = computed(() => {
 
 const expenseTotalFcfa = computed(() =>
   rows.value
-    .filter((row) => row.status !== 'REJECTED')
+    .filter((row) => row.status !== 'REJECTED' && row.flow !== 'ENTREE')
     .reduce((sum, row) => sum + row.amountFcfa, 0),
 )
 
@@ -266,9 +269,9 @@ onMounted(() => {
         <UiButton
           v-if="canManageExpenses && activeSection === 'liste'"
           :icon="Plus"
-          @click="openCreateExpense"
+          @click="openCreateExpense()"
         >
-          {{ uiText('Nouvelle dépense') }}
+          {{ uiText('Nouvelle saisie') }}
         </UiButton>
       </template>
     </UiPageHeader>
@@ -350,6 +353,7 @@ onMounted(() => {
             <tr>
               <th>{{ uiText('Date') }}</th>
               <th>{{ uiText('Catégorie') }}</th>
+              <th>{{ uiText('Type') }}</th>
               <th>{{ uiText('Description') }}</th>
               <th>{{ uiText('Montant') }}</th>
               <th>{{ uiText('Statut') }}</th>
@@ -360,6 +364,7 @@ onMounted(() => {
             <tr v-for="row in rows" :key="row.id">
               <td>{{ formatShortDate(row.date) }}</td>
               <td>{{ row.category }}</td>
+              <td>{{ row.flow === 'ENTREE' ? uiText('Entrée') : uiText('Sortie') }}</td>
               <td>{{ row.description }}</td>
               <td>{{ formatFcfa(row.amountFcfa) }}</td>
               <td>
@@ -404,6 +409,7 @@ onMounted(() => {
       :saving="expenseSaving"
       :editing="editingExpense"
       :indices="activeIndices"
+      :default-flow="editingExpense?.flow ?? createFlow"
       :default-business-date="expenseBusinessDate"
       @go-to-indices="showExpenseModal = false; selectSection('indices')"
       @close="showExpenseModal = false; editingExpense = null"

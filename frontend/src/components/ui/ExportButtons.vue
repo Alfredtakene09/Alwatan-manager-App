@@ -66,9 +66,10 @@ defineEmits<{
 
 <style scoped>
 .export-buttons {
-  display: inline-flex;
+  display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
   align-items: center;
+  max-width: 100%;
 }
 </style>

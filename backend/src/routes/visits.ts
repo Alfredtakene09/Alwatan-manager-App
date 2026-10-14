@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { InterventionCategory, InvoiceStatus, InvoiceType, PatientCategory, Prisma, SurgeryStatus, UserRole, VisitStatus } from "@prisma/client";
+import { ConsultationQuotaMode, InterventionCategory, InvoiceStatus, InvoiceType, PatientCategory, Prisma, SurgeryStatus, UserRole, VisitStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
 import { backfillClinicServiceDoctorLinks, findSelectableDoctorInClinicService, listTransferDoctorsForClinicService } from "../lib/clinic-service-doctors.js";
@@ -64,7 +64,14 @@ import {
   PATIENT_HAS_PAYMENTS_CODE,
 } from "../lib/patient-payment-guard.js";
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
-import { serializeDoctorFields, selectableDoctorIncludingPausedWhere, selectableDoctorByIdWhere } from "../lib/doctor-compensation.js";
+import {
+  computeConsultationShares,
+  doctorUsesQuota,
+  serializeDoctorFields,
+  selectableDoctorIncludingPausedWhere,
+  selectableDoctorByIdWhere,
+  type DoctorProfile,
+} from "../lib/doctor-compensation.js";
 import { isOperationAssistantStaff } from "../lib/doctor-profile.js";
 import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
 import {
@@ -113,14 +120,35 @@ const visitInclude = {
 function mapVisitWithBilling<T extends {
   consultationFeeFcfa: number | null;
   reductionFcfa: number | null;
-  invoices: { id: string; invoiceNumber: string; amountFcfa: number; status: string }[];
-}>(visit: T) {
+  invoices: {
+    id: string;
+    invoiceNumber: string;
+    amountFcfa: number;
+    paidAmountFcfa: number;
+    status: string;
+  }[];
+}>(visit: T, doctor?: DoctorProfile | null) {
   const invoice = visit.invoices[0];
   const amounts = computeConsultationAmounts(
     visit.consultationFeeFcfa,
     visit.reductionFcfa,
     invoice?.amountFcfa,
   );
+  const paidFcfa =
+    invoice && invoice.status !== InvoiceStatus.CANCELLED
+      ? Math.max(0, invoice.paidAmountFcfa)
+      : 0;
+  const employee = doctor?.employee;
+  const doctorShare =
+    doctor && employee && paidFcfa > 0
+      ? computeConsultationShares(
+          paidFcfa,
+          employee.consultationQuotaPercent ?? 0,
+          employee.consultationQuotaFcfa,
+          employee.consultationQuotaMode ?? ConsultationQuotaMode.PERCENT,
+          doctor,
+        ).doctorShareFcfa
+      : null;
 
   return {
     ...visit,
@@ -129,6 +157,12 @@ function mapVisitWithBilling<T extends {
       invoiceId: invoice?.id ?? null,
       invoiceNumber: invoice?.invoiceNumber ?? null,
       invoiceStatus: invoice?.status ?? null,
+      paidFcfa,
+      doctorShareFcfa: doctorShare,
+      doctorQuotaPercent:
+        doctor && employee && employee.consultationQuotaMode !== ConsultationQuotaMode.FIXED_AMOUNT
+          ? (employee.consultationQuotaPercent ?? null)
+          : null,
     },
   };
 }
@@ -364,7 +398,22 @@ router.get("/", async (req, res) => {
         : { createdAt: "asc" },
     take: queue === "consulted" ? 200 : 100,
   });
-  return res.json(visits.map(mapVisitWithBilling));
+
+  let viewerDoctor: DoctorProfile | null = null;
+  if (canAccessModule(user.role, "consultation") && queue !== "supervision") {
+    const viewer = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { role: true, employee: true },
+    });
+    if (viewer && doctorUsesQuota(viewer)) viewerDoctor = viewer;
+  }
+  return res.json(
+    visits.map((visit) => {
+      const ownsVisit =
+        visit.assignedDoctorId === user.id || visit.consultation?.doctorId === user.id;
+      return mapVisitWithBilling(visit, ownsVisit ? viewerDoctor : null);
+    }),
+  );
 });
 
 router.get("/transfer-services", requireModule("consultation"), async (_req, res) => {

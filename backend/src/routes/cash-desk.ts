@@ -1,6 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
-import { ClinicExpenseCategory, ClinicExpenseStatus, Prisma, ReceptionShiftSlot, UserRole } from "@prisma/client";
+import {
+  ClinicExpenseCategory,
+  ClinicExpenseFlow,
+  ClinicExpenseStatus,
+  Prisma,
+  ReceptionShiftSlot,
+  UserRole,
+} from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import {
   CASH_COLLECTOR_ROLES,
@@ -20,6 +27,7 @@ import {
 } from "../lib/cashier-personal-stats.js";
 import { buildDayClosureSalesSummary } from "../lib/day-closure-sales.js";
 import { DEFAULT_EXPENSE_INDICES } from "../lib/expense-indices-seed.js";
+import { resolveExpenseClassification } from "../lib/expense-flow.js";
 import { requireAuth, requireAnyModule } from "../middleware/auth.js";
 
 const router = Router();
@@ -58,6 +66,8 @@ const expenseSchema = z.object({
   amountFcfa: z.coerce.number().int().positive(),
   label: z.string().min(2).max(200),
   category: z.nativeEnum(ClinicExpenseCategory).default(ClinicExpenseCategory.AUTRE),
+  flow: z.nativeEnum(ClinicExpenseFlow).optional(),
+  indiceId: z.string().min(1).optional(),
   comment: z.string().max(500).optional(),
   paidById: z.string().min(1).optional(),
 });
@@ -84,6 +94,7 @@ function canManageExpense(
 const expenseIndiceSchema = z.object({
   name: z.string().min(2).max(100),
   description: z.string().max(500).optional(),
+  flow: z.nativeEnum(ClinicExpenseFlow).optional(),
   active: z.boolean().optional(),
 });
 
@@ -95,6 +106,7 @@ async function syncExpenseIndices() {
       create: {
         name: item.name,
         description: item.description,
+        flow: item.flow,
         sortOrder: index,
         active: true,
       },
@@ -107,6 +119,7 @@ function serializeExpenseIndice(row: {
   id: string;
   name: string;
   description: string | null;
+  flow: ClinicExpenseFlow;
   active: boolean;
   sortOrder: number;
 }) {
@@ -114,6 +127,7 @@ function serializeExpenseIndice(row: {
     id: row.id,
     name: row.name,
     description: row.description,
+    flow: row.flow,
     active: row.active,
     sortOrder: row.sortOrder,
   };
@@ -181,7 +195,14 @@ router.get("/expenses", async (req, res) => {
     orderBy: { createdAt: "desc" },
   });
 
-  const totalFcfa = rows.reduce((sum, row) => sum + row.amountFcfa, 0);
+  const totalFcfa = rows.reduce(
+    (sum, row) => sum + (row.flow === ClinicExpenseFlow.ENTREE ? 0 : row.amountFcfa),
+    0,
+  );
+  const entriesTotalFcfa = rows.reduce(
+    (sum, row) => sum + (row.flow === ClinicExpenseFlow.ENTREE ? row.amountFcfa : 0),
+    0,
+  );
 
   return res.json({
     from: fromIso || null,
@@ -189,11 +210,13 @@ router.get("/expenses", async (req, res) => {
     filter: filter || "all",
     businessDate: toIso || formatBusinessDate(new Date()),
     totalFcfa,
+    entriesTotalFcfa,
     categories: EXPENSE_CATEGORY_LABELS,
     rows: rows.map((row) => ({
       id: row.id,
       businessDate: formatBusinessDate(row.businessDate),
       amountFcfa: row.amountFcfa,
+      flow: row.flow,
       label: row.label,
       category: row.category,
       categoryLabel: EXPENSE_CATEGORY_LABELS[row.category],
@@ -216,12 +239,20 @@ router.post("/expenses", async (req, res) => {
     const cashier = await assertCashier(paidById);
     if (!cashier) return res.status(400).json({ error: "Caissier invalide" });
 
+    const classification = await resolveExpenseClassification({
+      indiceId: body.indiceId,
+      category: body.category,
+      flow: body.flow,
+    });
+
     const row = await prisma.clinicExpense.create({
       data: {
         businessDate,
         amountFcfa: body.amountFcfa,
         label: body.label.trim(),
-        category: body.category,
+        flow: classification.flow,
+        category: classification.category,
+        indiceId: classification.indiceId,
         comment: body.comment?.trim() || null,
         paidById,
         recordedById: user.id,
@@ -232,11 +263,21 @@ router.post("/expenses", async (req, res) => {
       },
     });
 
+    await refreshUnvalidatedDayClosureForExpense(paidById, businessDate);
+
     return res.status(201).json({
       id: row.id,
-      message: "Dépense enregistrée.",
+      flow: row.flow,
+      category: row.category,
+      message:
+        row.flow === ClinicExpenseFlow.ENTREE
+          ? "Entrée enregistrée. Le montant est ajouté au solde."
+          : "Dépense enregistrée.",
     });
   } catch (error) {
+    if (error instanceof Error && error.message === "INDICE_INVALID") {
+      return res.status(400).json({ error: "Indice invalide ou inactif." });
+    }
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: "Données invalides", details: error.issues });
     }
@@ -357,6 +398,7 @@ router.post("/expense-indices", async (req, res) => {
       data: {
         name: body.name.trim(),
         description: body.description?.trim() || null,
+        flow: body.flow ?? ClinicExpenseFlow.SORTIE,
       },
     });
     return res.status(201).json(serializeExpenseIndice(item));
@@ -387,6 +429,7 @@ router.put("/expense-indices/:id", async (req, res) => {
         ...(body.description !== undefined
           ? { description: body.description.trim() || null }
           : {}),
+        ...(body.flow !== undefined ? { flow: body.flow } : {}),
         ...(body.active !== undefined ? { active: body.active } : {}),
       },
     });
@@ -459,7 +502,7 @@ async function buildDayClosureSnapshot(userId: string, businessDate: Date) {
 
   const shiftSlot = dbUser?.cashShiftSlot ?? inferShiftSlotFromDate(new Date());
   const collectedFcfa = sales.collectedFcfa || collected.totalFcfa;
-  const netFcfa = netAfterExpenses(collectedFcfa, expenses.totalFcfa);
+  const netFcfa = netAfterExpenses(collectedFcfa, expenses.totalFcfa, expenses.inflowFcfa);
 
   return {
     businessDate: formatBusinessDate(dayStart),

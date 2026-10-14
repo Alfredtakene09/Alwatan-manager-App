@@ -3,6 +3,7 @@ export type FinancialKpis = {
   revenueChangePercent: number
   expensesMonthFcfa: number
   expensesChangePercent: number
+  entriesMonthFcfa?: number
   netMonthFcfa: number
   netChangePercent: number
   payrollMonthFcfa: number
@@ -43,6 +44,7 @@ export type AdminExpenseRow = {
   date: string
   businessDate?: string
   categoryCode?: 'FOURNITURES' | 'MAINTENANCE' | 'ACHAT_URGENT' | 'TRANSPORT' | 'AUTRE'
+  flow?: 'SORTIE' | 'ENTREE'
   category: string
   label?: string
   description: string

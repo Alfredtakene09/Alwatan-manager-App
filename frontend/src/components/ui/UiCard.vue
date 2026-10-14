@@ -155,7 +155,7 @@ const descriptionText = computed(() => {
   padding-top: 0.25rem;
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 1199px) {
   .ui-card__header {
     flex-wrap: wrap;
     align-items: center;

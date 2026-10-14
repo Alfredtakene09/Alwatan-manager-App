@@ -1,5 +1,6 @@
 import {
   ClinicExpenseCategory,
+  ClinicExpenseFlow,
   ClinicExpenseStatus,
   HospitalizationStatus,
   InvoiceStatus,
@@ -350,10 +351,18 @@ async function sumValidatedExpensesBetween(from: Date, to: Date) {
       status: ClinicExpenseStatus.VALIDATED,
       businessDate: { gte: from, lt: to },
     },
-    select: { amountFcfa: true, category: true },
+    select: { amountFcfa: true, category: true, flow: true },
   });
-  const totalFcfa = rows.reduce((sum, row) => sum + row.amountFcfa, 0);
-  return { totalFcfa, rows };
+  const outflows = rows.filter((row) => row.flow !== ClinicExpenseFlow.ENTREE);
+  const entriesFcfa = rows.reduce(
+    (sum, row) => sum + (row.flow === ClinicExpenseFlow.ENTREE ? row.amountFcfa : 0),
+    0,
+  );
+  return {
+    totalFcfa: outflows.reduce((sum, row) => sum + row.amountFcfa, 0),
+    entriesFcfa,
+    rows: outflows,
+  };
 }
 
 async function sumPayrollPaidBetween(from: Date, to: Date) {
@@ -467,6 +476,7 @@ export type FinancialKpis = {
   revenueChangePercent: number;
   expensesMonthFcfa: number;
   expensesChangePercent: number;
+  entriesMonthFcfa: number;
   netMonthFcfa: number;
   netChangePercent: number;
   payrollMonthFcfa: number;
@@ -521,14 +531,15 @@ export async function buildFinancialKpis(
 
   const currentExpensesTotal = currentExpenses.totalFcfa + currentPayrollPaid;
   const prevExpensesTotal = prevExpenses.totalFcfa + prevPayrollPaid;
-  const currentNet = currentRevenue.totalFcfa - currentExpensesTotal;
-  const prevNet = prevRevenue.totalFcfa - prevExpensesTotal;
+  const currentNet = currentRevenue.totalFcfa + currentExpenses.entriesFcfa - currentExpensesTotal;
+  const prevNet = prevRevenue.totalFcfa + prevExpenses.entriesFcfa - prevExpensesTotal;
 
   return {
     revenueMonthFcfa: currentRevenue.totalFcfa,
     revenueChangePercent: percentChange(currentRevenue.totalFcfa, prevRevenue.totalFcfa),
     expensesMonthFcfa: currentExpensesTotal,
     expensesChangePercent: percentChange(currentExpensesTotal, prevExpensesTotal),
+    entriesMonthFcfa: currentExpenses.entriesFcfa,
     netMonthFcfa: currentNet,
     netChangePercent: percentChange(currentNet, prevNet),
     payrollMonthFcfa: fichePayrollMass,
@@ -656,8 +667,8 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
   const currentExpensesTotal =
     currentExpenses.totalFcfa + currentPayrollPaid;
   const prevExpensesTotal = prevExpenses.totalFcfa + prevPayrollPaid;
-  const currentNet = currentRevenue.totalFcfa - currentExpensesTotal;
-  const prevNet = prevRevenue.totalFcfa - prevExpensesTotal;
+  const currentNet = currentRevenue.totalFcfa + currentExpenses.entriesFcfa - currentExpensesTotal;
+  const prevNet = prevRevenue.totalFcfa + prevExpenses.entriesFcfa - prevExpensesTotal;
 
   const expenseBreakdown = mapExpenseBreakdown(currentExpenses.rows, currentPayrollPaid);
   const operationsByService = await buildOperationsByService(
@@ -697,7 +708,7 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
           toIso: bounds.toIso,
           revenueFcfa: revenue.totalFcfa,
           expensesFcfa: expensesTotal,
-          netFcfa: revenue.totalFcfa - expensesTotal,
+          netFcfa: revenue.totalFcfa + expenses.entriesFcfa - expensesTotal,
         };
       }),
     )
@@ -738,6 +749,7 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
       revenueChangePercent: percentChange(currentRevenue.totalFcfa, prevRevenue.totalFcfa),
       expensesMonthFcfa: currentExpensesTotal,
       expensesChangePercent: percentChange(currentExpensesTotal, prevExpensesTotal),
+      entriesMonthFcfa: currentExpenses.entriesFcfa,
       netMonthFcfa: currentNet,
       netChangePercent: percentChange(currentNet, prevNet),
       payrollMonthFcfa: fichePayrollMass,

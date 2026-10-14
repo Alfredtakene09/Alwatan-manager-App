@@ -1,5 +1,6 @@
-import { ClinicExpenseStatus, InvoiceStatus, type ReceptionShiftSlot } from "@prisma/client";
+import { ClinicExpenseFlow, ClinicExpenseStatus, InvoiceStatus, type ReceptionShiftSlot } from "@prisma/client";
 import { prisma } from "./db.js";
+import { netAfterCashMovements } from "./expense-flow.js";
 import {
   COLLECTED_INVOICE_TYPES,
   loadCollectedSlicesBetween,
@@ -21,10 +22,40 @@ export type CashierExpenseLine = {
 };
 
 export type CashierExpenseSummary = {
+  /** Sorties uniquement — les entrées sont dans inflowFcfa. */
   totalFcfa: number;
+  inflowFcfa: number;
   count: number;
   rows: CashierExpenseLine[];
 };
+
+function summarizeExpenseRows(
+  rows: Array<{
+    id: string;
+    label: string;
+    amountFcfa: number;
+    createdAt: Date;
+    flow: ClinicExpenseFlow;
+  }>,
+): CashierExpenseSummary {
+  let totalFcfa = 0;
+  let inflowFcfa = 0;
+  for (const row of rows) {
+    if (row.flow === ClinicExpenseFlow.ENTREE) inflowFcfa += row.amountFcfa;
+    else totalFcfa += row.amountFcfa;
+  }
+  return {
+    totalFcfa,
+    inflowFcfa,
+    count: rows.length,
+    rows: rows.map((row) => ({
+      id: row.id,
+      label: row.label,
+      amountFcfa: row.amountFcfa,
+      createdAt: row.createdAt.toISOString(),
+    })),
+  };
+}
 
 export async function aggregateCollectedForCashier(
   cashierId: string,
@@ -60,16 +91,7 @@ export async function sumExpensesForCashierBetween(
     orderBy: { createdAt: "asc" },
   });
 
-  return {
-    totalFcfa: rows.reduce((sum, row) => sum + row.amountFcfa, 0),
-    count: rows.length,
-    rows: rows.map((row) => ({
-      id: row.id,
-      label: row.label,
-      amountFcfa: row.amountFcfa,
-      createdAt: row.createdAt.toISOString(),
-    })),
-  };
+  return summarizeExpenseRows(rows);
 }
 
 /** Dépenses payées par le caissier — optionnellement limitées à [from, to) via createdAt. */
@@ -89,16 +111,7 @@ export async function sumExpensesForCashierInWindow(
     orderBy: { createdAt: "asc" },
   });
 
-  return {
-    totalFcfa: rows.reduce((sum, row) => sum + row.amountFcfa, 0),
-    count: rows.length,
-    rows: rows.map((row) => ({
-      id: row.id,
-      label: row.label,
-      amountFcfa: row.amountFcfa,
-      createdAt: row.createdAt.toISOString(),
-    })),
-  };
+  return summarizeExpenseRows(rows);
 }
 
 export async function sumExpensesForCashierShift(
@@ -114,8 +127,8 @@ export async function sumExpensesForCashierShift(
   return sumExpensesForCashierInWindow(cashierId, businessDate, from, to);
 }
 
-export function netAfterExpenses(collectedFcfa: number, expensesFcfa: number) {
-  return Math.max(0, collectedFcfa - expensesFcfa);
+export function netAfterExpenses(collectedFcfa: number, expensesFcfa: number, entriesFcfa = 0) {
+  return netAfterCashMovements(collectedFcfa, expensesFcfa, entriesFcfa);
 }
 
 /** Recalcule les dépenses du solde ouvert. Les recettes déjà figées ne sont pas réécrites. */
@@ -131,7 +144,7 @@ export async function refreshUnvalidatedDayClosure(cashierId: string, businessDa
   if (!closure || closure.validatedAt || closure.settlementId) return;
 
   const expenses = await sumExpensesForCashierOnDate(cashierId, businessDate);
-  const netFcfa = netAfterExpenses(closure.collectedFcfa, expenses.totalFcfa);
+  const netFcfa = netAfterExpenses(closure.collectedFcfa, expenses.totalFcfa, expenses.inflowFcfa);
   if (closure.expensesFcfa === expenses.totalFcfa && closure.netFcfa === netFcfa) return;
 
   await prisma.receptionDayClosure.update({
@@ -252,11 +265,18 @@ export async function applyOpenClosureAdjustments(
     });
     if (!closure || closure.validatedAt || closure.settlementId) continue;
     const collectedFcfa = Math.max(0, closure.collectedFcfa + direction * adjustment.amountFcfa);
-    const netFcfa = netAfterExpenses(collectedFcfa, closure.expensesFcfa);
-    if (collectedFcfa === closure.collectedFcfa && netFcfa === closure.netFcfa) continue;
+    const expenses = await sumExpensesForCashierOnDate(adjustment.cashierId, adjustment.businessDate);
+    const netFcfa = netAfterExpenses(collectedFcfa, expenses.totalFcfa, expenses.inflowFcfa);
+    if (
+      collectedFcfa === closure.collectedFcfa &&
+      netFcfa === closure.netFcfa &&
+      expenses.totalFcfa === closure.expensesFcfa
+    ) {
+      continue;
+    }
     await prisma.receptionDayClosure.update({
       where: { id: closure.id },
-      data: { collectedFcfa, netFcfa },
+      data: { collectedFcfa, expensesFcfa: expenses.totalFcfa, netFcfa },
     });
   }
 }

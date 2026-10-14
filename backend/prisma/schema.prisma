@@ -400,6 +400,10 @@ model Visit {
   assignedClinicServiceId String?
   consultationFeeFcfa     Int?
   reductionFcfa           Int?        @default(0)
+  /// Kinésithérapie : nombre de séances facturées (consultationFeeFcfa = séances × prix).
+  sessionsCount           Int?
+  /// Kinésithérapie : prix d’une séance au moment de l’enregistrement.
+  sessionPriceFcfa        Int?
   notes                   String?
   /// Utilisateur (réception) ayant enregistré la visite.
   createdById             String?
@@ -1097,15 +1101,26 @@ enum DoctorShareClaimStatus {
   CANCELLED
 }
 
+enum ClinicExpenseFlow {
+  /// Sortie de caisse — diminue le solde.
+  SORTIE
+  /// Entrée de caisse — le montant saisi augmente le solde.
+  ENTREE
+}
+
 /** Indice / motif prédéfini pour le formulaire de dépense clinique. */
 model ClinicExpenseIndice {
-  id          String   @id @default(cuid())
-  name        String   @unique
+  id          String            @id @default(cuid())
+  name        String            @unique
   description String?
-  active      Boolean  @default(true)
-  sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  /// ENTREE ajoute au solde, SORTIE (dépense) le retire.
+  flow        ClinicExpenseFlow @default(SORTIE)
+  active      Boolean           @default(true)
+  sortOrder   Int               @default(0)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  expenses ClinicExpense[]
 }
 
 model ExpenseCategory {
@@ -1127,7 +1142,10 @@ model ClinicExpense {
   businessDate      DateTime              @db.Date
   amountFcfa        Int
   label             String
+  /// SORTIE = dépense. ENTREE = montant ajouté au solde.
+  flow              ClinicExpenseFlow     @default(SORTIE)
   category          ClinicExpenseCategory @default(AUTRE)
+  indiceId          String?
   expenseCategoryId String?
   status            ClinicExpenseStatus   @default(VALIDATED)
   comment           String?
@@ -1141,14 +1159,17 @@ model ClinicExpense {
   validatedAt       DateTime?
   createdAt         DateTime              @default(now())
 
-  expenseCategory ExpenseCategory? @relation(fields: [expenseCategoryId], references: [id])
-  paidBy          User             @relation("ExpensePaidBy", fields: [paidById], references: [id])
+  expenseCategory ExpenseCategory?     @relation(fields: [expenseCategoryId], references: [id])
+  indice          ClinicExpenseIndice? @relation(fields: [indiceId], references: [id], onDelete: SetNull)
+  paidBy          User                 @relation("ExpensePaidBy", fields: [paidById], references: [id])
   recordedBy      User             @relation("ExpenseRecordedBy", fields: [recordedById], references: [id])
   validatedBy     User?            @relation("ExpenseValidatedBy", fields: [validatedById], references: [id])
 
   @@index([businessDate])
   @@index([paidById, businessDate])
   @@index([status])
+  @@index([indiceId])
+  @@index([flow])
 }
 
 /** Fiche de paie mensuelle — suivi admin des salaires. */

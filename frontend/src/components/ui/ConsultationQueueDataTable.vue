@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Eye, ArrowLeftRight } from '@lucide/vue'
-import { fullName } from '@/lib/roles'
+import { formatFcfa, fullName } from '@/lib/roles'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 import { getVisitStatusMeta } from '@/lib/visit-status'
 import { sortByCreatedAtNewestFirst } from '@/lib/patient-sort'
 import { useAppI18n } from '@/i18n/useAppI18n'
@@ -28,10 +29,15 @@ export type ConsultationVisitRow = {
     pulseBpm?: number | null
     recordedAt: string
   }>
+  sessionsCount?: number | null
+  sessionPriceFcfa?: number | null
   billing?: {
     consultationFeeFcfa: number
     reductionFcfa: number
     totalFcfa: number
+    paidFcfa?: number
+    doctorShareFcfa?: number | null
+    doctorQuotaPercent?: number | null
   }
   consultation?: {
     clinicalNotes?: string | null
@@ -72,9 +78,17 @@ const rows = computed(() => {
       doctorName: v.assignedDoctor
         ? `Dr ${fullName(v.assignedDoctor.firstName, v.assignedDoctor.lastName)}`
         : uiText('Non assigné'),
+      sessionsLabel: v.sessionsCount
+        ? translateTemplate('{n} séance(s)', { n: v.sessionsCount })
+        : '',
+      paidFcfa: v.billing?.paidFcfa ?? 0,
+      dueFcfa: v.billing?.totalFcfa ?? 0,
+      shareFcfa: v.billing?.doctorShareFcfa ?? null,
+      sharePercent: v.billing?.doctorQuotaPercent ?? null,
     }
   })
 })
+const showBilling = computed(() => !props.readOnly)
 </script>
 
 <template>
@@ -96,6 +110,7 @@ const rows = computed(() => {
               <th>{{ uiText('Patient') }}</th>
               <th>{{ uiText('Statut') }}</th>
               <th>{{ uiText('Arrivée') }}</th>
+              <th v-if="showBilling">{{ uiText('Encaissé') }}</th>
               <th v-if="readOnly">{{ uiText('Médecin assigné') }}</th>
               <th v-else class="simple-table__actions-head">{{ uiText('Actions') }}</th>
             </tr>
@@ -118,6 +133,17 @@ const rows = computed(() => {
               <td>
                 <span class="st-date">{{ row.arrivalDate }}</span>
                 <span class="st-sub">{{ row.arrivalTime }}</span>
+              </td>
+              <td v-if="showBilling">
+                <span class="st-date">
+                  {{ row.paidFcfa > 0 ? formatFcfa(row.paidFcfa) : row.dueFcfa > 0 ? uiText('Non payé') : '—' }}
+                </span>
+                <span v-if="row.sessionsLabel" class="st-sub">{{ row.sessionsLabel }}</span>
+                <span v-if="row.shareFcfa != null" class="st-sub">
+                  {{ uiText('Ma part') }}
+                  <template v-if="row.sharePercent != null">({{ row.sharePercent }} %)</template>
+                  : {{ formatFcfa(row.shareFcfa) }}
+                </span>
               </td>
               <td v-if="readOnly">
                 <span class="st-date">{{ row.doctorName }}</span>

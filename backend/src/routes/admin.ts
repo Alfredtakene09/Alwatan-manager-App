@@ -3,6 +3,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import {
   ClinicExpenseCategory,
+  ClinicExpenseFlow,
   ClinicExpenseStatus,
   InterventionCategory,
   PayrollStatus,
@@ -15,6 +16,7 @@ import {
 } from "@prisma/client";
 import { parseShiftSlot } from "../lib/cash-shift.js";
 import { refreshUnvalidatedDayClosureForExpense } from "../lib/cashier-personal-stats.js";
+import { resolveExpenseClassification } from "../lib/expense-flow.js";
 import { prisma } from "../lib/db.js";
 import { excludeLegacyEmiratesTariffWhere } from "../lib/printed-tariff-catalog.js";
 import { ensureDefaultBedsForRoom } from "../lib/hospitalization-rooms.js";
@@ -1325,6 +1327,8 @@ const adminExpenseSchema = z.object({
   amountFcfa: z.number().int().positive(),
   label: z.string().min(2),
   category: z.nativeEnum(ClinicExpenseCategory).optional(),
+  flow: z.nativeEnum(ClinicExpenseFlow).optional(),
+  indiceId: z.string().min(1).optional(),
   status: z.nativeEnum(ClinicExpenseStatus).optional(),
   comment: z.string().optional(),
   rejectionReason: z.string().optional(),
@@ -1346,6 +1350,7 @@ function serializeAdminExpense(row: {
   businessDate: Date;
   amountFcfa: number;
   label: string;
+  flow: ClinicExpenseFlow;
   category: ClinicExpenseCategory;
   status: ClinicExpenseStatus;
   comment: string | null;
@@ -1357,6 +1362,7 @@ function serializeAdminExpense(row: {
     date: formatBusinessDate(row.businessDate),
     businessDate: formatBusinessDate(row.businessDate),
     categoryCode: row.category,
+    flow: row.flow,
     amountFcfa: row.amountFcfa,
     label: row.label,
     description: row.label,
@@ -1425,6 +1431,7 @@ router.get("/expenses", async (req, res) => {
           date: row.date,
           businessDate: row.date,
           categoryCode: "AUTRE" as const,
+          flow: ClinicExpenseFlow.SORTIE,
           amountFcfa: row.amountFcfa,
           label: row.description,
           description: row.description,
@@ -1451,12 +1458,19 @@ router.post("/expenses", requireUiAction("comptabilite.depenses"), async (req, r
     const status = body.status ?? ClinicExpenseStatus.VALIDATED;
     const rejectionReason =
       status === ClinicExpenseStatus.REJECTED ? body.rejectionReason?.trim() || "Rejet manuel" : null;
+    const classification = await resolveExpenseClassification({
+      indiceId: body.indiceId,
+      category: body.category,
+      flow: body.flow,
+    });
     const row = await prisma.clinicExpense.create({
       data: {
         businessDate,
         amountFcfa: body.amountFcfa,
         label: body.label.trim(),
-        category: body.category ?? ClinicExpenseCategory.AUTRE,
+        flow: classification.flow,
+        category: classification.category,
+        indiceId: classification.indiceId,
         comment: body.comment?.trim() || null,
         status,
         rejectionReason,
@@ -1466,6 +1480,9 @@ router.post("/expenses", requireUiAction("comptabilite.depenses"), async (req, r
         validatedAt: status !== ClinicExpenseStatus.PENDING ? new Date() : null,
       },
     });
+    if (status === ClinicExpenseStatus.VALIDATED) {
+      await refreshUnvalidatedDayClosureForExpense(user.id, businessDate);
+    }
 
     await prisma.auditLog.create({
       data: {
@@ -1477,8 +1494,17 @@ router.post("/expenses", requireUiAction("comptabilite.depenses"), async (req, r
       },
     });
 
-    return res.status(201).json(serializeAdminExpense(row));
+    return res.status(201).json({
+      ...serializeAdminExpense(row),
+      message:
+        row.flow === ClinicExpenseFlow.ENTREE
+          ? "Entrée enregistrée. Le montant est ajouté au solde."
+          : "Dépense enregistrée.",
+    });
   } catch (error) {
+    if (error instanceof Error && error.message === "INDICE_INVALID") {
+      return res.status(400).json({ error: "Indice invalide ou inactif." });
+    }
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: "Données invalides", details: error.issues });
     }
@@ -1500,13 +1526,22 @@ router.put("/expenses/:id", requireUiAction("comptabilite.depenses"), async (req
     const rejectionReason =
       status === ClinicExpenseStatus.REJECTED ? body.rejectionReason?.trim() || "Rejet manuel" : null;
 
+    const indiceId = body.indiceId ?? existing.indiceId;
+    const classification = await resolveExpenseClassification({
+      indiceId,
+      category: body.category ?? existing.category,
+      flow: body.flow ?? existing.flow,
+      allowInactive: indiceId === existing.indiceId,
+    });
     const updated = await prisma.clinicExpense.update({
       where: { id: existing.id },
       data: {
         businessDate,
         amountFcfa: body.amountFcfa,
         label: body.label.trim(),
-        category: body.category ?? existing.category,
+        flow: classification.flow,
+        category: classification.category,
+        indiceId: classification.indiceId,
         comment: body.comment?.trim() || null,
         status,
         rejectionReason,
@@ -1520,6 +1555,9 @@ router.put("/expenses/:id", requireUiAction("comptabilite.depenses"), async (req
     }
     return res.json(serializeAdminExpense(updated));
   } catch (error) {
+    if (error instanceof Error && error.message === "INDICE_INVALID") {
+      return res.status(400).json({ error: "Indice invalide ou inactif." });
+    }
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: "Données invalides", details: error.issues });
     }

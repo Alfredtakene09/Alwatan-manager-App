@@ -1,4 +1,5 @@
 import {
+  ClinicExpenseFlow,
   ClinicExpenseStatus,
   InvoiceStatus,
   InvoiceType,
@@ -369,6 +370,7 @@ export async function buildJournalEntries(filters: JournalFilters = {}) {
         id: true,
         label: true,
         amountFcfa: true,
+        flow: true,
         businessDate: true,
         validatedAt: true,
         createdAt: true,
@@ -461,15 +463,16 @@ export async function buildJournalEntries(filters: JournalFilters = {}) {
   for (const expense of expenses) {
     const occurredAt = expense.validatedAt ?? expense.createdAt;
     if (!inPeriod(occurredAt, from, to)) continue;
+    const isEntry = expense.flow === ClinicExpenseFlow.ENTREE;
     raw.push({
       id: `exp-${expense.id}`,
       occurredAt: occurredAt.toISOString(),
-      label: expense.label,
+      label: isEntry ? `Entrée — ${expense.label}` : expense.label,
       category: "DEPENSE",
-      categoryLabel: CATEGORY_LABELS.DEPENSE,
-      type: "SORTIE",
-      inflowFcfa: 0,
-      outflowFcfa: expense.amountFcfa,
+      categoryLabel: isEntry ? "Entrée" : CATEGORY_LABELS.DEPENSE,
+      type: isEntry ? "ENTREE" : "SORTIE",
+      inflowFcfa: isEntry ? expense.amountFcfa : 0,
+      outflowFcfa: isEntry ? 0 : expense.amountFcfa,
       reference: expense.id.slice(-8).toUpperCase(),
       source: "ClinicExpense",
     });

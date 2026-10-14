@@ -86,7 +86,7 @@ const subtitleText = computed(() => {
   align-items: flex-end;
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 1199px) {
   .page-header {
     flex-wrap: wrap;
     align-items: stretch;
@@ -114,8 +114,11 @@ const subtitleText = computed(() => {
 
   .page-header__actions :deep(.ui-button),
   .page-header__actions :deep(.ui-btn) {
-    flex: 1;
+    flex: 1 1 100%;
+    width: 100%;
     min-width: 0;
+    max-width: 100%;
+    white-space: normal;
   }
 }
 </style>

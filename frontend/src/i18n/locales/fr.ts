@@ -567,6 +567,16 @@ export default {
     Féminin: 'Féminin',
     Masculin: 'Masculin',
     'Personnes enregistrées': 'Personnes enregistrées',
+    'Nombre de séances': 'Nombre de séances',
+    'Prix par séance (FCFA)': 'Prix par séance (FCFA)',
+    'Montant à encaisser': 'Montant à encaisser',
+    '{n} séance(s)': '{n} séance(s)',
+    '{sessions} séance(s) × {price} — part médecin {quota} : {share}':
+      '{sessions} séance(s) × {price} — part médecin {quota} : {share}',
+    'Indiquez au moins 1 séance.': 'Indiquez au moins 1 séance.',
+    'Indiquez le prix d’une séance.': 'Indiquez le prix d’une séance.',
+    'La réduction ne peut pas dépasser le montant des séances.':
+      'La réduction ne peut pas dépasser le montant des séances.',
     'Féminin / Masculin': 'Féminin / Masculin',
     'Patients examens': 'Patients examens',
     'Ont reçu des examens': 'Ont reçu des examens',
@@ -638,6 +648,8 @@ export default {
       "Vue d'ensemble, finances, caisses et supervision de la clinique",
     'Recettes du mois': 'Recettes du mois',
     'Dépenses du mois': 'Dépenses du mois',
+    'Entrée : {amount}': 'Entrée : {amount}',
+    'Sortie : {amount}': 'Sortie : {amount}',
     'Bénéfice net': 'Bénéfice net',
     'Masse salariale': 'Masse salariale',
     'Salaires à jour des fiches employés': 'Salaires à jour des fiches employés',
@@ -1167,6 +1179,9 @@ export default {
     'Liste des dépenses enregistrées pour {period}':
       'Liste des dépenses enregistrées pour {period}',
     'Nouvelle dépense': 'Nouvelle dépense',
+    'Nouvelle saisie': 'Nouvelle saisie',
+    'Aucune ligne pour cette date. Cliquez sur « Nouvelle saisie » pour enregistrer une dépense ou une entrée.':
+      'Aucune ligne pour cette date. Cliquez sur « Nouvelle saisie » pour enregistrer une dépense ou une entrée.',
     'Aucune dépense pour cette date. Cliquez sur « Nouvelle dépense » pour enregistrer une sortie de caisse.':
       'Aucune dépense pour cette date. Cliquez sur « Nouvelle dépense » pour enregistrer une sortie de caisse.',
     'Chargement des dépenses…': 'Chargement des dépenses…',

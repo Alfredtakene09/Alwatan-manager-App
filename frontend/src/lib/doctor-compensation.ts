@@ -242,6 +242,22 @@ export function isAnesthetistDoctor(person: {
   return foldStaffLabel(person.jobTitle).includes('anesth') || foldStaffLabel(person.specialty).includes('anesth')
 }
 
+/** Kinésithérapie : facturation par séance au lieu d’une consultation unique. */
+export function isKinesitherapieServiceName(name?: string | null) {
+  const folded = foldStaffLabel(name).trim()
+  return (
+    folded.includes('kinesitherap') ||
+    folded.includes('kinesie terap') ||
+    folded === 'kine' ||
+    folded.startsWith('kine ')
+  )
+}
+
+/** Prix d’une séance : tarif de la fiche médecin, sinon tarif catalogue par défaut. */
+export function defaultKineSessionPriceForDoctor(doctor?: DoctorOption | null) {
+  return defaultConsultationAmountForDoctor(doctor) || 5000
+}
+
 export function isGeneralSurgeryServiceName(name?: string | null) {
   const folded = foldStaffLabel(name)
   return folded.includes('chirurgie') && folded.includes('general')

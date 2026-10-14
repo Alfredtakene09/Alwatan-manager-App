@@ -72,6 +72,7 @@ import {
   receptionistScopeUserId,
 } from "../lib/reception-scope.js";
 import {
+  isKinesitherapieServiceName,
   resolveActiveClinicServiceByName,
   resolveVisitClinicServiceId,
   resolveDoctorClinicServices,
@@ -284,6 +285,8 @@ function mapConsultationVisitForReception(
     doctor,
     serviceName,
     billingKind: "consultation" as const,
+    sessionsCount: visit.sessionsCount ?? null,
+    sessionPriceFcfa: visit.sessionPriceFcfa ?? null,
     consultationFeeFcfa: amounts.consultationFeeFcfa,
     reductionFcfa: amounts.reductionFcfa,
     consultationAmountFcfa: amounts.consultationFeeFcfa || null,
@@ -906,7 +909,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     sumRegisteredPatientsEntriesFcfa(patientCashPeriodScope, rangeStart, rangeEndExclusive),
     personalCashScope && !service && !doctorId
       ? sumExpensesForCashierBetween(user.id, rangeStart, rangeEndExclusive)
-      : Promise.resolve({ totalFcfa: 0, count: 0, rows: [] }),
+      : Promise.resolve({ totalFcfa: 0, inflowFcfa: 0, count: 0, rows: [] }),
     buildRegistrationReport({
       patientWhere: {
         active: true,
@@ -919,7 +922,10 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     }),
   ]);
 
-  const netTodayFcfa = Math.max(0, collectedToday.totalFcfa - myExpensesToday.totalFcfa);
+  const netTodayFcfa = Math.max(
+    0,
+    collectedToday.totalFcfa + myExpensesToday.inflowFcfa - myExpensesToday.totalFcfa,
+  );
   const doctorShareFcfa = registration.lines.reduce((sum, line) => sum + line.doctorShareFcfa, 0);
   const {
     examPatients: examPatientsCount,
@@ -1016,6 +1022,8 @@ const registerConsultationSchema = patientSchema
     doctorId: z.string(),
     consultationAmountFcfa: z.number().int().min(0).optional(),
     reductionFcfa: z.number().int().min(0).optional(),
+    sessionsCount: z.number().int().min(1).max(200).optional(),
+    sessionPriceFcfa: z.number().int().min(0).optional(),
     phone: z.string().trim().optional(),
   })
   .superRefine((data, ctx) => {
@@ -1077,11 +1085,24 @@ router.post(
       ? resolvePatientCategory(existingPatient.category)
       : requestedCategory;
 
-    let consultationAmountFcfa = resolveDoctorConsultationAmount(
-      doctor,
-      body.consultationAmountFcfa ?? null,
-    );
-    if (existingPatient) {
+    const requestedService = body.service?.trim() || "";
+    const clinicService = requestedService
+      ? await resolveActiveClinicServiceByName(prisma, requestedService)
+      : null;
+    const serviceName = clinicService?.name ?? (requestedService || null);
+    const sessionBilling =
+      body.sessionsCount != null && isKinesitherapieServiceName(serviceName)
+        ? {
+            sessionsCount: body.sessionsCount,
+            sessionPriceFcfa: Math.max(0, body.sessionPriceFcfa ?? 0),
+          }
+        : null;
+    const sessionFields = sessionBilling ?? { sessionsCount: null, sessionPriceFcfa: null };
+
+    let consultationAmountFcfa = sessionBilling
+      ? sessionBilling.sessionsCount * sessionBilling.sessionPriceFcfa
+      : resolveDoctorConsultationAmount(doctor, body.consultationAmountFcfa ?? null);
+    if (existingPatient && !sessionBilling) {
       try {
         const renewal = await resolveConsultationFeeForPatientDoctor({
           patientId: existingPatient.id,
@@ -1117,11 +1138,6 @@ router.post(
       ? await planReconsultation(existingPatient.id)
       : null;
 
-    const requestedService = body.service?.trim() || "";
-    const clinicService = requestedService
-      ? await resolveActiveClinicServiceByName(prisma, requestedService)
-      : null;
-    const serviceName = clinicService?.name ?? (requestedService || null);
     const doctorServiceId = clinicService
       ? null
       : await resolveVisitClinicServiceId(body.doctorId, existingPatient?.service ?? serviceName);
@@ -1169,6 +1185,7 @@ router.post(
                   ...(clinicService ? { assignedClinicServiceId: clinicService.id } : {}),
                   consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
                   reductionFcfa: billing.reductionFcfa,
+                  ...sessionFields,
                 },
               })
             : await tx.visit.create({
@@ -1184,6 +1201,7 @@ router.post(
                       : {}),
                   consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
                   reductionFcfa: billing.reductionFcfa,
+                  ...sessionFields,
                 },
               });
 
@@ -1254,6 +1272,7 @@ router.post(
           ...(clinicService ? { assignedClinicServiceId: clinicService.id } : {}),
           consultationFeeFcfa: billing.consultationAmountFcfa || undefined,
           reductionFcfa: billing.reductionFcfa,
+          ...sessionFields,
         },
       });
 

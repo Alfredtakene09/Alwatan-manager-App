@@ -6,6 +6,7 @@ import api from '@/api/client'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiInput from '@/components/ui/UiInput.vue'
+import UiSelect from '@/components/ui/UiSelect.vue'
 import UiTextarea from '@/components/ui/UiTextarea.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
@@ -13,7 +14,7 @@ import UiFormModal from '@/components/ui/UiFormModal.vue'
 import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import '@/assets/simple-table.css'
 
-import type { ExpenseIndiceRecord } from '@/lib/expense-indices'
+import type { ExpenseFlow, ExpenseIndiceRecord } from '@/lib/expense-indices'
 
 const emit = defineEmits<{
   changed: []
@@ -28,20 +29,22 @@ const modalOpen = ref(false)
 const editingId = ref<string | null>(null)
 const formName = ref('')
 const formDescription = ref('')
+const formFlow = ref<ExpenseFlow>('SORTIE')
 
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 const isEditing = computed(() => editingId.value !== null)
 
 const indiceModalSubtitle = computed(() =>
   isEditing.value
-    ? 'Modifiez le nom ou la description proposés dans le formulaire de dépense.'
-    : 'Ex. Entretien, Transport, Maintenance…',
+    ? 'Modifiez le nom, le type ou la description.'
+    : 'Liez l\'indice à une entrée ou à une dépense.',
 )
 
 const tableRows = computed(() =>
   items.value.map((item) => ({
     id: item.id,
     name: item.name,
+    flowLabel: item.flow === 'ENTREE' ? 'Entrée' : 'Dépense',
     description: item.description?.trim() || '—',
     statusLabel: item.active ? 'Actif' : 'Inactif',
     statusVariant: item.active ? 'success' : 'danger',
@@ -76,6 +79,7 @@ async function loadItems() {
 function resetForm() {
   formName.value = ''
   formDescription.value = ''
+  formFlow.value = 'SORTIE'
 }
 
 function openCreateModal() {
@@ -91,6 +95,7 @@ function openEditModal(id: string) {
   editingId.value = id
   formName.value = item.name
   formDescription.value = item.description ?? ''
+  formFlow.value = item.flow === 'ENTREE' ? 'ENTREE' : 'SORTIE'
   modalOpen.value = true
   message.value = ''
 }
@@ -118,12 +123,14 @@ async function saveItem() {
       await api.put(`/cash-desk/expense-indices/${editingId.value}`, {
         name,
         description: description || undefined,
+        flow: formFlow.value,
       })
       message.value = 'Indice modifié.'
     } else {
       await api.post('/cash-desk/expense-indices', {
         name,
         description: description || undefined,
+        flow: formFlow.value,
       })
       message.value = 'Indice ajouté.'
     }
@@ -224,6 +231,7 @@ onMounted(loadItems)
               <tr>
                 <th class="simple-table__num">#</th>
                 <th>Nom</th>
+                <th>Type</th>
                 <th>Description</th>
                 <th>Statut</th>
                 <th class="simple-table__actions-head">Actions</th>
@@ -233,6 +241,7 @@ onMounted(loadItems)
               <tr v-for="(row, index) in tableRows" :key="row.id">
                 <td class="simple-table__num">{{ index + 1 }}</td>
                 <td><span class="st-name">{{ row.name }}</span></td>
+                <td>{{ row.flowLabel }}</td>
                 <td>
                   <span v-if="row.description === '—'" class="st-muted">—</span>
                   <span v-else>{{ row.description }}</span>
@@ -268,6 +277,10 @@ onMounted(loadItems)
     <UiAlert v-if="message && modalOpen" :type="messageType" :message="message" />
     <section class="form-panel">
       <UiInput v-model="formName" label="Nom" placeholder="Ex. Entretien" required />
+      <UiSelect v-model="formFlow" label="Type" required>
+        <option value="SORTIE">Dépense — retire du solde</option>
+        <option value="ENTREE">Entrée — ajoute au solde</option>
+      </UiSelect>
       <UiTextarea
         v-model="formDescription"
         label="Description"

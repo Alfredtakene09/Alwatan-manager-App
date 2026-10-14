@@ -1,5 +1,6 @@
 import {
   ClinicExpenseCategory,
+  ClinicExpenseFlow,
   ClinicExpenseStatus,
   InvoiceStatus,
   InvoiceType,
@@ -86,11 +87,11 @@ async function sumPeriodCardTotals(from: Date, to: Date) {
   ]);
   const expensesTotal = expenses.totalFcfa + payrollPaid;
   return {
-    revenueFcfa: revenue.totalFcfa,
+    revenueFcfa: revenue.totalFcfa + expenses.entriesFcfa,
     expensesFcfa: expensesTotal,
     chargesFcfa: expenses.totalFcfa,
     payrollFcfa: payrollPaid,
-    netFcfa: revenue.totalFcfa - expensesTotal,
+    netFcfa: revenue.totalFcfa + expenses.entriesFcfa - expensesTotal,
     expenseRows: expenses.rows,
   };
 }
@@ -362,11 +363,17 @@ async function sumValidatedExpensesBetween(from: Date, to: Date) {
       status: ClinicExpenseStatus.VALIDATED,
       businessDate: { gte: from, lt: to },
     },
-    select: { amountFcfa: true, category: true },
+    select: { amountFcfa: true, category: true, flow: true },
   });
+  const outflows = rows.filter((row) => row.flow !== ClinicExpenseFlow.ENTREE);
+  const entriesFcfa = rows.reduce(
+    (sum, row) => sum + (row.flow === ClinicExpenseFlow.ENTREE ? row.amountFcfa : 0),
+    0,
+  );
   return {
-    totalFcfa: rows.reduce((sum, row) => sum + row.amountFcfa, 0),
-    rows,
+    totalFcfa: outflows.reduce((sum, row) => sum + row.amountFcfa, 0),
+    entriesFcfa,
+    rows: outflows,
   };
 }
 
@@ -404,13 +411,14 @@ async function buildDailyFlow(days: number) {
         sumPayrollPaidBetween(dayStart, dayEnd),
       ]);
       const outflowsFcfa = expenses.totalFcfa + payrollPaid;
+      const inflowsFcfa = revenue.totalFcfa + expenses.entriesFcfa;
       return {
         date: dayStart.toISOString().slice(0, 10),
         label: dayStart.toLocaleDateString("fr-FR", { day: "numeric", month: "short" }),
-        inflowsFcfa: revenue.totalFcfa,
+        inflowsFcfa,
         outflowsFcfa,
         payrollFcfa: payrollPaid,
-        balanceFcfa: revenue.totalFcfa - outflowsFcfa,
+        balanceFcfa: inflowsFcfa - outflowsFcfa,
       };
     }),
   );
@@ -466,15 +474,26 @@ async function computeGlobalCashBalance() {
   await Promise.all(
     [...byCashier.entries()].map(async ([cashierId, bucket]) => {
       const since = lastSettlementByCashier.get(cashierId) ?? new Date(0);
-      const expenses = await prisma.clinicExpense.aggregate({
-        where: {
-          paidById: cashierId,
-          status: ClinicExpenseStatus.VALIDATED,
-          createdAt: { gte: since },
-        },
-        _sum: { amountFcfa: true },
-      });
-      const net = netAfterExpenses(bucket.grossFcfa, expenses._sum.amountFcfa ?? 0);
+      const movementWhere = {
+        paidById: cashierId,
+        status: ClinicExpenseStatus.VALIDATED,
+        createdAt: { gte: since },
+      };
+      const [outflows, entries] = await Promise.all([
+        prisma.clinicExpense.aggregate({
+          where: { ...movementWhere, flow: { not: ClinicExpenseFlow.ENTREE } },
+          _sum: { amountFcfa: true },
+        }),
+        prisma.clinicExpense.aggregate({
+          where: { ...movementWhere, flow: ClinicExpenseFlow.ENTREE },
+          _sum: { amountFcfa: true },
+        }),
+      ]);
+      const net = netAfterExpenses(
+        bucket.grossFcfa,
+        outflows._sum.amountFcfa ?? 0,
+        entries._sum.amountFcfa ?? 0,
+      );
       if (bucket.role === UserRole.RECEPTIONNISTE) {
         receptionFcfa += net;
       } else {
@@ -482,6 +501,29 @@ async function computeGlobalCashBalance() {
       }
     }),
   );
+
+  const outsideEntries = await prisma.clinicExpense.findMany({
+    where: {
+      status: ClinicExpenseStatus.VALIDATED,
+      flow: ClinicExpenseFlow.ENTREE,
+      ...(byCashier.size > 0 ? { paidById: { notIn: [...byCashier.keys()] } } : {}),
+    },
+    select: {
+      paidById: true,
+      amountFcfa: true,
+      createdAt: true,
+      paidBy: { select: { role: true } },
+    },
+  });
+  for (const row of outsideEntries) {
+    const since = lastSettlementByCashier.get(row.paidById) ?? new Date(0);
+    if (row.createdAt < since) continue;
+    if (row.paidBy.role === UserRole.RECEPTIONNISTE) {
+      receptionFcfa += row.amountFcfa;
+    } else {
+      comptableFcfa += row.amountFcfa;
+    }
+  }
 
   const doctorSharesFcfa = await outstandingDoctorShareCashFcfa();
   return {
@@ -629,7 +671,8 @@ export async function buildGestionnaireDashboardOverview(range?: DashboardDateRa
 
   const payrollMonthGrossFcfa = payrollRows.reduce((sum, row) => sum + row.grossFcfa, 0);
   const monthOutflowsFcfa = monthExpenses.totalFcfa + monthPayrollPaid;
-  const journalBalanceFcfa = monthRevenue.totalFcfa - monthOutflowsFcfa;
+  const journalInflowsFcfa = monthRevenue.totalFcfa + monthExpenses.entriesFcfa;
+  const journalBalanceFcfa = journalInflowsFcfa - monthOutflowsFcfa;
   const expenseBreakdown = mapExpenseBreakdown(monthExpenseRows.rows, monthPayrollPaid);
   const cardPeriodStats = await buildCardPeriodStats(now, dailyFlow90);
 
@@ -648,7 +691,7 @@ export async function buildGestionnaireDashboardOverview(range?: DashboardDateRa
       expensesTodayFcfa: todayExpenses.totalFcfa,
       payrollMonthGrossFcfa,
       journalBalanceFcfa,
-      journalInflowsFcfa: monthRevenue.totalFcfa,
+      journalInflowsFcfa,
       journalOutflowsFcfa: monthOutflowsFcfa,
     },
     dailyFlow: dailyFlow90,

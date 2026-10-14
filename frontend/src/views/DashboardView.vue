@@ -15,7 +15,7 @@ import {
 } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
-import { canAccessModule, formatFcfa } from '@/lib/roles'
+import { canAccessModule, formatFcfa, formatFcfaShort } from '@/lib/roles'
 import type { AdminDashboardOverview } from '@/lib/admin-dashboard'
 import {
   formatMonthLabel,
@@ -147,11 +147,15 @@ const summaryStats = computed((): SummaryStat[] => {
     },
     {
       id: 'expenses',
-      label: translateDashboardLabel(isFullMonthRange.value ? 'Dépenses du mois' : 'Dépenses de la période'),
-      value: formatFcfa(k.expensesMonthFcfa),
+      label: '',
+      value: translateTemplate('Sortie : {amount}', {
+        amount: formatFcfaShort(k.expensesMonthFcfa),
+      }),
       icon: TrendingDown,
       variant: 'rose',
-      trend: formatTrendPercentLocalized(k.expensesChangePercent, !isFullMonthRange.value),
+      detail: translateTemplate('Entrée : {amount}', {
+        amount: formatFcfaShort(k.entriesMonthFcfa ?? 0),
+      }),
     },
     {
       id: 'net',
@@ -346,8 +350,8 @@ function dashboardExportPayload() {
   const sections: ExportSection<DashboardExportRow>[] = []
 
   const kpiRows: DashboardExportRow[] = summaryStats.value.map((card) => ({
-    label: String(card.label),
-    value: String(card.value),
+    label: card.label ? String(card.label) : String(card.value),
+    value: card.detail ? String(card.detail) : String(card.value),
     extra: evolutionTextForExport(card.trend ? String(card.trend) : ''),
   }))
   if (kpiRows.length) {

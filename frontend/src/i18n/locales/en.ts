@@ -552,6 +552,16 @@ export default {
     Féminin: 'Female',
     Masculin: 'Male',
     'Personnes enregistrées': 'Registered people',
+    'Nombre de séances': 'Number of sessions',
+    'Prix par séance (FCFA)': 'Price per session (FCFA)',
+    'Montant à encaisser': 'Amount to collect',
+    '{n} séance(s)': '{n} session(s)',
+    '{sessions} séance(s) × {price} — part médecin {quota} : {share}':
+      '{sessions} session(s) × {price} — doctor share {quota}: {share}',
+    'Indiquez au moins 1 séance.': 'Enter at least 1 session.',
+    'Indiquez le prix d’une séance.': 'Enter the price of one session.',
+    'La réduction ne peut pas dépasser le montant des séances.':
+      'The discount cannot exceed the sessions amount.',
     'Féminin / Masculin': 'Female / Male',
     'Patients examens': 'Exam patients',
     'Ont reçu des examens': 'Received exams',
@@ -624,6 +634,8 @@ export default {
     'Recettes du mois': 'Monthly revenue',
     'Recettes de la période': 'Period revenue',
     'Dépenses du mois': 'Monthly expenses',
+    'Entrée : {amount}': 'Inflow: {amount}',
+    'Sortie : {amount}': 'Outflow: {amount}',
     'Bénéfice net': 'Net profit',
     'Masse salariale': 'Payroll mass',
     'Salaires à jour des fiches employés': 'Current salaries from employee records',
@@ -1252,6 +1264,9 @@ export default {
     'Liste des dépenses enregistrées pour {period}':
       'Expenses recorded for {period}',
     'Nouvelle dépense': 'New expense',
+    'Nouvelle saisie': 'New entry',
+    'Aucune ligne pour cette date. Cliquez sur « Nouvelle saisie » pour enregistrer une dépense ou une entrée.':
+      'No lines for this date. Click “New entry” to record an expense or an inflow.',
     'Aucune dépense pour cette date. Cliquez sur « Nouvelle dépense » pour enregistrer une sortie de caisse.':
       'No expenses for this date. Click « New expense » to record a cash outflow.',
     'Chargement des dépenses…': 'Loading expenses…',

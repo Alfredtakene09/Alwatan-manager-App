@@ -626,8 +626,8 @@ watch(
   }
 }
 
-/* ── Tablette ── */
-@media (max-width: 1023px) {
+/* ── Tablette et petit écran : menu en tiroir, contenu pleine largeur ── */
+@media (max-width: 1199px) {
   .sidebar {
     width: min(var(--sidebar-width-tablet), 85vw);
     transform: translateX(-100%);
@@ -660,6 +660,47 @@ watch(
     gap: 0.55rem;
   }
 
+  .topbar__right {
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.4rem;
+  }
+
+  .topbar__user {
+    min-width: 0;
+    max-width: 100%;
+    padding-inline: 0.45rem;
+  }
+
+  .topbar__user-info span {
+    display: none;
+  }
+
+  .topbar__user-info strong {
+    max-width: 8.5rem;
+  }
+
+  .page-content {
+    overflow-x: auto;
+  }
+
+}
+
+/* ── Tablette étroite : la barre du haut passe sur deux lignes ── */
+@media (max-width: 900px) {
+  .topbar {
+    flex-wrap: wrap;
+  }
+
+  .topbar__right {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .topbar__user-info strong {
+    max-width: 16rem;
+  }
 }
 
 /* ── Mobile ── */
