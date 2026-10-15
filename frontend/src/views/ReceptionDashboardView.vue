@@ -791,6 +791,13 @@ function patientExportCaptionRows() {
 
 const PATIENT_EXPORT_TITLE = 'Patients enregistrés'
 
+function patientExportSubtitle(): string | undefined {
+  if (selectedReceptionistName.value) return undefined
+  const names = receptionists.value.map((item) => item.name.trim()).filter(Boolean)
+  const label = uiText('Tous les réceptionnistes')
+  return names.length ? `${label} : ${names.join(', ')}` : label
+}
+
 type RegistrationSummaryLine = {
   group: DayClosureLineGroup
   service: string
@@ -980,6 +987,7 @@ async function exportPatients(format: 'pdf' | 'excel' | 'word') {
       return
     }
     const options = {
+      subtitle: patientExportSubtitle(),
       captionRows: patientExportCaptionRows(),
       sections,
       orientation: 'portrait' as const,

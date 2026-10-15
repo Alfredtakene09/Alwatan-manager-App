@@ -180,7 +180,13 @@ async function loadClinicLogo(): Promise<PdfLogo | null> {
   }
 }
 
-function drawClinicHeader(doc: jsPDF, title: string, logo: PdfLogo | null, density: PdfDensity): number {
+function drawClinicHeader(
+  doc: jsPDF,
+  title: string,
+  logo: PdfLogo | null,
+  density: PdfDensity,
+  subtitle?: string,
+): number {
   const pageWidth = doc.internal.pageSize.getWidth()
   let logoBottom = 0
   if (logo) {
@@ -215,6 +221,16 @@ function drawClinicHeader(doc: jsPDF, title: string, logo: PdfLogo | null, densi
   doc.setFontSize(density.headerTitle)
   doc.setTextColor(15, 69, 74)
   doc.text(cleanTitle, pageWidth / 2, y, { align: 'center' })
+  const cleanSubtitle = pdfText(subtitle ?? '').trim()
+  if (cleanSubtitle) {
+    y += density.compactLines ? 4.5 : 6.5
+    doc.setFont(fontFor(cleanSubtitle), 'normal')
+    doc.setFontSize(density.caption)
+    doc.setTextColor(51, 65, 85)
+    const lines = doc.splitTextToSize(cleanSubtitle, pageWidth - 28) as string[]
+    doc.text(lines, pageWidth / 2, y, { align: 'center' })
+    y += (lines.length - 1) * density.captionStep
+  }
   y += density.compactLines ? 5 : 9
   return y
 }
@@ -319,6 +335,7 @@ function renderReportPdf(
   columns: ExportColumn<any>[],
   rows: any[],
   options: {
+    subtitle?: string
     captionRows?: ExportCaptionRow[]
     footerLabel?: string
     totalsRows?: ExportCaptionRow[]
@@ -332,7 +349,7 @@ function renderReportPdf(
   const pageHeight = doc.internal.pageSize.getHeight()
   const footerLabel = pdfText(options?.footerLabel ?? '')
 
-  let y = drawClinicHeader(doc, title, logo, density)
+  let y = drawClinicHeader(doc, title, logo, density, options?.subtitle)
   if (options?.captionRows?.length) {
     y = drawCaptions(doc, options.captionRows, y, density) + (density.compactLines ? 1.5 : 3)
   }
@@ -385,6 +402,7 @@ export async function createReportPdf(
   columns: ExportColumn<any>[],
   rows: any[],
   options?: {
+    subtitle?: string
     captionRows?: ExportCaptionRow[]
     /** Date de génération, affichée en pied de page (les filtres restent en en-tête). */
     footerLabel?: string
@@ -412,6 +430,7 @@ export async function saveReportPdfFile(
   columns: ExportColumn<any>[],
   rows: any[],
   options?: {
+    subtitle?: string
     captionRows?: ExportCaptionRow[]
     footerLabel?: string
     totalsRows?: ExportCaptionRow[]

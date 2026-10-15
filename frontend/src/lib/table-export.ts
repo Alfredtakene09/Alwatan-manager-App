@@ -26,6 +26,8 @@ export { escapeHtml, exportableRows, rowsToHtmlTable, rowsToMatrix, sectionsToHt
 export type { ExportCaptionRow, ExportCell, ExportColumn, ExportSection }
 
 export type TableExportOptions = {
+  /** PDF uniquement : ligne centrée sous le titre. */
+  subtitle?: string
   captionRows?: ExportCaptionRow[]
   totalsRows?: ExportCaptionRow[]
   /** Si défini, remplace le tableau unique (groupes / récapitulatif). */
@@ -170,6 +172,7 @@ export function exportTablePdf<T>(
   const sections = exportableSections(options?.sections)
   void import('@/lib/table-export-pdf').then(({ saveReportPdfFile }) =>
     saveReportPdfFile(title, columns, exportRows, {
+      subtitle: options?.subtitle,
       captionRows: options?.captionRows,
       footerLabel: reportPdfFooterLabel(generatedAt),
       totalsRows: options?.totalsRows,
