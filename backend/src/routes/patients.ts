@@ -67,6 +67,8 @@ import {
   isExternalPatientVisit,
 } from "../lib/visit-external.js";
 import {
+  colleagueHistorySince,
+  otherReceptionistsUntreatedPatientsWhere,
   patientsInDoctorScopeWhere,
   receptionistOwnPatientsWhere,
   receptionistScopeUserId,
@@ -652,6 +654,19 @@ router.get("/", async (req, res) => {
     return res.json([]);
   }
   const ownScope = receptionistOwnPatientsWhere(user, createdById);
+  const wantsColleagueHistory = String(req.query.othersUntreated ?? "") === "1";
+  const canSeeColleagueHistory =
+    user.role === UserRole.RECEPTIONNISTE ||
+    user.role === UserRole.ADMIN ||
+    user.role === UserRole.GESTIONNAIRE ||
+    user.role === UserRole.COMPTABLE;
+  const othersUntreated = wantsColleagueHistory && canSeeColleagueHistory;
+  const listScope = othersUntreated
+    ? otherReceptionistsUntreatedPatientsWhere(
+        user.role === UserRole.RECEPTIONNISTE ? user.id : null,
+        colleagueHistorySince(),
+      )
+    : ownScope;
 
   function parseDayStart(value: string): Date | null {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -665,7 +680,7 @@ router.get("/", async (req, res) => {
   let createdAtFilter: { gte?: Date; lt?: Date } | undefined;
   const fromDay = parseDayStart(fromParam);
   const toDay = parseDayStart(toParam || fromParam);
-  if (fromDay || toDay) {
+  if ((fromDay || toDay) && !othersUntreated) {
     createdAtFilter = {};
     if (fromDay) createdAtFilter.gte = fromDay;
     if (toDay) {
@@ -707,12 +722,12 @@ router.get("/", async (req, res) => {
 
   const patients = await prisma.patient.findMany({
     where: requestedIds.length
-      ? {
+        ? {
           id: { in: requestedIds },
           ...ownScope,
         }
       : {
-          ...ownScope,
+          ...listScope,
           ...(category ? { category: category as PatientCategory } : {}),
           ...(service ? { service } : {}),
           ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
@@ -740,7 +755,7 @@ router.get("/", async (req, res) => {
       },
     },
     orderBy: [{ createdAt: "desc" }, { code: "desc" }],
-    ...(requestedIds.length || createdAtFilter ? {} : { take: 50 }),
+    ...(requestedIds.length || createdAtFilter ? {} : { take: othersUntreated ? 500 : 50 }),
   });
 
   const lockedIds = await findPatientIdsDeletionLocked(patients.map((p) => p.id));

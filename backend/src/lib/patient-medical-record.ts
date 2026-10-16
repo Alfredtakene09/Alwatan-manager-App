@@ -91,11 +91,9 @@ export function buildMedicalHistoryEntry(
   const consultation = visit.consultation;
   if (!consultation) return null;
 
+  // Le médecin qui a le dossier voit les examens et les notes, même d’un confrère.
   const canSeeClinical =
-    !!options?.canViewAllClinicalDetails ||
-    (!!options?.viewerDoctorId &&
-      !!consultation.doctorId &&
-      consultation.doctorId === options.viewerDoctorId);
+    !!options?.canViewAllClinicalDetails || !!options?.viewerDoctorId;
 
   const byKind = parsePrescribedExamsByKind(consultation.clinicalNotes);
   const allPrescribedExams = flattenPrescribedExams(byKind);

@@ -276,6 +276,8 @@ export default {
     'Dossier {code} rouvert — {name} : historique complet transmis au médecin.':
       'Dossier {code} rouvert — {name} : historique complet transmis au médecin.',
     'Aucun historique pour ce patient.': 'Aucun historique pour ce patient.',
+    'Examens et notes des consultations précédentes, y compris celles d’un autre médecin.':
+      'Examens et notes des consultations précédentes, y compris celles d’un autre médecin.',
     'Erreur lors de la création du dossier.': 'Erreur lors de la création du dossier.',
     "Impossible d'imprimer le reçu.": "Impossible d'imprimer le reçu.",
     'Imprimer le reçu': 'Imprimer le reçu',
@@ -1154,6 +1156,11 @@ export default {
     'Patient personnel enregistré (gratuit) — envoyé chez {doctor}.':
       'Patient personnel enregistré (gratuit) — envoyé chez {doctor}.',
     'Vos dossiers créés à la réception': 'Vos dossiers créés à la réception',
+    'Mes dossiers': 'Mes dossiers',
+    'Patients des autres réceptionnistes en attente du médecin — 24 heures':
+      'Patients des autres réceptionnistes en attente du médecin — 24 heures',
+    'Patients des réceptionnistes en attente du médecin — 24 heures':
+      'Patients des réceptionnistes en attente du médecin — 24 heures',
     Réceptionniste: 'Réceptionniste',
     'Tous les réceptionnistes': 'Tous les réceptionnistes',
     'Tous les médecins': 'Tous les médecins',

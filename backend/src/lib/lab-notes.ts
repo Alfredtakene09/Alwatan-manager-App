@@ -878,6 +878,27 @@ export function paidExamLabels(
   return [];
 }
 
+const EXAM_QUANTITY_KINDS = new Set<ExamKindSlug>(["examen", "radio", "echo", "odonto"]);
+
+/**
+ * Nombre d'examens facturés sur la ligne (Cheville + Pied = 2).
+ * null pour une consultation, une opération ou une hospitalisation.
+ */
+export function registrationExamQuantity(invoice: {
+  billingExamKind?: string | null;
+  visit?: { consultation?: { clinicalNotes?: string | null } | null } | null;
+}): number | null {
+  const kind = invoice.billingExamKind?.trim() as ExamKindSlug | undefined;
+  if (!kind || !EXAM_QUANTITY_KINDS.has(kind)) return null;
+  const notes = invoice.visit?.consultation?.clinicalNotes;
+  const paid = paidExamLabels(notes, kind);
+  if (paid.length) return paid.length;
+  const labels = (parsePrescribedExamsByKind(notes)[kind] ?? [])
+    .map((label) => label.trim())
+    .filter(Boolean);
+  return Math.max(1, labels.length);
+}
+
 /** Libellés encore à encaisser. Vide si le type est déjà soldé sans ajout. */
 export function payableExamLabels(
   notes: string | null | undefined,

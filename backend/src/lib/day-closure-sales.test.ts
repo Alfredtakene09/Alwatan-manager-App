@@ -382,6 +382,34 @@ describe("assembleDayClosureReceiptLines", () => {
     assert.equal(summary.collectedFcfa, 129000);
   });
 
+  it("compte chaque examen du laboratoire, pas la facture", () => {
+    const summary = assembleDayClosureReceiptLines([
+      {
+        collectedFcfa: 8000,
+        invoice: receiptInvoice({
+          id: "lab-1",
+          type: InvoiceType.LAB_EXAM,
+          amountFcfa: 8000,
+          paidAmountFcfa: 8000,
+          billingExamKind: "examen",
+          visit: {
+            reductionFcfa: 0,
+            consultationFeeFcfa: 0,
+            assignedClinicService: null,
+            patient: null,
+            consultation: {
+              clinicalNotes: "Examens prescrits (Laboratoire) : NFS, Glycémie",
+            },
+          },
+        }),
+      },
+    ]);
+    assert.deepEqual(
+      summary.serviceLines.map((line) => ({ label: line.label, qty: line.qty, totalFcfa: line.totalFcfa })),
+      [{ label: "Laboratoire", qty: 2, totalFcfa: 8000 }],
+    );
+  });
+
   it("distingue une consultation Orthopédie d'une opération Orthopédie", () => {
     const summary = assembleDayClosureReceiptLines([
       {

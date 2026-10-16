@@ -33,7 +33,7 @@ import {
 } from "../lib/patient-payment-guard.js";
 import { ensurePatientMergedByPhone } from "../lib/merge-patients.js";
 import { buildPatientPaymentHistory } from "../lib/patient-invoice-payments.js";
-import { medecinMatchWhere } from "../lib/medecin-queues.js";
+import { medecinMatchWhere, resolveDoctorQueueContext } from "../lib/medecin-queues.js";
 import { resolveConsultationFeeForPatientDoctor } from "../lib/consultation-validity.js";
 import {
   resolveConsultationBilling,
@@ -184,8 +184,12 @@ router.get("/:patientId", requireAnyModule(...DOSSIER_MODULES), async (req, res)
 
   const isMedecin = req.user!.role === "MEDECIN";
   if (isMedecin) {
+    const queueCtx = await resolveDoctorQueueContext(req.user!.id);
     const linkedToPatient = await prisma.visit.findFirst({
-      where: { patientId, ...medecinMatchWhere(req.user!.id) },
+      where: {
+        patientId,
+        ...medecinMatchWhere(req.user!.id, queueCtx.clinicServiceIds),
+      },
       select: { id: true },
     });
     if (!linkedToPatient) {

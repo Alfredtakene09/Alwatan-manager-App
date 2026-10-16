@@ -297,6 +297,8 @@ export default {
     'Dossier {code} rouvert — {name} : historique complet transmis au médecin.':
       'أُعيد فتح الملف {code} — {name}: السجل الكامل مُرسل للطبيب.',
     'Aucun historique pour ce patient.': 'لا يوجد سجل لهذا المريض.',
+    'Examens et notes des consultations précédentes, y compris celles d’un autre médecin.':
+      'فحوصات وملاحظات الزيارات السابقة، بما فيها تلك التي سجلها طبيب آخر.',
     'Erreur lors de la création du dossier.': 'خطأ أثناء إنشاء الملف.',
     "Impossible d'imprimer le reçu.": 'تعذر طباعة الإيصال.',
     "Impossible de charger la file des patients externes.": 'تعذر تحميل قائمة المرضى الخارجيين.',
@@ -1135,6 +1137,11 @@ export default {
     'Patient personnel enregistré (gratuit) — envoyé chez {doctor}.':
       'تم تسجيل مريض الموظفين (مجاني) — أُرسل إلى {doctor}.',
     'Vos dossiers créés à la réception': 'ملفاتك المنشأة في الاستقبال',
+    'Mes dossiers': 'ملفاتي',
+    'Patients des autres réceptionnistes en attente du médecin — 24 heures':
+      'مرضى سجّلهم موظفون آخرون في الاستقبال وما زالوا بانتظار الطبيب — 24 ساعة',
+    'Patients des réceptionnistes en attente du médecin — 24 heures':
+      'مرضى سجّلهم موظفو الاستقبال وما زالوا بانتظار الطبيب — 24 ساعة',
     Reconsultation: 'إعادة استشارة',
     'Calcul du tarif…': 'جاري حساب التعرفة…',
     "Nouvelle visite de consultation — examens, opérations et hospitalisation peuvent être prescrits à chaque passage. Si la validité du médecin est encore active, la consultation est gratuite (0 FCFA). L'historique précédent reste enregistré dans le dossier patient.":

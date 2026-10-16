@@ -13,7 +13,9 @@ import {
   type DoctorProfile,
 } from "./doctor-compensation.js";
 import { collectedAmountFcfa } from "./surgery-cost-shares.js";
-import { paidExamLabels, parsePrescribedExamsByKind, type ExamKindSlug } from "./lab-notes.js";
+import { parsePrescribedExamsByKind, registrationExamQuantity } from "./lab-notes.js";
+
+export { registrationExamQuantity };
 import { registrationSummaryInvoiceWhere } from "./reception-scope.js";
 import { extractExternalPatientService } from "./visit-external.js";
 
@@ -156,7 +158,12 @@ type RegistrationRuleInvoice = {
 
 function registrationRuleDay(invoice: RegistrationRuleInvoice): string | null {
   const followsPayment =
-    invoice.type === InvoiceType.SURGERY || invoice.billingExamKind === "operation";
+    invoice.type === InvoiceType.SURGERY ||
+    invoice.billingExamKind === "operation" ||
+    invoice.billingExamKind === "examen" ||
+    invoice.billingExamKind === "radio" ||
+    invoice.billingExamKind === "echo" ||
+    invoice.billingExamKind === "odonto";
   const at = followsPayment
     ? invoice.paidAt ?? invoice.patient?.createdAt ?? invoice.createdAt
     : invoice.patient?.createdAt ?? invoice.createdAt;
@@ -213,26 +220,30 @@ function invoiceDoctor(invoice: SummaryInvoice): DoctorProfile | null {
   return invoice.visit?.assignedDoctor ?? invoice.visit?.consultation?.doctor ?? null;
 }
 
-/** Types dont la quantité du cumul est le nombre d'examens, pas le nombre de lignes. */
-const EXAM_QUANTITY_KINDS = new Set<ExamKindSlug>(["examen", "radio", "echo", "odonto"]);
-
-/**
- * Nombre d'examens facturés sur la ligne (Cheville + Pied = 2).
- * null pour une consultation, une opération ou une hospitalisation : on compte alors la ligne.
- */
-export function registrationExamQuantity(invoice: {
+type ExamCountInvoice = {
+  id: string;
+  patientId?: string | null;
   billingExamKind?: string | null;
+  paidAt?: Date | null;
+  createdAt?: Date | null;
   visit?: { consultation?: { clinicalNotes?: string | null } | null } | null;
-}): number | null {
-  const kind = invoice.billingExamKind?.trim() as ExamKindSlug | undefined;
-  if (!kind || !EXAM_QUANTITY_KINDS.has(kind)) return null;
-  const notes = invoice.visit?.consultation?.clinicalNotes;
-  const paid = paidExamLabels(notes, kind);
-  if (paid.length) return paid.length;
-  const labels = (parsePrescribedExamsByKind(notes)[kind] ?? [])
-    .map((label) => label.trim())
-    .filter(Boolean);
-  return Math.max(1, labels.length);
+};
+
+/** Une seule facture porte la quantité quand plusieurs encaissements partagent les mêmes examens. */
+export function examCountCarrierIds(invoices: ExamCountInvoice[]): Set<string> {
+  const carriers = new Map<string, { id: string; at: number }>();
+  for (const invoice of invoices) {
+    if (registrationExamQuantity(invoice) == null) continue;
+    const key = [
+      invoice.patientId ?? invoice.id,
+      invoice.billingExamKind ?? "",
+      invoice.visit?.consultation?.clinicalNotes ?? "",
+    ].join("\u0000");
+    const at = invoice.paidAt?.getTime() ?? invoice.createdAt?.getTime() ?? 0;
+    const current = carriers.get(key);
+    if (!current || at >= current.at) carriers.set(key, { id: invoice.id, at });
+  }
+  return new Set([...carriers.values()].map((row) => row.id));
 }
 
 function isCollectedExamInvoice(invoice: {
@@ -737,8 +748,10 @@ function consultationsForSummary(invoices: PricedInvoice[]): PricedInvoice[] {
 
 function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationSummaryLine[] {
   const grouped = new Map<string, Accumulator>();
+  const rows = consultationsForSummary(invoices);
+  const examCarriers = examCountCarrierIds(rows);
 
-  for (const invoice of consultationsForSummary(invoices)) {
+  for (const invoice of rows) {
     const collectedFcfa = summaryAmountFcfa(invoice);
     const amountFcfa = consultationTariffAmount(invoice, collectedFcfa);
     if (amountFcfa <= 0) continue;
@@ -786,7 +799,7 @@ function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationS
 
     const examQty = registrationExamQuantity(invoice);
     if (examQty != null) {
-      row.qty += examQty;
+      if (examCarriers.has(invoice.id)) row.qty += examQty;
     } else {
       const patientKey = group === "operation" ? invoice.id : (invoice.patientId ?? invoice.id);
       if (!row.patientIds.has(patientKey)) {

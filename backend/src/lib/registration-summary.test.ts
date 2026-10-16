@@ -13,6 +13,7 @@ import {
   usesCollectedRegistrationRules,
   operationShare,
   ORTHO_TRAUMA_SERVICE,
+  examCountCarrierIds,
   registrationExamQuantity,
   registrationLineIdentity,
 } from "./registration-summary.js";
@@ -368,6 +369,29 @@ describe("lignes d'opérations à l'export", () => {
     assert.equal(ortho.service, ORTHO_TRAUMA_SERVICE);
     assert.equal(trauma.service, ORTHO_TRAUMA_SERVICE);
     assert.equal(ortho.key, trauma.key);
+  });
+
+  it("compte les examens une seule fois quand deux factures partagent la même liste", () => {
+    const notes = "Examens prescrits (Radio) : Cheville, Pied\nExamens facturés (Radio) : Cheville, Pied";
+    const visit = { consultation: { clinicalNotes: notes } };
+    const carriers = examCountCarrierIds([
+      {
+        id: "early",
+        patientId: "p1",
+        billingExamKind: "radio",
+        paidAt: new Date("2026-10-16T08:00:00Z"),
+        visit,
+      },
+      {
+        id: "last",
+        patientId: "p1",
+        billingExamKind: "radio",
+        paidAt: new Date("2026-10-16T11:00:00Z"),
+        visit,
+      },
+    ]);
+    assert.deepEqual([...carriers], ["last"]);
+    assert.equal(registrationExamQuantity({ billingExamKind: "radio", visit }), 2);
   });
 
   it("compte chaque examen de radiologie, pas la ligne", () => {

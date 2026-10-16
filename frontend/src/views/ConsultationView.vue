@@ -100,6 +100,10 @@ const hasOperationSelected = computed(
   () => (selectedExamsByKind.value.operation?.length ?? 0) > 0,
 )
 
+const previousHistory = computed(() =>
+  recentHistory.value.filter((entry) => entry.visitId !== modalVisitId.value),
+)
+
 const patientMetaLine = computed(() => {
   if (!modalVisit.value) return ''
   const parts = [modalVisit.value.patient.code]
@@ -586,15 +590,25 @@ onUnmounted(() => {
           </header>
 
           <div class="modal__body">
-            <section v-if="loadingHistory || recentHistory.length" class="info-section info-section--history">
+            <section
+              v-if="loadingHistory || previousHistory.length"
+              class="info-section info-section--history"
+            >
               <h3>
                 <ClipboardList :size="15" />
                 {{ uiText('Historique médical') }}
               </h3>
+              <p class="comment-hint">
+                {{
+                  uiText(
+                    'Examens et notes des consultations précédentes, y compris celles d’un autre médecin.',
+                  )
+                }}
+              </p>
               <p v-if="loadingHistory" class="comment-hint">{{ uiText('Chargement…') }}</p>
               <PatientMedicalHistory
                 v-else
-                :entries="recentHistory"
+                :entries="previousHistory"
                 :patient="modalVisit.patient"
                 :expand-first="true"
                 :show-open-lab-link="true"

@@ -40,13 +40,15 @@ describe("classifyVisitAction", () => {
 });
 
 describe("buildMedicalHistoryEntry — dossier partagé", () => {
-  it("masque le diagnostic d’un autre médecin sans droit élargi", () => {
+  it("montre au médecin les examens et les notes d’un autre médecin", () => {
     const entry = buildMedicalHistoryEntry(otherDoctorVisit, {
       viewerDoctorId: "doctor-b",
       canViewAllClinicalDetails: false,
     });
-    assert.equal(entry?.diagnosis, null);
-    assert.equal(entry?.doctorComment, null);
+    assert.equal(entry?.diagnosis, "Paludisme");
+    assert.equal(entry?.doctorComment, "Conduite A");
+    assert.deepEqual(entry?.labExams, ["NFS"]);
+    assert.equal(entry?.doctor?.lastName, "Diallo");
   });
 
   it("expose tout l’historique au médecin lié au patient", () => {

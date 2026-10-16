@@ -2,7 +2,7 @@ import { InvoiceStatus, InvoiceType, Prisma } from "@prisma/client";
 import { prisma } from "./db.js";
 import { classifyInvoiceForSettlement } from "./cash-settlement-breakdown.js";
 import { buildExamSheetsByKind } from "./exam-billing.js";
-import { EXAM_KIND_SECTION_LABELS, type ExamKindSlug } from "./lab-notes.js";
+import { EXAM_KIND_SECTION_LABELS, registrationExamQuantity, type ExamKindSlug } from "./lab-notes.js";
 import {
   COLLECTED_INVOICE_TYPES,
   collectedAmountFcfa,
@@ -479,11 +479,14 @@ export function assembleDayClosureReceiptLines(
       qty: 0,
       totalFcfa: 0,
     };
+    const examQty = registrationExamQuantity(invoice);
     const patientKey =
       invoice.type === InvoiceType.CONSULTATION
         ? `${invoice.patientId ?? invoice.id}\0${consultationServiceName(invoice)}`
         : invoice.id;
-    if (!consultationPatients.has(patientKey)) {
+    if (examQty != null) {
+      row.qty += examQty;
+    } else if (!consultationPatients.has(patientKey)) {
       consultationPatients.add(patientKey);
       row.qty += 1;
     }

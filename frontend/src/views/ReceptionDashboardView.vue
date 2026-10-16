@@ -15,6 +15,7 @@ import {
   CircleDollarSign,
   BedDouble,
   FlaskConical,
+  History,
   Scissors,
   Percent,
 } from '@lucide/vue'
@@ -236,6 +237,10 @@ function openRegisteredPatientsList() {
 const selectedActivityCard = ref('')
 
 function openDashboardStat(id: string) {
+  if (historyMode.value) {
+    historyMode.value = false
+    void loadPatients()
+  }
   selectedActivityCard.value = selectedActivityCard.value === id ? '' : id
   openRegisteredPatientsList()
 }
@@ -283,6 +288,10 @@ function todayInputValue() {
 }
 
 const patients = ref<Patient[]>([])
+const historyMode = ref(false)
+const canSeeColleagueHistory = computed(() =>
+  ['RECEPTIONNISTE', 'ADMIN', 'GESTIONNAIRE', 'COMPTABLE'].includes(auth.user?.role ?? ''),
+)
 const doctors = ref<Doctor[]>([])
 const services = ref<ServiceOption[]>([])
 const listFrom = ref(todayInputValue())
@@ -670,7 +679,7 @@ function patientMatchesSearch(patient: Patient, query: string) {
 }
 
 const visiblePatients = computed(() => {
-  const ids = activityPatientIds.value
+  const ids = historyMode.value ? null : activityPatientIds.value
   const source = ids ? activityPatients.value : patients.value
   const query = search.value.trim()
   if (!ids || !query) return source
@@ -734,6 +743,13 @@ const listDateLabel = computed(() => {
 })
 
 const patientsPanelSubtitle = computed(() => {
+  if (historyMode.value) {
+    return uiText(
+      auth.user?.role === 'RECEPTIONNISTE'
+        ? 'Patients des autres réceptionnistes en attente du médecin — 24 heures'
+        : 'Patients des réceptionnistes en attente du médecin — 24 heures',
+    )
+  }
   const cardLabel =
     selectedActivityCard.value === 'lab'
       ? uiText('Laboratoire')
@@ -1229,26 +1245,37 @@ async function printRegistrationCumul() {
   }
 }
 
+function toggleColleagueHistory() {
+  historyMode.value = !historyMode.value
+  if (historyMode.value) selectedActivityCard.value = ''
+  void loadPatients()
+}
+
 async function loadPatients() {
   loadingPatients.value = true
   try {
     let from = listFrom.value || todayInputValue()
     let to = listTo.value || from
-    if (from > to) {
+    if (!historyMode.value && from > to) {
       ;[from, to] = [to, from]
       listFrom.value = from
       listTo.value = to
     }
     const { data } = await api.get('/patients', {
-      params: {
-        from,
-        to,
-        createdById: canFilterByReceptionist.value
-          ? filterReceptionistId.value || undefined
-          : undefined,
-        doctorId: canFilterByDoctor.value ? filterDoctorId.value || undefined : undefined,
-        service: serviceFilter.value.trim() || undefined,
-      },
+      params: historyMode.value
+        ? {
+            othersUntreated: '1',
+            service: serviceFilter.value.trim() || undefined,
+          }
+        : {
+            from,
+            to,
+            createdById: canFilterByReceptionist.value
+              ? filterReceptionistId.value || undefined
+              : undefined,
+            doctorId: canFilterByDoctor.value ? filterDoctorId.value || undefined : undefined,
+            service: serviceFilter.value.trim() || undefined,
+          },
     })
     patients.value = sortPatientsNewestFirst(data)
   } finally {
@@ -1932,6 +1959,7 @@ function clearListFilters() {
   serviceFilter.value = ''
   filterReceptionistId.value = ''
   filterDoctorId.value = ''
+  historyMode.value = false
   void nextTick(() => {
     resettingListFilters = false
     void loadPatients()
@@ -2109,6 +2137,7 @@ onUnmounted(clearAlert)
                   type="date"
                   class="date-filter__input"
                   :max="listTo || undefined"
+                  :disabled="historyMode"
                   :aria-label="uiText('Du')"
                 />
               </label>
@@ -2119,6 +2148,7 @@ onUnmounted(clearAlert)
                   type="date"
                   class="date-filter__input"
                   :min="listFrom || undefined"
+                  :disabled="historyMode"
                   :aria-label="uiText('Au')"
                 />
               </label>
@@ -2184,8 +2214,23 @@ onUnmounted(clearAlert)
             </div>
 
             <div class="table-toolbar__actions">
+              <UiButton
+                v-if="canSeeColleagueHistory && !historyMode"
+                variant="outline"
+                :icon="History"
+                @click="toggleColleagueHistory"
+              >
+                Historique
+              </UiButton>
+              <UiButton
+                v-if="canSeeColleagueHistory && historyMode"
+                variant="secondary"
+                @click="toggleColleagueHistory"
+              >
+                Mes dossiers
+              </UiButton>
               <ExportButtons
-                v-if="canExportPatients"
+                v-if="canExportPatients && !historyMode"
                 :disabled="loadingPatients || exportingPatients || !patients.length"
                 @pdf="exportPatients('pdf')"
                 @excel="exportPatients('excel')"
@@ -2218,7 +2263,7 @@ onUnmounted(clearAlert)
             :loading="loadingPatients || loadingActivityPatients || !!togglingPatientId"
             :service-options="serviceFilterOptions"
             v-model:service-filter="serviceFilter"
-            :show-receptionist="canFilterByReceptionist"
+            :show-receptionist="canFilterByReceptionist || historyMode"
             show-print
             show-admin-delete
             :printing-patient-id="printingPatientId"

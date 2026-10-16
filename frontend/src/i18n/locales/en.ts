@@ -297,6 +297,8 @@ export default {
     'Dossier {code} rouvert — {name} : historique complet transmis au médecin.':
       'Record {code} reopened — {name}: full history sent to the doctor.',
     'Aucun historique pour ce patient.': 'No history for this patient.',
+    'Examens et notes des consultations précédentes, y compris celles d’un autre médecin.':
+      'Exams and notes from earlier visits, including those of another doctor.',
     'Erreur lors de la création du dossier.': 'Error while creating the record.',
     "Impossible d'imprimer le reçu.": 'Unable to print the receipt.',
     "Impossible de charger la file des patients externes.": 'Unable to load the external patient queue.',
@@ -504,6 +506,11 @@ export default {
     'Voir la liste': 'View the list',
     'Liste des dossiers créés à la réception': 'Records created at reception',
     'Vos dossiers créés à la réception': 'Your records created at reception',
+    'Mes dossiers': 'My records',
+    'Patients des autres réceptionnistes en attente du médecin — 24 heures':
+      'Patients registered by other receptionists, still waiting for the doctor — 24 hours',
+    'Patients des réceptionnistes en attente du médecin — 24 heures':
+      'Patients registered by receptionists, still waiting for the doctor — 24 hours',
     '{scope} — {date}': '{scope} — {date}',
     '{scope} — {date}{service}': '{scope} — {date}{service}',
     ' — {service}': ' — {service}',

@@ -1,5 +1,6 @@
-import { InvoiceStatus, UserRole, type Prisma } from "@prisma/client";
+import { InvoiceStatus, UserRole, VisitStatus, type Prisma } from "@prisma/client";
 import { COLLECTED_INVOICE_TYPES } from "./revenue-stats.js";
+import { EXTERNAL_PATIENT_VISIT_NOTE } from "./visit-external.js";
 
 export type ReceptionScopeUser = { id: string; role: string };
 
@@ -63,9 +64,8 @@ export function registrationSummaryReceptionistWhere(
   };
 }
 
-const operationInvoiceWhere: Prisma.InvoiceWhereInput = {
-  OR: [{ type: "SURGERY" }, { billingExamKind: "operation" }],
-};
+/** Opération et examens : le cumul suit le dernier réceptionniste qui a encaissé. */
+const CASHIER_PAYMENT_DAY_EXAM_KINDS = ["operation", "examen", "radio", "echo", "odonto"] as const;
 
 function patientWhereWithoutRegistrationDay(
   where: Prisma.PatientWhereInput,
@@ -76,9 +76,9 @@ function patientWhereWithoutRegistrationDay(
 
 /**
  * Cumul des enregistrements.
- * Les opérations encaissées par une réception sortent du jour d'ouverture du
- * dossier : elles vont au réceptionniste qui a encaissé, le jour du paiement.
- * Le médecin peut les avoir enregistrées ; ça ne change pas la caisse.
+ * Les opérations et les examens encaissés par une réception sortent du jour
+ * d'ouverture du dossier : ils vont au dernier réceptionniste qui a encaissé,
+ * le jour du paiement. Le médecin peut les avoir prescrits ; ça ne change pas la caisse.
  */
 export function registrationSummaryInvoiceWhere(options: {
   patientWhere: Prisma.PatientWhereInput;
@@ -92,7 +92,10 @@ export function registrationSummaryInvoiceWhere(options: {
     OR: [
       {
         type: { not: "SURGERY" },
-        OR: [{ billingExamKind: null }, { billingExamKind: { not: "operation" } }],
+        OR: [
+          { billingExamKind: null },
+          { billingExamKind: { notIn: [...CASHIER_PAYMENT_DAY_EXAM_KINDS] } },
+        ],
       },
       { payments: { none: { recordedBy: { role: UserRole.RECEPTIONNISTE } } } },
     ],
@@ -113,32 +116,80 @@ export function registrationSummaryInvoiceWhere(options: {
     recordedBy: { role: UserRole.RECEPTIONNISTE },
     ...(receptionistId ? { recordedById: receptionistId } : {}),
   };
-  const collectedOperation: Prisma.InvoiceWhereInput = {
+  const settledExam: Prisma.InvoiceWhereInput[] = [
+    { billingExamKind: { in: ["examen", "radio", "echo", "odonto"] } },
+    { paidAt: { gte: options.period.from, lt: options.period.to } },
+    { payments: { some: { recordedBy: { role: UserRole.RECEPTIONNISTE } } } },
+  ];
+  if (receptionistId) settledExam.push({ issuedById: receptionistId });
+  const collectedOnPaymentDay: Prisma.InvoiceWhereInput = {
     type: { in: COLLECTED_INVOICE_TYPES },
     status: { not: InvoiceStatus.CANCELLED },
     patient: patientWhereWithoutRegistrationDay(options.patientWhere),
-    AND: [
-      operationInvoiceWhere,
+    OR: [
       {
-        OR: [
+        AND: [
+          { OR: [{ type: "SURGERY" }, { billingExamKind: "operation" }] },
           {
-            paidAt: { gte: options.period.from, lt: options.period.to },
-            payments: { some: cashierPayment },
-          },
-          {
-            paidAt: null,
-            payments: {
-              some: {
-                ...cashierPayment,
+            OR: [
+              {
                 paidAt: { gte: options.period.from, lt: options.period.to },
+                payments: { some: cashierPayment },
               },
-            },
+              {
+                paidAt: null,
+                payments: {
+                  some: {
+                    ...cashierPayment,
+                    paidAt: { gte: options.period.from, lt: options.period.to },
+                  },
+                },
+              },
+            ],
           },
         ],
       },
+      { AND: settledExam },
     ],
   };
-  return { OR: [registered, collectedOperation] };
+  return { OR: [registered, collectedOnPaymentDay] };
+}
+
+const NOT_YET_SEEN_BY_DOCTOR: VisitStatus[] = [
+  VisitStatus.WAITING_CONSULTATION,
+  VisitStatus.IN_CONSULTATION,
+];
+
+const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Les dossiers de l'historique disparaissent après 24 heures. */
+export function colleagueHistorySince(now = new Date()) {
+  return new Date(now.getTime() - HISTORY_WINDOW_MS);
+}
+
+/**
+ * Dossiers ouverts par un autre réceptionniste, pas encore vus par le médecin,
+ * enregistrés depuis moins de 24 heures.
+ * Les examens et le laboratoire restent dans leurs files partagées.
+ */
+export function otherReceptionistsUntreatedPatientsWhere(
+  excludeUserId: string | null | undefined,
+  since: Date,
+): Prisma.PatientWhereInput {
+  return {
+    ...(excludeUserId ? { createdById: { not: excludeUserId } } : {}),
+    createdAt: { gte: since },
+    createdBy: { role: UserRole.RECEPTIONNISTE },
+    visits: {
+      some: {
+        status: { in: NOT_YET_SEEN_BY_DOCTOR },
+        OR: [
+          { notes: null },
+          { NOT: { notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE } } },
+        ],
+      },
+    },
+  };
 }
 
 /** Réceptionniste : uniquement ses dossiers. Direction / gestionnaire / admin : tout, ou un réceptionniste choisi. */

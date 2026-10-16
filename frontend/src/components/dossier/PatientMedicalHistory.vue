@@ -276,6 +276,13 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
               <component :is="expandedVisitId === entry.visitId ? ChevronDown : ChevronRight" :size="16" />
               <strong>{{ formatDate(entry.date) }}</strong>
               <span class="timeline-card__time">{{ formatTime(entry.date) }}</span>
+              <span v-if="entry.doctor" class="timeline-card__doctor">
+                {{
+                  translateTemplate('Dr {name}', {
+                    name: fullName(entry.doctor.firstName, entry.doctor.lastName),
+                  })
+                }}
+              </span>
               <span class="badge badge--status">{{ statusLabel(entry.status) }}</span>
             </div>
             <div class="timeline-card__badges">
@@ -576,6 +583,12 @@ function printOrdonnance(entry: MedicalHistoryEntry) {
 .timeline-card__time {
   color: var(--text-muted);
   font-size: 0.8125rem;
+}
+
+.timeline-card__doctor {
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-weight: 700;
 }
 
 .timeline-card__badges {
