@@ -1082,6 +1082,10 @@ function assistantOptionLabel(person: AssistantOption) {
   return person.surgeryQuotaPercent ? `${label} (${person.surgeryQuotaPercent} %)` : label
 }
 
+function assistantNameKey(name: string) {
+  return name.replace(/^dr\.?\s*/i, '').trim().toLowerCase()
+}
+
 function surgeonOptionLabel(doctor: DoctorOption) {
   const name = doctorOptionLabel(doctor)
   return doctor.surgeryQuotaPercent ? `${name} (${doctor.surgeryQuotaPercent} %)` : name
@@ -1153,10 +1157,10 @@ async function loadAssistantDoctors() {
       isMedecin: person.isMedecin,
       surgeryQuotaPercent: person.surgeryQuotaPercent ?? null,
     }))
-    const currentName = assistantForm.value.name.trim().toLowerCase()
-    if (!assistantForm.value.doctorId && currentName) {
+    const currentName = assistantNameKey(assistantForm.value.name)
+    if (assistantForm.value.mode === 'custom' && currentName) {
       const found = assistantDoctors.value.find(
-        (person) => `${person.firstName} ${person.lastName}`.trim().toLowerCase() === currentName,
+        (person) => assistantNameKey(`${person.firstName} ${person.lastName}`) === currentName,
       )
       if (found) {
         assistantForm.value.doctorId = found.id
@@ -1176,14 +1180,21 @@ function syncAssistantFormFromSelection() {
     return
   }
   const hasAssistant = !!exam.hasAssistant
+  const defaultName = exam.anesthesiologistName?.trim() ?? ''
+  const matchingAssistant = defaultName
+    ? assistantDoctors.value.find(
+        (person) => assistantNameKey(`${person.firstName} ${person.lastName}`) === assistantNameKey(defaultName),
+      )
+    : undefined
+  const customDefault = !exam.anesthesiologistId && defaultName && !matchingAssistant
   assistantForm.value = {
-    withAssistant: hasAssistant,
+    withAssistant: hasAssistant || !!exam.anesthesiologistId || !!defaultName,
     percent: String(exam.anesthesiologistPercent && exam.anesthesiologistPercent > 0
       ? exam.anesthesiologistPercent
       : DEFAULT_ASSISTANT_PERCENT),
-    doctorId: exam.anesthesiologistId ?? '',
-    name: exam.anesthesiologistId ? '' : (exam.anesthesiologistName ?? ''),
-    mode: exam.anesthesiologistId || !exam.anesthesiologistName ? 'select' : 'custom',
+    doctorId: exam.anesthesiologistId ?? matchingAssistant?.id ?? (customDefault ? `custom:${defaultName}` : ''),
+    name: customDefault ? defaultName : '',
+    mode: customDefault ? 'custom' : 'select',
   }
   assistantMessage.value = ''
   emitOperationAssistant()
@@ -1206,6 +1217,14 @@ function onOptionalFreeOpNameInput(value: string | number) {
 function onAssistantDoctorChange(value: string | number) {
   const id = String(value ?? '')
   assistantForm.value.doctorId = id
+  if (id.startsWith('custom:')) {
+    assistantForm.value.name = id.slice('custom:'.length)
+    assistantForm.value.mode = 'custom'
+    emitOperationAssistant()
+    return
+  }
+  assistantForm.value.name = ''
+  assistantForm.value.mode = 'select'
   const person = assistantDoctors.value.find((item) => item.id === id)
   if (person?.surgeryQuotaPercent && person.surgeryQuotaPercent > 0) {
     assistantForm.value.percent = String(person.surgeryQuotaPercent)
@@ -1225,6 +1244,14 @@ function emitOperationAssistant() {
   const percent = Math.min(99, Math.max(1, Math.round(Number(assistantForm.value.percent) || DEFAULT_ASSISTANT_PERCENT)))
   const selected = assistantDoctors.value.find((person) => person.id === assistantForm.value.doctorId)
   if (!selected) {
+    if (assistantForm.value.mode === 'custom' && assistantForm.value.name.trim()) {
+      emit('update:operationAssistant', {
+        anesthesiologistPercent: percent,
+        anesthesiologistId: null,
+        anesthesiologistName: assistantForm.value.name.trim(),
+      })
+      return
+    }
     emit('update:operationAssistant', null)
     return
   }
@@ -1858,6 +1885,12 @@ watch(
               @update:model-value="onAssistantDoctorChange"
             >
               <option value="">{{ uiText('— Sélectionner —') }}</option>
+              <option
+                v-if="assistantForm.mode === 'custom' && assistantForm.name"
+                :value="`custom:${assistantForm.name}`"
+              >
+                {{ assistantForm.name }}
+              </option>
               <option v-for="person in assistantDoctors" :key="person.id" :value="person.id">
                 {{ assistantOptionLabel(person) }}
               </option>
