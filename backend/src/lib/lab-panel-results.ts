@@ -217,6 +217,21 @@ export function hasFilledLabPanelResults(notes?: string | null) {
   return Object.values(parseLabPanelResults(notes)).some(labPanelValuesHaveEntry);
 }
 
+/** Tous les panneaux requis doivent avoir au moins une valeur non vide avant validation/print final. */
+export function hasAllRequiredLabPanelsFilled(
+  notes?: string | null,
+  requiredSlugs: Iterable<string> = [],
+) {
+  const slugs = [...new Set([...requiredSlugs].map((slug) => String(slug).trim()).filter(Boolean))];
+  if (!slugs.length) return true;
+
+  const panels = parseLabPanelResults(notes);
+  return slugs.every((slug) => {
+    const values = panels[slug];
+    return values ? labPanelValuesHaveEntry(values) : false;
+  });
+}
+
 /** Chaque validation (y compris résultats tardifs) ajoute un horodatage distinct. */
 export function appendLabResultsCompletion(notes: string | null | undefined) {
   const base = (notes ?? "").trim();

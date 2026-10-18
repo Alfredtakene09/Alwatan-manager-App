@@ -15,6 +15,7 @@ import {
 import { normalizeExamFormLabelKey } from "../lib/exam-lab-panel.js";
 import {
   appendLabResultsCompletion,
+  hasAllRequiredLabPanelsFilled,
   hasFilledLabPanelResults,
   hasLabExamsPrescribed,
   isLabPanelSlug,
@@ -28,6 +29,7 @@ import { backfillLabSentToLabAtForPaidQueue } from "../lib/lab-receptionist-back
 import { refreshLabPanelRegistry } from "../lib/lab-panels-registry.js";
 import { requireAuth } from "../middleware/auth.js";
 import { canAccessModule, type AppUserRole } from "../lib/roles.js";
+import { EXTERNAL_PATIENT_VISIT_NOTE } from "../lib/visit-external.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -147,7 +149,7 @@ async function findLabVisitForWrite(visitId: string): Promise<{
   const sentAt = visit.consultation.labSentToLabAt;
   const completed = hasLabResults(notes);
   const waitingPaid = hasPaidLabWorkPending(notes, sentAt);
-  const hasContext = hasLabDossierContext(notes, sentAt);
+  const hasContext = hasLabDossierContext(notes, sentAt, visit.notes);
   const hasFilled = hasFilledLabPanelResults(notes);
 
   if (!hasContext) return { visit: null, blockReason: "NO_LAB_CONTEXT" };
@@ -175,7 +177,11 @@ function labWriteBlockMessage(reason: LabWriteBlockReason, panelLabel?: string):
 function hasLabDossierContext(
   notes?: string | null,
   labSentToLabAt?: Date | null,
+  visitNotes?: string | null,
 ) {
+  if (visitNotes?.includes(EXTERNAL_PATIENT_VISIT_NOTE) && hasLabExamsPrescribed(notes)) {
+    return true;
+  }
   if (hasLabExamsPrescribed(notes)) return true;
   if (hasLabResults(notes)) return true;
   if (Object.keys(parseLabPanelResults(notes)).length > 0) return true;
@@ -189,7 +195,7 @@ async function findLabVisitForRead(visitId: string) {
   });
 
   if (!visit?.consultation) return null;
-  if (!hasLabDossierContext(visit.consultation.clinicalNotes, visit.consultation.labSentToLabAt)) {
+  if (!hasLabDossierContext(visit.consultation.clinicalNotes, visit.consultation.labSentToLabAt, visit.notes)) {
     return null;
   }
   return visit;
@@ -214,12 +220,14 @@ router.get("/queue", async (_req, res) => {
   });
 
   return res.json(
-    visits.filter((visit) =>
-      hasPaidLabWorkPending(
-        visit.consultation?.clinicalNotes,
-        visit.consultation?.labSentToLabAt,
-      ),
-    ),
+    visits.filter((visit) => {
+      const notes = visit.consultation?.clinicalNotes ?? null;
+      const visitNotes = visit.notes ?? null;
+      return (
+        hasPaidLabWorkPending(notes, visit.consultation?.labSentToLabAt) ||
+        (visitNotes?.includes(EXTERNAL_PATIENT_VISIT_NOTE) && hasLabExamsPrescribed(notes))
+      );
+    }),
   );
 });
 
@@ -434,6 +442,17 @@ router.post("/visits/:visitId/complete", async (req, res) => {
       });
     }
     return res.json({ ok: true, alreadyCompleted: true });
+  }
+
+  const prescribedPanels = await resolvePrescribedPanels(visit.consultation.clinicalNotes);
+  const requiredSlugs = prescribedPanels.map((panel) => panel.slug);
+
+  if (requiredSlugs.length && !hasAllRequiredLabPanelsFilled(visit.consultation.clinicalNotes, requiredSlugs)) {
+    return res.status(400).json({
+      error:
+        "Tous les résultats envoyés doivent être saisis avant la validation et l’impression du dossier.",
+      code: "INCOMPLETE_REQUIRED_RESULTS",
+    });
   }
 
   if (!hasFilledLabPanelResults(visit.consultation.clinicalNotes)) {

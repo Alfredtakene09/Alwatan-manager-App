@@ -489,16 +489,19 @@ async function savePrintAndComplete() {
 
   const missing = listMissingPrescribedPanels(panels)
   const missingMsg = formatMissingPanelsMessage(missing)
+  if (missing.length) {
+    showMessage(
+      `${uiText('Tous les résultats envoyés doivent être saisis avant validation et impression.')}${missingMsg ? ` ${missingMsg}` : ''}`,
+      'error',
+    )
+    return
+  }
 
   const ok = await confirmAppModal({
     title: uiText('Enregistrer, imprimer et clôturer'),
-    message: missing.length
-      ? `${missingMsg} ${uiText(
-          'Enregistrer uniquement les examens saisis, imprimer et clôturer le dossier ?',
-        )}`
-      : uiText(
-          'Enregistrer tous les résultats, imprimer un seul document et transmettre au médecin ?',
-        ),
+    message: uiText(
+      'Enregistrer tous les résultats, imprimer un seul document et transmettre au médecin ?',
+    ),
     confirmLabel: uiText('Enregistrer, imprimer et clôturer'),
     type: 'CONFIRM',
   })

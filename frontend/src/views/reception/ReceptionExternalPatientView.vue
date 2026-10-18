@@ -201,9 +201,17 @@ async function loadDoctors() {
   }
 }
 
-const parsedName = computed(() => splitPatientFullName(patientForm.value.fullName))
+function normalizePatientIdentity(fullName: string) {
+  const { firstName, lastName } = splitPatientFullName(fullName)
+  return {
+    firstName: firstName.trim(),
+    lastName: lastName.trim(),
+  }
+}
+
+const parsedName = computed(() => normalizePatientIdentity(patientForm.value.fullName))
 const parsedAge = computed(() => parsePatientAge(patientForm.value.age, patientForm.value.ageUnit))
-const editParsedName = computed(() => splitPatientFullName(editForm.value.fullName))
+const editParsedName = computed(() => normalizePatientIdentity(editForm.value.fullName))
 const editParsedAge = computed(() => parsePatientAge(editForm.value.age, editForm.value.ageUnit))
 
 const newPatientExamCount = computed(() => countExamsByKind(examsByKind.value))
@@ -257,7 +265,7 @@ const canSubmitExams = computed(
     operationPercentReady.value,
 )
 
-const externalExamKinds = EXTERNAL_PATIENT_EXAM_KINDS
+const externalLabOnlyExamKinds: ExamKindSlug[] = ['examen', 'radio', 'echo', 'odonto']
 
 function destinationServicesLabel(byKind: ExamsByKind): string {
   const labels = (EXTERNAL_PATIENT_EXAM_KINDS as ExamKindSlug[])
@@ -822,14 +830,15 @@ async function confirmNewPatient() {
   if (registering.value) return
   if (!canConfirmNewPatient.value) return
   const { firstName, lastName } = parsedName.value
+  if (!firstName.trim() || !lastName.trim()) {
+    message.value = uiText('Le nom et le prénom du patient sont obligatoires.')
+    messageType.value = 'error'
+    return
+  }
   const age = parsePatientAge(patientForm.value.age, patientForm.value.ageUnit)
   const basePayload = {
-    firstName,
-    lastName,
-    age: age ?? undefined,
-    ageUnit: patientForm.value.ageUnit,
-    phone: patientForm.value.phone.trim() || undefined,
-    gender: patientForm.value.gender,
+    firstName: firstName.trim(),
+    lastName: lastName.trim(),
   }
 
   if (newPatientExamCount.value > 0) {
@@ -1159,7 +1168,7 @@ onMounted(() => {
           <p class="form-panel__hint">
             {{
               uiText(
-                'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.',
+                'Choisissez les examens disponibles du laboratoire. Aucun assistant n’est requis.',
               )
             }}
           </p>
@@ -1170,7 +1179,8 @@ onMounted(() => {
             v-model:operation-doctor-id="selectedDoctorId"
             v-model:operation-assistant="operationAssistant"
             v-model:operation-service-id="operationServiceId"
-            :kinds="externalExamKinds"
+            :kinds="externalLabOnlyExamKinds"
+            :show-operation-assistant="false"
             :show-comments="false"
             :show-consultation="false"
             @active-service-change="onActiveServiceChange"
@@ -1293,7 +1303,7 @@ onMounted(() => {
           <p class="form-panel__hint">
             {{
               uiText(
-                'Modifiez le service, les examens, le montant et la réduction. Le médecin est facultatif.',
+                'Modifiez les examens du laboratoire disponibles. Aucun assistant n’est requis.',
               )
             }}
           </p>
@@ -1304,7 +1314,8 @@ onMounted(() => {
             v-model:operation-doctor-id="selectedDoctorId"
             v-model:operation-assistant="operationAssistant"
             v-model:operation-service-id="operationServiceId"
-            :kinds="externalExamKinds"
+            :kinds="externalLabOnlyExamKinds"
+            :show-operation-assistant="false"
             :show-comments="false"
             :show-consultation="false"
             @active-service-change="onActiveServiceChange"
@@ -1388,18 +1399,19 @@ onMounted(() => {
         <p class="form-panel__hint">
           {{
             uiText(
-              'Choisissez le service puis les examens ou opérations. Le médecin est facultatif.',
+              'Choisissez les examens disponibles du laboratoire. Aucun assistant n’est requis.',
             )
           }}
         </p>
         <MultiExamPrescriptionPicker
           v-model="examsByKind"
           v-model:operation-amount-fcfa="operationAmountFcfa"
-            v-model:operation-surgeon-percent="operationSurgeonPercent"
+          v-model:operation-surgeon-percent="operationSurgeonPercent"
           v-model:operation-doctor-id="selectedDoctorId"
           v-model:operation-assistant="operationAssistant"
           v-model:operation-service-id="operationServiceId"
-          :kinds="externalExamKinds"
+          :kinds="externalLabOnlyExamKinds"
+          :show-operation-assistant="false"
           :show-comments="false"
           :show-consultation="false"
           @active-service-change="onActiveServiceChange"

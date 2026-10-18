@@ -97,6 +97,8 @@ const props = withDefaults(
     operationSurgeonPercent?: number | null
     /** Service clinique choisi comme opération (patient externe). */
     operationServiceId?: string | null
+    /** Cache l’assistant/opérateur pour les flux de sélection labo externe. */
+    showOperationAssistant?: boolean
   }>(),
   {
     comments: () => emptyExamCommentsByKind(),
@@ -110,6 +112,7 @@ const props = withDefaults(
     operationDoctorId: null,
     operationSurgeonPercent: null,
     operationServiceId: null,
+    showOperationAssistant: true,
   },
 )
 
@@ -917,8 +920,9 @@ const showOperationPricePanel = computed(
 
 const showOperationAssistantPanel = computed(
   () =>
-    !!cartOperationLabel.value ||
-    (receptionistFreePrice.value && !!selectedOperationServiceId.value),
+    props.showOperationAssistant &&
+    (!!cartOperationLabel.value ||
+      (receptionistFreePrice.value && !!selectedOperationServiceId.value)),
 )
 
 const operationDoctorIdModel = computed({
@@ -1083,7 +1087,7 @@ function assistantOptionLabel(person: AssistantOption) {
 }
 
 function assistantNameKey(name: string) {
-  return name.replace(/^dr\.?\s*/i, '').trim().toLowerCase()
+  return (name ?? '').replace(/^dr\.?\s*/i, '').trim().toLowerCase()
 }
 
 function surgeonOptionLabel(doctor: DoctorOption) {
@@ -1180,20 +1184,20 @@ function syncAssistantFormFromSelection() {
     return
   }
   const hasAssistant = !!exam.hasAssistant
-  const defaultName = exam.anesthesiologistName?.trim() ?? ''
+  const defaultName = assistantNameKey(exam.anesthesiologistName ?? '')
   const matchingAssistant = defaultName
     ? assistantDoctors.value.find(
-        (person) => assistantNameKey(`${person.firstName} ${person.lastName}`) === assistantNameKey(defaultName),
+        (person) => assistantNameKey(`${person.firstName} ${person.lastName}`) === defaultName,
       )
     : undefined
-  const customDefault = !exam.anesthesiologistId && defaultName && !matchingAssistant
+  const customDefault = !exam.anesthesiologistId && !!defaultName && !matchingAssistant
   assistantForm.value = {
     withAssistant: hasAssistant || !!exam.anesthesiologistId || !!defaultName,
     percent: String(exam.anesthesiologistPercent && exam.anesthesiologistPercent > 0
       ? exam.anesthesiologistPercent
       : DEFAULT_ASSISTANT_PERCENT),
-    doctorId: exam.anesthesiologistId ?? matchingAssistant?.id ?? (customDefault ? `custom:${defaultName}` : ''),
-    name: customDefault ? defaultName : '',
+    doctorId: exam.anesthesiologistId ?? matchingAssistant?.id ?? (customDefault ? `custom:${exam.anesthesiologistName?.trim() ?? ''}` : ''),
+    name: customDefault ? (exam.anesthesiologistName?.trim() ?? '') : '',
     mode: customDefault ? 'custom' : 'select',
   }
   assistantMessage.value = ''
@@ -1244,12 +1248,17 @@ function emitOperationAssistant() {
   const percent = Math.min(99, Math.max(1, Math.round(Number(assistantForm.value.percent) || DEFAULT_ASSISTANT_PERCENT)))
   const selected = assistantDoctors.value.find((person) => person.id === assistantForm.value.doctorId)
   if (!selected) {
-    if (assistantForm.value.mode === 'custom' && assistantForm.value.name.trim()) {
+    const customName = assistantForm.value.name.trim()
+    if (assistantForm.value.mode === 'custom' && customName) {
       emit('update:operationAssistant', {
         anesthesiologistPercent: percent,
         anesthesiologistId: null,
-        anesthesiologistName: assistantForm.value.name.trim(),
+        anesthesiologistName: customName,
       })
+      return
+    }
+    if (!customName && assistantForm.value.mode !== 'custom') {
+      emit('update:operationAssistant', null)
       return
     }
     emit('update:operationAssistant', null)

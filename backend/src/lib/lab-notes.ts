@@ -590,6 +590,12 @@ export function labsWaitingWhere(doctorId?: string) {
           },
         },
       },
+      {
+        AND: [
+          { clinicalNotes: { contains: EXAMS_PRESCRIBED_PREFIX } },
+          { visit: { notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE } } },
+        ],
+      },
     ],
     NOT: { clinicalNotes: { contains: LAB_RESULTS_COMPLETION_MARKER } },
   };

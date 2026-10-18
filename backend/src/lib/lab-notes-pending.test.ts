@@ -220,6 +220,12 @@ describe("file laboratoire — examens payés", () => {
     );
   });
 
+  it("inclut les dossiers externes avec prescription de labo dans le filtre SQL", () => {
+    const dumped = JSON.stringify(labsWaitingWhere());
+    assert.ok(dumped.includes("PATIENT_EXTERNE"));
+    assert.ok(dumped.includes("Examens prescrits"));
+  });
+
   it("inclut les dossiers soldés sans tampon labSentToLabAt dans le filtre SQL", () => {
     const dumped = JSON.stringify(labsWaitingWhere());
     assert.ok(dumped.includes("Examens payés (Laboratoire)"));

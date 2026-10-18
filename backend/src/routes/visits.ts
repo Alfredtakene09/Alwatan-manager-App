@@ -1094,13 +1094,19 @@ const operationAssistantSchema = z
   })
   .optional();
 
+const trimmedString = (minLength = 1) =>
+  z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() : value),
+    z.string().min(minLength),
+  );
+
 const externalLabOrderSchema = z
   .object({
     patientId: z.string().optional(),
-    firstName: z.string().min(2).optional(),
-    lastName: z.string().min(2).optional(),
-    phone: z.string().optional(),
-    gender: z.string().optional(),
+    firstName: trimmedString(2).optional(),
+    lastName: trimmedString(2).optional(),
+    phone: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().optional()),
+    gender: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().optional()),
     service: z.string().max(120).optional(),
     /** Médecin / prescripteur optionnel (ordonnance externe) */
     doctorId: z.string().optional(),
@@ -1147,10 +1153,10 @@ const externalLabOrderSchema = z
 const externalPatientSchema = z
   .object({
     patientId: z.string().optional(),
-    firstName: z.string().min(2).optional(),
-    lastName: z.string().min(2).optional(),
-    phone: z.string().optional(),
-    gender: z.string().optional(),
+    firstName: trimmedString(2).optional(),
+    lastName: trimmedString(2).optional(),
+    phone: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().optional()),
+    gender: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().optional()),
     service: z.string().max(120).optional(),
     /** Médecin / prescripteur optionnel pour le patient externe */
     doctorId: z.string().optional(),
@@ -1305,10 +1311,10 @@ router.delete(
 
 const externalQueueUpdateSchema = z
   .object({
-    firstName: z.string().min(2),
-    lastName: z.string().min(2),
-    phone: z.string().optional(),
-    gender: z.string().optional(),
+    firstName: trimmedString(2),
+    lastName: trimmedString(2),
+    phone: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().optional()),
+    gender: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().optional()),
     service: z.string().max(120).optional(),
     doctorId: z.string().optional(),
     prescriberDoctorId: z.string().optional(),
