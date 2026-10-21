@@ -16,7 +16,6 @@ import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
 import {
   doctorMatchesService,
   doctorMatchesClinicServiceId,
-  withoutAnesthetistForGeneralSurgery,
   preferredDoctorId,
   sortDoctorsForReception,
   type DoctorOption,
@@ -87,7 +86,8 @@ const filteredDoctors = computed(() => {
   } else {
     matched = sortedDoctors.value.filter((doctor) => doctorMatchesService(doctor, form.value.service))
   }
-  return sortDoctorsForReception(withoutAnesthetistForGeneralSurgery(matched, form.value.service))
+  if (form.value.service && !matched.length) matched = sortedDoctors.value
+  return sortDoctorsForReception(matched)
 })
 
 const canRegister = computed(() => {

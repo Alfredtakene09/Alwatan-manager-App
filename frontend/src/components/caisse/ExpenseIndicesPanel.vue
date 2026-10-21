@@ -30,6 +30,24 @@ const editingId = ref<string | null>(null)
 const formName = ref('')
 const formDescription = ref('')
 const formFlow = ref<ExpenseFlow>('SORTIE')
+const flowFilter = ref<'' | ExpenseFlow>('')
+
+const flowFilters: Array<{ value: '' | ExpenseFlow; label: string }> = [
+  { value: '', label: 'Tous' },
+  { value: 'SORTIE', label: 'Dépenses' },
+  { value: 'ENTREE', label: 'Entrées' },
+]
+
+const filteredItems = computed(() =>
+  flowFilter.value
+    ? items.value.filter((item) => (item.flow === 'ENTREE' ? 'ENTREE' : 'SORTIE') === flowFilter.value)
+    : items.value,
+)
+
+function flowCount(value: '' | ExpenseFlow) {
+  if (!value) return items.value.length
+  return items.value.filter((item) => (item.flow === 'ENTREE' ? 'ENTREE' : 'SORTIE') === value).length
+}
 
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 const isEditing = computed(() => editingId.value !== null)
@@ -41,7 +59,7 @@ const indiceModalSubtitle = computed(() =>
 )
 
 const tableRows = computed(() =>
-  items.value.map((item) => ({
+  filteredItems.value.map((item) => ({
     id: item.id,
     name: item.name,
     flowLabel: item.flow === 'ENTREE' ? 'Entrée' : 'Dépense',
@@ -85,6 +103,7 @@ function resetForm() {
 function openCreateModal() {
   editingId.value = null
   resetForm()
+  if (flowFilter.value) formFlow.value = flowFilter.value
   modalOpen.value = true
   message.value = ''
 }
@@ -214,7 +233,24 @@ onMounted(loadItems)
 
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
 
+    <div class="flow-filters" role="group" aria-label="Type d'indice">
+      <button
+        v-for="opt in flowFilters"
+        :key="opt.value || 'all'"
+        type="button"
+        class="flow-filters__chip"
+        :class="{ 'flow-filters__chip--active': flowFilter === opt.value }"
+        :aria-pressed="flowFilter === opt.value"
+        @click="flowFilter = opt.value"
+      >
+        {{ opt.label }} ({{ flowCount(opt.value) }})
+      </button>
+    </div>
+
     <p v-if="!loading && !items.length" class="empty">Aucun indice enregistré</p>
+    <p v-else-if="!loading && !tableRows.length" class="empty">
+      {{ flowFilter === 'ENTREE' ? 'Aucun indice d\'entrée' : 'Aucun indice de dépense' }}
+    </p>
     <div v-else class="simple-table-shell simple-table-shell--fill">
       <div
         v-if="loading"
@@ -300,6 +336,32 @@ onMounted(loadItems)
 <style scoped>
 .panel-alert {
   margin-bottom: 1rem;
+}
+
+.flow-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.flow-filters__chip {
+  height: 2rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.flow-filters__chip--active {
+  border-color: var(--primary-200);
+  background: var(--primary-50);
+  color: var(--primary-800);
 }
 
 .empty {

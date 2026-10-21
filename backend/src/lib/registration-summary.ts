@@ -1,4 +1,4 @@
-import { ConsultationQuotaMode, InvoiceStatus, InvoiceType, Prisma } from "@prisma/client";
+import { ConsultationQuotaMode, InvoiceStatus, InvoiceType, Prisma, UserRole } from "@prisma/client";
 import { prisma } from "./db.js";
 import {
   classifyInvoiceForDayClosure,
@@ -93,6 +93,9 @@ const summaryInvoiceSelect = {
   paidAt: true,
   issuedById: true,
   billingExamKind: true,
+  payments: {
+    select: { amountFcfa: true, paidAt: true },
+  },
   surgeryCaseId: true,
   hospitalizationId: true,
   patient: { select: { createdAt: true, createdById: true } },
@@ -153,8 +156,17 @@ type RegistrationRuleInvoice = {
   createdAt?: Date | null;
   paidAt?: Date | null;
   issuedById?: string | null;
+  payments?: Array<{ paidAt?: Date | null }>;
   patient?: { createdAt?: Date | null; createdById?: string | null } | null;
 };
+
+function latestPaymentAt(payments?: Array<{ paidAt?: Date | null }>): Date | null {
+  return payments?.reduce<Date | null>(
+    (latest, payment) =>
+      payment.paidAt && (!latest || payment.paidAt > latest) ? payment.paidAt : latest,
+    null,
+  ) ?? null;
+}
 
 function registrationRuleDay(invoice: RegistrationRuleInvoice): string | null {
   const followsPayment =
@@ -164,8 +176,9 @@ function registrationRuleDay(invoice: RegistrationRuleInvoice): string | null {
     invoice.billingExamKind === "radio" ||
     invoice.billingExamKind === "echo" ||
     invoice.billingExamKind === "odonto";
+  const paymentAt = latestPaymentAt(invoice.payments);
   const at = followsPayment
-    ? invoice.paidAt ?? invoice.patient?.createdAt ?? invoice.createdAt
+    ? invoice.paidAt ?? paymentAt ?? invoice.patient?.createdAt ?? invoice.createdAt
     : invoice.patient?.createdAt ?? invoice.createdAt;
   if (!at || Number.isNaN(at.getTime())) return null;
   return formatBusinessDate(at);
@@ -192,6 +205,14 @@ function summaryAmountFcfa(invoice: SummaryInvoice): number {
   if (!usesCollectedRegistrationRules(invoice)) return billed;
   const paid = Math.max(0, invoice.paidAmountFcfa ?? 0);
   if (invoice.status === InvoiceStatus.CANCELLED) return 0;
+  if (
+    invoice.type === InvoiceType.LAB_EXAM &&
+    invoice.billingExamKind &&
+    invoice.payments.length > 0
+  ) {
+    const paymentAmount = invoice.payments.reduce((sum, payment) => sum + payment.amountFcfa, 0);
+    if (paymentAmount > 0) return paymentAmount;
+  }
   if (
     invoice.status === InvoiceStatus.PENDING ||
     invoice.status === InvoiceStatus.PARTIALLY_PAID
@@ -226,6 +247,7 @@ type ExamCountInvoice = {
   billingExamKind?: string | null;
   paidAt?: Date | null;
   createdAt?: Date | null;
+  payments?: Array<{ paidAt?: Date | null }>;
   visit?: { consultation?: { clinicalNotes?: string | null } | null } | null;
 };
 
@@ -239,7 +261,11 @@ export function examCountCarrierIds(invoices: ExamCountInvoice[]): Set<string> {
       invoice.billingExamKind ?? "",
       invoice.visit?.consultation?.clinicalNotes ?? "",
     ].join("\u0000");
-    const at = invoice.paidAt?.getTime() ?? invoice.createdAt?.getTime() ?? 0;
+    const at =
+      latestPaymentAt(invoice.payments)?.getTime() ??
+      invoice.paidAt?.getTime() ??
+      invoice.createdAt?.getTime() ??
+      0;
     const current = carriers.get(key);
     if (!current || at >= current.at) carriers.set(key, { id: invoice.id, at });
   }
@@ -668,9 +694,23 @@ async function withCatalogOperations(invoices: SummaryInvoice[]): Promise<Priced
 }
 
 async function loadRegistrationInvoices(options: RegistrationSummaryOptions) {
+  const receptionistId = options.receptionistId?.trim() || "";
+  const paymentWhere: Prisma.InvoicePaymentWhereInput = {
+    recordedBy: { role: UserRole.RECEPTIONNISTE },
+    ...(options.period
+      ? { paidAt: { gte: options.period.from, lt: options.period.to } }
+      : {}),
+    ...(receptionistId ? { recordedById: receptionistId } : {}),
+  };
   return prisma.invoice.findMany({
     where: registrationSummaryInvoiceWhere(options),
-    select: summaryInvoiceSelect,
+    select: {
+      ...summaryInvoiceSelect,
+      payments: {
+        where: paymentWhere,
+        select: { amountFcfa: true, paidAt: true },
+      },
+    },
   });
 }
 

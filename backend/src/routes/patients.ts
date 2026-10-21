@@ -40,6 +40,11 @@ import {
 } from "../lib/patient-payment-guard.js";
 import { forceDeletePatientCascade } from "../lib/patient-admin-delete.js";
 import {
+  activeExamInvoices,
+  mapCombinedExamPayment,
+  mapInvoicePayment,
+} from "../lib/visit-exam-payment.js";
+import {
   findDuplicatePatient,
   findPatientForDossierFusion,
   serializePatientForDuplicate,
@@ -216,29 +221,7 @@ async function findPrintableConsultationVisit(patientId: string) {
   });
 }
 
-function mapConsultationPayment(invoice: {
-  id: string;
-  invoiceNumber: string;
-  status: InvoiceStatus;
-  amountFcfa: number;
-  paidAmountFcfa: number;
-} | null | undefined) {
-  if (!invoice || invoice.status === InvoiceStatus.CANCELLED) return null;
-  const remainingFcfa = Math.max(0, invoice.amountFcfa - invoice.paidAmountFcfa);
-  return {
-    invoiceId: invoice.id,
-    invoiceNumber: invoice.invoiceNumber,
-    status: invoice.status,
-    amountFcfa: invoice.amountFcfa,
-    paidAmountFcfa: invoice.paidAmountFcfa,
-    remainingFcfa,
-    payable:
-      remainingFcfa > 0 &&
-      (invoice.status === InvoiceStatus.PENDING ||
-        invoice.status === InvoiceStatus.PARTIALLY_PAID ||
-        invoice.status === InvoiceStatus.DRAFT),
-  };
-}
+const mapConsultationPayment = mapInvoicePayment;
 
 function mapConsultationVisitForReception(
   visit: NonNullable<Awaited<ReturnType<typeof findPrintableConsultationVisit>>>,
@@ -260,6 +243,7 @@ function mapConsultationVisitForReception(
     const reductionFcfa = Math.max(0, visit.consultation?.labExamReductionFcfa ?? 0);
     const netFcfa = labInvoices.reduce((sum, invoice) => sum + invoice.amountFcfa, 0);
     const grossFcfa = netFcfa + reductionFcfa;
+    const orderedLabInvoices = activeExamInvoices(labInvoices);
     return {
       id: visit.id,
       doctorId,
@@ -269,9 +253,9 @@ function mapConsultationVisitForReception(
       consultationFeeFcfa: grossFcfa,
       reductionFcfa,
       consultationAmountFcfa: grossFcfa || null,
-      invoiceNumber: labInvoices[0]?.invoiceNumber ?? null,
+      invoiceNumber: orderedLabInvoices.map((invoice) => invoice.invoiceNumber).join(" + ") || null,
       totalFcfa: netFcfa,
-      consultationPayment: mapConsultationPayment(labInvoices[0]),
+      consultationPayment: mapCombinedExamPayment(orderedLabInvoices),
     };
   }
 
@@ -751,6 +735,8 @@ router.get("/", async (req, res) => {
           status: true,
           amountFcfa: true,
           paidAmountFcfa: true,
+          visitId: true,
+          createdAt: true,
         },
       },
     },
@@ -763,13 +749,21 @@ router.get("/", async (req, res) => {
     patients.map((patient) => {
       const { invoices, ...rest } = patient;
       // Même colonne « paiement » : consultation si présente, sinon montant labo (patients externes).
-      const paymentInvoice =
-        invoices.find((invoice) => invoice.type === InvoiceType.CONSULTATION) ??
-        invoices.find((invoice) => invoice.type === InvoiceType.LAB_EXAM);
+      const consultationInvoice = invoices.find((invoice) => invoice.type === InvoiceType.CONSULTATION);
+      const latestLabInvoice = invoices.find((invoice) => invoice.type === InvoiceType.LAB_EXAM);
+      const visitLabInvoices = latestLabInvoice
+        ? invoices.filter(
+            (invoice) =>
+              invoice.type === InvoiceType.LAB_EXAM && invoice.visitId === latestLabInvoice.visitId,
+          )
+        : [];
+      const payment = consultationInvoice
+        ? mapConsultationPayment(consultationInvoice)
+        : mapCombinedExamPayment(visitLabInvoices);
       return {
         ...rest,
         canDelete: canFullList && !lockedIds.has(patient.id),
-        consultationPayment: canFullList ? mapConsultationPayment(paymentInvoice) : null,
+        consultationPayment: canFullList ? payment : null,
       };
     }),
   );
@@ -1370,13 +1364,12 @@ router.get("/:id", requireModule("reception"), async (req, res) => {
   if (!patient) return res.status(404).json({ error: "Patient introuvable" });
 
   const printableVisit = await findPrintableConsultationVisit(patient.id);
+  const waitingVisit = printableVisit ? mapConsultationVisitForReception(printableVisit) : null;
 
   return res.json({
     ...patient,
-    waitingVisit: printableVisit ? mapConsultationVisitForReception(printableVisit) : null,
-    consultationPayment: printableVisit
-      ? mapConsultationPayment(printableVisit.invoices[0])
-      : null,
+    waitingVisit,
+    consultationPayment: waitingVisit?.consultationPayment ?? null,
   });
 });
 

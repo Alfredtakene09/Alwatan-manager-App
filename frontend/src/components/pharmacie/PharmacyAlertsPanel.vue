@@ -7,8 +7,18 @@ import {
   Clock,
   CalendarX,
   Trash2,
+  Plus,
+  Minus,
+  Save,
+  ArrowDownUp,
 } from '@lucide/vue'
 import api from '@/api/client'
+import { canWritePharmacyCatalog } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth'
+import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
+import UiFormModal from '@/components/ui/UiFormModal.vue'
+import UiInput from '@/components/ui/UiInput.vue'
+import UiSelect from '@/components/ui/UiSelect.vue'
 import {
   buildClinicPrintHeader,
   openPrintDocument,
@@ -70,6 +80,7 @@ type AlertCard = {
   meta: string
   levelLabel: string
   variant: 'danger' | 'warning' | 'muted'
+  quantity: number | null
 }
 
 const data = ref<AlertsResponse | null>(null)
@@ -147,6 +158,7 @@ const filteredCards = computed((): AlertCard[] => {
         meta: level === 'out' ? uiText('Rupture') : level === 'critical' ? uiText('Critique') : uiText('Stock bas'),
         levelLabel: level === 'out' ? uiText('Rupture') : level === 'critical' ? uiText('Critique') : uiText('Bas'),
         variant: (level === 'low' ? 'warning' : 'danger') as 'danger' | 'warning',
+        quantity: item.quantity,
       }))
   }
 
@@ -164,6 +176,7 @@ const filteredCards = computed((): AlertCard[] => {
       meta: new Date(`${item.expiryDate}T12:00:00`).toLocaleDateString('fr-FR'),
       levelLabel: level === 'expired' ? uiText('Expiré') : uiText('Expire bientôt'),
       variant: (level === 'expired' ? 'danger' : 'warning') as 'danger' | 'warning',
+      quantity: d.stockItems.find((s) => s.productId === item.productId)?.quantity ?? null,
     }))
 })
 
@@ -191,13 +204,13 @@ function pickDefaultFilter(response: AlertsResponse) {
   activeFilter.value = firstWithItems ?? 'out'
 }
 
-async function loadAlerts() {
+async function loadAlerts(options: { keepFilter?: boolean; keepMessage?: boolean } = {}) {
   loading.value = true
-  message.value = ''
+  if (!options.keepMessage) message.value = ''
   try {
     const { data: response } = await api.get<AlertsResponse>('/pharmacie/alerts')
     data.value = response
-    pickDefaultFilter(response)
+    if (!options.keepFilter) pickDefaultFilter(response)
   } catch {
     message.value = 'Impossible de charger les alertes.'
     messageType.value = 'error'
@@ -266,7 +279,7 @@ async function removeOneExpired(card: AlertCard) {
     )
     message.value = result.message ?? 'Produit retiré.'
     messageType.value = 'success'
-    await loadAlerts()
+    await loadAlerts({ keepFilter: true, keepMessage: true })
   } catch (error: unknown) {
     const apiMessage =
       error && typeof error === 'object' && 'response' in error
@@ -276,6 +289,101 @@ async function removeOneExpired(card: AlertCard) {
     messageType.value = 'error'
   } finally {
     removing.value = false
+  }
+}
+
+const auth = useAuthStore()
+const canManageStock = computed(() => canWritePharmacyCatalog(auth.user))
+
+const stockModalCard = ref<AlertCard | null>(null)
+const stockModalType = ref<'ENTRY' | 'EXIT'>('ENTRY')
+const stockQuantity = ref('1')
+const stockSupplierId = ref('')
+const stockUnitCost = ref('')
+const stockReference = ref('')
+const stockSaving = ref(false)
+const stockError = ref('')
+const suppliers = ref<PharmacySupplierRecord[]>([])
+const suppliersLoaded = ref(false)
+
+const activeSuppliers = computed(() => suppliers.value.filter((s) => s.active))
+
+async function ensureSuppliers() {
+  if (suppliersLoaded.value) return
+  try {
+    const { data: list } = await api.get<PharmacySupplierRecord[]>('/pharmacie/suppliers')
+    suppliers.value = list
+    suppliersLoaded.value = true
+  } catch {
+    stockError.value = 'Impossible de charger les fournisseurs.'
+  }
+}
+
+function openStockModal(card: AlertCard, type: 'ENTRY' | 'EXIT') {
+  stockModalCard.value = card
+  stockModalType.value = type
+  stockQuantity.value = '1'
+  stockSupplierId.value = ''
+  stockUnitCost.value = ''
+  stockReference.value = ''
+  stockError.value = ''
+  if (type === 'ENTRY') void ensureSuppliers()
+}
+
+function closeStockModal() {
+  if (stockSaving.value) return
+  stockModalCard.value = null
+}
+
+async function saveStockMovement() {
+  const card = stockModalCard.value
+  if (!card || stockSaving.value) return
+  const qty = Number(stockQuantity.value)
+  if (!Number.isInteger(qty) || qty <= 0) {
+    stockError.value = 'Quantité invalide.'
+    return
+  }
+  if (stockModalType.value === 'EXIT' && card.quantity !== null && qty > card.quantity) {
+    stockError.value = translateTemplate('Stock insuffisant (disponible : {qty}).', { qty: card.quantity })
+    return
+  }
+  if (stockModalType.value === 'ENTRY' && !stockSupplierId.value) {
+    stockError.value = 'Sélectionnez un fournisseur pour une entrée.'
+    return
+  }
+
+  const payload: Record<string, unknown> = {
+    productId: card.productId,
+    type: stockModalType.value,
+    quantity: qty,
+    reference: stockReference.value.trim() || undefined,
+  }
+  if (stockModalType.value === 'ENTRY') {
+    payload.supplierId = stockSupplierId.value
+    const unitCost = Number(stockUnitCost.value)
+    if (Number.isFinite(unitCost) && unitCost > 0) payload.unitCostFcfa = Math.round(unitCost)
+  }
+
+  stockSaving.value = true
+  stockError.value = ''
+  try {
+    await api.post('/pharmacie/stock-movements', payload)
+    stockSaving.value = false
+    stockModalCard.value = null
+    message.value = translateTemplate(
+      stockModalType.value === 'ENTRY' ? '{qty} unité(s) ajoutée(s) à « {name} ».' : '{qty} unité(s) retirée(s) de « {name} ».',
+      { qty, name: card.name },
+    )
+    messageType.value = 'success'
+    await loadAlerts({ keepFilter: true, keepMessage: true })
+  } catch (error: unknown) {
+    const apiMessage =
+      error && typeof error === 'object' && 'response' in error
+        ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined
+    stockError.value = apiMessage ?? 'Enregistrement impossible.'
+  } finally {
+    stockSaving.value = false
   }
 }
 
@@ -331,9 +439,9 @@ watch(
   },
 )
 
-onMounted(loadAlerts)
+onMounted(() => loadAlerts())
 
-defineExpose({ reload: loadAlerts })
+defineExpose({ reload: () => loadAlerts() })
 </script>
 
 <template>
@@ -423,10 +531,80 @@ defineExpose({ reload: loadAlerts })
           <h4 class="alert-card__name">{{ card.name }}</h4>
           <p class="alert-card__detail">{{ card.detail }}</p>
           <p class="alert-card__meta">{{ card.meta }}</p>
+          <div v-if="canManageStock && activeFilter !== 'expired'" class="alert-card__actions">
+            <button
+              type="button"
+              class="stock-btn stock-btn--add"
+              :disabled="loading || stockSaving"
+              @click="openStockModal(card, 'ENTRY')"
+            >
+              <Plus :size="15" aria-hidden="true" />
+              {{ uiText('Ajouter') }}
+            </button>
+            <button
+              type="button"
+              class="stock-btn stock-btn--remove"
+              :disabled="loading || stockSaving || card.quantity === 0"
+              @click="openStockModal(card, 'EXIT')"
+            >
+              <Minus :size="15" aria-hidden="true" />
+              {{ uiText('Retirer') }}
+            </button>
+          </div>
         </article>
       </div>
     </div>
   </div>
+
+  <UiFormModal
+    v-if="stockModalCard"
+    title-id="pharmacy-alert-stock-modal-title"
+    :title="stockModalType === 'ENTRY' ? uiText('Ajouter du stock') : uiText('Retirer du stock')"
+    :subtitle="stockModalCard.name"
+    :icon="ArrowDownUp"
+    :body-scroll="false"
+    @close="closeStockModal"
+  >
+    <UiAlert v-if="stockError" type="error" :message="stockError" />
+    <section class="form-panel">
+      <p v-if="stockModalCard.quantity !== null" class="stock-hint">
+        {{ translateTemplate('Stock actuel : {qty}', { qty: stockModalCard.quantity }) }}
+      </p>
+      <template v-if="stockModalType === 'ENTRY'">
+        <UiSelect v-model="stockSupplierId" label="Fournisseur" required>
+          <option value="">{{ uiText('Sélectionner un fournisseur') }}</option>
+          <option v-for="s in activeSuppliers" :key="s.id" :value="s.id">{{ s.name }}</option>
+        </UiSelect>
+        <div class="stock-form-grid">
+          <UiInput v-model="stockQuantity" label="Quantité reçue" type="number" min="1" required />
+          <UiInput v-model="stockUnitCost" label="Coût unitaire (FCFA)" type="number" min="1" />
+        </div>
+        <UiInput v-model="stockReference" label="N° bon / facture fournisseur" placeholder="Référence document…" />
+      </template>
+      <template v-else>
+        <UiInput
+          v-model="stockQuantity"
+          label="Quantité sortie"
+          type="number"
+          min="1"
+          :max="stockModalCard.quantity ?? undefined"
+          required
+        />
+        <UiInput v-model="stockReference" label="Motif / référence" placeholder="Ex. périmé, casse…" />
+      </template>
+    </section>
+    <template #footer>
+      <UiButton variant="ghost" :disabled="stockSaving" @click="closeStockModal">{{ uiText('Annuler') }}</UiButton>
+      <UiButton
+        :variant="stockModalType === 'ENTRY' ? 'primary' : 'danger'"
+        :icon="Save"
+        :disabled="stockSaving"
+        @click="saveStockMovement"
+      >
+        {{ stockSaving ? uiText('Enregistrement…') : uiText('Valider') }}
+      </UiButton>
+    </template>
+  </UiFormModal>
 </template>
 
 <style scoped>
@@ -642,6 +820,69 @@ defineExpose({ reload: loadAlerts })
 .alert-card__detail {
   font-weight: 700;
   color: var(--text);
+}
+
+.alert-card__actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: auto;
+  padding-top: 0.45rem;
+}
+
+.stock-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  padding: 0.38rem 0.5rem;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.stock-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.stock-btn--add {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #047857;
+}
+
+.stock-btn--add:hover:not(:disabled) {
+  background: #d1fae5;
+}
+
+.stock-btn--remove {
+  background: #fff;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.stock-btn--remove:hover:not(:disabled) {
+  background: #fef2f2;
+}
+
+.stock-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.stock-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 
 .empty {

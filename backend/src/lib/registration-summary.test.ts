@@ -394,6 +394,30 @@ describe("lignes d'opérations à l'export", () => {
     assert.equal(registrationExamQuantity({ billingExamKind: "radio", visit }), 2);
   });
 
+  it("attribue la quantité à la facture du dernier versement, pas à la plus récente facture créée", () => {
+    const notes = "Examens prescrits (Radio) : Cheville, Pied\nExamens facturés (Radio) : Cheville, Pied";
+    const visit = { consultation: { clinicalNotes: notes } };
+    const carriers = examCountCarrierIds([
+      {
+        id: "last-paid",
+        patientId: "p1",
+        billingExamKind: "radio",
+        createdAt: new Date("2026-10-15T08:00:00Z"),
+        payments: [{ paidAt: new Date("2026-10-18T11:00:00Z") }],
+        visit,
+      },
+      {
+        id: "last-created",
+        patientId: "p1",
+        billingExamKind: "radio",
+        createdAt: new Date("2026-10-17T11:00:00Z"),
+        payments: [{ paidAt: new Date("2026-10-18T09:00:00Z") }],
+        visit,
+      },
+    ]);
+    assert.deepEqual([...carriers], ["last-paid"]);
+  });
+
   it("compte chaque examen de radiologie, pas la ligne", () => {
     const qty = registrationExamQuantity({
       billingExamKind: "radio",
@@ -575,6 +599,16 @@ describe("cartes d'enregistrement", () => {
         patient: { createdAt: new Date("2026-09-14T08:00:00+01:00"), createdById: monera },
       }),
       false,
+    );
+    assert.equal(
+      usesCollectedRegistrationRules({
+        billingExamKind: "radio",
+        createdAt: new Date("2026-09-14T08:00:00+01:00"),
+        paidAt: null,
+        payments: [{ paidAt: new Date("2026-10-18T11:00:00+01:00") }],
+        patient: { createdAt: new Date("2026-09-14T08:00:00+01:00"), createdById: "faiza" },
+      }),
+      true,
     );
   });
 

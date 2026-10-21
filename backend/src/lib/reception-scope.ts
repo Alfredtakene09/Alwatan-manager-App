@@ -118,10 +118,15 @@ export function registrationSummaryInvoiceWhere(options: {
   };
   const settledExam: Prisma.InvoiceWhereInput[] = [
     { billingExamKind: { in: ["examen", "radio", "echo", "odonto"] } },
-    { paidAt: { gte: options.period.from, lt: options.period.to } },
-    { payments: { some: { recordedBy: { role: UserRole.RECEPTIONNISTE } } } },
+    {
+      payments: {
+        some: {
+          ...cashierPayment,
+          paidAt: { gte: options.period.from, lt: options.period.to },
+        },
+      },
+    },
   ];
-  if (receptionistId) settledExam.push({ issuedById: receptionistId });
   const collectedOnPaymentDay: Prisma.InvoiceWhereInput = {
     type: { in: COLLECTED_INVOICE_TYPES },
     status: { not: InvoiceStatus.CANCELLED },

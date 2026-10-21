@@ -101,9 +101,15 @@ describe("périmètre réceptionniste", () => {
     });
     assert.deepEqual(branches[1]?.AND, [
       { billingExamKind: { in: ["examen", "radio", "echo", "odonto"] } },
-      { paidAt: { gte: from, lt: to } },
-      { payments: { some: { recordedBy: { role: UserRole.RECEPTIONNISTE } } } },
-      { issuedById: "rec-1" },
+      {
+        payments: {
+          some: {
+            recordedBy: { role: UserRole.RECEPTIONNISTE },
+            recordedById: "rec-1",
+            paidAt: { gte: from, lt: to },
+          },
+        },
+      },
     ]);
   });
 

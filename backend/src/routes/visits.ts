@@ -1185,7 +1185,10 @@ router.get("/external-queue", requireModule("reception"), async (req, res) => {
           patient: true,
           assignedDoctor: { select: { id: true, firstName: true, lastName: true } },
           surgeryCase: { select: { surgeonPercent: true } },
-          invoices: { where: { type: InvoiceType.LAB_EXAM }, take: 1 },
+          invoices: {
+            where: { type: InvoiceType.LAB_EXAM, status: { not: InvoiceStatus.CANCELLED } },
+            orderBy: { createdAt: "asc" },
+          },
         },
       },
     },
@@ -1197,8 +1200,10 @@ router.get("/external-queue", requireModule("reception"), async (req, res) => {
     .filter((row) => !isOperationOnlyPrescription(row.clinicalNotes))
     .map((row) => {
       const hasExams = hasExamsPrescribed(row.clinicalNotes);
-      const grossFcfa = hasExams ? computeLabExamsGrossFcfa(row.clinicalNotes) : 0;
-      const invoice = row.visit.invoices[0];
+      const invoices = row.visit.invoices;
+      const invoicedNetFcfa = invoices.reduce((sum, invoice) => sum + invoice.amountFcfa, 0);
+      const catalogGrossFcfa = hasExams ? computeLabExamsGrossFcfa(row.clinicalNotes) : 0;
+      const reductionFcfa = row.labExamReductionFcfa ?? 0;
       return {
         id: row.id,
         visitId: row.visitId,
@@ -1212,10 +1217,15 @@ router.get("/external-queue", requireModule("reception"), async (req, res) => {
         examsSummary: hasExams
           ? summarizePrescribedExamFieldNames(buildLabExamLines(row.clinicalNotes).map((l) => l.label))
           : "Examens en attente",
-        grossFcfa,
-        netFcfa: hasExams ? Math.max(0, grossFcfa - (row.labExamReductionFcfa ?? 0)) : 0,
-        invoiced: !!invoice,
-        invoiceNumber: invoice?.invoiceNumber ?? null,
+        // Déjà facturé : montants réels des factures (labo + écho…), pas le catalogue du jour.
+        grossFcfa: invoices.length ? invoicedNetFcfa + reductionFcfa : catalogGrossFcfa,
+        netFcfa: invoices.length
+          ? invoicedNetFcfa
+          : hasExams
+            ? Math.max(0, catalogGrossFcfa - reductionFcfa)
+            : 0,
+        invoiced: invoices.length > 0,
+        invoiceNumber: invoices.map((invoice) => invoice.invoiceNumber).join(" + ") || null,
         doctorId: row.doctor?.id ?? row.visit.assignedDoctor?.id ?? null,
         doctor: row.doctor ?? row.visit.assignedDoctor ?? null,
         operationSurgeonPercent: row.visit.surgeryCase?.surgeonPercent ?? null,

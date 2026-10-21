@@ -317,6 +317,7 @@ function mapLabExamPaid(consultation: {
       paidAt?: Date | null;
       issuedBy?: { id: string; firstName: string; lastName: string } | null;
       payments?: Array<{
+        paidAt: Date;
         recordedBy?: { id: string; firstName: string; lastName: string } | null;
       }>;
     }>;
@@ -365,10 +366,15 @@ function mapLabExamPaid(consultation: {
     const paidFcfa = Math.max(0, invoice.paidAmountFcfa ?? 0);
     const amountFcfa = Math.max(0, invoice.amountFcfa);
     const remaining = Math.max(0, amountFcfa - paidFcfa);
+    const latestPaymentAt = invoice.payments?.reduce<Date | null>(
+      (latest, payment) => (payment.paidAt > (latest ?? new Date(0)) ? payment.paidAt : latest),
+      null,
+    ) ?? null;
+    const invoicePaidAt = latestPaymentAt ?? invoice.paidAt ?? invoice.createdAt;
     collectedFcfa += paidFcfa;
     remainingFcfa += remaining;
-    if (!latestInvoiceAt || invoice.createdAt > latestInvoiceAt) {
-      latestInvoiceAt = invoice.createdAt;
+    if (!latestInvoiceAt || invoicePaidAt > latestInvoiceAt) {
+      latestInvoiceAt = invoicePaidAt;
     }
     if (!cashierName && invoice.issuedBy) {
       cashierName = `${invoice.issuedBy.firstName} ${invoice.issuedBy.lastName}`.trim();
@@ -450,8 +456,16 @@ function mapLabExamPaid(consultation: {
   }
   for (const invoice of labInvoices) {
     const kind = (invoice.billingExamKind ?? null) as ExamKindSlug | null;
-    if (!kind || paidAtByKind[kind]) continue;
-    paidAtByKind[kind] = (invoice.paidAt ?? invoice.createdAt).toISOString();
+    if (!kind) continue;
+    const latestPaymentAt = invoice.payments?.reduce<Date | null>(
+      (latest, payment) => (payment.paidAt > (latest ?? new Date(0)) ? payment.paidAt : latest),
+      null,
+    );
+    const invoicePaidAt = latestPaymentAt ?? invoice.paidAt ?? invoice.createdAt;
+    const currentPaidAt = paidAtByKind[kind] ? new Date(paidAtByKind[kind]!) : null;
+    if (!currentPaidAt || invoicePaidAt > currentPaidAt) {
+      paidAtByKind[kind] = invoicePaidAt.toISOString();
+    }
   }
   const markerDates = Object.values(markerByKind);
   const paidAt =
@@ -926,6 +940,7 @@ router.get("/paid-exams", cashierAccess, async (req, res) => {
               issuedBy: { select: { id: true, firstName: true, lastName: true } },
               payments: {
                 select: {
+                  paidAt: true,
                   recordedBy: { select: { id: true, firstName: true, lastName: true } },
                 },
                 orderBy: { paidAt: "asc" },

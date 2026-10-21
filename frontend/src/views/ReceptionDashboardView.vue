@@ -54,7 +54,6 @@ import {
   doctorNeedsConsultationAmountInput,
   doctorQuotaHint,
   doctorMatchesService,
-  withoutAnesthetistForGeneralSurgery,
   doctorShowsFixedConsultationPrice,
   resolveConsultationAmountForDoctor,
   showDoctorConsultationBilling,
@@ -319,12 +318,15 @@ const sortedDoctors = computed(() =>
   }),
 )
 function filteredDoctorsByService(serviceName: string) {
-  const matched = !serviceName
+  return !serviceName
     ? sortedDoctors.value
     : sortedDoctors.value.filter((doctor) => doctorMatchesService(doctor, serviceName))
-  return withoutAnesthetistForGeneralSurgery(matched, serviceName)
 }
-const formServiceDoctors = computed(() => filteredDoctorsByService(form.value.service))
+const formServiceDoctors = computed(() => {
+  const matched = filteredDoctorsByService(form.value.service)
+  if (form.value.service && !matched.length) return sortedDoctors.value
+  return matched
+})
 const editServiceDoctors = computed(() => {
   const matched = filteredDoctorsByService(editForm.value.service)
   if (editForm.value.service && !matched.length) return sortedDoctors.value
@@ -2665,9 +2667,8 @@ onUnmounted(clearAlert)
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  height: 100%;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .dashboard-sticky {
@@ -2765,6 +2766,14 @@ onUnmounted(clearAlert)
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.75rem), 1fr));
   gap: 0.4rem;
   margin: 0;
+}
+
+@media (min-width: 1200px) {
+  .stats-grid {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+  }
 }
 
 .stats-grid--loading {
@@ -2888,12 +2897,11 @@ button.dash-stat {
 }
 
 .dashboard-body {
-  flex: 1 1 0;
-  min-height: 0;
+  flex: none;
   display: flex;
   flex-direction: column;
   padding-top: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .patients-panel-sticky {
@@ -2904,8 +2912,7 @@ button.dash-stat {
 }
 
 .patients-table-card {
-  flex: 1 1 0;
-  min-height: 0;
+  flex: none;
   display: flex;
   flex-direction: column;
   margin-top: 0.25rem;
@@ -2913,16 +2920,24 @@ button.dash-stat {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
-  overflow: hidden;
 }
 
 .patients-table-card .table-wrap {
-  flex: 1 1 0;
-  min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
   padding: 0.5rem 0.75rem 0.75rem;
+}
+
+.patients-table-card .table-wrap :deep(.simple-table-shell) {
+  height: auto;
+  max-height: none;
+  overflow: visible;
+}
+
+.patients-table-card .table-wrap :deep(.simple-table-scroll) {
+  flex: none;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .page-alert {
