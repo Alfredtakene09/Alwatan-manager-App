@@ -2698,6 +2698,9 @@ export default {
     '{n} produit(s) expiré(s) retiré(s).': '{n} produit(s) expiré(s) retiré(s).',
     'Impossible de retirer les produits expirés.': 'Impossible de retirer les produits expirés.',
     'Retirer ce produit': 'Retirer ce produit',
+    'Supprimer ce produit': 'Supprimer ce produit',
+    'Supprimer définitivement « {name} » du catalogue ? Si le produit a un historique de ventes, il sera seulement désactivé.':
+      'Supprimer définitivement « {name} » du catalogue ? Si le produit a un historique de ventes, il sera seulement désactivé.',
     'Retirer « {name} » du catalogue (expiré) et remettre le stock à 0 ?': 'Retirer « {name} » du catalogue (expiré) et remettre le stock à 0 ?',
     'Produit retiré.': 'Produit retiré.',
     'Impossible de retirer ce produit.': 'Impossible de retirer ce produit.',

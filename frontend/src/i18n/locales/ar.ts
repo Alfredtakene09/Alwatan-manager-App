@@ -2713,6 +2713,9 @@ export default {
     '{n} produit(s) expiré(s) retiré(s).': 'تمت إزالة {n} منتج/منتجات منتهية.',
     'Impossible de retirer les produits expirés.': 'تعذر إزالة المنتجات المنتهية.',
     'Retirer ce produit': 'إزالة هذا المنتج',
+    'Supprimer ce produit': 'حذف هذا المنتج',
+    'Supprimer définitivement « {name} » du catalogue ? Si le produit a un historique de ventes, il sera seulement désactivé.':
+      'حذف «{name}» نهائيًا من الكتالوج؟ إذا كان للمنتج سجل مبيعات فسيتم تعطيله فقط.',
     'Retirer « {name} » du catalogue (expiré) et remettre le stock à 0 ?': 'إزالة « {name} » من الكتالوج (منتهٍ) وإعادة المخزون إلى 0؟',
     'Produit retiré.': 'تمت إزالة المنتج.',
     'Impossible de retirer ce produit.': 'تعذر إزالة هذا المنتج.',

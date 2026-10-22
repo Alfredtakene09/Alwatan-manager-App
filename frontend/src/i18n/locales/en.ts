@@ -2713,6 +2713,9 @@ export default {
     '{n} produit(s) expiré(s) retiré(s).': '{n} expired product(s) removed.',
     'Impossible de retirer les produits expirés.': 'Unable to remove expired products.',
     'Retirer ce produit': 'Remove this product',
+    'Supprimer ce produit': 'Delete this product',
+    'Supprimer définitivement « {name} » du catalogue ? Si le produit a un historique de ventes, il sera seulement désactivé.':
+      'Permanently delete "{name}" from the catalog? If the product has sales history, it will only be deactivated.',
     'Retirer « {name} » du catalogue (expiré) et remettre le stock à 0 ?': 'Remove “{name}” from the catalog (expired) and reset stock to 0?',
     'Produit retiré.': 'Product removed.',
     'Impossible de retirer ce produit.': 'Unable to remove this product.',

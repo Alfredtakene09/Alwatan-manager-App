@@ -295,6 +295,41 @@ async function removeOneExpired(card: AlertCard) {
 const auth = useAuthStore()
 const canManageStock = computed(() => canWritePharmacyCatalog(auth.user))
 
+async function deleteOutOfStockProduct(card: AlertCard) {
+  if (removing.value) return
+  const confirmed = await confirmAppModal({
+    type: 'DELETE',
+    title: 'Supprimer ce produit',
+    message: translateTemplate(
+      'Supprimer définitivement « {name} » du catalogue ? Si le produit a un historique de ventes, il sera seulement désactivé.',
+      { name: card.name },
+    ),
+    confirmLabel: 'Supprimer',
+    cancelLabel: 'Annuler',
+  })
+  if (!confirmed) return
+
+  removing.value = true
+  message.value = ''
+  try {
+    const { data: result } = await api.delete<{ message?: string }>(
+      `/pharmacie/products/${card.productId}`,
+    )
+    message.value = result.message ?? 'Produit supprimé.'
+    messageType.value = 'success'
+    await loadAlerts({ keepFilter: true, keepMessage: true })
+  } catch (error: unknown) {
+    const apiMessage =
+      error && typeof error === 'object' && 'response' in error
+        ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined
+    message.value = apiMessage ?? 'Suppression impossible.'
+    messageType.value = 'error'
+  } finally {
+    removing.value = false
+  }
+}
+
 const stockModalCard = ref<AlertCard | null>(null)
 const stockModalType = ref<'ENTRY' | 'EXIT'>('ENTRY')
 const stockQuantity = ref('1')
@@ -527,6 +562,17 @@ defineExpose({ reload: () => loadAlerts() })
             >
               {{ uiText('Retirer') }}
             </UiButton>
+            <button
+              v-else-if="canManageStock && activeFilter === 'out'"
+              type="button"
+              class="trash-btn"
+              :title="uiText('Supprimer')"
+              :aria-label="uiText('Supprimer')"
+              :disabled="removing || loading"
+              @click="deleteOutOfStockProduct(card)"
+            >
+              <Trash2 :size="16" aria-hidden="true" />
+            </button>
           </div>
           <h4 class="alert-card__name">{{ card.name }}</h4>
           <p class="alert-card__detail">{{ card.detail }}</p>
@@ -820,6 +866,28 @@ defineExpose({ reload: () => loadAlerts() })
 .alert-card__detail {
   font-weight: 700;
   color: var(--text);
+}
+
+.trash-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid #fecaca;
+  background: #fff;
+  color: #b91c1c;
+  cursor: pointer;
+}
+
+.trash-btn:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
+.trash-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .alert-card__actions {
