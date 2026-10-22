@@ -229,6 +229,12 @@ const lineChartSeries = computed(() => {
       values: points.map((row) => row.revenueFcfa),
     },
     {
+      key: 'entries',
+      label: uiText('Entrées'),
+      color: '#0d9488',
+      values: points.map((row) => row.entriesFcfa ?? 0),
+    },
+    {
       key: 'expenses',
       label: translateDashboardLabel('Dépenses'),
       color: '#e11d48',

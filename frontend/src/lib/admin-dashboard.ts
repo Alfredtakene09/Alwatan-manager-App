@@ -23,6 +23,7 @@ export type MonthlyTrendPoint = {
   revenueFcfa: number
   expensesFcfa: number
   netFcfa: number
+  entriesFcfa?: number
 }
 
 export type BreakdownItem = {

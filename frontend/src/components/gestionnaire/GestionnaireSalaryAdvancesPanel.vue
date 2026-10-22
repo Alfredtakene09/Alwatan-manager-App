@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
-import { Plus, HandCoins, Ban, Trash2, Search, Printer, Download } from '@lucide/vue'
+import { Plus, HandCoins, Ban, Trash2, Search, Printer, Download, Eye } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { formatShortDate } from '@/lib/admin-dashboard'
@@ -9,6 +9,7 @@ import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiCard from '@/components/ui/UiCard.vue'
+import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
@@ -64,6 +65,7 @@ const searchQuery = ref('')
 const tableFilter = ref('')
 const exportScope = ref<'all' | 'selected'>('all')
 const selectedIds = ref<string[]>([])
+const viewedAdvance = ref<SalaryAdvanceRow | null>(null)
 
 const filteredRows = computed(() => {
   const q = `${searchQuery.value} ${tableFilter.value}`.trim().toLowerCase()
@@ -400,21 +402,19 @@ defineExpose({ reload: loadRows })
               @change="toggleAllVisible"
             />
           </th>
+          <th>#</th>
           <th>Date</th>
           <th>Employé</th>
-          <th>Service</th>
           <th>Total</th>
           <th>Reste</th>
           <th>Tranche / paie</th>
           <th>Statut</th>
           <th>Période paie</th>
-          <th>Enregistré par</th>
-          <th>Commentaire</th>
           <th class="col-actions"><span class="sr-only">Actions</span></th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in filteredRows" :key="row.id">
+        <tr v-for="(row, index) in filteredRows" :key="row.id">
           <td>
             <input
               type="checkbox"
@@ -423,6 +423,7 @@ defineExpose({ reload: loadRows })
               @change="toggleOne(row.id, ($event.target as HTMLInputElement).checked)"
             />
           </td>
+          <td>{{ index + 1 }}</td>
           <td>{{ formatShortDate(row.businessDate) }}</td>
           <td>
             <strong>{{ row.employee.fullName }}</strong>
@@ -430,7 +431,6 @@ defineExpose({ reload: loadRows })
               {{ row.employee.jobTitle }}
             </span>
           </td>
-          <td>{{ row.employee.service }}</td>
           <td>{{ formatFcfa(row.amountFcfa) }}</td>
           <td>{{ formatFcfa(row.remainingFcfa ?? row.amountFcfa) }}</td>
           <td>
@@ -458,10 +458,14 @@ defineExpose({ reload: loadRows })
             </span>
           </td>
           <td>{{ payrollPeriodLabel(row) }}</td>
-          <td>{{ row.recordedByName }}</td>
-          <td class="advances-table__comment">{{ row.comment || '—' }}</td>
           <td class="actions">
             <GestionnaireRowActionGroup>
+              <GestionnaireRowAction
+                :icon="Eye"
+                label="Vue"
+                variant="neutral"
+                @click="viewedAdvance = row"
+              />
               <GestionnaireRowAction
                 v-if="row.status === 'PENDING'"
                 :icon="Ban"
@@ -483,6 +487,23 @@ defineExpose({ reload: loadRows })
     </table>
   </UiCard>
 
+  <UiFormModal
+    v-if="viewedAdvance"
+    title="Détail de l'avance"
+    :subtitle="viewedAdvance.employee.fullName"
+    :icon="HandCoins"
+    @close="viewedAdvance = null"
+  >
+    <dl class="advance-detail">
+      <dt>Service</dt>
+      <dd>{{ viewedAdvance.employee.service }}</dd>
+      <dt>Enregistré par</dt>
+      <dd>{{ viewedAdvance.recordedByName }}</dd>
+      <dt>Commentaire</dt>
+      <dd>{{ viewedAdvance.comment || '—' }}</dd>
+    </dl>
+  </UiFormModal>
+
   <GestionnaireSalaryAdvanceFormModal
     :open="showModal"
     :employees="employees"
@@ -495,6 +516,22 @@ defineExpose({ reload: loadRows })
 </template>
 
 <style scoped>
+.advance-detail {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.6rem 1rem;
+  margin: 0;
+}
+
+.advance-detail dt {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.advance-detail dd {
+  margin: 0;
+}
+
 .table-head-actions {
   display: grid;
   grid-template-columns: 1.5fr 1fr auto auto;

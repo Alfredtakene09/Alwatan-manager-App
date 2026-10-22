@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { Check, X, Banknote, RefreshCw } from '@lucide/vue'
+import { Check, X, Banknote, RefreshCw, Search } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName } from '@/lib/roles'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -37,9 +37,33 @@ const messageType = ref<'success' | 'error'>('success')
 const statusFilter = ref('PENDING')
 const rateDraft = ref<Record<string, string>>({})
 
+const searchQuery = ref('')
+
+function normalizeText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+}
+
 const filtered = computed(() => {
-  if (!statusFilter.value) return rows.value
-  return rows.value.filter((row) => row.status === statusFilter.value)
+  const byStatus = statusFilter.value
+    ? rows.value.filter((row) => row.status === statusFilter.value)
+    : rows.value
+  const q = normalizeText(searchQuery.value.trim())
+  if (!q) return byStatus
+  return byStatus.filter((row) =>
+    normalizeText(
+      [
+        doctorName(row),
+        row.employee.specialty ?? '',
+        row.businessDate,
+        row.comment ?? '',
+        row.rejectionReason ?? '',
+        statusLabel(row.status),
+      ].join(' '),
+    ).includes(q),
+  )
 })
 
 function statusLabel(status: string) {
@@ -176,6 +200,12 @@ onMounted(reload)
         <option value="REJECTED">Refusées</option>
         <option value="">Tous</option>
       </UiSelect>
+      <UiInput
+        v-model="searchQuery"
+        label="Recherche"
+        placeholder="Médecin, date, commentaire…"
+        :icon="Search"
+      />
       <UiButton variant="ghost" :icon="RefreshCw" :disabled="loading" @click="reload">
         Actualiser
       </UiButton>

@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   PillBottle,
   BedDouble,
-  FileText,
   Settings,
   Users,
   FlaskConical,
@@ -519,14 +518,6 @@ const directionOperationalNav: NavSection[] = [
         icon: Receipt,
         module: 'comptabilite',
         children: [
-          {
-            to: '/gestionnaire/livre-journal',
-            label: 'Caisse & journal',
-            icon: FileText,
-            module: 'comptabilite',
-            description: 'Livre journal et historique des journées',
-            uiAction: 'comptabilite.journal',
-          },
           {
             to: '/admin/depenses',
             label: 'Gestion des dépenses',

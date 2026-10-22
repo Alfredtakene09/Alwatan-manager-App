@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Wallet, Plus, Pencil, Trash2, ListOrdered } from '@lucide/vue'
+import { ArrowLeft, Wallet, Plus, Pencil, ListOrdered, Search } from '@lucide/vue'
 import api from '@/api/client'
 import { canAccessModule, formatFcfa } from '@/lib/roles'
-import { confirmAppModal } from '@/lib/api-modal-helper'
 import type { AdminExpenseRow } from '@/lib/admin-dashboard'
-import { EXPENSE_STATUS_VARIANT, formatShortDate } from '@/lib/admin-dashboard'
+import { formatShortDate } from '@/lib/admin-dashboard'
 import AdminExpenseFormModal, {
   type AdminExpenseEdit,
   type AdminExpenseFormPayload,
@@ -23,7 +22,6 @@ import ExportButtons from '@/components/ui/ExportButtons.vue'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
-import { translateTemplate } from '@/lib/dashboard-i18n'
 
 type SectionId = 'liste' | 'indices'
 type ListFilter = 'range' | 'all' | 'month'
@@ -50,6 +48,32 @@ const dateTo = ref(todayIso())
 const { activeIndices, loadIndices } = useExpenseIndices()
 
 const rows = ref<AdminExpenseRow[]>([])
+const search = ref('')
+
+function normalizeText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+}
+
+const filteredRows = computed(() => {
+  const query = normalizeText(search.value.trim())
+  if (!query) return rows.value
+  return rows.value.filter((row) =>
+    normalizeText(
+      [
+        row.description,
+        row.category,
+        row.comment ?? '',
+        row.flow === 'ENTREE' ? 'entrée' : 'sortie',
+        formatShortDate(row.date),
+        String(row.amountFcfa),
+        formatFcfa(row.amountFcfa),
+      ].join(' '),
+    ).includes(query),
+  )
+})
 const loading = ref(false)
 const showExpenseModal = ref(false)
 const editingExpense = ref<AdminExpenseEdit | null>(null)
@@ -157,20 +181,6 @@ function openEditExpense(row: AdminExpenseRow) {
   showExpenseModal.value = true
 }
 
-async function deleteExpense(row: AdminExpenseRow) {
-  const ok = await confirmAppModal({
-    type: 'DELETE',
-    title: uiText('Supprimer la dépense'),
-    message: translateTemplate('Supprimer définitivement « {name} » ?', {
-      name: row.description,
-    }),
-    confirmLabel: uiText('Supprimer'),
-  })
-  if (!ok) return
-  await api.delete(`/admin/expenses/${row.id}`)
-  await loadRows()
-}
-
 async function submitExpense(payload: AdminExpenseFormPayload) {
   expenseSaving.value = true
   try {
@@ -205,7 +215,6 @@ const expenseExportColumns: ExportColumn<AdminExpenseRow>[] = [
   { header: 'Catégorie', value: (row) => row.category },
   { header: 'Description', value: (row) => row.description },
   { header: 'Montant', value: (row) => formatFcfa(row.amountFcfa) },
-  { header: 'Statut', value: (row) => row.statusLabel },
   { header: 'Commentaire', value: (row) => row.comment?.trim() || '—' },
 ]
 
@@ -219,15 +228,15 @@ function expenseExportShared() {
 }
 
 function exportExpensesPdf() {
-  exportTablePdf(uiText('Dépenses'), expenseExportColumns, rows.value, expenseExportShared())
+  exportTablePdf(uiText('Dépenses'), expenseExportColumns, filteredRows.value, expenseExportShared())
 }
 
 function exportExpensesExcel() {
-  exportTableExcel(uiText('Dépenses'), expenseExportColumns, rows.value, expenseExportShared())
+  exportTableExcel(uiText('Dépenses'), expenseExportColumns, filteredRows.value, expenseExportShared())
 }
 
 function exportExpensesWord() {
-  void exportTableWord(uiText('Dépenses'), expenseExportColumns, rows.value, expenseExportShared())
+  void exportTableWord(uiText('Dépenses'), expenseExportColumns, filteredRows.value, expenseExportShared())
 }
 
 function goBack() {
@@ -340,12 +349,24 @@ onMounted(() => {
 
     <template v-if="activeSection === 'liste'">
       <UiCard v-if="canManageExpenses" title="Liste des dépenses">
+        <div class="depenses-search">
+          <Search :size="16" class="depenses-search__icon" />
+          <input
+            v-model="search"
+            type="search"
+            class="depenses-search__input"
+            :placeholder="uiText('Rechercher une dépense…')"
+            :aria-label="uiText('Rechercher une dépense…')"
+          />
+        </div>
         <div v-if="loading" class="chart-empty">{{ uiText('Chargement…') }}</div>
-        <div v-else-if="!rows.length" class="chart-empty">
+        <div v-else-if="!filteredRows.length" class="chart-empty">
           {{
-            listFilter === 'range'
-              ? uiText('Aucune dépense pour cette date')
-              : uiText('Aucune dépense')
+            search.trim()
+              ? uiText('Aucun résultat')
+              : listFilter === 'range'
+                ? uiText('Aucune dépense pour cette date')
+                : uiText('Aucune dépense')
           }}
         </div>
         <table v-else class="admin-table">
@@ -356,30 +377,28 @@ onMounted(() => {
               <th>{{ uiText('Type') }}</th>
               <th>{{ uiText('Description') }}</th>
               <th>{{ uiText('Montant') }}</th>
-              <th>{{ uiText('Statut') }}</th>
               <th>{{ uiText('Actions') }}</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in rows" :key="row.id">
+            <tr v-for="row in filteredRows" :key="row.id">
               <td>{{ formatShortDate(row.date) }}</td>
               <td>{{ row.category }}</td>
-              <td>{{ row.flow === 'ENTREE' ? uiText('Entrée') : uiText('Sortie') }}</td>
+              <td :class="row.flow === 'ENTREE' ? 'flow-in' : 'flow-out'">
+                {{ row.flow === 'ENTREE' ? uiText('Entrée') : uiText('Sortie') }}
+              </td>
               <td>{{ row.description }}</td>
               <td>{{ formatFcfa(row.amountFcfa) }}</td>
-              <td>
-                <span class="status-badge" :class="`status-badge--${EXPENSE_STATUS_VARIANT[row.status]}`">
-                  {{ row.statusLabel }}
-                </span>
-              </td>
               <td class="actions">
                 <template v-if="row.source !== 'payroll'">
-                <UiButton size="sm" variant="ghost" :icon="Pencil" @click="openEditExpense(row)">
-                  {{ uiText('Modifier') }}
-                </UiButton>
-                <UiButton size="sm" variant="danger" :icon="Trash2" @click="deleteExpense(row)">
-                  {{ uiText('Supprimer') }}
-                </UiButton>
+                <UiButton
+                  size="sm"
+                  variant="ghost"
+                  :icon="Pencil"
+                  :title="uiText('Modifier')"
+                  :aria-label="uiText('Modifier')"
+                  @click="openEditExpense(row)"
+                />
                 </template>
                 <span v-else class="text-muted">{{ uiText('Paie versée') }}</span>
               </td>
@@ -419,6 +438,48 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.depenses-search {
+  position: relative;
+  max-width: 22rem;
+  margin-bottom: 0.75rem;
+}
+
+.depenses-search__icon {
+  position: absolute;
+  top: 50%;
+  left: 0.65rem;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.depenses-search__input {
+  width: 100%;
+  padding: 0.5rem 0.75rem 0.5rem 2.1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.depenses-search__input:focus {
+  outline: none;
+  border-color: var(--primary-400);
+}
+
+.flow-out {
+  background: #fee2e2;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.flow-in {
+  background: #dcfce7;
+  color: #15803d;
+  font-weight: 600;
+}
+
 .admin-page {
   display: flex;
   flex-direction: column;

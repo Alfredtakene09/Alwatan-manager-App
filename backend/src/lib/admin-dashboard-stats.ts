@@ -707,6 +707,7 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
           fromIso: bounds.fromIso,
           toIso: bounds.toIso,
           revenueFcfa: revenue.totalFcfa,
+          entriesFcfa: expenses.entriesFcfa,
           expensesFcfa: expensesTotal,
           netFcfa: revenue.totalFcfa + expenses.entriesFcfa - expensesTotal,
         };
