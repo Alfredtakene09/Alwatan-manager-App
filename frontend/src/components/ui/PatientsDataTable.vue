@@ -35,7 +35,7 @@ export type PatientRow = {
   createdBy?: { id: string; firstName: string; lastName: string } | null
   /** Réceptionniste de la dernière visite (re-visite, changement de service). */
   registeredBy?: { id: string; firstName: string; lastName: string } | null
-  updatedBy?: { id: string; firstName: string; lastName: string } | null { id: string; firstName: string; lastName: string } | null
+  updatedBy?: { id: string; firstName: string; lastName: string } | null
   consultationPayment?: ConsultationPaymentInfo | null
 }
 
