@@ -1116,8 +1116,8 @@ const dashboardStats = computed(() => {
   {
     id: 'revenue',
     label: revenueLabel,
-    value: formatFcfaCompact(stats.value.entriesTodayFcfa ?? stats.value.consultationsTodayFcfa ?? 0),
-    hint: 'Consultations, examens, opérations, hospitalisation',
+    value: formatFcfaCompact(stats.value.consultationsTodayFcfa ?? 0),
+    hint: 'Consultations des patients inscrits',
     icon: Banknote,
     variant: 'violet' as const,
     money: true,
