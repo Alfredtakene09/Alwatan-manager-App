@@ -33,7 +33,9 @@ export type PatientRow = {
   /** false = dossier désactivé (données conservées) */
   active?: boolean
   createdBy?: { id: string; firstName: string; lastName: string } | null
-  updatedBy?: { id: string; firstName: string; lastName: string } | null
+  /** Réceptionniste de la dernière visite (re-visite, changement de service). */
+  registeredBy?: { id: string; firstName: string; lastName: string } | null
+  updatedBy?: { id: string; firstName: string; lastName: string } | null { id: string; firstName: string; lastName: string } | null
   consultationPayment?: ConsultationPaymentInfo | null
 }
 
@@ -118,6 +120,10 @@ const activeServiceLabel = computed(() => {
   return clinicServiceText(selected)
 })
 
+function registeredByOf(patient: PatientRow) {
+  return patient.registeredBy ?? patient.createdBy ?? null
+}
+
 const rows = computed(() =>
   sortPatientsNewestFirst(props.patients).map((p) => ({
     patient: p,
@@ -127,8 +133,8 @@ const rows = computed(() =>
     phone: p.phone || '',
     gender: p.gender,
     createdAt: formatDate(p.createdAt),
-    receptionistName: p.createdBy ? fullName(p.createdBy.firstName, p.createdBy.lastName) : '',
-    modifiedByName: modifierLabel(p.createdBy, p.updatedBy),
+    receptionistName: registeredByOf(p) ? fullName(registeredByOf(p)!.firstName, registeredByOf(p)!.lastName) : '',
+    modifiedByName: modifierLabel(registeredByOf(p), p.updatedBy),
     active: p.active !== false,
     payable: Boolean(p.consultationPayment?.payable),
     paid: p.consultationPayment?.status === 'PAID',

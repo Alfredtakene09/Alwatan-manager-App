@@ -39,6 +39,7 @@ import {
   findPatientIdsDeletionLocked,
 } from "../lib/patient-payment-guard.js";
 import { forceDeletePatientCascade } from "../lib/patient-admin-delete.js";
+import { reopenVisitForNewConsultation, reregistrationRequired } from "../lib/visit-reregistration.js";
 import {
   activeExamInvoices,
   mapCombinedExamPayment,
@@ -75,6 +76,7 @@ import {
   colleagueHistorySince,
   otherReceptionistsUntreatedPatientsWhere,
   patientsInDoctorScopeWhere,
+  patientRegisteredInPeriodWhere,
   receptionistOwnPatientsWhere,
   receptionistScopeUserId,
 } from "../lib/reception-scope.js";
@@ -690,6 +692,13 @@ router.get("/", async (req, res) => {
       },
     });
   }
+  if (createdAtFilter && !requestedIds.length) {
+    // Un ancien dossier revu (nouvelle visite, examens, changement de service) apparaît
+    // à la date de cette activité, pas seulement à sa date de création.
+    andFilters.push(
+      patientRegisteredInPeriodWhere(createdAtFilter, receptionistScopeUserId(user, createdById)),
+    );
+  }
   if (doctorPatientWhere) andFilters.push(doctorPatientWhere);
   if (terms.length > 0) {
     andFilters.push(
@@ -714,13 +723,18 @@ router.get("/", async (req, res) => {
           ...listScope,
           ...(category ? { category: category as PatientCategory } : {}),
           ...(service ? { service } : {}),
-          ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
           ...(andFilters.length > 0 ? { AND: andFilters } : {}),
         },
     include: {
       treatingDoctor: { select: treatingDoctorSelect },
       createdBy: { select: { id: true, firstName: true, lastName: true } },
       updatedBy: { select: { id: true, firstName: true, lastName: true } },
+      visits: {
+        where: { status: { not: VisitStatus.CANCELLED } },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { createdBy: { select: { id: true, firstName: true, lastName: true } } },
+      },
       invoices: {
         where: {
           type: { in: [InvoiceType.CONSULTATION, InvoiceType.LAB_EXAM] },
@@ -747,7 +761,7 @@ router.get("/", async (req, res) => {
   const lockedIds = await findPatientIdsDeletionLocked(patients.map((p) => p.id));
   return res.json(
     patients.map((patient) => {
-      const { invoices, ...rest } = patient;
+      const { invoices, visits, ...rest } = patient;
       // Même colonne « paiement » : consultation si présente, sinon montant labo (patients externes).
       const consultationInvoice = invoices.find((invoice) => invoice.type === InvoiceType.CONSULTATION);
       const latestLabInvoice = invoices.find((invoice) => invoice.type === InvoiceType.LAB_EXAM);
@@ -762,6 +776,7 @@ router.get("/", async (req, res) => {
         : mapCombinedExamPayment(visitLabInvoices);
       return {
         ...rest,
+        registeredBy: visits[0]?.createdBy ?? rest.createdBy,
         canDelete: canFullList && !lockedIds.has(patient.id),
         consultationPayment: canFullList ? payment : null,
       };
@@ -840,10 +855,16 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     ...(service ? { service } : {}),
     ...(doctorPatientWhere ? { AND: [doctorPatientWhere] } : {}),
   };
-  const patientPeriodScope = { ...patientScope, createdAt: createdAtRange };
-  const patientCashPeriodScope = { ...patientCashScope, createdAt: createdAtRange };
   const isReceptionist = user.role === UserRole.RECEPTIONNISTE;
   const scopedReceptionistId = isReceptionist ? user.id : createdById || null;
+  const patientPeriodScope: Prisma.PatientWhereInput = {
+    ...patientScope,
+    AND: [
+      ...(doctorPatientWhere ? [doctorPatientWhere] : []),
+      patientRegisteredInPeriodWhere(createdAtRange, scopedReceptionistId),
+    ],
+  };
+  const patientCashPeriodScope = { ...patientCashScope, createdAt: createdAtRange };
   const revenueOptions = {
     ...(service ? { patientService: service } : {}),
     ...(scopedReceptionistId ? { cashierId: scopedReceptionistId } : {}),
@@ -1513,6 +1534,26 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
       }
     }
 
+    const latestVisit = await prisma.visit.findFirst({
+      where: { patientId, status: { not: VisitStatus.CANCELLED } },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        status: true,
+        notes: true,
+        assignedDoctorId: true,
+        consultation: {
+          select: { clinicalNotes: true, completedAt: true, labSentToLabAt: true },
+        },
+      },
+    });
+    const mustReopenVisit = reregistrationRequired({
+      visit: latestVisit,
+      previousService: existing.service,
+      nextService: body.service,
+      nextDoctorId: body.doctorId,
+    });
+
     const patient = await prisma.$transaction(async (tx) => {
       const updated = await tx.patient.update({
         where: { id: String(req.params.id) },
@@ -1561,6 +1602,12 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
         const canonical = await resolveActiveClinicServiceByName(tx, body.service);
         if (canonical) updated.service = canonical.name;
       }
+      if (mustReopenVisit && latestVisit) {
+        await reopenVisitForNewConsultation(tx, {
+          visitId: latestVisit.id,
+          userId: req.user!.id,
+        });
+      }
 
       return updated;
     });
@@ -1578,6 +1625,15 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
     if (error instanceof Error && error.message === "REDUCTION_FORBIDDEN") {
       return res.status(403).json({
         error: "Vous n'êtes pas autorisé à réduire le prix des examens.",
+      });
+    }
+    if (
+      error instanceof Error &&
+      (error.message === "SURGERY_LOCKED" || error.message === "HOSPITALIZATION_LOCKED")
+    ) {
+      return res.status(409).json({
+        error:
+          "Impossible de changer le service : une opération ou une hospitalisation est déjà en cours pour cette visite.",
       });
     }
     if (error instanceof Error && error.message === PATIENT_HAS_PAYMENTS_CODE) {

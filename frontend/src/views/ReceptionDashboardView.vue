@@ -1700,42 +1700,6 @@ async function deletePatient(patient: Patient) {
   }
 }
 
-async function togglePatientActive(patient: Patient) {
-  const nextActive = patient.active === false
-  const patientName = fullName(patient.firstName, patient.lastName)
-  if (!nextActive) {
-    const confirmed = await confirmAppModal({
-      type: 'WARNING',
-      title: 'Désactiver le patient',
-      message: translateTemplate(
-        'Désactiver le dossier {code} — {name} ? Les visites, consultations et factures sont conservées ; le dossier pourra être réactivé.',
-        { code: patient.code, name: patientName },
-      ),
-      confirmLabel: 'Désactiver',
-    })
-    if (!confirmed) return
-  }
-
-  togglingPatientId.value = patient.id
-  clearAlert()
-  try {
-    await api.patch(`/patients/${patient.id}/active`, { active: nextActive })
-    showAlert(
-      translateTemplate(nextActive ? 'Dossier {code} réactivé.' : 'Dossier {code} désactivé.', {
-        code: patient.code,
-      }),
-    )
-    await refreshAll()
-  } catch (error: unknown) {
-    await showApiErrorModal(
-      error,
-      nextActive ? 'Impossible de réactiver ce patient.' : 'Impossible de désactiver ce patient.',
-    )
-  } finally {
-    togglingPatientId.value = null
-  }
-}
-
 function assignEditForm(detail: PatientDetail) {
   const visit = detail.waitingVisit
   const recordedAmount = visit?.consultationAmountFcfa
@@ -2266,13 +2230,13 @@ onUnmounted(clearAlert)
             :service-options="serviceFilterOptions"
             v-model:service-filter="serviceFilter"
             :show-receptionist="canFilterByReceptionist || historyMode"
+            :show-toggle-active="false"
             show-print
             show-admin-delete
             :printing-patient-id="printingPatientId"
             @print="printPatientReceipt"
             @edit="openEditModal"
             @reconsult="openReconsultModal"
-            @toggle-active="togglePatientActive"
             @delete="deletePatient"
           />
         </div>

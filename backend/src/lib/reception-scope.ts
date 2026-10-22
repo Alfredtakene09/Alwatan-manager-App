@@ -104,10 +104,24 @@ export function registrationSummaryInvoiceWhere(options: {
     ...(options.period ? [staysOnRegistrationDay] : []),
     ...(receptionistId ? [registrationSummaryReceptionistWhere(receptionistId)] : []),
   ];
+  // Re-visite d'un ancien dossier : la facture créée sur la période compte aussi,
+  // même si le dossier patient a été ouvert un autre jour.
+  const registrationDay = options.patientWhere.createdAt;
+  const keepsPatientDay = Boolean(options.period && registrationDay);
+  if (keepsPatientDay && options.period) {
+    registeredFilters.push({
+      OR: [
+        { patient: { createdAt: registrationDay } },
+        { createdAt: { gte: options.period.from, lt: options.period.to } },
+      ],
+    });
+  }
   const registered: Prisma.InvoiceWhereInput = {
     type: { in: COLLECTED_INVOICE_TYPES },
     status: { not: InvoiceStatus.CANCELLED },
-    patient: options.patientWhere,
+    patient: keepsPatientDay
+      ? patientWhereWithoutRegistrationDay(options.patientWhere)
+      : options.patientWhere,
     ...(registeredFilters.length ? { AND: registeredFilters } : {}),
   };
   if (!options.period) return registered;
@@ -208,6 +222,40 @@ export function receptionistOwnPatientsWhere(
     OR: [
       { createdById: id },
       { invoices: { some: { issuedById: id } } },
+    ],
+  };
+}
+
+/**
+ * Patient enregistré sur la période : dossier créé, ou nouvelle visite / facture
+ * (re-visite, changement de service) à cette période. Si un réceptionniste est ciblé,
+ * seules ses visites et factures comptent.
+ */
+export function patientRegisteredInPeriodWhere(
+  range: { gte?: Date; lt?: Date },
+  receptionistId?: string | null,
+): Prisma.PatientWhereInput {
+  return {
+    OR: [
+      { createdAt: range },
+      {
+        visits: {
+          some: {
+            createdAt: range,
+            status: { not: VisitStatus.CANCELLED },
+            ...(receptionistId ? { createdById: receptionistId } : {}),
+          },
+        },
+      },
+      {
+        invoices: {
+          some: {
+            createdAt: range,
+            status: { not: InvoiceStatus.CANCELLED },
+            ...(receptionistId ? { issuedById: receptionistId } : {}),
+          },
+        },
+      },
     ],
   };
 }
