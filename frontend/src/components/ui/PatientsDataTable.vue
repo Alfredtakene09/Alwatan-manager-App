@@ -28,6 +28,8 @@ export type PatientRow = {
   service?: string | null
   gender?: string
   createdAt?: string
+  /** Date de la dernière inscription (re-visite, changement de service). */
+  lastRegisteredAt?: string
   /** false = déjà envoyé / consulté (ou données liées) */
   canDelete?: boolean
   /** false = dossier désactivé (données conservées) */
@@ -132,7 +134,7 @@ const rows = computed(() =>
     service: p.service?.trim() || '',
     phone: p.phone || '',
     gender: p.gender,
-    createdAt: formatDate(p.createdAt),
+    createdAt: formatDate(p.lastRegisteredAt ?? p.createdAt),
     receptionistName: registeredByOf(p) ? fullName(registeredByOf(p)!.firstName, registeredByOf(p)!.lastName) : '',
     modifiedByName: modifierLabel(registeredByOf(p), p.updatedBy),
     active: p.active !== false,

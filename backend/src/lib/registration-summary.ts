@@ -177,9 +177,15 @@ function registrationRuleDay(invoice: RegistrationRuleInvoice): string | null {
     invoice.billingExamKind === "echo" ||
     invoice.billingExamKind === "odonto";
   const paymentAt = latestPaymentAt(invoice.payments);
+  const registeredAt =
+    invoice.patient?.createdAt &&
+    invoice.createdAt &&
+    invoice.createdAt > invoice.patient.createdAt
+      ? invoice.createdAt
+      : invoice.patient?.createdAt ?? invoice.createdAt;
   const at = followsPayment
-    ? invoice.paidAt ?? paymentAt ?? invoice.patient?.createdAt ?? invoice.createdAt
-    : invoice.patient?.createdAt ?? invoice.createdAt;
+    ? invoice.paidAt ?? paymentAt ?? registeredAt
+    : registeredAt;
   if (!at || Number.isNaN(at.getTime())) return null;
   return formatBusinessDate(at);
 }

@@ -733,7 +733,10 @@ router.get("/", async (req, res) => {
         where: { status: { not: VisitStatus.CANCELLED } },
         orderBy: { createdAt: "desc" },
         take: 1,
-        select: { createdBy: { select: { id: true, firstName: true, lastName: true } } },
+        select: {
+          createdBy: { select: { id: true, firstName: true, lastName: true } },
+          createdAt: true,
+        },
       },
       invoices: {
         where: {
@@ -777,6 +780,8 @@ router.get("/", async (req, res) => {
       return {
         ...rest,
         registeredBy: visits[0]?.createdBy ?? rest.createdBy,
+        lastRegisteredAt:
+          visits[0] && visits[0].createdAt > rest.createdAt ? visits[0].createdAt : rest.createdAt,
         canDelete: canFullList && !lockedIds.has(patient.id),
         consultationPayment: canFullList ? payment : null,
       };

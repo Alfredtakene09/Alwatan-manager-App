@@ -1,5 +1,6 @@
 type SortablePatient = {
   createdAt?: string | Date | null
+  lastRegisteredAt?: string | Date | null
   code?: string
 }
 
@@ -18,7 +19,8 @@ function createdAtMs(value?: string | Date | null): number {
 /** Dernier inscrit en premier — tri par date d'inscription puis matricule. */
 export function sortPatientsNewestFirst<T extends SortablePatient>(patients: T[]): T[] {
   return [...patients].sort((a, b) => {
-    const byDate = createdAtMs(b.createdAt) - createdAtMs(a.createdAt)
+    const byDate =
+      createdAtMs(b.lastRegisteredAt ?? b.createdAt) - createdAtMs(a.lastRegisteredAt ?? a.createdAt)
     if (byDate !== 0) return byDate
     return patSequence(b.code) - patSequence(a.code)
   })
