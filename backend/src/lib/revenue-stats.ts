@@ -437,12 +437,14 @@ export async function sumRegisteredPatientsConsultationsFcfa(
   patientWhere: Prisma.PatientWhereInput,
   from: Date,
   to: Date,
+  issuedById?: string | null,
 ) {
   const invoices = await prisma.invoice.findMany({
     where: {
       type: InvoiceType.CONSULTATION,
       status: { not: InvoiceStatus.CANCELLED },
       createdAt: { gte: from, lt: to },
+      ...(issuedById ? { issuedById } : {}),
       patient: { AND: [patientWhere, comptabilitePatientWhere()] },
     },
     select: { amountFcfa: true, paidAmountFcfa: true, status: true },

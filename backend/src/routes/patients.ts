@@ -864,7 +864,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
       patientRegisteredInPeriodWhere(createdAtRange, scopedReceptionistId),
     ],
   };
-  const patientCashPeriodScope = { ...patientCashScope, createdAt: createdAtRange };
+  const patientCashPeriodScope = patientCashScope;
   const revenueOptions = {
     ...(service ? { patientService: service } : {}),
     ...(scopedReceptionistId ? { cashierId: scopedReceptionistId } : {}),
@@ -935,7 +935,12 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
       },
     }),
     aggregateCollectedBetween(rangeStart, rangeEndExclusive, revenueOptions),
-    sumRegisteredPatientsConsultationsFcfa(patientCashPeriodScope, rangeStart, rangeEndExclusive),
+    sumRegisteredPatientsConsultationsFcfa(
+      patientCashPeriodScope,
+      rangeStart,
+      rangeEndExclusive,
+      scopedReceptionistId,
+    ),
     sumRegisteredPatientsEntriesFcfa(patientCashPeriodScope, rangeStart, rangeEndExclusive),
     personalCashScope && !service && !doctorId
       ? sumExpensesForCashierBetween(user.id, rangeStart, rangeEndExclusive)
