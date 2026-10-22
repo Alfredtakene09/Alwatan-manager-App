@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Coins, Banknote, History, HandCoins, CheckCircle2, Clock } from '@lucide/vue'
+import { Coins, Banknote, History, HandCoins, CheckCircle2, Clock, Search } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { confirmAppModal } from '@/lib/api-modal-helper'
@@ -19,6 +19,11 @@ import GestionnaireSalaryAdvancesPanel from '@/components/gestionnaire/Gestionna
 import GestionnaireOvertimePanel from '@/components/gestionnaire/GestionnaireOvertimePanel.vue'
 
 type TabId = 'mois' | 'historique' | 'avances' | 'heures-supp'
+
+/** Montant affiché avec « F » au lieu de « FCFA ». */
+function formatF(amount: number) {
+  return formatFcfa(amount).replace(/FCFA/, 'F')
+}
 
 type PayrollResponse = {
   year: number
@@ -74,6 +79,25 @@ const rows = computed(() =>
   })),
 )
 
+const searchQuery = ref('')
+
+function normalizeText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+}
+
+const filteredRows = computed(() => {
+  const q = normalizeText(searchQuery.value.trim())
+  if (!q) return rows.value
+  return rows.value.filter((row) =>
+    normalizeText(
+      [row.employeeName, row.jobTitle ?? '', PAYROLL_STATUS_LABEL[row.status], String(row.grossFcfa)].join(' '),
+    ).includes(q),
+  )
+})
+
 const paidCount = computed(() => rows.value.filter((row) => row.status === 'PAID').length)
 const unpaidCount = computed(() => rows.value.filter((row) => row.status !== 'PAID').length)
 const totalCount = computed(() => rows.value.length)
@@ -112,6 +136,9 @@ watch(activeTab, async (tab, previous) => {
   })
   if (previous === 'avances' || tab === 'avances') {
     await loadAdvances()
+  }
+  if (tab === 'mois') {
+    await loadPayroll()
   }
 })
 
@@ -325,13 +352,26 @@ onMounted(reloadPayrollData)
           <span>{{ paidCount }}/{{ totalCount }} employés payés ce mois</span>
         </div>
 
+        <div class="payroll-search">
+          <Search :size="16" class="payroll-search__icon" />
+          <input
+            v-model="searchQuery"
+            type="search"
+            class="payroll-search__input"
+            placeholder="Rechercher un employé, un poste…"
+            aria-label="Rechercher une fiche de paie"
+          />
+        </div>
+
         <div v-if="loading" class="chart-empty">Chargement…</div>
         <div v-else-if="!rows.length" class="chart-empty">
           Aucune fiche de paie — définissez un salaire fixe sur les fiches employés
         </div>
+        <div v-else-if="!filteredRows.length" class="chart-empty">Aucun résultat</div>
         <table v-else class="admin-table">
           <thead>
             <tr>
+              <th>#</th>
               <th>Employé</th>
               <th>Poste</th>
               <th>Salaire brut</th>
@@ -342,17 +382,18 @@ onMounted(reloadPayrollData)
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in rows" :key="row.id">
+            <tr v-for="(row, index) in filteredRows" :key="row.id">
+              <td>{{ index + 1 }}</td>
               <td>{{ row.employeeName }}</td>
               <td>{{ row.jobTitle ?? '—' }}</td>
-              <td>{{ formatFcfa(row.grossFcfa) }}</td>
+              <td>{{ formatF(row.grossFcfa) }}</td>
               <td>
                 <span v-if="(row.pendingAdvancesFcfa ?? 0) > 0" class="advance-deduct">
-                  -{{ formatFcfa(row.pendingAdvancesFcfa ?? 0) }}
+                  -{{ formatF(row.pendingAdvancesFcfa ?? 0) }}
                 </span>
                 <span v-else>—</span>
               </td>
-              <td>{{ formatFcfa(row.netFcfa) }}</td>
+              <td>{{ formatF(row.netFcfa) }}</td>
               <td>{{ PAYROLL_STATUS_LABEL[row.status] }}</td>
               <td>
                 <UiButton
@@ -382,6 +423,36 @@ onMounted(reloadPayrollData)
 </template>
 
 <style scoped>
+.payroll-search {
+  position: relative;
+  max-width: 22rem;
+  margin-bottom: 0.75rem;
+}
+
+.payroll-search__icon {
+  position: absolute;
+  top: 50%;
+  left: 0.65rem;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.payroll-search__input {
+  width: 100%;
+  padding: 0.5rem 0.75rem 0.5rem 2.1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.payroll-search__input:focus {
+  outline: none;
+  border-color: var(--primary-400);
+}
+
 .admin-page {
   display: flex;
   flex-direction: column;
@@ -487,13 +558,20 @@ onMounted(reloadPayrollData)
 .admin-table {
   width: 100%;
   border-collapse: collapse;
+  font-size: 0.8125rem;
 }
 
 .admin-table th,
 .admin-table td {
-  padding: 0.65rem 0.5rem;
+  padding: 0.55rem 0.4rem;
   border-bottom: 1px solid var(--border);
   text-align: left;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.admin-table th {
+  font-size: 0.75rem;
 }
 
 .advance-deduct {
