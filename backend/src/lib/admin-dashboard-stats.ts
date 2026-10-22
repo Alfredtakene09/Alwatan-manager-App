@@ -510,6 +510,8 @@ export async function buildFinancialKpis(
   const [
     currentRevenue,
     prevRevenue,
+    currentPharmacy,
+    prevPharmacy,
     currentExpenses,
     prevExpenses,
     currentPayrollPaid,
@@ -520,6 +522,8 @@ export async function buildFinancialKpis(
   ] = await Promise.all([
     aggregateCollectedBetween(currentBounds.start, currentBounds.end),
     aggregateCollectedBetween(prevBounds.start, prevBounds.end),
+    aggregatePharmacyBetween(currentBounds.start, currentBounds.end),
+    aggregatePharmacyBetween(prevBounds.start, prevBounds.end),
     sumValidatedExpensesBetween(currentBounds.start, currentBounds.end),
     sumValidatedExpensesBetween(prevBounds.start, prevBounds.end),
     sumPayrollPaidBetween(currentBounds.start, currentBounds.end),
@@ -531,12 +535,14 @@ export async function buildFinancialKpis(
 
   const currentExpensesTotal = currentExpenses.totalFcfa + currentPayrollPaid;
   const prevExpensesTotal = prevExpenses.totalFcfa + prevPayrollPaid;
-  const currentNet = currentRevenue.totalFcfa + currentExpenses.entriesFcfa - currentExpensesTotal;
-  const prevNet = prevRevenue.totalFcfa + prevExpenses.entriesFcfa - prevExpensesTotal;
+  const currentRevenueTotal = currentRevenue.totalFcfa + currentPharmacy.totalFcfa;
+  const prevRevenueTotal = prevRevenue.totalFcfa + prevPharmacy.totalFcfa;
+  const currentNet = currentRevenueTotal + currentExpenses.entriesFcfa - currentExpensesTotal;
+  const prevNet = prevRevenueTotal + prevExpenses.entriesFcfa - prevExpensesTotal;
 
   return {
-    revenueMonthFcfa: currentRevenue.totalFcfa,
-    revenueChangePercent: percentChange(currentRevenue.totalFcfa, prevRevenue.totalFcfa),
+    revenueMonthFcfa: currentRevenueTotal,
+    revenueChangePercent: percentChange(currentRevenueTotal, prevRevenueTotal),
     expensesMonthFcfa: currentExpensesTotal,
     expensesChangePercent: percentChange(currentExpensesTotal, prevExpensesTotal),
     entriesMonthFcfa: currentExpenses.entriesFcfa,
@@ -567,6 +573,8 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
   const [
     currentRevenue,
     prevRevenue,
+    currentPharmacy,
+    prevPharmacy,
     currentExpenses,
     prevExpenses,
     currentPayrollPaid,
@@ -574,7 +582,6 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
     fichePayrollMass,
     currentDoctorShares,
     prevDoctorShares,
-    pharmacyMonth,
     recentExpenses,
     employees,
     payrollRows,
@@ -588,6 +595,8 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
   ] = await Promise.all([
     aggregateCollectedBetween(currentBounds.start, currentBounds.end),
     aggregateCollectedBetween(prevBounds.start, prevBounds.end),
+    aggregatePharmacyBetween(currentBounds.start, currentBounds.end),
+    aggregatePharmacyBetween(prevBounds.start, prevBounds.end),
     sumValidatedExpensesBetween(currentBounds.start, currentBounds.end),
     sumValidatedExpensesBetween(prevBounds.start, prevBounds.end),
     sumPayrollPaidBetween(currentBounds.start, currentBounds.end),
@@ -595,7 +604,6 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
     sumCurrentFichePayrollMass(),
     sumSettledDoctorSharesBetween(currentBounds.start, currentBounds.end),
     sumSettledDoctorSharesBetween(prevBounds.start, prevBounds.end),
-    aggregatePharmacyBetween(currentBounds.start, currentBounds.end),
     prisma.clinicExpense.findMany({
       orderBy: { createdAt: "desc" },
       take: 20,
@@ -667,8 +675,10 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
   const currentExpensesTotal =
     currentExpenses.totalFcfa + currentPayrollPaid;
   const prevExpensesTotal = prevExpenses.totalFcfa + prevPayrollPaid;
-  const currentNet = currentRevenue.totalFcfa + currentExpenses.entriesFcfa - currentExpensesTotal;
-  const prevNet = prevRevenue.totalFcfa + prevExpenses.entriesFcfa - prevExpensesTotal;
+  const currentRevenueTotal = currentRevenue.totalFcfa + currentPharmacy.totalFcfa;
+  const prevRevenueTotal = prevRevenue.totalFcfa + prevPharmacy.totalFcfa;
+  const currentNet = currentRevenueTotal + currentExpenses.entriesFcfa - currentExpensesTotal;
+  const prevNet = prevRevenueTotal + prevExpenses.entriesFcfa - prevExpensesTotal;
 
   const expenseBreakdown = mapExpenseBreakdown(currentExpenses.rows, currentPayrollPaid);
   const operationsByService = await buildOperationsByService(
@@ -694,8 +704,9 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
       trendPeriods.map(async (period) => {
         const bounds = clipToRange(period, trendFrom, trendTo);
         if (!bounds) return null;
-        const [revenue, expenses, payrollPaid] = await Promise.all([
+        const [revenue, pharmacy, expenses, payrollPaid] = await Promise.all([
           aggregateCollectedBetween(bounds.start, bounds.end),
+          aggregatePharmacyBetween(bounds.start, bounds.end),
           sumValidatedExpensesBetween(bounds.start, bounds.end),
           sumPayrollPaidBetween(bounds.start, bounds.end),
         ]);
@@ -706,10 +717,10 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
           label: registrationRangeLabel(bounds.fromIso, bounds.toIso),
           fromIso: bounds.fromIso,
           toIso: bounds.toIso,
-          revenueFcfa: revenue.totalFcfa,
+          revenueFcfa: revenue.totalFcfa + pharmacy.totalFcfa,
           entriesFcfa: expenses.entriesFcfa,
           expensesFcfa: expensesTotal,
-          netFcfa: revenue.totalFcfa + expenses.entriesFcfa - expensesTotal,
+          netFcfa: revenue.totalFcfa + pharmacy.totalFcfa + expenses.entriesFcfa - expensesTotal,
         };
       }),
     )
@@ -746,8 +757,8 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
 
   return {
     financialKpis: {
-      revenueMonthFcfa: currentRevenue.totalFcfa,
-      revenueChangePercent: percentChange(currentRevenue.totalFcfa, prevRevenue.totalFcfa),
+      revenueMonthFcfa: currentRevenueTotal,
+      revenueChangePercent: percentChange(currentRevenueTotal, prevRevenueTotal),
       expensesMonthFcfa: currentExpensesTotal,
       expensesChangePercent: percentChange(currentExpensesTotal, prevExpensesTotal),
       entriesMonthFcfa: currentExpenses.entriesFcfa,
@@ -768,7 +779,7 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
       to: resolved.toIso,
     },
     monthlyTrend,
-    revenueBreakdown: mapRevenueBreakdown(currentRevenue, pharmacyMonth.totalFcfa),
+    revenueBreakdown: mapRevenueBreakdown(currentRevenue, currentPharmacy.totalFcfa),
     expenseBreakdown,
     operationsByService,
     recentExpenses: recentExpenses.map((row) => ({
