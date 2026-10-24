@@ -104,13 +104,6 @@ const periodCaption = computed(() => {
   return formatRegistrationRange(from, to)
 })
 
-const boardSubtitle = computed(() => {
-  void localeCode.value
-  const base = uiText("Vue d'ensemble, finances, caisses et supervision de la clinique")
-  if (!dateFrom.value || !dateTo.value) return base
-  return `${base} — ${periodCaption.value}`
-})
-
 
 const REVENUE_COLORS: Record<string, string> = {
   consultations: '#2563eb',
@@ -132,10 +125,6 @@ const summaryStats = computed((): SummaryStat[] => {
   void localeCode.value
   const k = gestionnaireOverview.value?.financialKpis ?? overview.value?.financialKpis
   if (!k) return []
-  const cash = gestionnaireOverview.value?.kpis
-  const soldeFcfa = cash
-    ? cash.receptionCashFcfa + cash.comptableCashFcfa
-    : 0
   return [
     {
       id: 'revenue',
@@ -188,13 +177,6 @@ const summaryStats = computed((): SummaryStat[] => {
         }),
         formatTrendPercentLocalized(k.doctorSharesChangePercent ?? 0, !isFullMonthRange.value),
       ].join(' · '),
-    },
-    {
-      id: 'balance',
-      label: translateDashboardLabel('Solde'),
-      value: formatFcfa(soldeFcfa),
-      icon: Wallet,
-      variant: 'cyan',
     },
   ]
 })
@@ -266,6 +248,44 @@ const expenseBars = computed(() =>
   })),
 )
 
+const expenseFlowBars = computed(() => {
+  void localeCode.value
+  const k = overview.value?.financialKpis
+  return [
+    {
+      key: 'entries',
+      label: uiText('Entrées'),
+      amountFcfa: k?.entriesMonthFcfa ?? 0,
+      color: '#0d9488',
+    },
+    {
+      key: 'exits',
+      label: uiText('Sorties'),
+      amountFcfa: k?.expensesMonthFcfa ?? 0,
+      color: '#e11d48',
+    },
+  ]
+})
+
+const expenseFlowSeries = computed(() => {
+  void localeCode.value
+  const points = filteredTrend.value
+  return [
+    {
+      key: 'entries',
+      label: uiText('Entrées'),
+      color: '#0d9488',
+      values: points.map((row) => row.entriesFcfa ?? 0),
+    },
+    {
+      key: 'exits',
+      label: uiText('Sorties'),
+      color: '#e11d48',
+      values: points.map((row) => row.expensesFcfa),
+    },
+  ]
+})
+
 const moduleIconByKey: Record<string, Component> = {
   consultations: Users,
   examens: FlaskConical,
@@ -286,10 +306,13 @@ const moduleVariantByKey: Record<string, NonNullable<SummaryStat['variant']>> = 
   autres: 'cyan',
 }
 
+const revenueBreakdownForCards = computed(() =>
+  (overview.value?.revenueBreakdown ?? []).filter((row) => row.key.toLowerCase() !== 'operations'),
+)
+
 const revenueModuleStats = computed(() => {
   void localeCode.value
-  const rows = overview.value?.revenueBreakdown ?? []
-  return rows.map((row) => {
+  return revenueBreakdownForCards.value.map((row) => {
     const normalizedKey = row.key.toLowerCase()
     const icon = moduleIconByKey[normalizedKey] ?? Banknote
     const variant = moduleVariantByKey[normalizedKey] ?? 'green'
@@ -369,7 +392,7 @@ function dashboardExportPayload() {
     })
   }
 
-  const revenueRows: DashboardExportRow[] = (overview.value?.revenueBreakdown ?? []).map((row) => ({
+  const revenueRows: DashboardExportRow[] = revenueBreakdownForCards.value.map((row) => ({
     label: `${translateDashboardLabel('Entrées')} ${translateDashboardLabel(row.label)}`,
     value: formatFcfa(row.amountFcfa),
     extra: percentLabel(row.percent),
@@ -530,7 +553,7 @@ watch([dateFrom, dateTo], ([from, to], [prevFrom, prevTo]) => {
 <template>
   <RoleDashboardShell
     title="Tableau de board"
-    :subtitle="boardSubtitle"
+    subtitle=""
     :icon="LayoutDashboard"
     :stats="summaryStats"
     :loading="loading"
@@ -567,7 +590,7 @@ watch([dateFrom, dateTo], ([from, to], [prevFrom, prevTo]) => {
         :icon="Wallet"
         @click="router.push('/admin/depenses')"
       >
-        Gestion des dépenses
+        {{ uiText('Comptabilité') }}
       </UiButton>
       <ExportButtons
         :disabled="!canExportDashboard"
@@ -581,7 +604,7 @@ watch([dateFrom, dateTo], ([from, to], [prevFrom, prevTo]) => {
     </template>
 
     <div class="admin-dashboard">
-      <section v-if="showAdminSection && revenueModuleStats.length" class="finance-entry-section">
+      <section v-if="showAdminSection" class="finance-entry-section">
         <div class="finance-entry-section__header">
           <h3>Entrées financières par module</h3>
           <span>{{ periodCaption }}</span>
@@ -596,18 +619,18 @@ watch([dateFrom, dateTo], ([from, to], [prevFrom, prevTo]) => {
             :variant="card.variant"
             compact
           />
+          <UiStatCard
+            label="Opération"
+            :value="formatFcfa(operationsTotalFcfa)"
+            :trend="operationsCountLabel"
+            :icon="Activity"
+            variant="amber"
+            compact
+          />
         </div>
       </section>
 
       <section v-if="showAdminSection" class="clinical-cards">
-        <UiStatCard
-          label="Opération"
-          :value="formatFcfa(operationsTotalFcfa)"
-          :trend="operationsCountLabel"
-          :icon="Activity"
-          variant="amber"
-          compact
-        />
         <UiStatCard
           label="Patients de la période"
           :value="overview?.clinical.patientsInPeriod ?? overview?.clinical.patientsToday ?? 0"
@@ -662,6 +685,28 @@ watch([dateFrom, dateTo], ([from, to], [prevFrom, prevTo]) => {
           icon-variant="rose"
         >
           <DashboardHorizontalBars :rows="expenseBars" :format-value="formatFcfa" />
+        </UiCard>
+
+        <UiCard
+          class="charts-grid__wide"
+          title="Gestion des dépenses : entrées et sorties"
+          :description="trendRangeCaption"
+          :icon="Wallet"
+          icon-variant="blue"
+        >
+          <div class="expense-flow">
+            <DashboardHorizontalBars
+              :rows="expenseFlowBars"
+              :format-value="formatFcfa"
+              empty-label="Aucun mouvement sur la période"
+            />
+            <DashboardLineChart
+              :labels="lineChartLabels"
+              :series="expenseFlowSeries"
+              :format-value="formatFcfa"
+              :loading="loading"
+            />
+          </div>
         </UiCard>
       </section>
     </div>
@@ -722,6 +767,16 @@ watch([dateFrom, dateTo], ([from, to], [prevFrom, prevTo]) => {
 
 .charts-grid > :first-child {
   grid-column: 1 / -1;
+}
+
+.charts-grid__wide {
+  grid-column: 1 / -1;
+}
+
+.expense-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
 .clinical-cards {
@@ -785,7 +840,8 @@ watch([dateFrom, dateTo], ([from, to], [prevFrom, prevTo]) => {
     grid-template-columns: 1fr;
   }
 
-  .charts-grid > :first-child {
+  .charts-grid > :first-child,
+  .charts-grid__wide {
     grid-column: auto;
   }
 }

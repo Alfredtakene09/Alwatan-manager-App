@@ -57,10 +57,17 @@ function normalizeText(value: string) {
     .toLowerCase()
 }
 
+const flowFilter = ref<'all' | 'ENTREE' | 'SORTIE'>('all')
+const dateFromInitialized = ref(false)
+
 const filteredRows = computed(() => {
   const query = normalizeText(search.value.trim())
-  if (!query) return rows.value
-  return rows.value.filter((row) =>
+  const byFlow =
+    flowFilter.value === 'all'
+      ? rows.value
+      : rows.value.filter((row) => row.flow === flowFilter.value)
+  if (!query) return byFlow
+  return byFlow.filter((row) =>
     normalizeText(
       [
         row.description,
@@ -132,6 +139,11 @@ async function loadRows() {
           : { from: dateFrom.value, to: dateTo.value }
     const { data } = await api.get<AdminExpenseRow[]>('/admin/expenses', { params })
     rows.value = data
+    if (!dateFromInitialized.value && listFilter.value === 'all') {
+      dateFromInitialized.value = true
+      const first = data.map((row) => row.date.slice(0, 10)).sort()[0]
+      if (first) dateFrom.value = first
+    }
   } finally {
     loading.value = false
   }
@@ -285,6 +297,7 @@ onMounted(() => {
       </template>
     </UiPageHeader>
 
+    <div class="depenses-bar">
     <div class="depenses-toolbar-row">
       <CaisseToolbar role="toolbar" :aria-label="uiText('Filtres dépenses')" class="depenses-toolbar-row__filters">
         <button
@@ -323,16 +336,17 @@ onMounted(() => {
           @update:model-value="onDateRangeChange"
         />
 
-        <button
-          type="button"
-          class="depenses-toolbar__tab"
-          :class="{ 'depenses-toolbar__tab--active': activeSection === 'indices' }"
-          :aria-selected="activeSection === 'indices'"
-          @click="selectSection('indices')"
+        <select
+          v-if="canManageExpenses"
+          v-model="flowFilter"
+          class="depenses-toolbar__select"
+          :aria-label="uiText('Type')"
+          :disabled="activeSection === 'indices'"
         >
-          <ListOrdered :size="16" />
-          {{ uiText('Indices') }}
-        </button>
+          <option value="all">{{ uiText('Entrées et sorties') }}</option>
+          <option value="ENTREE">{{ uiText('Entrée') }}</option>
+          <option value="SORTIE">{{ uiText('Sortie') }}</option>
+        </select>
       </CaisseToolbar>
 
       <div
@@ -345,6 +359,18 @@ onMounted(() => {
           {{ expenseSummary.totalLabel }} : {{ formatFcfa(expenseSummary.totalFcfa) }}
         </strong>
       </div>
+    </div>
+
+    <button
+      type="button"
+      class="depenses-toolbar__tab depenses-bar__indices"
+      :class="{ 'depenses-toolbar__tab--active': activeSection === 'indices' }"
+      :aria-selected="activeSection === 'indices'"
+      @click="selectSection('indices')"
+    >
+      <ListOrdered :size="16" />
+      {{ uiText('Indices') }}
+    </button>
     </div>
 
     <template v-if="activeSection === 'liste'">
@@ -516,6 +542,38 @@ onMounted(() => {
 .status-badge--amber { background: #fef3c7; color: #b45309; }
 .status-badge--rose { background: #ffe4e6; color: #be123c; }
 
+.depenses-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 0.65rem;
+  width: 100%;
+}
+
+.depenses-bar .depenses-toolbar-row {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.depenses-bar__indices {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted, #eef2e6);
+}
+
+.depenses-toolbar__select {
+  min-height: 2.25rem;
+  padding: 0 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
 .depenses-toolbar-row {
   display: flex;
   align-items: stretch;
@@ -591,6 +649,10 @@ onMounted(() => {
 }
 
 @media (max-width: 960px) {
+  .depenses-bar {
+    flex-direction: column;
+  }
+
   .depenses-toolbar-row {
     flex-direction: column;
     align-items: stretch;

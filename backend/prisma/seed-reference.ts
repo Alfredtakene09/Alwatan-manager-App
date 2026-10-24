@@ -99,7 +99,7 @@ export async function seedReferenceData() {
   for (const kind of Object.values(ExamCatalogKind)) {
     for (const item of EXAM_CATALOG_SEED[kind]) {
       await prisma.examCatalogItem.upsert({
-        where: { kind_code: { kind, code: item.code } },
+        where: { kind_code_serviceScopeKey: { kind, code: item.code, serviceScopeKey: "_" } },
         update: {
           label: item.label,
           category: item.category ?? null,

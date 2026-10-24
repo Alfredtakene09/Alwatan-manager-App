@@ -283,7 +283,7 @@ export function resolveDashboardDateRange(query: {
 
 /** Premier et dernier jour où un dossier a réellement été enregistré. */
 export async function registrationSpan(): Promise<DashboardDateRange | null> {
-  const [first, last] = await Promise.all([
+  const [first, last, firstExpense, lastExpense] = await Promise.all([
     prisma.patient.findFirst({
       orderBy: { createdAt: "asc" },
       select: { createdAt: true },
@@ -292,10 +292,22 @@ export async function registrationSpan(): Promise<DashboardDateRange | null> {
       orderBy: { createdAt: "desc" },
       select: { createdAt: true },
     }),
+    prisma.clinicExpense.findFirst({
+      where: { status: ClinicExpenseStatus.VALIDATED },
+      orderBy: { businessDate: "asc" },
+      select: { businessDate: true },
+    }),
+    prisma.clinicExpense.findFirst({
+      where: { status: ClinicExpenseStatus.VALIDATED },
+      orderBy: { businessDate: "desc" },
+      select: { businessDate: true },
+    }),
   ]);
-  if (!first || !last) return null;
-  const from = startOfDay(first.createdAt);
-  const toStart = startOfDay(last.createdAt);
+  const starts = [first?.createdAt, firstExpense?.businessDate].filter((d): d is Date => !!d);
+  const ends = [last?.createdAt, lastExpense?.businessDate].filter((d): d is Date => !!d);
+  if (!starts.length || !ends.length) return null;
+  const from = startOfDay(new Date(Math.min(...starts.map((d) => d.getTime()))));
+  const toStart = startOfDay(new Date(Math.max(...ends.map((d) => d.getTime()))));
   const toExclusive = new Date(toStart);
   toExclusive.setDate(toExclusive.getDate() + 1);
   return { from, toExclusive, fromIso: toIsoDay(from), toIso: toIsoDay(toStart) };
