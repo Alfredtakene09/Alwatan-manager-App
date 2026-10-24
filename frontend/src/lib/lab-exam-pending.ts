@@ -71,6 +71,8 @@ export type LabExamPendingItem = {
       age?: number | null
       ageUnit?: PatientAgeUnit | null
       gender?: string | null
+      category?: string | null
+      discountPercent?: number | null
     }
   }
   doctor: { firstName: string; lastName: string } | null

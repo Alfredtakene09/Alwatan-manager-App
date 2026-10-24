@@ -9,7 +9,11 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { prisma } from "../lib/db.js";
-import { comptabilitePatientWhere, isComptabiliteBillablePatient } from "../lib/patient-billing.js";
+import {
+  comptabilitePatientWhere,
+  isComptabiliteBillablePatient,
+  withPatientDiscount,
+} from "../lib/patient-billing.js";
 import {
   ensureHospitalizationFromReferral,
   hospitalisationPrescriptionLabel,
@@ -456,6 +460,14 @@ router.delete("/rooms/:id", ...roomsWriteAccess, async (req, res) => {
   }
 });
 
+/** Patient d'une hospitalisation, pour sa réduction personnel éventuelle. */
+async function patientForDiscount(tx: Prisma.TransactionClient, patientId: string) {
+  return tx.patient.findUnique({
+    where: { id: patientId },
+    select: { category: true, discountPercent: true },
+  });
+}
+
 router.post("/actions", async (req, res) => {
   const user = req.user!;
   const action = req.body.action as string;
@@ -628,7 +640,11 @@ router.post("/actions", async (req, res) => {
         const nights = computeStayNights(body.startDate, body.endDate);
         const dailyRateFcfa = dailyRateForRoomType(room.type);
         const grossFcfa = nights * dailyRateFcfa;
-        const reductionFcfa = Math.min(Math.max(0, body.reductionFcfa), grossFcfa);
+        const reductionFcfa = withPatientDiscount(
+          await patientForDiscount(tx, patientId),
+          grossFcfa,
+          Math.min(Math.max(0, body.reductionFcfa), grossFcfa),
+        );
         const totalDueFcfa = Math.max(0, grossFcfa - reductionFcfa);
 
         // Encaissement uniquement via l'action collect_payment (bouton « Encaisser »).
@@ -797,7 +813,15 @@ router.post("/actions", async (req, res) => {
         const nights = computeStayNights(data.startDate, data.endDate);
         const dailyRateFcfa = dailyRateForRoomType(room.type);
         const grossFcfa = nights * dailyRateFcfa;
-        const reductionFcfa = Math.min(Math.max(0, data.reductionFcfa), grossFcfa);
+        const target = await tx.hospitalization.findUniqueOrThrow({
+          where: { id: data.hospitalizationId },
+          select: { visit: { select: { patientId: true } } },
+        });
+        const reductionFcfa = withPatientDiscount(
+          await patientForDiscount(tx, target.visit.patientId),
+          grossFcfa,
+          Math.min(Math.max(0, data.reductionFcfa), grossFcfa),
+        );
         const totalDueFcfa = Math.max(0, grossFcfa - reductionFcfa);
 
         const hospitalization = await tx.hospitalization.update({
@@ -860,7 +884,11 @@ router.post("/actions", async (req, res) => {
         const endDate = parseIsoDate(data.endDate);
         const nights = computeStayNights(data.startDate, data.endDate);
         const grossFcfa = nights * existing.dailyRateFcfa;
-        const reductionFcfa = Math.min(Math.max(0, data.reductionFcfa), grossFcfa);
+        const reductionFcfa = withPatientDiscount(
+          await patientForDiscount(tx, existing.visit.patientId),
+          grossFcfa,
+          Math.min(Math.max(0, data.reductionFcfa), grossFcfa),
+        );
         const totalDueFcfa = Math.max(0, grossFcfa - reductionFcfa);
 
         const hospitalization = await tx.hospitalization.update({
@@ -901,7 +929,12 @@ router.post("/actions", async (req, res) => {
           Math.ceil((endDate.getTime() - hospitalization.startDate.getTime()) / (1000 * 60 * 60 * 24)),
         );
         const grossFcfa = nights * hospitalization.dailyRateFcfa;
-        const reductionFcfa = hospitalization.reductionFcfa ?? 0;
+        // Durée réelle : la réduction personnel suit le nouveau montant brut.
+        const reductionFcfa = withPatientDiscount(
+          await patientForDiscount(tx, hospitalization.visit.patientId),
+          grossFcfa,
+          hospitalization.reductionFcfa ?? 0,
+        );
         const totalDue = Math.max(0, grossFcfa - reductionFcfa);
         const alreadyInvoiced = await sumPaidHospitalizationFcfa(tx, hospitalization.id);
         const acompteOffBooks = alreadyInvoiced > 0 ? 0 : Math.max(0, hospitalization.depositFcfa ?? 0);

@@ -16,6 +16,7 @@ import {
   UI_ACTION_GROUPS,
   actionAppliesToRole,
   isUiActionTargetRole,
+  isUiActionVisibleByDefault,
   type HiddenByRole,
   type UiActionTargetRole,
 } from '@/lib/ui-actions'
@@ -310,7 +311,12 @@ const formRoleIsTarget = computed(() => isUiActionTargetRole(form.value.role))
 
 const formRoleHidden = computed(() => {
   if (!isUiActionTargetRole(form.value.role)) return [] as string[]
-  return roleHiddenByRole.value[form.value.role as UiActionTargetRole] ?? []
+  const role = form.value.role as UiActionTargetRole
+  // Liste enregistrée = actions dont l'état diffère du défaut du rôle.
+  const toggled = new Set(roleHiddenByRole.value[role] ?? [])
+  return UI_ACTIONS.map((action) => action.id).filter(
+    (id) => isUiActionVisibleByDefault(id, role) === toggled.has(id),
+  )
 })
 
 const userActionGroups = computed(() => {

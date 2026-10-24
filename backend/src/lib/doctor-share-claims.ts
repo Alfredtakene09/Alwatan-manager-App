@@ -22,6 +22,7 @@ import {
   type DoctorProfile,
 } from "./doctor-compensation.js";
 import { currentPayrollPeriod } from "./admin-payroll.js";
+import { formatBusinessDate, parseBusinessDate, toBusinessDateBound } from "./cash-shift.js";
 import { collectedAmountFcfa } from "./surgery-cost-shares.js";
 
 export type DbClient = PrismaClient | Prisma.TransactionClient;
@@ -34,7 +35,7 @@ export type ReceivablePeriod = {
 
 export function periodBounds(mode: "day" | "month", dateKey?: string): ReceivablePeriod {
   if (mode === "day") {
-    const raw = dateKey ?? new Date().toISOString().slice(0, 10);
+    const raw = dateKey ?? formatBusinessDate(new Date());
     const [y, m, d] = raw.split("-").map(Number);
     const from = new Date(y, m - 1, d);
     const to = new Date(y, m - 1, d + 1);
@@ -177,7 +178,12 @@ export async function buildDoctorReceivable(
       doctorUserId,
       status: { in: blockingClaimStatuses },
       OR: [
-        { businessDate: { gte: period.from, lt: period.to } },
+        {
+          businessDate: {
+            gte: toBusinessDateBound(period.from),
+            lt: toBusinessDateBound(period.to),
+          },
+        },
         { status: DoctorShareClaimStatus.PENDING_PAYROLL },
         // Une facture ou une opération déjà réclamée ne doit plus compter,
         // même si la date enregistrée a glissé d'un jour.
@@ -262,7 +268,7 @@ export async function buildDoctorReceivable(
   });
 
   for (const surgery of surgeries) {
-    const businessDate = (surgery.completedAt ?? period.from).toISOString().slice(0, 10);
+    const businessDate = formatBusinessDate(surgery.completedAt ?? period.from);
     const collected = collectedAmountFcfa(surgery.invoice ?? {});
     if (
       surgery.surgeonId === doctorUserId &&
@@ -371,13 +377,9 @@ export async function buildDoctorReceivable(
       if (!surgery) continue;
       const collected = invoice.paidAmountFcfa;
       if (collected <= 0) continue;
-      const businessDate = (
-        invoice.payments[0]?.paidAt ??
-        invoice.paidAt ??
-        period.from
-      )
-        .toISOString()
-        .slice(0, 10);
+      const businessDate = formatBusinessDate(
+        invoice.payments[0]?.paidAt ?? invoice.paidAt ?? period.from,
+      );
 
       if (
         surgery.surgeonId === doctorUserId &&
@@ -467,7 +469,7 @@ export async function buildDoctorReceivable(
         key: `consult-${invoice.id}`,
         kind: DoctorShareKind.CONSULTATION,
         amountFcfa: doctorShareFcfa,
-        businessDate: (invoice.paidAt ?? period.from).toISOString().slice(0, 10),
+        businessDate: formatBusinessDate(invoice.paidAt ?? period.from),
         invoiceId: invoice.id,
         label: invoice.visit?.sessionsCount
           ? `Kinésithérapie ${invoice.visit.sessionsCount} séance(s) ${invoice.invoiceNumber}`
@@ -610,8 +612,7 @@ export async function requestPayrollForItems(
       throw new Error("SURGERY_REQUIRED");
     }
 
-    const [y, m, d] = item.businessDate.split("-").map(Number);
-    const businessDate = new Date(y, m - 1, d);
+    const businessDate = parseBusinessDate(item.businessDate);
 
     const row = await tx.doctorShareClaim.create({
       data: {
@@ -761,11 +762,7 @@ export async function ensureSettledSurgeryCashClaim(
   });
   if (!doctor?.employeeId) return null;
 
-  const businessDate = new Date(
-    input.businessDate.getFullYear(),
-    input.businessDate.getMonth(),
-    input.businessDate.getDate(),
-  );
+  const businessDate = toBusinessDateBound(input.businessDate);
   const now = new Date();
   const existing = await tx.doctorShareClaim.findFirst({
     where: { surgeryCaseId: input.surgeryCaseId, kind: input.kind },
@@ -900,8 +897,8 @@ export async function applyPendingShareClaimsToPayroll(
         {
           payrollYear: null,
           businessDate: {
-            gte: new Date(input.year, input.month - 1, 1),
-            lt: new Date(input.year, input.month, 1),
+            gte: new Date(Date.UTC(input.year, input.month - 1, 1)),
+            lt: new Date(Date.UTC(input.year, input.month, 1)),
           },
         },
       ],

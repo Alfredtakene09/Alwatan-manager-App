@@ -30,6 +30,11 @@ export type UiActionDef = {
   label: string
   hint?: string
   defaultRoles: readonly UiActionTargetRole[]
+  /**
+   * Si défini : action masquée par défaut, sauf pour ces rôles (opt-in).
+   * La case cochée dans la gestion des boutons active alors l'action.
+   */
+  defaultEnabledRoles?: readonly UiActionTargetRole[]
 }
 
 const ALL_TARGETS = UI_ACTION_TARGET_ROLES
@@ -222,6 +227,14 @@ export const UI_ACTIONS: UiActionDef[] = [
     defaultRoles: DIRECTION_STAFF,
   },
   {
+    id: 'pharmacie.purchase_invoice',
+    group: 'pharmacy',
+    label: 'Ajout de produits par facture',
+    hint: 'Entre le stock et sort le prix d’achat de la caisse. Désactivé par défaut sauf Gestionnaire.',
+    defaultRoles: ['GESTIONNAIRE', 'PHARMACIEN'],
+    defaultEnabledRoles: ['GESTIONNAIRE'],
+  },
+  {
     id: 'users.create',
     group: 'users',
     label: 'Nouvel utilisateur',
@@ -243,6 +256,12 @@ export function isUiActionTargetRole(role: string): role is UiActionTargetRole {
 
 export function actionAppliesToRole(action: UiActionDef, role: UiActionTargetRole) {
   return action.defaultRoles.includes(role)
+}
+
+/** Visible sans réglage particulier pour ce rôle. */
+export function isUiActionVisibleByDefault(actionId: string, role: UiActionTargetRole) {
+  const action = UI_ACTIONS.find((item) => item.id === actionId)
+  return !action?.defaultEnabledRoles || action.defaultEnabledRoles.includes(role)
 }
 
 /** Admin et Direction ne sont jamais restreints. Sinon, masqué seulement si listé. */

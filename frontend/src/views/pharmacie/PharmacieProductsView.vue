@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Package, Plus } from '@lucide/vue'
+import { FileText, Package, Plus } from '@lucide/vue'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
@@ -8,6 +8,7 @@ import PharmacyProductsPanel from '@/components/pharmacie/PharmacyProductsPanel.
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { useAuthStore } from '@/stores/auth'
 import { canAccessModule } from '@/lib/roles'
+import { isUiActionAllowed } from '@/lib/ui-actions'
 
 const { uiText } = useAppI18n()
 const auth = useAuthStore()
@@ -16,11 +17,15 @@ const panel = ref<{
   exportExcel: () => void
   exportWord: () => void
   openCreateModal: () => void | Promise<void>
+  openPurchaseModal: () => void | Promise<void>
   exportDisabled: boolean
 } | null>(null)
 
 const canManageCatalog = computed(() =>
   auth.user ? canAccessModule(auth.user.role, 'pharmacie') : false,
+)
+const canAddByInvoice = computed(
+  () => canManageCatalog.value && isUiActionAllowed(auth.user, 'pharmacie.purchase_invoice'),
 )
 </script>
 
@@ -40,6 +45,15 @@ const canManageCatalog = computed(() =>
               @excel="panel?.exportExcel()"
               @word="panel?.exportWord()"
             />
+            <UiButton
+              v-if="canAddByInvoice"
+              variant="secondary"
+              size="sm"
+              :icon="FileText"
+              @click="panel?.openPurchaseModal()"
+            >
+              {{ uiText('Ajout par facture') }}
+            </UiButton>
             <UiButton
               v-if="canManageCatalog"
               variant="primary"

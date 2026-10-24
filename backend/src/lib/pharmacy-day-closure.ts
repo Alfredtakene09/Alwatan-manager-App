@@ -1,4 +1,4 @@
-import { formatBusinessDate } from "./cash-shift.js";
+import { formatBusinessDate, toBusinessDateBound } from "./cash-shift.js";
 import { prisma } from "./db.js";
 import { buildPharmacyRevenueReport } from "./pharmacy-revenue.js";
 
@@ -13,7 +13,12 @@ export function pharmacyDayBounds(now = new Date()) {
   start.setHours(0, 0, 0, 0);
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
-  return { start, end, businessDate: start, businessDateIso: formatBusinessDate(start) };
+  return {
+    start,
+    end,
+    businessDate: toBusinessDateBound(start),
+    businessDateIso: formatBusinessDate(start),
+  };
 }
 
 function parseLocalIsoDay(iso: string | undefined, fallback: Date) {
@@ -78,7 +83,7 @@ export async function buildPharmacyDayClosureSnapshot(
     pharmacistId && singleDay
       ? prisma.pharmacyDayClosure.findUnique({
           where: {
-            pharmacistId_businessDate: { pharmacistId, businessDate: start },
+            pharmacistId_businessDate: { pharmacistId, businessDate: toBusinessDateBound(start) },
           },
         })
       : Promise.resolve(null),

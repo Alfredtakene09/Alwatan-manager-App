@@ -57,7 +57,12 @@ import {
   parseJournalFiltersFromQuery,
 } from "../lib/gestionnaire-journal.js";
 import { buildAdminDashboardOverview } from "../lib/admin-dashboard-stats.js";
-import { parseBusinessDate, formatBusinessDate } from "../lib/cash-shift.js";
+import {
+  businessDateToLocalStart,
+  toBusinessDateBound,
+  formatBusinessDate,
+  parseBusinessDate,
+} from "../lib/cash-shift.js";
 import {
   currentPayrollPeriod,
   ensurePayrollForMonth,
@@ -492,7 +497,7 @@ router.get("/journal/export.pdf", async (req, res) => {
     { periodLabel, filtersLabel },
   );
   const download = req.query.download === "1" || req.query.download === "true";
-  const dateStamp = new Date().toISOString().slice(0, 10);
+  const dateStamp = formatBusinessDate(new Date());
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader(
     "Content-Disposition",
@@ -565,8 +570,8 @@ router.patch("/expense-categories/:id/archive", async (req, res) => {
 router.get("/expenses", async (req, res) => {
   const filter = typeof req.query.filter === "string" ? req.query.filter : "all";
   const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const monthStart = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
+  const monthEnd = new Date(Date.UTC(now.getFullYear(), now.getMonth() + 1, 1));
   const where =
     filter === "pending"
       ? { status: ClinicExpenseStatus.PENDING }
@@ -589,7 +594,9 @@ router.get("/expenses", async (req, res) => {
       ? []
       : (
           await listPaidPayrollExpenseCores(
-            filter === "month" ? { from: monthStart, to: monthEnd } : undefined,
+            filter === "month"
+              ? { from: businessDateToLocalStart(monthStart), to: businessDateToLocalStart(monthEnd) }
+              : undefined,
           )
         ).map((row) => ({
           id: row.id,
@@ -927,7 +934,7 @@ router.post("/employees", requireUiAction("employees.create"), async (req, res) 
         clinicServiceId: serviceLink.clinicServiceId,
         address: body.address?.trim() || null,
         birthDate: body.birthDate ? parseBusinessDate(body.birthDate) : null,
-        hiredAt: body.hiredAt ? parseBusinessDate(body.hiredAt) : new Date(),
+        hiredAt: body.hiredAt ? parseBusinessDate(body.hiredAt) : toBusinessDateBound(new Date()),
         contractType: body.contractType ?? null,
         contractStatus: body.contractStatus ?? EmployeeContractStatus.ACTIF,
         bonusFcfa: body.bonusFcfa ?? null,
@@ -1173,7 +1180,11 @@ async function buildPayrollMonthResponse(targetYear: number, targetMonth: number
   ]);
   const serialized = rows.map((row) =>
     serializePayrollRow(row, {
-      pendingAdvancesFcfa: pendingMap.get(row.employeeId) ?? 0,
+      // Même plafond qu'à la validation : pas plus que le salaire + primes.
+      pendingAdvancesFcfa: Math.min(
+        pendingMap.get(row.employeeId) ?? 0,
+        row.grossFcfa + (overtimeMap.get(row.employeeId) ?? 0),
+      ),
       pendingOvertimeFcfa: overtimeMap.get(row.employeeId) ?? 0,
     }),
   );
@@ -1287,12 +1298,6 @@ router.post("/payroll/:id/pay", async (req, res) => {
     return res.status(409).json({ error: "Déjà payé" });
   }
   const updated = await prisma.$transaction(async (tx) => {
-    const advanceDeductionFcfa = await deductPendingAdvancesForPayroll(
-      tx,
-      row.employeeId,
-      row.year,
-      row.month,
-    );
     const paidAt = body.paidAt ? new Date(body.paidAt) : new Date();
     const overtimePrimeFcfa = await applyValidatedOvertimeToPayroll(tx, {
       employeeId: row.employeeId,
@@ -1309,6 +1314,14 @@ router.post("/payroll/:id/pay", async (req, res) => {
       paidAt,
     });
     const primeFcfa = overtimePrimeFcfa + sharePrimeFcfa;
+    // Avances retenues après les primes, plafonnées au montant dû.
+    const advanceDeductionFcfa = await deductPendingAdvancesForPayroll(
+      tx,
+      row.employeeId,
+      row.year,
+      row.month,
+      row.grossFcfa + primeFcfa,
+    );
     return tx.employeePayroll.update({
       where: { id: row.id },
       data: {

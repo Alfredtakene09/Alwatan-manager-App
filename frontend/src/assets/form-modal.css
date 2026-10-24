@@ -32,6 +32,11 @@
   max-width: 44rem;
 }
 
+/* Formulaires en tableau (ex. lignes de facture). */
+.ui-form-modal--xlarge {
+  max-width: min(68rem, 96vw);
+}
+
 .ui-form-modal--no-scroll {
   max-height: min(96dvh, 920px);
 }
@@ -225,7 +230,8 @@
 
   .ui-form-modal,
   .ui-form-modal--wide,
-  .ui-form-modal--large {
+  .ui-form-modal--large,
+  .ui-form-modal--xlarge {
     max-width: 100%;
   }
 

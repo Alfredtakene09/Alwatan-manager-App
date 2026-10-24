@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Wallet, Plus, Pencil, ListOrdered, Search } from '@lucide/vue'
+import { ArrowLeft, Wallet, Plus, Pencil, ListOrdered, Search, Trash2 } from '@lucide/vue'
 import api from '@/api/client'
 import { canAccessModule, formatFcfa } from '@/lib/roles'
 import type { AdminExpenseRow } from '@/lib/admin-dashboard'
@@ -22,6 +22,8 @@ import ExportButtons from '@/components/ui/ExportButtons.vue'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
+import { translateTemplate } from '@/lib/dashboard-i18n'
 
 type SectionId = 'liste' | 'indices'
 type ListFilter = 'range' | 'all' | 'month'
@@ -191,6 +193,34 @@ function openEditExpense(row: AdminExpenseRow) {
     rejectionReason: row.rejectionReason ?? '',
   }
   showExpenseModal.value = true
+}
+
+const deletingId = ref<string | null>(null)
+
+/** Supprime la ligne : la somme sort des totaux, du solde de caisse et du tableau de bord. */
+async function deleteExpense(row: AdminExpenseRow) {
+  if (row.source === 'payroll' || deletingId.value) return
+  const isPurchase = (row.label ?? row.description ?? '').startsWith('Achat pharmacie')
+  const confirmed = await confirmAppModal({
+    title: uiText('Supprimer la ligne'),
+    message:
+      translateTemplate('« {label} » ({amount}) sera supprimée et retirée des totaux et du solde de caisse.', {
+        label: row.label ?? row.description,
+        amount: formatFcfa(row.amountFcfa),
+      }) +
+      (isPurchase ? ` ${uiText('Le stock pharmacie de cette facture n’est pas modifié.')}` : ''),
+    confirmLabel: uiText('Supprimer'),
+  })
+  if (!confirmed) return
+  deletingId.value = row.id
+  try {
+    await api.delete(`/admin/expenses/${row.id}`)
+    await loadRows()
+  } catch (error) {
+    await showApiErrorModal(error, uiText('Suppression impossible.'))
+  } finally {
+    deletingId.value = null
+  }
 }
 
 async function submitExpense(payload: AdminExpenseFormPayload) {
@@ -425,6 +455,17 @@ onMounted(() => {
                   :aria-label="uiText('Modifier')"
                   @click="openEditExpense(row)"
                 />
+                <UiButton
+                  size="sm"
+                  variant="ghost"
+                  class="action-delete"
+                  :icon="Trash2"
+                  :title="uiText('Supprimer')"
+                  :aria-label="uiText('Supprimer')"
+                  :loading="deletingId === row.id"
+                  :disabled="!!deletingId"
+                  @click="deleteExpense(row)"
+                />
                 </template>
                 <span v-else class="text-muted">{{ uiText('Paie versée') }}</span>
               </td>
@@ -528,6 +569,10 @@ onMounted(() => {
 .actions {
   display: flex;
   gap: 0.35rem;
+}
+
+.actions :deep(.action-delete) {
+  color: #be123c;
 }
 
 .status-badge {

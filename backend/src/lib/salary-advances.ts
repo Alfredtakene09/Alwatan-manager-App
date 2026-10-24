@@ -64,7 +64,7 @@ export function serializeSalaryAdvance(row: SalaryAdvanceRow) {
   };
 }
 
-/** Somme qui sera déduite à la prochaine paie (tranches ou solde restant). */
+/** Somme prévue à la prochaine paie (tranches ou solde restant), avant plafonnement au salaire. */
 export async function sumPendingAdvancesByEmployee(employeeIds: string[]) {
   if (!employeeIds.length) return new Map<string, number>();
   const rows = await prisma.salaryAdvance.findMany({
@@ -100,6 +100,8 @@ export async function deductPendingAdvancesForPayroll(
   employeeId: string,
   year: number,
   month: number,
+  /** Plafond : on ne retient jamais plus que ce que l'employé doit toucher. */
+  maxFcfa = Number.POSITIVE_INFINITY,
 ) {
   const pending = await tx.salaryAdvance.findMany({
     where: {
@@ -118,10 +120,12 @@ export async function deductPendingAdvancesForPayroll(
 
   let total = 0;
   for (const row of pending) {
-    const deduction =
+    const planned =
       row.installmentFcfa != null
         ? Math.min(row.installmentFcfa, row.remainingFcfa)
         : row.remainingFcfa;
+    // Le reste non retenu ce mois-ci reste dû sur la paie suivante.
+    const deduction = Math.min(planned, Math.max(0, maxFcfa - total));
     if (deduction <= 0) continue;
 
     const nextRemaining = row.remainingFcfa - deduction;

@@ -8,6 +8,7 @@ import {
   UserRole,
 } from "@prisma/client";
 import { prisma } from "./db.js";
+import { toBusinessDateBound } from "./cash-shift.js";
 import {
   currentPayrollPeriod,
   ensurePayrollForMonth,
@@ -361,7 +362,7 @@ async function sumValidatedExpensesBetween(from: Date, to: Date) {
   const rows = await prisma.clinicExpense.findMany({
     where: {
       status: ClinicExpenseStatus.VALIDATED,
-      businessDate: { gte: from, lt: to },
+      businessDate: { gte: toBusinessDateBound(from), lt: toBusinessDateBound(to) },
     },
     select: { amountFcfa: true, category: true, flow: true },
   });

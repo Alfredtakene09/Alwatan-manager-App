@@ -93,7 +93,12 @@ import {
 } from "../lib/salary-advances.js";
 import { applyValidatedOvertimeToPayroll, sumValidatedOvertimeByEmployee } from "../lib/doctor-overtime.js";
 import { applyPendingShareClaimsToPayroll } from "../lib/doctor-share-claims.js";
-import { parseBusinessDate, formatBusinessDate } from "../lib/cash-shift.js";
+import {
+  businessDateToLocalStart,
+  formatBusinessDate,
+  isValidBusinessDate,
+  parseBusinessDate,
+} from "../lib/cash-shift.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -1400,8 +1405,8 @@ router.get("/expenses", async (req, res) => {
   } else {
     const filter = typeof req.query.filter === "string" ? req.query.filter : "all";
     const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const monthStart = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
+    const monthEnd = new Date(Date.UTC(now.getFullYear(), now.getMonth() + 1, 1));
 
     where =
       filter === "pending"
@@ -1421,7 +1426,10 @@ router.get("/expenses", async (req, res) => {
   });
   const clinicRows = rows.map(serializeAdminExpense);
   const payrollRange = where.businessDate
-    ? { from: where.businessDate.gte, to: where.businessDate.lt }
+    ? {
+        from: businessDateToLocalStart(where.businessDate.gte),
+        to: businessDateToLocalStart(where.businessDate.lt),
+      }
     : undefined;
   const payrollRows =
     where.status === ClinicExpenseStatus.PENDING
@@ -1654,9 +1662,21 @@ router.get("/payroll/history", async (req, res) => {
   if (!canViewEmployeeCompensation(req.user!.role)) {
     return res.status(403).json({ error: "Accès aux salaires non autorisé." });
   }
-  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 100));
+  const fromIso = typeof req.query.from === "string" ? req.query.from : "";
+  const toIso = typeof req.query.to === "string" ? req.query.to : "";
+  const hasRange = isValidBusinessDate(fromIso) && isValidBusinessDate(toIso);
+  // Avec une période : toutes les paies versées entre les deux dates (jours locaux inclus).
+  const paidAtRange = hasRange
+    ? (() => {
+        const from = businessDateToLocalStart(parseBusinessDate(fromIso));
+        const to = businessDateToLocalStart(parseBusinessDate(toIso));
+        to.setDate(to.getDate() + 1);
+        return { gte: from, lt: to };
+      })()
+    : undefined;
+  const limit = hasRange ? 2000 : Math.min(200, Math.max(1, Number(req.query.limit) || 100));
   const rows = await prisma.employeePayroll.findMany({
-    where: { status: PayrollStatus.PAID },
+    where: { status: PayrollStatus.PAID, ...(paidAtRange ? { paidAt: paidAtRange } : {}) },
     include: employeePayrollInclude,
     orderBy: [{ paidAt: "desc" }],
     take: limit,
@@ -1680,13 +1700,17 @@ router.get("/payroll", async (req, res) => {
   const targetYear = Number.isFinite(queryYear) ? queryYear : year;
   const targetMonth = Number.isFinite(queryMonth) ? queryMonth : month;
 
-  await ensurePayrollForMonth(targetYear, targetMonth);
+  const { eligibleIds } = await ensurePayrollForMonth(targetYear, targetMonth);
 
-  const rows = await prisma.employeePayroll.findMany({
+  const allRows = await prisma.employeePayroll.findMany({
     where: { year: targetYear, month: targetMonth },
     include: employeePayrollInclude,
     orderBy: [{ status: "asc" }, { employee: { lastName: "asc" } }],
   });
+  // Paie versée : toujours visible. Non payée : seulement si l'employé a encore un salaire actif.
+  const rows = allRows.filter(
+    (row) => row.status === PayrollStatus.PAID || eligibleIds.has(row.employeeId),
+  );
   const employeeIds = rows.map((row) => row.employeeId);
   const [pendingMap, overtimeMap] = await Promise.all([
     sumPendingAdvancesByEmployee(employeeIds),
@@ -1698,7 +1722,11 @@ router.get("/payroll", async (req, res) => {
     month: targetMonth,
     rows: rows.map((row) =>
       serializePayrollRow(row, {
-        pendingAdvancesFcfa: pendingMap.get(row.employeeId) ?? 0,
+        // Même plafond qu'à la validation : pas plus que le salaire + primes.
+        pendingAdvancesFcfa: Math.min(
+          pendingMap.get(row.employeeId) ?? 0,
+          row.grossFcfa + (overtimeMap.get(row.employeeId) ?? 0),
+        ),
         pendingOvertimeFcfa: overtimeMap.get(row.employeeId) ?? 0,
       }),
     ),
@@ -1811,12 +1839,6 @@ router.post("/payroll/:id/pay", async (req, res) => {
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    const advanceDeductionFcfa = await deductPendingAdvancesForPayroll(
-      tx,
-      row.employeeId,
-      row.year,
-      row.month,
-    );
     const paidAt = new Date();
     const overtimePrimeFcfa = await applyValidatedOvertimeToPayroll(tx, {
       employeeId: row.employeeId,
@@ -1833,6 +1855,14 @@ router.post("/payroll/:id/pay", async (req, res) => {
       paidAt,
     });
     const primeFcfa = overtimePrimeFcfa + sharePrimeFcfa;
+    // Avances retenues après les primes, plafonnées au montant dû.
+    const advanceDeductionFcfa = await deductPendingAdvancesForPayroll(
+      tx,
+      row.employeeId,
+      row.year,
+      row.month,
+      row.grossFcfa + primeFcfa,
+    );
     return tx.employeePayroll.update({
       where: { id: row.id },
       data: {

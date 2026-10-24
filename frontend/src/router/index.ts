@@ -303,10 +303,9 @@ const router = createRouter({
           meta: { module: 'pharmacie', pharmacyCatalog: true, roles: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE'] },
         },
         {
+          // Menu « Mouvements » retiré : l'ancienne adresse renvoie vers les produits.
           path: 'pharmacie/mouvements',
-          name: 'pharmacie-mouvements',
-          component: () => import('@/views/pharmacie/PharmacieMovementsView.vue'),
-          meta: { module: 'pharmacie', roles: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE'] },
+          redirect: '/pharmacie/produits',
         },
         {
           path: 'pharmacie/tableau-de-bord',

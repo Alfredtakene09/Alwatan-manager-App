@@ -37,7 +37,8 @@ const validateSchema = z.object({
 function parseBusinessDate(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!match) return null;
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  // Colonne SQL date : minuit UTC, sinon le jour enregistré glisse à la veille.
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
   return Number.isNaN(date.getTime()) ? null : date;
 }
 

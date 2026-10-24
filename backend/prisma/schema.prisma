@@ -333,6 +333,8 @@ model Patient {
   category    PatientCategory  @default(STANDARD)
   ongName     String?
   recommendedByName String?
+  /// Patient personnel : % de réduction appliqué à tout son parcours (null = 20 % par défaut).
+  discountPercent   Int?
   /// Médecin traitant permanent du dossier (optionnel) — distinct du médecin de la visite
   treatingDoctorId String?
   /// Utilisateur qui a créé le dossier à la réception (pour périmètre réceptionniste)

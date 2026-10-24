@@ -5,7 +5,7 @@ import { prisma } from "../lib/db.js";
 import { generateInvoiceNumber } from "../lib/patient-code.js";
 import { immediatePaidInvoiceData } from "../lib/invoice-paid.js";
 import { generatePharmacyExternalClientCode, splitPharmacyExternalClientName } from "../lib/pharmacy-external-client.js";
-import { shouldCreateImmediateInvoice } from "../lib/patient-billing.js";
+import { shouldCreateImmediateInvoice, withPatientDiscount } from "../lib/patient-billing.js";
 import { applyStockMovement, recordDispensationMovement } from "../lib/pharmacy-stock.js";
 import { listPharmacyStockAlerts, listPharmacyExpiryAlerts } from "../lib/pharmacy-alerts.js";
 import { buildPharmacyReport } from "../lib/pharmacy-reports.js";
@@ -28,11 +28,14 @@ import {
   PHARMACY_ORDONNANCE_PREFIX,
 } from "../lib/lab-notes.js";
 import { requireAuth, requireModule, requirePharmacyCatalogAccess, requireUiAction } from "../middleware/auth.js";
+import { isValidBusinessDate } from "../lib/cash-shift.js";
+import { recordPharmacyPurchase } from "../lib/pharmacy-purchase.js";
 
 const router = Router();
 router.use(requireAuth, requireModule("pharmacie"));
 
 const catalogAccess = [requirePharmacyCatalogAccess, requireUiAction("pharmacie.catalog")] as const;
+const purchaseAccess = [requirePharmacyCatalogAccess, requireUiAction("pharmacie.purchase_invoice")] as const;
 
 function routeParam(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
@@ -1362,6 +1365,79 @@ router.post("/stock-movements", ...catalogAccess, async (req, res) => {
   }
 });
 
+const purchaseSchema = z.object({
+  supplierId: z.string().min(1),
+  invoiceNumber: z.string().trim().min(1).max(60),
+  businessDate: z.string().refine(isValidBusinessDate),
+  comment: z.string().max(500).optional(),
+  lines: z
+    .array(
+      z
+        .object({
+          productId: z.string().min(1).optional().nullable(),
+          newProduct: z
+            .object({
+              name: z.string().trim().min(2),
+              dosage: z.string().optional().nullable(),
+              pharmaceuticalForm: z.string().optional().nullable(),
+              categoryId: z.string().optional().nullable(),
+            })
+            .optional()
+            .nullable(),
+          quantity: z.number().int().positive().max(100_000),
+          purchasePriceFcfa: z.number().int().positive(),
+          unitPriceFcfa: z.number().int().positive().optional().nullable(),
+          expiryDate: z.string().optional().nullable(),
+          noExpiry: z.boolean().optional(),
+        })
+        .refine((line) => !!line.productId || !!line.newProduct, {
+          message: "Produit requis",
+        }),
+    )
+    .min(1)
+    .max(200),
+});
+
+/** Ajout de produits par facture fournisseur : stock + sortie de caisse en comptabilité. */
+router.post("/purchases", ...purchaseAccess, async (req, res) => {
+  const user = req.user!;
+  try {
+    const body = purchaseSchema.parse(req.body);
+    const result = await recordPharmacyPurchase({
+      supplierId: body.supplierId,
+      invoiceNumber: body.invoiceNumber,
+      businessDate: body.businessDate,
+      comment: body.comment,
+      userId: user.id,
+      lines: body.lines.map((line) => ({
+        productId: line.productId ?? null,
+        newProduct: line.newProduct ?? null,
+        quantity: line.quantity,
+        purchasePriceFcfa: line.purchasePriceFcfa,
+        unitPriceFcfa: line.unitPriceFcfa ?? null,
+        expiryDate: line.noExpiry ? null : parseExpiryDate(line.expiryDate),
+        noExpiry: line.noExpiry ?? false,
+      })),
+      resolveSku: (name) => resolveProductSku({ name }),
+      findDuplicateId: (product) => findCatalogDuplicateId(product),
+    });
+    return res.status(201).json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: "Facture incomplète — vérifiez fournisseur, n° de facture et lignes." });
+    }
+    if (error instanceof Error) {
+      if (error.message === "CASHIER_INVALID") return res.status(400).json({ error: "Caisse invalide." });
+      if (error.message === "SALE_PRICE_REQUIRED") {
+        return res.status(400).json({ error: "Prix de vente requis pour un nouveau produit." });
+      }
+      if (error.message === "EMPTY_PURCHASE") return res.status(400).json({ error: "Montant de la facture nul." });
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError) return mapProductCatalogError(error, res);
+    return mapStockError(error, res);
+  }
+});
+
 router.get("/", async (_req, res) => {
   const [products, patients] = await Promise.all([
     prisma.product.findMany({
@@ -1595,7 +1671,10 @@ router.post("/", async (req, res) => {
       }
 
       const requestedReduction = body.reductionFcfa ?? 0;
-      const reductionFcfa = body.isFree ? grossTotal : Math.min(requestedReduction, grossTotal);
+      // Patient personnel : au moins sa réduction (20 % par défaut) sur la vente.
+      const reductionFcfa = body.isFree
+        ? grossTotal
+        : withPatientDiscount(patient, grossTotal, Math.min(requestedReduction, grossTotal));
       const total = Math.max(0, grossTotal - reductionFcfa);
       const coveredByName = body.coveredByName?.trim() || null;
       const paymentNote = body.isFree

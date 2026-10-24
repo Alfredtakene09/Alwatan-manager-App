@@ -9,6 +9,7 @@ import {
   VisitStatus,
 } from "@prisma/client";
 import { prisma } from "./db.js";
+import { toBusinessDateBound } from "./cash-shift.js";
 import { labsPendingApprovalWhere } from "./lab-notes.js";
 import {
   aggregateCollectedBetween,
@@ -303,8 +304,15 @@ export async function registrationSpan(): Promise<DashboardDateRange | null> {
       select: { businessDate: true },
     }),
   ]);
-  const starts = [first?.createdAt, firstExpense?.businessDate].filter((d): d is Date => !!d);
-  const ends = [last?.createdAt, lastExpense?.businessDate].filter((d): d is Date => !!d);
+  // businessDate est une date SQL (minuit UTC) : on la relit comme jour calendaire local.
+  const businessDay = (d?: Date) =>
+    d ? new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) : undefined;
+  const starts = [first?.createdAt, businessDay(firstExpense?.businessDate)].filter(
+    (d): d is Date => !!d,
+  );
+  const ends = [last?.createdAt, businessDay(lastExpense?.businessDate)].filter(
+    (d): d is Date => !!d,
+  );
   if (!starts.length || !ends.length) return null;
   const from = startOfDay(new Date(Math.min(...starts.map((d) => d.getTime()))));
   const toStart = startOfDay(new Date(Math.max(...ends.map((d) => d.getTime()))));
@@ -361,7 +369,7 @@ async function sumValidatedExpensesBetween(from: Date, to: Date) {
   const rows = await prisma.clinicExpense.findMany({
     where: {
       status: ClinicExpenseStatus.VALIDATED,
-      businessDate: { gte: from, lt: to },
+      businessDate: { gte: toBusinessDateBound(from), lt: toBusinessDateBound(to) },
     },
     select: { amountFcfa: true, category: true, flow: true },
   });

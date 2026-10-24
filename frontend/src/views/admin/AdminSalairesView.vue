@@ -81,6 +81,9 @@ const rows = computed(() =>
 
 const searchQuery = ref('')
 
+/** Une fiche validée quitte la liste du mois et reste consultable dans l'Historique. */
+const pendingRows = computed(() => rows.value.filter((row) => row.status !== 'PAID'))
+
 function normalizeText(value: string) {
   return value
     .normalize('NFD')
@@ -90,8 +93,8 @@ function normalizeText(value: string) {
 
 const filteredRows = computed(() => {
   const q = normalizeText(searchQuery.value.trim())
-  if (!q) return rows.value
-  return rows.value.filter((row) =>
+  if (!q) return pendingRows.value
+  return pendingRows.value.filter((row) =>
     normalizeText(
       [row.employeeName, row.jobTitle ?? '', PAYROLL_STATUS_LABEL[row.status], String(row.grossFcfa)].join(' '),
     ).includes(q),
@@ -177,11 +180,14 @@ async function reloadPayrollData() {
   await Promise.all([loadPayroll(), loadAdvances()])
 }
 
-async function payRow(row: PayrollRow) {
+async function payRow(row: (typeof rows.value)[number]) {
   const ok = await confirmAppModal({
     type: 'CONFIRM',
     title: 'Valider la paie',
-    message: `Confirmer le paiement du salaire de ${row.employeeName} (${formatFcfa(row.grossFcfa)}) ?`,
+    message:
+      row.pendingAdvancesFcfa > 0
+        ? `Confirmer le paiement du salaire de ${row.employeeName} : ${formatFcfa(row.grossFcfa)} − avance ${formatFcfa(row.pendingAdvancesFcfa)} = ${formatFcfa(row.netFcfa)} à verser ?`
+        : `Confirmer le paiement du salaire de ${row.employeeName} (${formatFcfa(row.netFcfa)}) ?`,
     confirmLabel: 'Confirmer',
   })
   if (!ok) return
@@ -192,7 +198,7 @@ async function payRow(row: PayrollRow) {
 }
 
 async function payAllPending() {
-  const pending = rows.value.filter((row) => row.status !== 'PAID')
+  const pending = pendingRows.value
   if (!pending.length) return
   const ok = await confirmAppModal({
     type: 'CONFIRM',
@@ -270,7 +276,7 @@ onMounted(reloadPayrollData)
           aria-label="Période de paie"
         />
         <ExportButtons :disabled="loading || !rows.length" @pdf="exportPayrollPdf" @excel="exportPayrollExcel" @word="exportPayrollWord" />
-        <UiButton @click="payAllPending">Valider la paie</UiButton>
+        <UiButton :disabled="!pendingRows.length" @click="payAllPending">Valider la paie</UiButton>
       </template>
     </UiPageHeader>
 
@@ -367,6 +373,12 @@ onMounted(reloadPayrollData)
         <div v-else-if="!rows.length" class="chart-empty">
           Aucune fiche de paie — définissez un salaire fixe sur les fiches employés
         </div>
+        <div v-else-if="!pendingRows.length" class="chart-empty">
+          Toutes les fiches de {{ periodLabel }} sont payées.
+          <UiButton size="sm" variant="ghost" :icon="History" @click="selectTab('historique')">
+            Voir l'historique
+          </UiButton>
+        </div>
         <div v-else-if="!filteredRows.length" class="chart-empty">Aucun résultat</div>
         <table v-else class="admin-table">
           <thead>
@@ -397,7 +409,6 @@ onMounted(reloadPayrollData)
               <td>{{ PAYROLL_STATUS_LABEL[row.status] }}</td>
               <td>
                 <UiButton
-                  v-if="row.status !== 'PAID'"
                   size="sm"
                   variant="success"
                   @click="payRow(row)"

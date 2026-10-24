@@ -19,7 +19,7 @@ describe("facture consultation", () => {
   });
 
   it("laisse PENDING sans paiement pour un patient exonéré", () => {
-    const data = consultationInvoiceCreateData(PatientCategory.PERSONNEL, {
+    const data = consultationInvoiceCreateData(PatientCategory.ASSOCIE, {
       invoiceNumber: "FAC-002",
       patientId: "p1",
       visitId: "v1",

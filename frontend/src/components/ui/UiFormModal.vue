@@ -10,7 +10,7 @@ const props = withDefaults(
     title: string
     subtitle?: string
     icon?: Component
-    size?: 'default' | 'wide' | 'large'
+    size?: 'default' | 'wide' | 'large' | 'xlarge'
     titleId?: string
     /** Si false, le modal n'est pas affiché. Défaut true (compatible avec v-if sur le composant). */
     open?: boolean
@@ -48,6 +48,7 @@ const subtitleText = computed(() => {
         :class="{
           'ui-form-modal--wide': size === 'wide',
           'ui-form-modal--large': size === 'large',
+          'ui-form-modal--xlarge': size === 'xlarge',
           'ui-form-modal--no-scroll': !bodyScroll,
         }"
         role="dialog"

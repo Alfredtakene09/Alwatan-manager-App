@@ -109,8 +109,8 @@ export async function sumValidatedOvertimeByEmployee(
   month: number,
 ): Promise<Map<string, number>> {
   if (!employeeIds.length) return new Map();
-  const start = new Date(year, month - 1, 1);
-  const end = new Date(year, month, 1);
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const end = new Date(Date.UTC(year, month, 1));
   const rows = await prisma.doctorOvertimeEntry.groupBy({
     by: ["employeeId"],
     where: {
@@ -136,8 +136,8 @@ export async function applyValidatedOvertimeToPayroll(
     paidAt?: Date;
   },
 ): Promise<number> {
-  const start = new Date(input.year, input.month - 1, 1);
-  const end = new Date(input.year, input.month, 1);
+  const start = new Date(Date.UTC(input.year, input.month - 1, 1));
+  const end = new Date(Date.UTC(input.year, input.month, 1));
   const entries = await tx.doctorOvertimeEntry.findMany({
     where: {
       employeeId: input.employeeId,
