@@ -605,46 +605,76 @@ export type RegistrationActivityCounts = {
   operationPatients: number;
   examPatients: number;
   hospitalizationPatients: number;
+  radioPatients: number;
+  echoPatients: number;
 };
 
+type RegistrationActivityKey = keyof RegistrationActivityPatientIds;
+
+/** Radiologie et échographie ont leur propre carte ; le reste des examens va au laboratoire. */
+function examActivityKey(label: string): "exam" | "radio" | "echo" {
+  if (label === "Radiologie") return "radio";
+  if (label === "Echographie") return "echo";
+  return "exam";
+}
+
 function registrationActivityGroups(invoices: SummaryInvoice[]) {
-  const patients = {
+  const patients: Record<RegistrationActivityKey, Set<string>> = {
     consultation: new Set<string>(),
     operation: new Set<string>(),
     exam: new Set<string>(),
     hospitalization: new Set<string>(),
+    radio: new Set<string>(),
+    echo: new Set<string>(),
+  };
+  const amounts: Record<RegistrationActivityKey, number> = {
+    consultation: 0,
+    operation: 0,
+    exam: 0,
+    hospitalization: 0,
+    radio: 0,
+    echo: 0,
   };
 
   for (const invoice of invoices) {
     const amountFcfa = consultationTariffAmount(invoice, summaryAmountFcfa(invoice));
     if (amountFcfa <= 0 || !invoice.patientId) continue;
-    const { group } = classifyInvoiceForDayClosure(invoice);
-    if (group === "consultation") patients.consultation.add(invoice.patientId);
-    else if (group === "operation") patients.operation.add(invoice.patientId);
-    else if (group === "hospitalization") patients.hospitalization.add(invoice.patientId);
-    else if (isCollectedExamInvoice(invoice)) patients.exam.add(invoice.patientId);
+    const { group, label } = classifyInvoiceForDayClosure(invoice);
+    let key: RegistrationActivityKey;
+    if (group === "consultation") key = "consultation";
+    else if (group === "operation") key = "operation";
+    else if (group === "hospitalization") key = "hospitalization";
+    else if (isCollectedExamInvoice(invoice)) key = examActivityKey(label);
+    else continue;
+    patients[key].add(invoice.patientId);
+    amounts[key] += amountFcfa;
   }
 
-  return patients;
+  return { patients, amounts };
 }
 
 /**
  * Patients des cartes d'enregistrement.
  * Une facture annulée, un montant nul, un dossier seulement notifié ou une
  * prescription sans facture ne comptent pas. Chaque facture va dans une seule carte.
- * Radiologie et échographie restent avec le laboratoire : ce sont des examens facturés.
- * Seuls les examens payés entrent dans la carte Laboratoire.
+ * Radiologie et échographie ont chacune leur carte, hors laboratoire.
+ * Seuls les examens payés entrent dans ces cartes.
  */
-export function registrationActivityPatientCounts(
-  invoices: SummaryInvoice[],
-): RegistrationActivityCounts {
-  const patients = registrationActivityGroups(invoices);
+function activityCounts(patients: Record<RegistrationActivityKey, Set<string>>): RegistrationActivityCounts {
   return {
     consultationPatients: patients.consultation.size,
     operationPatients: patients.operation.size,
     examPatients: patients.exam.size,
     hospitalizationPatients: patients.hospitalization.size,
+    radioPatients: patients.radio.size,
+    echoPatients: patients.echo.size,
   };
+}
+
+export function registrationActivityPatientCounts(
+  invoices: SummaryInvoice[],
+): RegistrationActivityCounts {
+  return activityCounts(registrationActivityGroups(invoices).patients);
 }
 
 function catalogServiceMatches(recorded: string, typeService: string) {
@@ -725,29 +755,33 @@ export type RegistrationActivityPatientIds = {
   operation: string[];
   exam: string[];
   hospitalization: string[];
+  radio: string[];
+  echo: string[];
 };
+
+/** Montant encaissé de chaque carte d'enregistrement. */
+export type RegistrationActivityAmounts = Record<keyof RegistrationActivityPatientIds, number>;
 
 export async function buildRegistrationReport(options: RegistrationSummaryOptions): Promise<{
   lines: RegistrationSummaryLine[];
   activity: RegistrationActivityCounts;
   activityPatientIds: RegistrationActivityPatientIds;
+  activityAmountsFcfa: RegistrationActivityAmounts;
 }> {
   const invoices = await withCatalogOperations(await loadRegistrationInvoices(options));
-  const groups = registrationActivityGroups(invoices);
+  const { patients: groups, amounts } = registrationActivityGroups(invoices);
   return {
     lines: summarizeRegistrationInvoices(invoices),
-    activity: {
-      consultationPatients: groups.consultation.size,
-      operationPatients: groups.operation.size,
-      examPatients: groups.exam.size,
-      hospitalizationPatients: groups.hospitalization.size,
-    },
+    activity: activityCounts(groups),
     activityPatientIds: {
       consultation: [...groups.consultation],
       operation: [...groups.operation],
       exam: [...groups.exam],
       hospitalization: [...groups.hospitalization],
+      radio: [...groups.radio],
+      echo: [...groups.echo],
     },
+    activityAmountsFcfa: amounts,
   };
 }
 

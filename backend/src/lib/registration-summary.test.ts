@@ -529,8 +529,10 @@ describe("cartes d'enregistrement", () => {
     assert.deepEqual(counts, {
       consultationPatients: 1,
       operationPatients: 1,
-      examPatients: 2,
+      examPatients: 1,
       hospitalizationPatients: 1,
+      radioPatients: 1,
+      echoPatients: 0,
     });
   });
 

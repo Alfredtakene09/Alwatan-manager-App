@@ -81,9 +81,9 @@ const labelText = computed(() => {
 
 .stat-card--direct:has(.stat-card__icon--float) .stat-card__value,
 .stat-card--direct:has(.stat-card__icon--float) .stat-card__detail {
-  padding-inline-end: 1.2rem;
-  font-size: 0.62rem;
-  letter-spacing: -0.02em;
+  padding-inline-end: 1.5rem;
+  font-size: 0.9rem;
+  letter-spacing: -0.01em;
   text-overflow: clip;
 }
 
