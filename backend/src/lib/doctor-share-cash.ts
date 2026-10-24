@@ -4,6 +4,7 @@ import {
   type Prisma,
   type PrismaClient,
 } from "@prisma/client";
+import { toBusinessDateBound } from "./cash-shift.js";
 import { prisma } from "./db.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -16,7 +17,7 @@ export async function sumSettledDoctorSharesBetween(from: Date, toExclusive: Dat
       status: {
         in: [DoctorShareClaimStatus.SETTLED_CASH, DoctorShareClaimStatus.SETTLED_PAYROLL],
       },
-      businessDate: { gte: from, lt: toExclusive },
+      businessDate: { gte: toBusinessDateBound(from), lt: toBusinessDateBound(toExclusive) },
     },
     _sum: { amountFcfa: true },
   });

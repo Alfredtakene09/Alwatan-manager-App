@@ -28,6 +28,7 @@ import {
   reductionFcfaFromPercent,
 } from '@/lib/reception-reduction'
 import { useAuthStore } from '@/stores/auth'
+import { patientDiscountFcfa, patientDiscountPercent } from '@/lib/patient-category'
 import { formatAppDateTime } from '@/i18n/locale-format'
 import { EXAM_KIND_LABELS, type ExamKindSlug } from '@/lib/exam-catalog/types'
 import {
@@ -100,6 +101,7 @@ watch(
   async (item) => {
     if (item) await loadExamCatalog()
     reductionsByKind.value = initLabExamReductionsByKind()
+    if (item) applyStaffDiscountDefaults()
     payingKind.value = null
     installmentEnabledByKind.value = {}
     installmentAmountByKind.value = {}
@@ -108,6 +110,19 @@ watch(
 )
 
 const paidKindSet = computed(() => new Set(normalizedItem.value?.paidKinds ?? []))
+
+/** Patient personnel : réduction pré-remplie (20 % par défaut), appliquée aussi par le serveur. */
+const staffDiscountPercent = computed(() => patientDiscountPercent(props.item?.visit.patient))
+
+function applyStaffDiscountDefaults() {
+  if (!staffDiscountPercent.value) return
+  const next = { ...reductionsByKind.value }
+  for (const card of kindCards.value) {
+    if (card.isPaid) continue
+    next[card.kind] = Math.max(next[card.kind] ?? 0, patientDiscountFcfa(props.item?.visit.patient, card.grossFcfa))
+  }
+  reductionsByKind.value = next
+}
 
 const kindCards = computed(() => {
   void localeCode.value
@@ -448,6 +463,12 @@ function kindReductionPercent(kind: ExamKindSlug, grossFcfa: number) {
               <Calendar :size="12" class="patient-panel__icon" aria-hidden="true" />
               <span class="patient-panel__label">{{ uiText('Date') }}</span>
               <strong class="patient-panel__value">{{ patientInfo.date }}</strong>
+            </div>
+            <div v-if="staffDiscountPercent" class="patient-panel__item patient-panel__item--staff">
+              <span class="patient-panel__label">{{ uiText('Patient personnel') }}</span>
+              <strong class="patient-panel__value">
+                {{ translateTemplate('Réduction {percent} % appliquée', { percent: staffDiscountPercent }) }}
+              </strong>
             </div>
           </section>
 
@@ -1222,5 +1243,8 @@ function kindReductionPercent(kind: ExamKindSlug, grossFcfa: number) {
   justify-content: flex-end;
   gap: 0.5rem;
   margin-left: auto;
+}
+.patient-panel__item--staff .patient-panel__value {
+  color: #15803d;
 }
 </style>

@@ -68,7 +68,13 @@ import {
   voidAllPaidLabExams,
 } from "../lib/exam-reclamation-refund.js";
 import { assertRoomAvailableForAdmission } from "../lib/hospitalization-rooms.js";
-import { shouldCreateImmediateInvoice, comptabilitePatientWhere, comptabiliteInvoicePatientWhere } from "../lib/patient-billing.js";
+import {
+  shouldCreateImmediateInvoice,
+  comptabilitePatientWhere,
+  comptabiliteInvoicePatientWhere,
+  patientDiscountFcfa,
+  withPatientDiscount,
+} from "../lib/patient-billing.js";
 import {
   aggregateCollectedToday,
   buildRevenueLast7Days,
@@ -1452,20 +1458,30 @@ router.post("/", cashierAccess, async (req, res) => {
         data.reductionsByKind,
         data.reductionFcfa,
       );
-      const totalReductionFcfa = sumExamReductionsByKind(reductionsByKind, sheets);
       const role = user.role as AppUserRole;
-      if (totalReductionFcfa > 0 && !canReduceExamPrices(role)) {
+      // Patient personnel : sa réduction (20 % par défaut) ne demande aucun droit particulier ;
+      // seuls les montants au-delà sont contrôlés comme une réduction manuelle.
+      const patientDiscountByKind = Object.fromEntries(
+        sheets.map((sheet) => [sheet.kind, patientDiscountFcfa(existing.visit.patient, sheet.grossFcfa)]),
+      ) as Partial<Record<ExamKindSlug, number>>;
+      const manualReductionOf = (kind: ExamKindSlug) =>
+        Math.max(0, (reductionsByKind[kind] ?? 0) - (patientDiscountByKind[kind] ?? 0));
+      const manualReductionFcfa = sheets.reduce((sum, sheet) => sum + manualReductionOf(sheet.kind), 0);
+      if (manualReductionFcfa > 0 && !canReduceExamPrices(role)) {
         return res.status(403).json({
           error: "Vous n'êtes pas autorisé à réduire le prix des examens.",
         });
       }
-      if (totalReductionFcfa > grossFcfa) {
+      if (sumExamReductionsByKind(reductionsByKind, sheets) > grossFcfa) {
         return res.status(400).json({ error: "La réduction totale ne peut pas dépasser le montant total." });
       }
-      if (isReceptionExamReductionCapped(role) && totalReductionFcfa > 0) {
+      if (isReceptionExamReductionCapped(role) && manualReductionFcfa > 0) {
         const invalidKind = sheets.find((sheet) => {
           const reduction = reductionsByKind[sheet.kind] ?? 0;
-          return reduction > 0 && !isAllowedReceptionReduction(sheet.grossFcfa, reduction);
+          return (
+            manualReductionOf(sheet.kind) > 0 &&
+            !isAllowedReceptionReduction(sheet.grossFcfa, reduction)
+          );
         });
         if (invalidKind) {
           return res.status(400).json({
@@ -1473,6 +1489,15 @@ router.post("/", cashierAccess, async (req, res) => {
           });
         }
       }
+
+      for (const sheet of sheets) {
+        reductionsByKind[sheet.kind] = withPatientDiscount(
+          existing.visit.patient,
+          sheet.grossFcfa,
+          reductionsByKind[sheet.kind] ?? 0,
+        );
+      }
+      const totalReductionFcfa = sumExamReductionsByKind(reductionsByKind, sheets);
 
       const netFcfa = computeExamNetFcfa(sheets, reductionsByKind);
       if (netFcfa < 0) {
@@ -1493,13 +1518,14 @@ router.post("/", cashierAccess, async (req, res) => {
         });
       }
 
-      const resolvePaymentAmount = (kind: ExamKindSlug, sheetNetFcfa: number) => {
+      /** Tranche saisie par la caisse ; null = encaisser tout ce qui reste dû. */
+      const explicitInstallment = (kind: ExamKindSlug): number | null => {
         const byKind = installmentsByKind[kind];
         if (byKind != null) return byKind;
         if (kindsToPay.length === 1 && data.installmentAmountFcfa != null) {
           return data.installmentAmountFcfa;
         }
-        return sheetNetFcfa;
+        return null;
       };
 
       const result = await prisma.$transaction(async (tx) => {
@@ -1557,8 +1583,8 @@ router.post("/", cashierAccess, async (req, res) => {
           }
           const reductionFcfa = reductionsByKind[sheet.kind] ?? 0;
           const sheetNetFcfa = Math.max(0, sheet.grossFcfa - reductionFcfa);
-          const paymentAmountFcfa = resolvePaymentAmount(sheet.kind, sheetNetFcfa);
-          if (paymentAmountFcfa > sheetNetFcfa) {
+          const installmentFcfa = explicitInstallment(sheet.kind);
+          if (installmentFcfa != null && installmentFcfa > sheetNetFcfa) {
             throw new Error("INVALID_INSTALLMENT_AMOUNT");
           }
 
@@ -1580,6 +1606,13 @@ router.post("/", cashierAccess, async (req, res) => {
           ) {
             continue;
           }
+
+          // Sans tranche saisie, une facture déjà entamée se solde : on encaisse le reste dû.
+          const paymentAmountFcfa =
+            installmentFcfa ??
+            (existingInvoice
+              ? Math.max(0, existingInvoice.amountFcfa - existingInvoice.paidAmountFcfa)
+              : sheetNetFcfa);
 
           const invoiceNumber = existingInvoice ? undefined : invoiceNumbers[numberIndex++];
           const { invoice, isFullyPaid } = await applyExamKindPayment(tx, {

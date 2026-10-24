@@ -11,6 +11,7 @@ import {
   UI_ACTION_GROUPS,
   UI_ACTION_TARGET_ROLES,
   actionAppliesToRole,
+  isUiActionVisibleByDefault,
   type HiddenByRole,
   type UiActionTargetRole,
 } from '@/lib/ui-actions'
@@ -40,13 +41,15 @@ function isWideGroup(actionCount: number) {
   return actionCount >= 5
 }
 
+// La liste enregistrée contient les actions dont l'état diffère du défaut du rôle.
 function isVisible(actionId: string) {
-  return !(hiddenByRole.value[selectedRole.value] ?? []).includes(actionId)
+  const toggled = (hiddenByRole.value[selectedRole.value] ?? []).includes(actionId)
+  return isUiActionVisibleByDefault(actionId, selectedRole.value) !== toggled
 }
 
 function setVisible(actionId: string, visible: boolean) {
   const current = new Set(hiddenByRole.value[selectedRole.value] ?? [])
-  if (visible) current.delete(actionId)
+  if (visible === isUiActionVisibleByDefault(actionId, selectedRole.value)) current.delete(actionId)
   else current.add(actionId)
   hiddenByRole.value = {
     ...hiddenByRole.value,

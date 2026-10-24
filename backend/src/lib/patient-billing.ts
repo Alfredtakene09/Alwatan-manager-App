@@ -1,24 +1,70 @@
 import { InvoiceStatus, PatientCategory } from "@prisma/client";
 
 export function isExemptPatient(category: PatientCategory) {
-  return category === PatientCategory.ASSOCIE || category === PatientCategory.PERSONNEL;
+  return category === PatientCategory.ASSOCIE;
+}
+
+/** Réduction appliquée par défaut à tout le parcours d'un patient personnel. */
+export const DEFAULT_STAFF_DISCOUNT_PERCENT = 20;
+
+type DiscountablePatient = {
+  category: PatientCategory;
+  discountPercent?: number | null;
+};
+
+/** % de réduction du patient : celui de sa fiche, sinon 20 % pour le personnel, 0 sinon. */
+export function patientDiscountPercent(patient: DiscountablePatient | null | undefined) {
+  if (!patient || patient.category !== PatientCategory.PERSONNEL) return 0;
+  const percent = patient.discountPercent ?? DEFAULT_STAFF_DISCOUNT_PERCENT;
+  return Math.min(100, Math.max(0, Math.round(percent)));
+}
+
+/** Montant de la réduction personnel sur un montant brut. */
+export function patientDiscountFcfa(
+  patient: DiscountablePatient | null | undefined,
+  grossFcfa: number,
+) {
+  const percent = patientDiscountPercent(patient);
+  if (percent <= 0 || grossFcfa <= 0) return 0;
+  return Math.round((grossFcfa * percent) / 100);
+}
+
+/**
+ * Réduction effective : jamais moins que la réduction personnel (idempotent si le montant
+ * déjà réduit est renvoyé), une réduction manuelle plus forte reste possible.
+ */
+export function withPatientDiscount(
+  patient: DiscountablePatient | null | undefined,
+  grossFcfa: number,
+  requestedReductionFcfa: number,
+) {
+  const gross = Math.max(0, grossFcfa);
+  const requested = Math.max(0, requestedReductionFcfa || 0);
+  return Math.min(gross, Math.max(requested, patientDiscountFcfa(patient, gross)));
 }
 
 export function isDeferredBillingPatient(_category: PatientCategory) {
   return false;
 }
 
+/** Catégories facturées (le personnel paie avec sa réduction ; seuls les associés sont exonérés). */
+const BILLABLE_CATEGORIES: PatientCategory[] = [
+  PatientCategory.STANDARD,
+  PatientCategory.ONG,
+  PatientCategory.PERSONNEL,
+];
+
 export function shouldCreateImmediateInvoice(category: PatientCategory) {
-  return category === PatientCategory.STANDARD || category === PatientCategory.ONG;
+  return BILLABLE_CATEGORIES.includes(category);
 }
 
 /** Patients pris en compte dans la comptabilité classique (hors associés). */
 export function isComptabiliteBillablePatient(category: PatientCategory) {
-  return category === PatientCategory.STANDARD || category === PatientCategory.ONG;
+  return BILLABLE_CATEGORIES.includes(category);
 }
 
 export function comptabilitePatientWhere() {
-  return { category: { in: [PatientCategory.STANDARD, PatientCategory.ONG] } };
+  return { category: { in: [...BILLABLE_CATEGORIES] } };
 }
 
 /** Dossiers actifs : les compteurs de patients ignorent les dossiers désactivés. */
@@ -53,13 +99,14 @@ export function resolveConsultationBilling(
   category: PatientCategory,
   consultationAmountFcfa?: number,
   reductionFcfa?: number,
+  discountPercent?: number | null,
 ) {
   if (isExemptPatient(category)) {
     return { consultationAmountFcfa: 0, reductionFcfa: 0, billableAmountFcfa: 0 };
   }
 
   const amount = consultationAmountFcfa ?? 0;
-  const reduction = Math.max(0, reductionFcfa ?? 0);
+  const reduction = withPatientDiscount({ category, discountPercent }, amount, reductionFcfa ?? 0);
   const billableAmountFcfa = Math.max(0, amount - reduction);
 
   return {
@@ -93,5 +140,5 @@ export const PATIENT_CATEGORY_LABELS: Record<PatientCategory, string> = {
   [PatientCategory.STANDARD]: "Standard",
   [PatientCategory.ASSOCIE]: "Associé / enfant (exonéré)",
   [PatientCategory.ONG]: "Standard",
-  [PatientCategory.PERSONNEL]: "Personnel (gratuit)",
+  [PatientCategory.PERSONNEL]: "Personnel (réduction)",
 };

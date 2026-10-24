@@ -23,12 +23,14 @@ import {
 } from "./lab-notes.js";
 
 describe("file d'attente paiement examens", () => {
-  it("inclut STANDARD et ONG (comme la file médecin « en paiement »)", () => {
+  it("inclut STANDARD, ONG et PERSONNEL (le personnel paie avec sa réduction)", () => {
     const where = labsPendingApprovalWhere();
     const visitAnd = where.visit.AND as Array<Record<string, unknown>>;
     assert.deepEqual(visitAnd[0], {
       patient: {
-        category: { in: [PatientCategory.STANDARD, PatientCategory.ONG] },
+        category: {
+          in: [PatientCategory.STANDARD, PatientCategory.ONG, PatientCategory.PERSONNEL],
+        },
       },
     });
   });

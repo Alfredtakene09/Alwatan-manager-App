@@ -7,6 +7,7 @@ export const DEFAULT_EXPENSE_INDICES: ReadonlyArray<{
   { name: "Transport", description: "Carburant, course, transport patient", flow: "SORTIE" },
   { name: "Maintenance", description: "Réparation équipement, maintenance bâtiment", flow: "SORTIE" },
   { name: "Achat urgent", description: "Médicaments ou consommables en urgence", flow: "SORTIE" },
+  { name: "Achat pharmacie", description: "Achat de médicaments sur facture fournisseur", flow: "SORTIE" },
   { name: "Fournitures médicales", description: "Gants, seringues, compresses, consommables", flow: "SORTIE" },
   { name: "Électricité / Eau", description: "Factures d'électricité, d'eau, internet", flow: "SORTIE" },
   { name: "Carburant générateur", description: "Carburant pour groupe électrogène", flow: "SORTIE" },

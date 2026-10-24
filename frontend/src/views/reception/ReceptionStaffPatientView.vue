@@ -7,9 +7,13 @@ import {
   RotateCcw,
   Printer,
   UserCheck,
+  Percent,
+  Save,
 } from '@lucide/vue'
 import api from '@/api/client'
-import { showDuplicateModalFromError } from '@/lib/api-modal-helper'
+import { showApiErrorModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
+import { useAuthStore } from '@/stores/auth'
+import { DEFAULT_STAFF_DISCOUNT_PERCENT } from '@/lib/patient-category'
 import { fullName } from '@/lib/roles'
 import { parsePatientAge, splitPatientFullName, formatPatientAge } from '@/lib/patient-name'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
@@ -46,7 +50,23 @@ type StaffPatientRow = {
   age?: number | null
   ageUnit?: PatientAgeUnit | null
   recommendedByName?: string | null
+  discountPercent?: number | null
   createdAt: string
+}
+
+const auth = useAuthStore()
+/** Seuls l'administrateur et le gestionnaire enregistrent un patient personnel. */
+const canManageStaff = computed(
+  () => auth.user?.role === 'ADMIN' || auth.user?.role === 'GESTIONNAIRE',
+)
+
+function discountOf(row: { discountPercent?: number | null }) {
+  return row.discountPercent ?? DEFAULT_STAFF_DISCOUNT_PERCENT
+}
+
+function parseDiscount(value: string) {
+  const n = Math.round(Number(value))
+  return value.trim() !== '' && Number.isFinite(n) && n >= 0 && n <= 100 ? n : null
 }
 
 const doctors = ref<DoctorOption[]>([])
@@ -68,6 +88,7 @@ const form = ref({
   recommendedByName: '',
   doctorId: '',
   treatingDoctorId: '',
+  discountPercent: String(DEFAULT_STAFF_DISCOUNT_PERCENT),
 })
 
 const parsedName = computed(() => splitPatientFullName(form.value.fullName))
@@ -100,7 +121,8 @@ const canRegister = computed(() => {
     phoneDigits.length >= 6 &&
     !!form.value.service &&
     form.value.recommendedByName.trim().length >= 2 &&
-    !!form.value.doctorId
+    !!form.value.doctorId &&
+    parseDiscount(form.value.discountPercent) !== null
   )
 })
 
@@ -115,6 +137,7 @@ function resetForm() {
     recommendedByName: '',
     doctorId: '',
     treatingDoctorId: '',
+    discountPercent: String(DEFAULT_STAFF_DISCOUNT_PERCENT),
   }
   syncDoctorsForService()
 }
@@ -208,13 +231,16 @@ async function registerStaffPatient() {
         recommendedByName: form.value.recommendedByName.trim(),
         doctorId: form.value.doctorId,
         treatingDoctorId: form.value.treatingDoctorId || null,
-        consultationAmountFcfa: 0,
-        reductionFcfa: 0,
+        discountPercent: parseDiscount(form.value.discountPercent),
       },
     )
-    message.value = translateTemplate('Patient personnel enregistré (gratuit) — envoyé chez {doctor}.', {
-      doctor: getDoctorName(form.value.doctorId),
-    })
+    message.value = translateTemplate(
+      'Patient personnel enregistré (réduction {percent} %) — envoyé chez {doctor}.',
+      {
+        percent: discountOf(data.patient),
+        doctor: getDoctorName(form.value.doctorId),
+      },
+    )
     messageType.value = 'success'
     printFiche({
       ...data.patient,
@@ -244,7 +270,7 @@ function printFiche(row: StaffPatientRow) {
   openPrintDocument(
     `${uiText('Fiche patient personnel')} ${row.code}`,
     `
-${buildClinicPrintHeader(uiText('Fiche patient — Personnel (gratuit)'))}
+${buildClinicPrintHeader(uiText('Fiche patient — Personnel'))}
   <div class="row"><span>${uiText('Date')}</span><strong>${dateTimeText(row.createdAt)}</strong></div>
   <div class="row"><span>${uiText('Patient')}</span><strong>${patientName}</strong></div>
   <div class="row"><span>${uiText('Matricule')}</span><strong>${row.code}</strong></div>
@@ -252,10 +278,36 @@ ${buildClinicPrintHeader(uiText('Fiche patient — Personnel (gratuit)'))}
   ${row.recommendedByName ? `<div class="row"><span>${uiText('Recommandé par')}</span><strong>${row.recommendedByName}</strong></div>` : ''}
   ${row.phone ? `<div class="row"><span>${uiText('Téléphone')}</span><strong>${row.phone}</strong></div>` : ''}
   ${row.age != null ? `<div class="row"><span>${uiText('Âge')}</span><strong>${formatPatientAge(row.age, normalizePatientAgeUnit(row.ageUnit))}</strong></div>` : ''}
-  <p style="margin-top:1rem;color:#64748b;font-size:0.875rem;">${uiText('Parcours gratuit — consultation et examens exonérés.')}</p>
+  <div class="row"><span>${uiText('Réduction')}</span><strong>${discountOf(row)} %</strong></div>
+  <p style="margin-top:1rem;color:#64748b;font-size:0.875rem;">${translateTemplate('Réduction de {percent} % sur tout le parcours (consultation, examens, opération, hospitalisation, pharmacie).', { percent: discountOf(row) })}</p>
   <div class="footer">${CLINIC.fullAddress}<br>${CLINIC.phoneLabel} — ${CLINIC.email}</div>
 `,
   )
+}
+
+const editingRow = ref<StaffPatientRow | null>(null)
+const editingDiscount = ref('')
+const savingDiscount = ref(false)
+
+function openDiscountEdit(row: StaffPatientRow) {
+  editingRow.value = row
+  editingDiscount.value = String(discountOf(row))
+}
+
+async function saveDiscount() {
+  const row = editingRow.value
+  const percent = parseDiscount(editingDiscount.value)
+  if (!row || percent === null || savingDiscount.value) return
+  savingDiscount.value = true
+  try {
+    await api.patch(`/patients/${row.id}/discount`, { discountPercent: percent })
+    row.discountPercent = percent
+    editingRow.value = null
+  } catch (error) {
+    await showApiErrorModal(error, uiText('Impossible de modifier la réduction.'))
+  } finally {
+    savingDiscount.value = false
+  }
 }
 
 const queueCountLabel = computed(() => {
@@ -274,13 +326,13 @@ onMounted(() => {
   <div>
     <UiPageHeader
       title="Patient personnel"
-      subtitle="Enregistrement d'un membre du personnel ou d'un proche recommandé — parcours entièrement gratuit"
+      subtitle="Enregistrement d'un membre du personnel ou d'un proche recommandé — réduction sur tout le parcours (20 % par défaut)"
       :icon="UserCheck"
     />
 
     <UiAlert v-if="message" :type="messageType" :message="message" />
 
-    <div class="page-create-bar">
+    <div v-if="canManageStaff" class="page-create-bar">
       <UiButton variant="primary" :icon="UserPlus" @click="openFormModal">
         Nouveau
       </UiButton>
@@ -304,6 +356,7 @@ onMounted(() => {
               <th>{{ uiText('Patient') }}</th>
               <th>{{ uiText('Service') }}</th>
               <th>{{ uiText('Recommandé par') }}</th>
+              <th>{{ uiText('Réduction') }}</th>
               <th>{{ uiText('Enregistré le') }}</th>
               <th class="col-actions">{{ uiText('Actions') }}</th>
             </tr>
@@ -316,8 +369,18 @@ onMounted(() => {
               </td>
               <td>{{ row.service ? clinicServiceText(row.service) : '—' }}</td>
               <td>{{ row.recommendedByName || '—' }}</td>
+              <td><strong>{{ discountOf(row) }} %</strong></td>
               <td>{{ dateTimeText(row.createdAt) }}</td>
               <td class="col-actions">
+                <UiButton
+                  v-if="canManageStaff"
+                  variant="ghost"
+                  size="sm"
+                  :icon="Percent"
+                  @click="openDiscountEdit(row)"
+                >
+                  Réduction
+                </UiButton>
                 <UiButton variant="ghost" size="sm" :icon="Printer" @click="printFiche(row)">
                   Fiche
                 </UiButton>
@@ -332,7 +395,7 @@ onMounted(() => {
       v-if="showFormModal"
       title-id="staff-patient-modal-title"
       title="Nouveau patient personnel"
-      subtitle="Parcours entièrement gratuit — consultation et examens exonérés"
+      subtitle="Réduction appliquée à tout le parcours — consultation, examens, opération, hospitalisation, pharmacie"
       :icon="UserPlus"
       @close="closeFormModal"
     >
@@ -384,6 +447,14 @@ onMounted(() => {
           required
         />
 
+        <UiInput
+          v-model="form.discountPercent"
+          label="Réduction (%)"
+          type="number"
+          :icon="Percent"
+          required
+        />
+
         <UiSelect v-model="form.treatingDoctorId" label="Médecin traitant (dossier)">
           <option value="">{{ uiText('Aucun (optionnel)') }}</option>
           <option v-for="doctor in filteredDoctors" :key="doctor.id" :value="doctor.id">
@@ -411,7 +482,41 @@ onMounted(() => {
           :icon="UserPlus"
           :disabled="!canRegister || registering"
         >
-          {{ registering ? uiText('Enregistrement…') : uiText('Enregistrer (gratuit)') }}
+          {{ registering ? uiText('Enregistrement…') : uiText('Enregistrer') }}
+        </UiButton>
+      </template>
+    </UiFormModal>
+
+    <UiFormModal
+      v-if="editingRow"
+      title-id="staff-discount-modal-title"
+      title="Réduction du patient personnel"
+      :subtitle="fullName(editingRow.firstName, editingRow.lastName)"
+      :icon="Percent"
+      @close="editingRow = null"
+    >
+      <form id="staff-discount-form" class="staff-form" @submit.prevent="saveDiscount">
+        <UiInput
+          v-model="editingDiscount"
+          label="Réduction (%)"
+          type="number"
+          :icon="Percent"
+          required
+        />
+        <p class="discount-hint">
+          {{ uiText("S'applique aux prochaines prestations : consultation, examens, opération, hospitalisation et pharmacie.") }}
+        </p>
+      </form>
+      <template #footer>
+        <UiButton type="button" variant="ghost" @click="editingRow = null">Annuler</UiButton>
+        <UiButton
+          type="submit"
+          form="staff-discount-form"
+          variant="primary"
+          :icon="Save"
+          :disabled="parseDiscount(editingDiscount) === null || savingDiscount"
+        >
+          {{ savingDiscount ? uiText('Enregistrement…') : uiText('Enregistrer') }}
         </UiButton>
       </template>
     </UiFormModal>
@@ -419,6 +524,12 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.discount-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
 .staff-form {
   display: flex;
   flex-direction: column;

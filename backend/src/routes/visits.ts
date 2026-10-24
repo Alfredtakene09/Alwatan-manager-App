@@ -936,6 +936,7 @@ router.post("/", requireModule("reception"), requireUiAction("reception.reconsul
       patient.category,
       consultationAmountFcfa,
       body.reductionFcfa ?? 0,
+      patient.discountPercent,
     );
     const doctorServiceId = body.doctorId
       ? await resolveVisitClinicServiceId(body.doctorId, patient.service)

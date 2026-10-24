@@ -281,7 +281,7 @@ router.post("/:patientId/reconsult", requireAnyModule(...DOSSIER_MODULES), async
 
   const patient = await prisma.patient.findUnique({
     where: { id: patientId },
-    select: { id: true, category: true, service: true },
+    select: { id: true, category: true, service: true, discountPercent: true },
   });
   if (!patient) return res.status(404).json({ error: "Patient introuvable" });
 
@@ -331,7 +331,12 @@ router.post("/:patientId/reconsult", requireAnyModule(...DOSSIER_MODULES), async
       doctorId,
       requestedAmount: null,
     });
-    const billing = resolveConsultationBilling(patient.category, renewal.amountFcfa, 0);
+    const billing = resolveConsultationBilling(
+      patient.category,
+      renewal.amountFcfa,
+      0,
+      patient.discountPercent,
+    );
     const doctorServiceId = await resolveVisitClinicServiceId(doctorId, patient.service);
 
     const visit = await prisma.$transaction(async (tx) => {

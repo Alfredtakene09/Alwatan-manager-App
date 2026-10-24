@@ -166,8 +166,8 @@ router.get("/expenses", async (req, res) => {
 
   if (filter === "month") {
     const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const monthStart = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
+    const monthEnd = new Date(Date.UTC(now.getFullYear(), now.getMonth() + 1, 1));
     dateWhere = { businessDate: { gte: monthStart, lt: monthEnd } };
   } else if (/^\d{4}-\d{2}-\d{2}$/.test(fromIso) && /^\d{4}-\d{2}-\d{2}$/.test(toIso)) {
     const fromDate = parseBusinessDate(fromIso);

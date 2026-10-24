@@ -32,6 +32,7 @@ export const UI_ACTION_IDS = [
   "users.create",
   "employees.create",
   "pharmacie.catalog",
+  "pharmacie.purchase_invoice",
   "lab.stock",
   "lab.result_forms",
   "comptabilite.reduction",
@@ -47,6 +48,19 @@ export const UI_ACTION_IDS = [
 ] as const;
 
 export type UiActionId = (typeof UI_ACTION_IDS)[number];
+
+/**
+ * Actions masquées par défaut, sauf pour les rôles listés (Admin et Direction toujours autorisés).
+ * Pour ces actions, la liste enregistrée par rôle signifie « activé » au lieu de « masqué ».
+ */
+export const UI_ACTION_DEFAULT_ENABLED_ROLES: Partial<Record<UiActionId, readonly UiActionTargetRole[]>> = {
+  "pharmacie.purchase_invoice": ["GESTIONNAIRE"],
+};
+
+function isVisibleByDefault(role: UiActionTargetRole, actionId: UiActionId) {
+  const enabledRoles = UI_ACTION_DEFAULT_ENABLED_ROLES[actionId];
+  return !enabledRoles || enabledRoles.includes(role);
+}
 
 const ACTION_ID_SET = new Set<string>(UI_ACTION_IDS);
 const TARGET_ROLE_SET = new Set<string>(UI_ACTION_TARGET_ROLES);
@@ -93,5 +107,9 @@ export function mergeHiddenUiActions(
 export function hiddenUiActionsForRole(role: AppUserRole, hiddenByRole: HiddenByRole): UiActionId[] {
   if (role === "ADMIN" || role === "COMPTABLE") return [];
   if (!isUiActionTargetRole(role)) return [];
-  return hiddenByRole[role] ?? [];
+  // La liste enregistrée contient les actions dont l'état diffère du défaut.
+  const toggled = new Set(hiddenByRole[role] ?? []);
+  return UI_ACTION_IDS.filter(
+    (actionId) => isVisibleByDefault(role, actionId) === toggled.has(actionId),
+  );
 }

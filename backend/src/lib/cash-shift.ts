@@ -58,6 +58,27 @@ export function parseBusinessDate(iso: string): Date {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
+/**
+ * Date locale (ex. minuit serveur) → même jour calendaire à minuit UTC, pour une colonne SQL date.
+ * Une valeur déjà à minuit UTC (issue de parseBusinessDate ou lue en base) est renvoyée telle quelle.
+ */
+export function toBusinessDateBound(date: Date): Date {
+  if (
+    date.getUTCHours() === 0 &&
+    date.getUTCMinutes() === 0 &&
+    date.getUTCSeconds() === 0 &&
+    date.getUTCMilliseconds() === 0
+  ) {
+    return new Date(date);
+  }
+  return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+}
+
+/** Date SQL (minuit UTC) → minuit heure locale du même jour, pour filtrer des horodatages. */
+export function businessDateToLocalStart(date: Date): Date {
+  return new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+}
+
 export function formatBusinessDate(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");

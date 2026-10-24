@@ -81,7 +81,7 @@ export async function ensurePayrollForMonth(year: number, month: number) {
 
   const eligible = listEligiblePayrollEmployees(employees);
 
-  if (!eligible.length) return { created: 0, total: 0 };
+  if (!eligible.length) return { created: 0, total: 0, eligibleIds: new Set<string>() };
 
   const { end } = payrollPeriodBounds(year, month);
   const isLate = Date.now() >= end.getTime();
@@ -108,7 +108,27 @@ export async function ensurePayrollForMonth(year: number, month: number) {
     ),
   );
 
-  return { created: eligible.length, total: eligible.length };
+  // Fiche non payée : suit le salaire actuel de la fiche employé (la paie versée reste figée).
+  await prisma.$transaction(
+    eligible.map((row) =>
+      prisma.employeePayroll.updateMany({
+        where: {
+          employeeId: row.employeeId,
+          year,
+          month,
+          status: { not: PayrollStatus.PAID },
+          grossFcfa: { not: row.grossFcfa },
+        },
+        data: { grossFcfa: row.grossFcfa },
+      }),
+    ),
+  );
+
+  return {
+    created: eligible.length,
+    total: eligible.length,
+    eligibleIds: new Set(eligible.map((row) => row.employeeId)),
+  };
 }
 
 export async function countEligiblePayrollEmployees() {

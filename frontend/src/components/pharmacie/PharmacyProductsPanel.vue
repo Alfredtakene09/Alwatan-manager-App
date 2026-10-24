@@ -16,6 +16,7 @@ import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import PharmacyProductSuggest, { type SuggestProduct } from '@/components/pharmacie/PharmacyProductSuggest.vue'
+import PharmacyPurchaseInvoiceModal from '@/components/pharmacie/PharmacyPurchaseInvoiceModal.vue'
 import { confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
@@ -65,6 +66,7 @@ const saving = ref(false)
 const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const modalOpen = ref(false)
+const purchaseModalOpen = ref(false)
 const editingId = ref<string | null>(null)
 
 const formName = ref('')
@@ -632,8 +634,19 @@ function onPickFormProduct(item: SuggestProduct) {
   fillFormFromProduct(full)
 }
 
+async function openPurchaseModal() {
+  if (!suppliers.value.length) await loadSuppliers()
+  purchaseModalOpen.value = true
+}
+
+async function onPurchaseSaved() {
+  await loadItems()
+  emit('changed')
+}
+
 defineExpose({
   reload: loadItems,
+  openPurchaseModal,
   exportPdf,
   exportExcel,
   exportWord,
@@ -900,6 +913,14 @@ defineExpose({
       </UiButton>
     </template>
   </UiFormModal>
+
+  <PharmacyPurchaseInvoiceModal
+    v-if="purchaseModalOpen"
+    :products="items"
+    :suppliers="suppliers"
+    @close="purchaseModalOpen = false"
+    @saved="onPurchaseSaved"
+  />
 </template>
 
 <style scoped>
