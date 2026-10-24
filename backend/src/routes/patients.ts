@@ -6,9 +6,11 @@ import { generateInvoiceNumber, generatePatientCode } from "../lib/patient-code.
 import { computeConsultationAmounts } from "../lib/consultation-amounts.js";
 import { ageUnitSchema, refinePatientAge } from "../lib/patient-age.js";
 import {
+  DEFAULT_STAFF_DISCOUNT_PERCENT,
   resolveConsultationBilling,
   resolveEditedConsultationAmount,
   shouldCreateImmediateInvoice,
+  withPatientDiscount,
 } from "../lib/patient-billing.js";
 import {
   aggregateCollectedBetween,
@@ -103,6 +105,8 @@ const patientSchema = z
     address: z.string().optional(),
     category: z.nativeEnum(PatientCategory).optional(),
     recommendedByName: z.string().optional(),
+    /** Patient personnel : % de réduction sur tout le parcours (20 par défaut). */
+    discountPercent: z.number().int().min(0).max(100).nullable().optional(),
     /** Médecin traitant permanent du dossier (optionnel) */
     treatingDoctorId: z.string().nullable().optional(),
   })
@@ -119,6 +123,19 @@ const treatingDoctorSelect = {
 function normalizeRecommendedByName(name?: string | null) {
   const trimmed = name?.trim();
   return trimmed ? trimmed : null;
+}
+
+/** Seuls l'administrateur et le gestionnaire enregistrent un patient personnel ou changent sa réduction. */
+function canManageStaffPatients(role: string) {
+  return role === "ADMIN" || role === "GESTIONNAIRE";
+}
+
+const STAFF_PATIENT_FORBIDDEN = "Seuls l'administrateur ou le gestionnaire peuvent enregistrer un patient personnel.";
+
+/** % enregistré sur la fiche : seulement pour le personnel. */
+function staffDiscountPercentField(category: PatientCategory, requested?: number | null) {
+  if (category !== PatientCategory.PERSONNEL) return null;
+  return requested ?? DEFAULT_STAFF_DISCOUNT_PERCENT;
 }
 
 function resolvePatientCategory(category?: PatientCategory | null) {
@@ -419,6 +436,7 @@ async function syncWaitingVisit(
     patient.category,
     resolvedAmount,
     nextReduction ?? 0,
+    patient.discountPercent,
   );
 
   if (!visit) {
@@ -563,7 +581,13 @@ async function syncExamRegistrationLine(
   ) {
     throw new Error("REDUCTION_PERCENT_INVALID");
   }
-  const net = Math.max(0, gross - reduction);
+  // Patient personnel : au moins sa réduction (20 % par défaut).
+  const patientRow = await tx.patient.findUnique({
+    where: { id: patientId },
+    select: { category: true, discountPercent: true },
+  });
+  const appliedReduction = withPatientDiscount(patientRow, gross, reduction);
+  const net = Math.max(0, gross - appliedReduction);
 
   const nextDoctorId = doctorId?.trim() || null;
   await tx.visit.update({
@@ -579,7 +603,7 @@ async function syncExamRegistrationLine(
     await tx.consultation.update({
       where: { id: visit.consultation.id },
       data: {
-        labExamReductionFcfa: reduction,
+        labExamReductionFcfa: appliedReduction,
         ...(nextDoctorId ? { doctorId: nextDoctorId } : {}),
       },
     });
@@ -972,6 +996,8 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     hospitalizationPatients: hospitalizationPatientsCount,
     consultationPatients: consultationPatientsCount,
     operationPatients: surgeryPatientsCount,
+    radioPatients: radioPatientsCount,
+    echoPatients: echoPatientsCount,
   } = registration.activity;
 
   return res.json({
@@ -987,6 +1013,11 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     hospitalizationPatientIds: registration.activityPatientIds.hospitalization,
     consultationPatientIds: registration.activityPatientIds.consultation,
     operationPatientIds: registration.activityPatientIds.operation,
+    radioPatientsCount,
+    echoPatientsCount,
+    radioPatientIds: registration.activityPatientIds.radio,
+    echoPatientIds: registration.activityPatientIds.echo,
+    activityAmountsFcfa: registration.activityAmountsFcfa,
     visitsToday,
     externalPatientsToday,
     revenueTodayFcfa: collectedToday.totalFcfa,
@@ -1099,6 +1130,9 @@ router.post(
     }
 
     const requestedCategory = resolvePatientCategory(body.category);
+    if (requestedCategory === PatientCategory.PERSONNEL && !canManageStaffPatients(req.user!.role)) {
+      return res.status(403).json({ error: STAFF_PATIENT_FORBIDDEN });
+    }
 
     const duplicate = await findDuplicatePatient({
       firstName: body.firstName,
@@ -1172,6 +1206,7 @@ router.post(
       category,
       consultationAmountFcfa,
       registrationReduction,
+      existingPatient ? existingPatient.discountPercent : (body.discountPercent ?? null),
     );
 
     const reconsultPlan = existingPatient
@@ -1295,6 +1330,7 @@ router.post(
           address: body.address,
           category: resolvePatientCategory(requestedCategory),
           ongName: null,
+          discountPercent: staffDiscountPercentField(requestedCategory, body.discountPercent),
           recommendedByName: normalizeRecommendedByName(body.recommendedByName),
           treatingDoctorId: treatingDoctorId ?? null,
           createdById: req.user!.id,
@@ -1407,6 +1443,12 @@ router.get("/:id", requireModule("reception"), async (req, res) => {
 router.post("/", requireModule("reception"), requireUiAction("reception.create_patient"), async (req, res) => {
   try {
     const body = patientSchema.parse(req.body);
+    if (
+      resolvePatientCategory(body.category) === PatientCategory.PERSONNEL &&
+      !canManageStaffPatients(req.user!.role)
+    ) {
+      return res.status(403).json({ error: STAFF_PATIENT_FORBIDDEN });
+    }
 
     let treatingDoctorId: string | null | undefined;
     try {
@@ -1449,6 +1491,10 @@ router.post("/", requireModule("reception"), requireUiAction("reception.create_p
           address: body.address,
           category: resolvePatientCategory(body.category),
           ongName: null,
+          discountPercent: staffDiscountPercentField(
+            resolvePatientCategory(body.category),
+            body.discountPercent,
+          ),
           recommendedByName: normalizeRecommendedByName(body.recommendedByName),
           treatingDoctorId: treatingDoctorId ?? null,
           createdById: req.user!.id,
@@ -1512,6 +1558,14 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
     }
 
     const nextCategory = resolvePatientCategory(body.category ?? existing.category);
+    const staffChange =
+      (nextCategory === PatientCategory.PERSONNEL) !== (existing.category === PatientCategory.PERSONNEL) ||
+      (body.discountPercent !== undefined &&
+        body.discountPercent !== existing.discountPercent &&
+        nextCategory === PatientCategory.PERSONNEL);
+    if (staffChange && !canManageStaffPatients(req.user!.role)) {
+      return res.status(403).json({ error: STAFF_PATIENT_FORBIDDEN });
+    }
 
     if (body.doctorId) {
       const doctor = await prisma.user.findFirst({
@@ -1578,6 +1632,11 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
           address: body.address,
           category: nextCategory,
           ongName: null,
+          ...(nextCategory !== PatientCategory.PERSONNEL
+            ? { discountPercent: null }
+            : body.discountPercent !== undefined || existing.category !== PatientCategory.PERSONNEL
+              ? { discountPercent: staffDiscountPercentField(nextCategory, body.discountPercent) }
+              : {}),
           recommendedByName: normalizeRecommendedByName(body.recommendedByName),
           dateOfBirth: body.dateOfBirth ? new Date(body.dateOfBirth) : undefined,
           ...(treatingDoctorId !== undefined ? { treatingDoctorId } : {}),
@@ -1660,6 +1719,33 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
     console.error("PATCH /patients/:id failed:", error);
     return res.status(400).json({ error: "Données invalides" });
   }
+});
+
+/** Patient personnel : modifie son % de réduction (admin / gestionnaire). */
+router.patch("/:id/discount", requireModule("reception"), async (req, res) => {
+  if (!canManageStaffPatients(req.user!.role)) {
+    return res.status(403).json({ error: STAFF_PATIENT_FORBIDDEN });
+  }
+  const parsed = z
+    .object({ discountPercent: z.number().int().min(0).max(100) })
+    .safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Réduction invalide (0 à 100 %)." });
+  }
+  const patient = await prisma.patient.findUnique({
+    where: { id: String(req.params.id) },
+    select: { id: true, category: true },
+  });
+  if (!patient) return res.status(404).json({ error: "Patient introuvable" });
+  if (patient.category !== PatientCategory.PERSONNEL) {
+    return res.status(400).json({ error: "La réduction ne concerne que les patients personnel." });
+  }
+  const updated = await prisma.patient.update({
+    where: { id: patient.id },
+    data: { discountPercent: parsed.data.discountPercent, updatedById: req.user!.id },
+    select: { id: true, discountPercent: true },
+  });
+  return res.json(updated);
 });
 
 router.patch("/:id/active", requireModule("reception"), async (req, res) => {

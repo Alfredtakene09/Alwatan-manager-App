@@ -5,7 +5,8 @@ import {
   LayoutDashboard,
   Search,
   UserPlus,
-  CalendarDays,
+  ScanLine,
+  Waves,
   RotateCcw,
   Pencil,
   X,
@@ -110,6 +111,13 @@ type ReceptionStats = {
   consultationPatientIds?: string[]
   operationPatientIds?: string[]
   registeredPatientIds?: string[]
+  radioPatientsCount?: number
+  echoPatientsCount?: number
+  radioPatientIds?: string[]
+  echoPatientIds?: string[]
+  activityAmountsFcfa?: Partial<
+    Record<'exam' | 'hospitalization' | 'consultation' | 'operation' | 'radio' | 'echo', number>
+  >
 }
 
 type Patient = {
@@ -660,6 +668,10 @@ const activityPatientIds = computed(() => {
       return stats.value.consultationPatientIds ?? []
     case 'surgery':
       return stats.value.operationPatientIds ?? []
+    case 'radio':
+      return stats.value.radioPatientIds ?? []
+    case 'echo':
+      return stats.value.echoPatientIds ?? []
     default:
       return stats.value.registeredPatientIds ?? null
   }
@@ -761,7 +773,11 @@ const patientsPanelSubtitle = computed(() => {
           ? uiText('Consultations')
           : selectedActivityCard.value === 'surgery'
             ? uiText('Opérations')
-            : ''
+            : selectedActivityCard.value === 'radio'
+              ? uiText('Radiologie')
+              : selectedActivityCard.value === 'echo'
+                ? uiText('Échographie')
+                : ''
   const scope = cardLabel
     ? cardLabel
     : auth.user?.role === 'RECEPTIONNISTE'
@@ -1039,6 +1055,11 @@ const hasAppliedListFilters = computed(
 
 let resettingListFilters = false
 
+/** Somme encaissée d'une carte, affichée sous le nombre de patients. */
+function activityAmountHint(key: keyof NonNullable<ReceptionStats['activityAmountsFcfa']>) {
+  return `${formatFcfaCompact(stats.value.activityAmountsFcfa?.[key] ?? 0)} FCFA`
+}
+
 const dashboardStats = computed(() => {
   const serviceHint = serviceFilter.value.trim()
     ? clinicServiceText(serviceFilter.value.trim())
@@ -1059,17 +1080,22 @@ const dashboardStats = computed(() => {
     : 'Recettes du jour'
   return [
   {
-    id: 'today',
-    label: serviceHint
-      ? translateTemplate('Inscrits {period} · {service}', {
-          period: periodLabel,
-          service: serviceHint,
-        })
-      : translateTemplate('Inscrits {period}', { period: periodLabel }),
-    value: stats.value.registeredToday,
-    hint: translateTemplate('{n} passage(s)', { n: stats.value.visitsToday }),
-    icon: CalendarDays,
-    variant: 'amber' as const,
+    id: 'radio',
+    label: 'Radiologie',
+    value: stats.value.radioPatientsCount ?? 0,
+    hint: activityAmountHint('radio'),
+    icon: ScanLine,
+    variant: 'blue' as const,
+    money: false,
+    clickable: true,
+  },
+  {
+    id: 'echo',
+    label: 'Échographie',
+    value: stats.value.echoPatientsCount ?? 0,
+    hint: activityAmountHint('echo'),
+    icon: Waves,
+    variant: 'violet' as const,
     money: false,
     clickable: true,
   },
@@ -1077,7 +1103,7 @@ const dashboardStats = computed(() => {
     id: 'lab',
     label: 'Laboratoire',
     value: stats.value.examPatientsCount ?? 0,
-    hint: periodLabel,
+    hint: activityAmountHint('exam'),
     icon: FlaskConical,
     variant: 'teal' as const,
     money: false,
@@ -1087,7 +1113,7 @@ const dashboardStats = computed(() => {
     id: 'hospitalization',
     label: 'Hospitalisation',
     value: stats.value.hospitalizationPatientsCount ?? 0,
-    hint: periodLabel,
+    hint: activityAmountHint('hospitalization'),
     icon: BedDouble,
     variant: 'rose' as const,
     money: false,
@@ -1097,7 +1123,7 @@ const dashboardStats = computed(() => {
     id: 'consultations',
     label: 'Consultations',
     value: stats.value.consultationPatientsCount ?? 0,
-    hint: periodLabel,
+    hint: activityAmountHint('consultation'),
     icon: Stethoscope,
     variant: 'blue' as const,
     money: false,
@@ -1107,7 +1133,7 @@ const dashboardStats = computed(() => {
     id: 'surgery',
     label: 'Opérations',
     value: stats.value.surgeryPatientsCount ?? 0,
-    hint: periodLabel,
+    hint: activityAmountHint('operation'),
     icon: Scissors,
     variant: 'amber' as const,
     money: false,
