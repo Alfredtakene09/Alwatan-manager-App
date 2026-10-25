@@ -20,7 +20,7 @@ export const useAuthStore = defineStore('auth', {
       }
       fetchMePromise = (async () => {
         try {
-          const { data } = await api.get<SessionUser>('/auth/me')
+          const { data } = await api.get<SessionUser>('/auth/me', { timeout: 10_000 })
           this.user = data
         } catch (error: unknown) {
           const status = (error as { response?: { status?: number } })?.response?.status

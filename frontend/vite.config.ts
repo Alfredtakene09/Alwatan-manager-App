@@ -12,7 +12,7 @@ export default defineConfig({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['logo-alwatan.jpeg', 'pwa/icon-192.png', 'pwa/icon-512.png'],
+      includeAssets: ['logo-alwatan.jpeg', 'logo-alwatan-256.jpeg', 'pwa/favicon-64.png', 'pwa/icon-192.png', 'pwa/icon-512.png'],
       manifest: {
         name: APP_NAME,
         short_name: APP_SHORT_NAME,
@@ -47,7 +47,9 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,jpeg,svg,woff,woff2}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,jpeg,svg,woff2}'],
+        // logo.png (650 Ko) n’est pas utilisé par l’interface ; .woff = doublon des .woff2.
+        globIgnores: ['**/logo.png'],
         navigateFallback: '/index.html',
         navigateFallbackDenylist: [/^\/api\//, /^\/maj\.html$/],
         skipWaiting: true,

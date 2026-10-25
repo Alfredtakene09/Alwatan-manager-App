@@ -162,19 +162,31 @@ function ensureStarted() {
 
   if (isDevFrontend()) return
 
-  updateServiceWorker = registerSW({
-    immediate: true,
-    onNeedRefresh() {
-      needRefresh.value = true
-    },
-    onRegisteredSW(_swUrl, registration) {
-      if (!registration) return
-      void registration.update()
-      setInterval(() => {
+  // Le précache du service worker (~5 Mo) ne doit pas concurrencer le premier affichage
+  // sur un téléphone lent / Tailscale : on l’enregistre une fois la page chargée et au repos.
+  const register = () => {
+    updateServiceWorker = registerSW({
+      immediate: true,
+      onNeedRefresh() {
+        needRefresh.value = true
+      },
+      onRegisteredSW(_swUrl, registration) {
+        if (!registration) return
         void registration.update()
-      }, 60_000)
-    },
-  })
+        setInterval(() => {
+          void registration.update()
+        }, 60_000)
+      },
+    })
+  }
+  const registerWhenIdle = () => {
+    const idle = (window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void })
+      .requestIdleCallback
+    if (idle) idle(register, { timeout: 4_000 })
+    else setTimeout(register, 1_500)
+  }
+  if (document.readyState === 'complete') registerWhenIdle()
+  else window.addEventListener('load', registerWhenIdle, { once: true })
 
   void checkServerBuild()
   setInterval(() => {

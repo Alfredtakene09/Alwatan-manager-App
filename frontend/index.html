@@ -2,15 +2,47 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/jpeg" href="/logo-alwatan.jpeg" />
+    <link rel="icon" type="image/png" href="/pwa/favicon-64.png" />
     <link rel="apple-touch-icon" href="/pwa/icon-192.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#1b4f9c" />
     <meta name="mobile-web-app-capable" content="yes" />
     <title>Clinique Alwatan — Manager Pro</title>
+    <link rel="preload" as="image" href="/logo-alwatan-256.jpeg" fetchpriority="high" />
+    <!--
+      Écran de démarrage inline : s’affiche dès les premiers octets reçus,
+      sans attendre JS / CSS / polices (téléphones lents, accès Tailscale).
+      Vue remplace le contenu de #app au montage.
+    -->
+    <style>
+      html, body { margin: 0; background: #f4f7fb; }
+      .boot {
+        min-height: 100vh; min-height: 100dvh;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 1rem; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        color: #1b4f9c; text-align: center; padding: 1rem; box-sizing: border-box;
+      }
+      .boot img { width: 96px; height: 96px; border-radius: 50%; background: #fff; box-shadow: 0 4px 16px rgba(27, 79, 156, 0.15); }
+      .boot__name { font-weight: 700; font-size: 1.05rem; margin: 0; }
+      .boot__bar { width: 160px; height: 4px; border-radius: 4px; background: #dbe5f3; overflow: hidden; }
+      .boot__bar::after {
+        content: ''; display: block; width: 40%; height: 100%; background: #1b4f9c; border-radius: 4px;
+        animation: boot-slide 1.1s ease-in-out infinite;
+      }
+      .boot__hint { font-size: 0.85rem; color: #5b6b82; margin: 0; }
+      @keyframes boot-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+      @media (prefers-reduced-motion: reduce) { .boot__bar::after { animation: none; width: 100%; } }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="boot" role="status" aria-live="polite">
+        <img src="/logo-alwatan-256.jpeg" alt="" width="96" height="96" />
+        <p class="boot__name">Clinique Alwatan</p>
+        <div class="boot__bar"></div>
+        <p class="boot__hint">Chargement… · جارٍ التحميل…</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

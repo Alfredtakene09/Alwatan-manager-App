@@ -7,12 +7,16 @@ import {
   shouldPrintPendingPaymentThanks,
 } from './external-ticket-copy'
 import { getAppLocale, translateUi, translateUiLocale } from '@/i18n/translate'
+import { loadCatalog } from '@/i18n/catalogs'
 import { formatReceiptDateFr, formatReceiptTimeFr } from '@/i18n/locale-format'
 import {
   extractBasePanelLabel,
   normalizeLabLabelKey,
   primaryPrescribedSectionOrExamName,
 } from '@/lib/lab-prescribed-panels'
+
+// Tickets / impressions bilingues FR + AR : l’arabe doit être chargé quelle que soit la langue UI.
+await loadCatalog('ar').catch(() => {})
 
 const formatFcfaPrint = formatFcfa
 const t = translateUi

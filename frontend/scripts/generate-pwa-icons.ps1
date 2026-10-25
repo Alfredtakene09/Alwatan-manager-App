@@ -1,4 +1,4 @@
-# Génère les icônes PWA (192, 512) à partir du logo clinique.
+﻿# Génère les icônes PWA (192, 512) à partir du logo clinique.
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $jpegCandidates = @(
@@ -37,5 +37,28 @@ foreach ($size in @(192, 512)) {
     $bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png)
     $bmp.Dispose()
 }
+
+# Versions légères pour l’écran de connexion / favicon (téléphones lents, Tailscale).
+$jpegCodec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+$jpegParams = New-Object System.Drawing.Imaging.EncoderParameters 1
+$jpegParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality), ([long]82)
+$small = New-Object System.Drawing.Bitmap 256, 256
+$g = [System.Drawing.Graphics]::FromImage($small)
+$g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+$g.Clear([System.Drawing.Color]::White)
+$g.DrawImage($img, 0, 0, 256, 256)
+$g.Dispose()
+$small.Save((Join-Path $pub 'logo-alwatan-256.jpeg'), $jpegCodec, $jpegParams)
+$small.Dispose()
+
+$fav = New-Object System.Drawing.Bitmap 64, 64
+$g = [System.Drawing.Graphics]::FromImage($fav)
+$g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+$g.Clear([System.Drawing.Color]::White)
+$g.DrawImage($img, 0, 0, 64, 64)
+$g.Dispose()
+$fav.Save((Join-Path $pwa 'favicon-64.png'), [System.Drawing.Imaging.ImageFormat]::Png)
+$fav.Dispose()
+
 $img.Dispose()
 Write-Host "Icônes PWA générées dans $pwa"
