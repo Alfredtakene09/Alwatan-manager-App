@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { operationAnesthetistError } from "../lib/operation-anesthetist.js";
 import { z } from "zod";
 import { ConsultationQuotaMode, InterventionCategory, InvoiceStatus, InvoiceType, PatientCategory, Prisma, SurgeryStatus, UserRole, VisitStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
@@ -2183,6 +2184,30 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
       (body.operationAmountFcfa == null || body.operationAmountFcfa <= 0)
     ) {
       return res.status(400).json({ error: "Indiquez le prix de l’opération." });
+    }
+    if (postedOperationLabels.length > 0) {
+      // Service de l'opération : celui choisi, sinon le libellé envoyé.
+      const operationService = body.operationServiceId
+        ? await prisma.clinicService.findUnique({
+            where: { id: body.operationServiceId },
+            select: { name: true },
+          })
+        : null;
+      // Opération du catalogue : son service (ex. « Cataracte » → Ophtalmologie).
+      const catalogOperation = operationService
+        ? null
+        : await prisma.interventionType.findFirst({
+            where: { label: { equals: postedOperationLabels[0]!, mode: "insensitive" } },
+            select: { clinicService: { select: { name: true } } },
+          });
+      const serviceName =
+        operationService?.name ??
+        catalogOperation?.clinicService?.name ??
+        body.service ??
+        postedOperationLabels[0] ??
+        null;
+      const anesthetistError = operationAnesthetistError(serviceName, body.operationAssistant);
+      if (anesthetistError) return res.status(400).json({ error: anesthetistError });
     }
 
     const clinicalNotes = body.examsByKind

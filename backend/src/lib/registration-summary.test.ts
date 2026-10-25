@@ -16,6 +16,7 @@ import {
   examCountCarrierIds,
   registrationExamQuantity,
   registrationLineIdentity,
+  summarizeRegistrationInvoices,
 } from "./registration-summary.js";
 import { consultationServiceName } from "./day-closure-sales.js";
 
@@ -652,5 +653,63 @@ describe("cartes d'enregistrement", () => {
       }),
     ]);
     assert.equal(counts.examPatients, 1);
+  });
+});
+
+describe("noms des médecins dans le cumul exporté", () => {
+  type Priced = Parameters<typeof summarizeRegistrationInvoices>[0][number];
+  const doctor = (id: string, firstName: string, lastName: string) => ({
+    id,
+    firstName,
+    lastName,
+    ...david(),
+  });
+  const consultation = (id: string, patientId: string, doc: ReturnType<typeof doctor>, amountFcfa: number) =>
+    ({
+      id,
+      patientId,
+      type: InvoiceType.CONSULTATION,
+      status: InvoiceStatus.PAID,
+      amountFcfa,
+      paidAmountFcfa: amountFcfa,
+      billingExamKind: null,
+      surgeryCaseId: null,
+      hospitalizationId: null,
+      createdAt: new Date(2026, 9, 20, 9),
+      paidAt: new Date(2026, 9, 20, 9),
+      payments: [],
+      surgeryCase: null,
+      hospitalization: null,
+      visit: {
+        consultationFeeFcfa: amountFcfa,
+        reductionFcfa: 0,
+        assignedDoctor: doc,
+        patient: { service: "Gynécologie" },
+        consultation: { doctor: doc, clinicalNotes: null },
+      },
+    }) as unknown as Priced;
+
+  it("donne le nom de chaque médecin d'une ligne de consultation, avec sa part", () => {
+    const lines = summarizeRegistrationInvoices([
+      consultation("c1", "p1", doctor("d1", "Awa", "Moussa"), 10_000),
+      consultation("c2", "p2", doctor("d2", "Ali", "Hassan"), 20_000),
+    ]);
+    const line = lines.find((row) => row.group === "consultation");
+    assert.ok(line, "ligne de consultation");
+    assert.deepEqual(line.doctorNames, ["Ali Hassan", "Awa Moussa"]);
+    assert.equal(line.doctorShareFcfa, 15_000);
+    const byDoctor = line.doctorShares.reduce((sum, entry) => sum + entry.shareFcfa, 0);
+    assert.equal(byDoctor, line.doctorShareFcfa);
+    assert.equal(line.doctorShareFcfa + line.clinicShareFcfa, line.amountFcfa);
+  });
+
+  it("ne laisse jamais une part médecin sans nom quand le médecin est connu", () => {
+    const lines = summarizeRegistrationInvoices([
+      consultation("c3", "p3", doctor("d3", "Dr Fatime", "Saleh"), 8_000),
+    ]);
+    for (const line of lines) {
+      if (line.doctorShareFcfa > 0) assert.ok(line.doctorNames.length > 0, line.service);
+    }
+    assert.deepEqual(lines[0]?.doctorNames, ["Fatime Saleh"]);
   });
 });

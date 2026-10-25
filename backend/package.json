@@ -32,6 +32,8 @@
     "db:seed-expenses": "tsx scripts/seed-expenses.ts",
     "db:rename-pharmacy-categories": "tsx scripts/rename-pharmacy-categories.ts",
     "db:migrate-pharmacy-categories-to-forms": "tsx scripts/migrate-pharmacy-categories-to-forms.ts",
+    "test:integration": "tsx --test --test-concurrency=1 tests/integration/flows.test.ts",
+    "audit": "tsx scripts/audit-flows.ts",
     "test": "tsx --test src/lib/pharmacy-returns.test.ts src/lib/patient-code.test.ts src/lib/password-policy.test.ts src/lib/consultation-invoice.test.ts src/lib/auth.test.ts src/lib/lab-notes-pending.test.ts src/lib/reception-scope.test.ts src/lib/petite-chirurgie-catalog.test.ts src/lib/year-month.test.ts src/lib/employee-compensation.test.ts src/lib/recorded-diagnoses.test.ts src/lib/printed-tariff-catalog.test.ts src/lib/clinic-service-exam.test.ts src/lib/lab-notes-section.test.ts src/lib/data-backup.test.ts src/lib/db-delete-guard.test.ts src/lib/merge-patients.test.ts src/lib/patient-medical-record.test.ts src/lib/revenue-stats.test.ts src/lib/exam-reclamation-refund.test.ts src/lib/day-closure-sales.test.ts src/lib/admin-payroll.test.ts src/lib/payroll-expenses.test.ts src/lib/hospitalization-rooms.test.ts src/lib/manual-service-operation.test.ts src/lib/registration-summary.test.ts src/lib/recorded-tariff.test.ts src/lib/patient-billing.test.ts src/lib/visit-exam-payment.test.ts src/lib/visit-reregistration.test.ts src/lib/remote-access.test.ts"
   },
   "prisma": {

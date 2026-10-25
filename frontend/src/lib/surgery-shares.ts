@@ -84,5 +84,5 @@ export function formatAssistantLabel(surgery: SurgeryCaseRow): string | null {
   if (assistant.percent <= 0) return null
   if (assistant.person) return fullName(assistant.person.firstName, assistant.person.lastName)
   if (assistant.name) return assistant.name
-  return 'Anesthésiste'
+  return 'Anesthésiste non renseigné'
 }

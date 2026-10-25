@@ -18,6 +18,7 @@ import {
 } from '@lucide/vue'
 import { isAxiosError } from 'axios'
 import api from '@/api/client'
+import { operationAnesthetistReady, resolveOperationServiceName } from '@/lib/operation-anesthetist'
 import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -238,7 +239,25 @@ const operationAmountFcfa = ref<number | null>(null)
 const operationSurgeonPercent = ref<number | null>(null)
 const operationAssistant = ref<OperationAssistantPayload | null>(null)
 const operationServiceId = ref('')
+/** Nom du service de l'onglet opération choisi dans le sélecteur. */
+const operationServiceName = ref('')
 const selectedDoctorId = ref('')
+
+function onRegisterServiceChange(payload: { kind: string | null; clinicServiceName: string | null }) {
+  if (payload.kind === 'operation') operationServiceName.value = payload.clinicServiceName ?? ''
+}
+
+/** Anesthésiste + % obligatoires, sauf Ophtalmologie et Odontologie. */
+const registerAnesthetistReady = computed(() =>
+  operationAnesthetistReady(
+    resolveOperationServiceName({
+      serviceId: operationServiceId.value,
+      serviceName: operationServiceName.value,
+      operationLabel: registerExams.value.operation?.find(Boolean) ?? null,
+    }),
+    operationAssistant.value,
+  ),
+)
 
 const registerOperationBlockers = computed(() => {
   const blockers: string[] = []
@@ -257,6 +276,9 @@ const registerOperationBlockers = computed(() => {
   if (surgeonPct == null || surgeonPct < 1 || surgeonPct > 99) {
     blockers.push(uiText('% du médecin'))
   }
+  if (hasOperation && !registerAnesthetistReady.value) {
+    blockers.push(uiText('Anesthésiste et son %'))
+  }
   return blockers
 })
 
@@ -269,6 +291,7 @@ function resetRegisterForm() {
   operationSurgeonPercent.value = null
   operationAssistant.value = null
   operationServiceId.value = ''
+  operationServiceName.value = ''
   selectedDoctorId.value = ''
 }
 
@@ -466,6 +489,11 @@ function otherSurgeonShare(op: OtherOperationInvoice, paidFcfa: number) {
     assistantShareFcfa,
     assistantPercent,
     assistantId: op.assistantId || catalog?.anesthesiologistId || '',
+    // Nom pris à la même source que le % : jamais une part sans nom dans les exports.
+    assistantName:
+      op.assistantName?.trim() ||
+      (assistantPercent > 0 ? catalog?.anesthesiologistName?.trim() : '') ||
+      (assistantShareFcfa > 0 ? uiText('Anesthésiste non renseigné') : '—'),
     clinicShareFcfa: Math.max(0, collected - surgeonShareFcfa - assistantShareFcfa),
   }
 }
@@ -517,11 +545,10 @@ function toOtherRow(op: OtherOperationInvoice): OperationRow {
     serviceName: op.serviceName?.trim() || '',
     interventionTypeId: '',
     surgeonId: op.doctor?.id ?? '',
-    surgeonName: doctor ? `Dr ${doctor.replace(/^dr\.?\s+/i, '')}` : '—',
+    surgeonName: doctor ? `Dr ${doctor.replace(/^dr\.?\s+/i, '')}` : uiText('Médecin non renseigné'),
     doctor: op.doctor ? { firstName: op.doctor.firstName, lastName: op.doctor.lastName } : null,
     invoiceNumber: op.invoiceNumber ?? '',
     payments: mapPayments(op),
-    assistantName: op.assistantName?.trim() || '—',
     completed: false,
     timestamp: date.getTime(),
     dateLabel,
@@ -1913,6 +1940,7 @@ onMounted(load)
           :kinds="['operation']"
           :show-comments="false"
           :show-consultation="false"
+          @active-service-change="onRegisterServiceChange"
         />
       </form>
       <template #footer>

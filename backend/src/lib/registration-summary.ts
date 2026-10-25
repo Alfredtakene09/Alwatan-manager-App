@@ -826,7 +826,8 @@ function consultationsForSummary(invoices: PricedInvoice[]): PricedInvoice[] {
   return [...others, ...best.values()];
 }
 
-function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationSummaryLine[] {
+/** Regroupe les factures en lignes du cumul (exporté pour les tests). */
+export function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationSummaryLine[] {
   const grouped = new Map<string, Accumulator>();
   const rows = consultationsForSummary(invoices);
   const examCarriers = examCountCarrierIds(rows);
@@ -874,8 +875,12 @@ function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationS
     };
     const surgeonName = group === "operation" ? lineDoctorName(invoice, group) : "";
     const assistantName = group === "operation" ? operationAssistantName(invoice) : "";
+    // Consultation : le médecin affiché est celui dont la part est calculée.
+    const consultationDoctorName =
+      group === "consultation" ? lineDoctorName(invoice, group) : "";
     if (surgeonName) row.doctorNameSet.add(surgeonName);
     if (assistantName) row.doctorNameSet.add(assistantName);
+    if (consultationDoctorName) row.doctorNameSet.add(consultationDoctorName);
 
     const examQty = registrationExamQuantity(invoice);
     if (examQty != null) {
@@ -902,6 +907,8 @@ function summarizeRegistrationInvoices(invoices: PricedInvoice[]): RegistrationS
     if (group === "operation") {
       addDoctorShare(row, surgeonName, surgeonOperationShare(invoice, shareBase));
       addDoctorShare(row, assistantName, assistantOperationShare(invoice, shareBase));
+    } else if (group === "consultation") {
+      addDoctorShare(row, consultationDoctorName, share);
     }
     // Reste clinique : part médecins + part clinique = montant de la ligne.
     row.clinicShareFcfa += clinicRemainderFcfa(amountFcfa, share.shareFcfa);

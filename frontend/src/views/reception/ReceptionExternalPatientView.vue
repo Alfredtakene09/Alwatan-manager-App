@@ -14,6 +14,7 @@ import {
   Trash2,
 } from '@lucide/vue'
 import api from '@/api/client'
+import { operationAnesthetistReady, resolveOperationServiceName } from '@/lib/operation-anesthetist'
 import { confirmAppModal, showApiErrorModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import {
   formatFcfa,
@@ -221,6 +222,19 @@ const storedOperationPercent = computed(() => {
   const stored = activeRow.value?.operationSurgeonPercent
   return stored != null && stored >= 1 && stored <= 99 ? stored : null
 })
+/** Anesthésiste + % obligatoires pour une opération, sauf Ophtalmologie et Odontologie. */
+const operationAnesthetistOk = computed(() => {
+  if (!hasOperationExam.value) return true
+  const context = activeServiceContext.value
+  return operationAnesthetistReady(
+    resolveOperationServiceName({
+      serviceId: operationServiceId.value,
+      serviceName: context.kind === 'operation' ? context.clinicServiceName : null,
+      operationLabel: examsByKind.value.operation?.find(Boolean) ?? null,
+    }),
+    operationAssistant.value,
+  )
+})
 const operationPercentReady = computed(() => {
   if (!hasOperationExam.value) return true
   const percent = operationSurgeonPercent.value ?? storedOperationPercent.value
@@ -239,7 +253,8 @@ const canConfirmNewPatientWithExams = computed(
     newPatientExamCount.value > 0 &&
     examNetFcfa.value > 0 &&
     operationDoctorReady.value &&
-    operationPercentReady.value,
+    operationPercentReady.value &&
+    operationAnesthetistOk.value,
 )
 
 const editExamsLocked = computed(() =>
@@ -250,7 +265,9 @@ const canSaveEdit = computed(() => {
   const { firstName, lastName } = editParsedName.value
   if (firstName.length < 2 || lastName.length < 2 || editParsedAge.value === null) return false
   if (editExamsLocked.value) return true
-  if (!operationDoctorReady.value || !operationPercentReady.value) return false
+  if (!operationDoctorReady.value || !operationPercentReady.value || !operationAnesthetistOk.value) {
+    return false
+  }
   if (activeRow.value?.hasExams) return newPatientExamCount.value > 0 && examNetFcfa.value > 0
   if (newPatientExamCount.value > 0) return examNetFcfa.value > 0
   return true
@@ -262,7 +279,8 @@ const canSubmitExams = computed(
     countExamsByKind(examsByKind.value) > 0 &&
     examNetFcfa.value > 0 &&
     operationDoctorReady.value &&
-    operationPercentReady.value,
+    operationPercentReady.value &&
+    operationAnesthetistOk.value,
 )
 
 const externalLabOnlyExamKinds: ExamKindSlug[] = ['examen', 'radio', 'echo', 'odonto']
@@ -1185,6 +1203,9 @@ onMounted(() => {
             :show-consultation="false"
             @active-service-change="onActiveServiceChange"
           />
+          <p v-if="hasOperationExam && !operationAnesthetistOk" class="anesthetist-required">
+            {{ uiText("Choisissez l'anesthésiste et son % (obligatoire, sauf Ophtalmologie et Odontologie).") }}
+          </p>
           <div v-if="!hasOperationExam" class="doctor-service-row">
             <UiSelect
               v-model="selectedDoctorId"
@@ -1320,6 +1341,9 @@ onMounted(() => {
             :show-consultation="false"
             @active-service-change="onActiveServiceChange"
           />
+          <p v-if="hasOperationExam && !operationAnesthetistOk" class="anesthetist-required">
+            {{ uiText("Choisissez l'anesthésiste et son % (obligatoire, sauf Ophtalmologie et Odontologie).") }}
+          </p>
           <div v-if="!hasOperationExam" class="doctor-service-row">
             <UiSelect
               v-model="selectedDoctorId"
@@ -1416,6 +1440,9 @@ onMounted(() => {
           :show-consultation="false"
           @active-service-change="onActiveServiceChange"
         />
+        <p v-if="hasOperationExam && !operationAnesthetistOk" class="anesthetist-required">
+          {{ uiText("Choisissez l'anesthésiste et son % (obligatoire, sauf Ophtalmologie et Odontologie).") }}
+        </p>
         <div v-if="!hasOperationExam" class="doctor-service-row">
           <UiSelect
             v-model="selectedDoctorId"
@@ -1700,5 +1727,11 @@ onMounted(() => {
   .form-grid-2 {
     grid-template-columns: 1fr;
   }
+}
+.anesthetist-required {
+  margin: 0.4rem 0 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #b45309;
 }
 </style>
