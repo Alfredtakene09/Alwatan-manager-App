@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { User, Lock } from '@lucide/vue'
 import { useAuthStore } from '@/stores/auth'
 import { getDefaultRoute } from '@/lib/roles'
-import { CLINIC } from '@/lib/clinic'
+import { CLINIC, DEFAULT_CLINIC } from '@/lib/clinic'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -21,6 +21,10 @@ const username = ref('')
 const password = ref('')
 const error = ref('')
 const usernameInputRef = ref<{ focus: () => void } | null>(null)
+/** Logo d’usine : version 256 px (~25 Ko) au lieu de l’original 1180 px pour un affichage rapide. */
+const loginLogo = computed(() =>
+  CLINIC.logo === DEFAULT_CLINIC.logo ? '/logo-alwatan-256.jpeg' : CLINIC.logo,
+)
 
 async function submit() {
   if (auth.loading) return
@@ -116,7 +120,7 @@ onUnmounted(() => {
       >
         <header class="login__brand">
           <h1 class="login__title">{{ t('login.title') }}</h1>
-          <img class="login__logo" :src="CLINIC.logo" :alt="CLINIC.nameFr" />
+          <img class="login__logo" :src="loginLogo" :alt="CLINIC.nameFr" width="256" height="256" fetchpriority="high" />
         </header>
 
         <UiInput

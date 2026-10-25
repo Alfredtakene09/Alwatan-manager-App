@@ -477,7 +477,8 @@ router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
   if (to.meta.public) {
-    if (!auth.user) await auth.fetchMe()
+    // Ne pas bloquer l’affichage de la connexion sur /auth/me (réseau lent / Tailscale) :
+    // LoginView restaure la session en arrière-plan et redirige si elle est encore valide.
     if (auth.user) return getDefaultRoute(auth.user.role)
     return true
   }

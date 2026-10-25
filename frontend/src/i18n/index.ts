@@ -1,7 +1,5 @@
 import { createI18n } from 'vue-i18n'
-import fr from './locales/fr'
-import en from './locales/en'
-import ar from './locales/ar'
+import { CATALOGS, loadCatalog, onCatalogLoaded } from './catalogs'
 
 export const LOCALES = [
   { code: 'fr', codeLabel: 'FR', name: 'Français' },
@@ -45,10 +43,32 @@ export const i18n = createI18n({
   legacy: false,
   locale: initialLocale,
   fallbackLocale: 'fr',
-  messages: { fr, en, ar },
+  messages: { fr: CATALOGS.fr! } as Record<string, any>,
 })
 
-export function setAppLocale(locale: AppLocale) {
+onCatalogLoaded((locale, bundle) => {
+  if (locale !== 'fr') i18n.global.setLocaleMessage(locale, bundle as any)
+})
+
+/** Charge le catalogue de la langue enregistrée (avant le montage de l’app). */
+export async function ensureInitialLocale(): Promise<void> {
+  if (initialLocale === 'fr') return
+  try {
+    await loadCatalog(initialLocale)
+  } catch {
+    // Réseau coupé : rester en français plutôt que bloquer l’écran.
+    i18n.global.locale.value = 'fr'
+    applyDocumentLocale('fr')
+  }
+}
+
+/** Précharge EN / AR en arrière-plan (tickets bilingues FR + AR, changement de langue instantané). */
+export function preloadAllLocales() {
+  for (const { code } of LOCALES) void loadCatalog(code).catch(() => {})
+}
+
+export async function setAppLocale(locale: AppLocale) {
+  await loadCatalog(locale)
   if (i18n.global.locale.value === locale) {
     applyDocumentLocale(locale)
     return

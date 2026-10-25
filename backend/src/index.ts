@@ -52,6 +52,7 @@ import { ensureClinicInfoRow } from "./lib/clinic.js";
 import { ensureRoleUiSettingsRow } from "./lib/role-ui-settings.js";
 import { getLanIpv4, getTailscaleIpv4, isPrivateLanOrigin, parseCorsOrigins } from "./lib/lan-host.js";
 import { prisma, prismaRaw } from "./lib/db.js";
+import { blockRemoteDeletes } from "./lib/remote-access.js";
 import { assertJwtSecret } from "./lib/auth.js";
 import { startDataBackupScheduler } from "./lib/data-backup.js";
 import { startHospitalizationReleaseScheduler } from "./lib/hospitalization-auto-release.js";
@@ -120,6 +121,9 @@ app.use((_req, res, next) => {
   );
   next();
 });
+
+/** Toute suppression demandée via Tailscale / hors réseau local est refusée (403). */
+app.use("/api", blockRemoteDeletes);
 
 /** Autorise delete/deleteMany Prisma uniquement pour les routes API (boutons UI). */
 app.use((req, _res, next) => {

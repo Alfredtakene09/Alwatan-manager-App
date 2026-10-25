@@ -1,16 +1,5 @@
-import fr from './locales/fr'
-import en from './locales/en'
-import ar from './locales/ar'
 import { i18n, type AppLocale } from './index'
-
-type MessageBundle = {
-  common?: Record<string, string>
-  ui?: Record<string, string>
-  nav?: Record<string, string>
-  roles?: Record<string, string>
-}
-
-const CATALOGS: Record<AppLocale, MessageBundle> = { fr, en, ar }
+import { CATALOGS, onCatalogLoaded, type MessageBundle } from './catalogs'
 
 /** Clés common (code) → libellé FR source. */
 const COMMON_FR: Record<string, string> = {
@@ -60,30 +49,27 @@ const NORMALIZED_NAV: Record<AppLocale, Record<string, string>> = {
   ar: {},
 }
 
-function rebuildNormalizedIndexes() {
-  for (const locale of Object.keys(CATALOGS) as AppLocale[]) {
-    const bundle = CATALOGS[locale]
-    const uiIndex: Record<string, string> = {}
-    const navIndex: Record<string, string> = {}
-    for (const [raw, value] of Object.entries(bundle.ui ?? {})) {
-      uiIndex[normalizeKey(raw)] = value
-    }
-    for (const [raw, value] of Object.entries(bundle.nav ?? {})) {
-      navIndex[normalizeKey(raw)] = value
-    }
-    NORMALIZED_UI[locale] = uiIndex
-    NORMALIZED_NAV[locale] = navIndex
+function buildNormalizedIndex(locale: AppLocale, bundle: MessageBundle) {
+  const uiIndex: Record<string, string> = {}
+  const navIndex: Record<string, string> = {}
+  for (const [raw, value] of Object.entries(bundle.ui ?? {})) {
+    uiIndex[normalizeKey(raw)] = value
   }
+  for (const [raw, value] of Object.entries(bundle.nav ?? {})) {
+    navIndex[normalizeKey(raw)] = value
+  }
+  NORMALIZED_UI[locale] = uiIndex
+  NORMALIZED_NAV[locale] = navIndex
 }
 
-rebuildNormalizedIndexes()
+onCatalogLoaded(buildNormalizedIndex)
 
 function activeLocale(): AppLocale {
   return (i18n.global.locale.value || 'fr') as AppLocale
 }
 
 function activeBundle(): MessageBundle {
-  return CATALOGS[activeLocale()] ?? CATALOGS.fr
+  return CATALOGS[activeLocale()] ?? CATALOGS.fr!
 }
 
 /**
@@ -112,7 +98,7 @@ export function translateUiLocale(
   const key = normalizeKey(text)
   if (!key) return text
 
-  const bundle = CATALOGS[locale] ?? CATALOGS.fr
+  const bundle = CATALOGS[locale] ?? CATALOGS.fr!
   // Priorité au catalogue vivant (HMR / fichiers locale mis à jour).
   const liveUi = bundle.ui?.[text] ?? bundle.ui?.[key]
   if (liveUi != null) return stripEmiratesTariffSuffix(liveUi)
