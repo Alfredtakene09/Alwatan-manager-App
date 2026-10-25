@@ -854,13 +854,12 @@ function registrationDetailLabel(row: RegistrationSummaryLine): string {
     row.group === 'operation' && row.operationName?.trim()
       ? clinicServiceText(row.operationName.trim())
       : ''
-  const doctors =
-    row.group === 'operation' || row.group === 'consultation'
-      ? (row.doctorNames ?? [])
-          .map((name) => name.trim().replace(/^dr\.?\s+/i, ''))
-          .filter(Boolean)
-          .map((name) => `Dr ${name}`)
-      : []
+  // Tous les types de ligne : un montant médecin doit toujours montrer à qui il revient.
+  const doctors = (row.doctorNames ?? [])
+    .map((name) => name.trim().replace(/^dr\.?\s+/i, ''))
+    .filter(Boolean)
+    .map((name) => `Dr ${name}`)
+  if (!doctors.length && row.doctorShareFcfa > 0) doctors.push(uiText('Médecin non renseigné'))
   const lines = [service, operation, ...doctors].filter(Boolean)
   return lines.join('\n')
 }
@@ -881,7 +880,7 @@ function splitPercents(row: RegistrationSummaryLine): { doctor: number; clinic: 
 function doctorShareLabel(row: RegistrationSummaryLine): string {
   if (row.doctorShareFcfa <= 0) return '—'
   const shares = (row.doctorShares ?? []).filter((entry) => entry.shareFcfa > 0)
-  if (row.group === 'operation' && shares.length > 1) {
+  if (shares.length > 1) {
     return shares
       .map((entry) => {
         const name = entry.name.trim().replace(/^dr\.?\s+/i, '')

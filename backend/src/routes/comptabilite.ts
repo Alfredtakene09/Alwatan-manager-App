@@ -221,6 +221,8 @@ function mapLabExamPending(
   updatedAt: Date;
   visit: {
     patient: { code: string; firstName: string; lastName: string; phone?: string | null };
+    /** Prescripteur choisi à la réception (patient externe) quand la consultation n'a pas de médecin. */
+    assignedDoctor?: { firstName: string; lastName: string } | null;
     surgeryCase?: { totalCostFcfa: number } | null;
     invoices?: Array<{
       billingExamKind?: string | null;
@@ -292,6 +294,8 @@ function mapLabExamPending(
   }
   return {
     ...consultation,
+    // Exports : le médecin de la consultation, sinon le prescripteur de la visite.
+    doctor: consultation.doctor ?? consultation.visit.assignedDoctor ?? null,
     allExamsByKind: unpaidOnly ? examsByKind : allExamsByKind,
     examsByKind,
     examLines,
@@ -867,6 +871,7 @@ router.get("/", cashierAccess, async (req, res) => {
         visit: {
           include: {
             patient: true,
+            assignedDoctor: { select: { firstName: true, lastName: true } },
             surgeryCase: { select: { status: true, totalCostFcfa: true } },
             invoices: {
               where: {
@@ -929,6 +934,7 @@ router.get("/paid-exams", cashierAccess, async (req, res) => {
       visit: {
         include: {
           patient: true,
+          assignedDoctor: { select: { firstName: true, lastName: true } },
           invoices: {
             where: {
               type: InvoiceType.LAB_EXAM,
