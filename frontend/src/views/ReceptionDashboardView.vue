@@ -115,6 +115,7 @@ type ReceptionStats = {
   echoPatientsCount?: number
   radioPatientIds?: string[]
   echoPatientIds?: string[]
+  totalCollectedFcfa?: number
   activityAmountsFcfa?: Partial<
     Record<'exam' | 'hospitalization' | 'consultation' | 'operation' | 'radio' | 'echo', number>
   >
@@ -1141,8 +1142,8 @@ const dashboardStats = computed(() => {
   {
     id: 'revenue',
     label: revenueLabel,
-    value: formatFcfaCompact(stats.value.consultationsTodayFcfa ?? 0),
-    hint: 'Consultations des patients inscrits',
+    value: formatFcfaCompact(stats.value.totalCollectedFcfa ?? 0),
+    hint: 'Tous les services',
     icon: Banknote,
     variant: 'violet' as const,
     money: true,
@@ -2867,6 +2868,7 @@ button.dash-stat {
   letter-spacing: -0.02em;
   line-height: 1.1;
   color: var(--text);
+  white-space: nowrap;
 }
 
 .dash-stat__unit {

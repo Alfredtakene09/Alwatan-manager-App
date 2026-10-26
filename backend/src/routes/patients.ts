@@ -990,7 +990,15 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     0,
     collectedToday.totalFcfa + myExpensesToday.inflowFcfa - myExpensesToday.totalFcfa,
   );
-  const doctorShareFcfa = registration.lines.reduce((sum, line) => sum + line.doctorShareFcfa, 0);
+  // Part des médecins cumulée : consultations et opérations.
+  const doctorShareFcfa = registration.lines
+    .filter((line) => line.group === "consultation" || line.group === "operation")
+    .reduce((sum, line) => sum + line.doctorShareFcfa, 0);
+  // Recettes : somme encaissée de toutes les prestations des patients.
+  const totalCollectedFcfa = Object.values(registration.activityAmountsFcfa).reduce(
+    (sum, amount) => sum + amount,
+    0,
+  );
   const {
     examPatients: examPatientsCount,
     hospitalizationPatients: hospitalizationPatientsCount,
@@ -1018,6 +1026,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     radioPatientIds: registration.activityPatientIds.radio,
     echoPatientIds: registration.activityPatientIds.echo,
     activityAmountsFcfa: registration.activityAmountsFcfa,
+    totalCollectedFcfa,
     visitsToday,
     externalPatientsToday,
     revenueTodayFcfa: collectedToday.totalFcfa,
