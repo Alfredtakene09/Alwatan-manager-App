@@ -28,6 +28,7 @@ import {
   payrollPeriodBounds,
   sumCurrentFichePayrollMass,
 } from "./admin-payroll.js";
+import { sumPayrollOutflowBetween } from "./payroll-outflow.js";
 import { sumSettledDoctorSharesBetween } from "./doctor-share-cash.js";
 
 export type MonthPeriod = { year: number; month: number };
@@ -385,15 +386,9 @@ async function sumValidatedExpensesBetween(from: Date, to: Date) {
   };
 }
 
+/** Salaires (net, par mois de paie) et avances (au versement) sortis sur la période. */
 async function sumPayrollPaidBetween(from: Date, to: Date) {
-  const rows = await prisma.employeePayroll.findMany({
-    where: {
-      status: PayrollStatus.PAID,
-      paidAt: { gte: from, lt: to },
-    },
-    select: { grossFcfa: true },
-  });
-  return rows.reduce((sum, row) => sum + row.grossFcfa, 0);
+  return (await sumPayrollOutflowBetween(from, to)).totalFcfa;
 }
 
 function mapExpenseBreakdown(

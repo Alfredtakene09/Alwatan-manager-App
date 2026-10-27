@@ -140,9 +140,19 @@ const progress = computed(() =>
   totalCount.value ? Math.round((paidCount.value / totalCount.value) * 100) : 0,
 )
 
-const employeesWithAdvancesCount = computed(() => {
-  const ids = new Set(advanceRows.value.map((row) => row.employeeId))
-  return ids.size
+/** Cartes du mois choisi : montants nets et effectifs. */
+const monthCardTotals = computed(() => {
+  const totals = { advancesFcfa: 0, advancesCount: 0, paidFcfa: 0, unpaidFcfa: 0 }
+  for (const row of rows.value) {
+    // Fiche payée : avance retenue ; non payée : avance qui sera retenue.
+    if (row.pendingAdvancesFcfa > 0) {
+      totals.advancesFcfa += row.pendingAdvancesFcfa
+      totals.advancesCount += 1
+    }
+    if (row.status === 'PAID') totals.paidFcfa += row.netFcfa
+    else totals.unpaidFcfa += row.netFcfa
+  }
+  return totals
 })
 
 const periodLabel = computed(() => {
@@ -307,6 +317,7 @@ function payrollExportCaption() {
 function exportPayrollPdf() {
   exportTablePdf('Paie du mois', payrollExportColumns, filteredRows.value, {
     captionRows: payrollExportCaption(),
+    orientation: 'landscape',
     totalsRows: payrollExportTotals(),
   })
 }
@@ -320,6 +331,7 @@ function exportPayrollExcel() {
 function exportPayrollWord() {
   void exportTableWord('Paie du mois', payrollExportColumns, filteredRows.value, {
     captionRows: payrollExportCaption(),
+    orientation: 'landscape',
     totalsRows: payrollExportTotals(),
   })
 }
@@ -391,22 +403,22 @@ onMounted(reloadPayrollData)
 
       <div class="salaires-toolbar-row__stats" aria-label="Synthèse paie">
         <UiStatCard
-          label="Avances"
-          :value="employeesWithAdvancesCount"
+          :label="`Avances · ${monthCardTotals.advancesCount}`"
+          :value="formatF(monthCardTotals.advancesFcfa)"
           :icon="HandCoins"
           variant="amber"
           mini
         />
         <UiStatCard
-          label="Payés"
-          :value="paidCount"
+          :label="`Payés · ${paidCount}`"
+          :value="formatF(monthCardTotals.paidFcfa)"
           :icon="CheckCircle2"
           variant="green"
           mini
         />
         <UiStatCard
-          label="Non payés"
-          :value="unpaidCount"
+          :label="`Non payés · ${unpaidCount}`"
+          :value="formatF(monthCardTotals.unpaidFcfa)"
           :icon="Clock"
           variant="rose"
           mini

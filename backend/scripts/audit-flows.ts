@@ -20,6 +20,7 @@ import { prisma } from "../src/lib/db.js";
 import { buildFinancialKpis, resolveDashboardDateRange } from "../src/lib/admin-dashboard-stats.js";
 import { buildRegistrationSummary } from "../src/lib/registration-summary.js";
 import { toBusinessDateBound } from "../src/lib/cash-shift.js";
+import { payrollMonthsStartingIn } from "../src/lib/payroll-outflow.js";
 
 const [fromArg, toArg] = process.argv.slice(2);
 const range = resolveDashboardDateRange({ from: fromArg, to: toArg ?? fromArg });
@@ -97,7 +98,8 @@ await check("Cumul des enregistrements — ticket et PDF", async (r) => {
   }
 });
 
-// 3. Tableau de bord : cartes Sortie / Entrée = dépenses validées + paie versée de la période.
+// 3. Tableau de bord : cartes Sortie / Entrée = dépenses validées + paie nette (mois de paie)
+//    + avances versées sur la période.
 await check("Tableau de bord — cartes Sortie / Entrée", async (r) => {
   const kpis = await buildFinancialKpis(new Date(), range);
   const expenses = await prisma.clinicExpense.findMany({
@@ -107,13 +109,24 @@ await check("Tableau de bord — cartes Sortie / Entrée", async (r) => {
     },
     select: { amountFcfa: true, flow: true },
   });
-  const payroll = await prisma.employeePayroll.aggregate({
-    where: { status: PayrollStatus.PAID, paidAt: { gte: range.from, lt: range.toExclusive } },
-    _sum: { grossFcfa: true },
+  const months = payrollMonthsStartingIn(range.from, range.toExclusive);
+  const payroll = months.length
+    ? await prisma.employeePayroll.findMany({
+        where: { status: PayrollStatus.PAID, OR: months },
+        select: { grossFcfa: true, primeFcfa: true, advanceDeductionFcfa: true },
+      })
+    : [];
+  const advances = await prisma.salaryAdvance.findMany({
+    where: {
+      status: { not: "CANCELLED" },
+      businessDate: { gte: toBusinessDateBound(range.from), lt: toBusinessDateBound(range.toExclusive) },
+    },
+    select: { amountFcfa: true },
   });
   const sorties =
     expenses.filter((e) => e.flow !== ClinicExpenseFlow.ENTREE).reduce((s, e) => s + e.amountFcfa, 0) +
-    (payroll._sum.grossFcfa ?? 0);
+    payroll.reduce((s, p) => s + Math.max(0, p.grossFcfa + p.primeFcfa - p.advanceDeductionFcfa), 0) +
+    advances.reduce((s, a) => s + a.amountFcfa, 0);
   const entrees = expenses.filter((e) => e.flow === ClinicExpenseFlow.ENTREE).reduce((s, e) => s + e.amountFcfa, 0);
   if (kpis.expensesMonthFcfa !== sorties) {
     r.errors.push(`carte Sortie ${fcfa(kpis.expensesMonthFcfa)} ≠ dépenses + paie ${fcfa(sorties)}`);

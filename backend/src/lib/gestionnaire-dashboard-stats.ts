@@ -15,6 +15,7 @@ import {
   payrollCountedWhere,
   payrollPeriodBounds,
 } from "./admin-payroll.js";
+import { sumPayrollOutflowBetween } from "./payroll-outflow.js";
 import { netAfterExpenses } from "./cashier-personal-stats.js";
 import {
   assessComptableDisbursementSchedule,
@@ -378,15 +379,9 @@ async function sumValidatedExpensesBetween(from: Date, to: Date) {
   };
 }
 
+/** Salaires (net, par mois de paie) et avances (au versement) sortis sur la période. */
 async function sumPayrollPaidBetween(from: Date, to: Date) {
-  const rows = await prisma.employeePayroll.findMany({
-    where: {
-      status: PayrollStatus.PAID,
-      paidAt: { gte: from, lt: to },
-    },
-    select: { grossFcfa: true },
-  });
-  return rows.reduce((sum, row) => sum + row.grossFcfa, 0);
+  return (await sumPayrollOutflowBetween(from, to)).totalFcfa;
 }
 
 function lastNDayStarts(count: number, from = new Date()) {

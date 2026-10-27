@@ -36,7 +36,7 @@ export type TableExportOptions = {
   sheetName?: string
   autoPrint?: boolean
   generatedAt?: Date
-  /** PDF uniquement. */
+  /** PDF et Word. */
   orientation?: 'portrait' | 'landscape'
   /** PDF uniquement : bordures visibles sur toutes les cellules. */
   gridLines?: boolean
@@ -263,6 +263,7 @@ export async function exportTableWord<T>(
     headerLines: clinicHeaderLines(),
     creator: CLINIC.shortName,
     logo,
+    orientation: options?.orientation,
   })
   const blob = await packWordBlob(doc)
   downloadBlob(blob, `${options?.filename ?? exportBasename(title)}.docx`)

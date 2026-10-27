@@ -78,6 +78,8 @@ import { UI_ACTION_IDS, UI_ACTION_TARGET_ROLES, parseHiddenByRole, parseHiddenUi
 import { getHiddenByRole, saveHiddenByRole } from "../lib/role-ui-settings.js";
 import {
   currentPayrollPeriod,
+  parseYearMonth,
+  payrollMonthRangeWhere,
   ensurePayrollForMonth,
   employeePayrollInclude,
   serializePayrollRow,
@@ -1677,9 +1679,14 @@ router.get("/payroll/history", async (req, res) => {
   }
   const fromIso = typeof req.query.from === "string" ? req.query.from : "";
   const toIso = typeof req.query.to === "string" ? req.query.to : "";
-  const hasRange = isValidBusinessDate(fromIso) && isValidBusinessDate(toIso);
+  const fromMonth = parseYearMonth(req.query.fromMonth);
+  const toMonth = parseYearMonth(req.query.toMonth);
+  // Par mois de paie (historique des mois), sinon par dates de paiement.
+  const monthRange =
+    fromMonth || toMonth ? payrollMonthRangeWhere(fromMonth ?? toMonth!, toMonth ?? fromMonth!) : null;
+  const hasRange = Boolean(monthRange) || (isValidBusinessDate(fromIso) && isValidBusinessDate(toIso));
   // Avec une période : toutes les paies versées entre les deux dates (jours locaux inclus).
-  const paidAtRange = hasRange
+  const paidAtRange = hasRange && !monthRange
     ? (() => {
         const from = businessDateToLocalStart(parseBusinessDate(fromIso));
         const to = businessDateToLocalStart(parseBusinessDate(toIso));
@@ -1689,7 +1696,11 @@ router.get("/payroll/history", async (req, res) => {
     : undefined;
   const limit = hasRange ? 2000 : Math.min(200, Math.max(1, Number(req.query.limit) || 100));
   const rows = await prisma.employeePayroll.findMany({
-    where: { status: PayrollStatus.PAID, ...(paidAtRange ? { paidAt: paidAtRange } : {}) },
+    where: {
+      status: PayrollStatus.PAID,
+      ...(paidAtRange ? { paidAt: paidAtRange } : {}),
+      ...(monthRange ?? {}),
+    },
     include: employeePayrollInclude,
     orderBy: [{ paidAt: "desc" }],
     take: limit,
