@@ -186,10 +186,17 @@ export function colleagueHistorySince(now = new Date()) {
   return new Date(now.getTime() - HISTORY_WINDOW_MS);
 }
 
+/** Facture encore à encaisser (examens, opération, consultation…). */
+export const UNPAID_INVOICE_STATUSES: InvoiceStatus[] = [
+  InvoiceStatus.DRAFT,
+  InvoiceStatus.PENDING,
+  InvoiceStatus.PARTIALLY_PAID,
+];
+
 /**
- * Dossiers ouverts par un autre réceptionniste, pas encore vus par le médecin,
- * enregistrés depuis moins de 24 heures.
- * Les examens et le laboratoire restent dans leurs files partagées.
+ * Dossiers ouverts par un autre réceptionniste, depuis moins de 24 heures :
+ * pas encore vus par le médecin, ou avec un parcours pas encore payé
+ * (examens prescrits, opération…) facturé sur la même fenêtre.
  */
 export function otherReceptionistsUntreatedPatientsWhere(
   excludeUserId: string | null | undefined,
@@ -197,17 +204,29 @@ export function otherReceptionistsUntreatedPatientsWhere(
 ): Prisma.PatientWhereInput {
   return {
     ...(excludeUserId ? { createdById: { not: excludeUserId } } : {}),
-    createdAt: { gte: since },
     createdBy: { role: UserRole.RECEPTIONNISTE },
-    visits: {
-      some: {
-        status: { in: NOT_YET_SEEN_BY_DOCTOR },
-        OR: [
-          { notes: null },
-          { NOT: { notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE } } },
-        ],
+    OR: [
+      {
+        createdAt: { gte: since },
+        visits: {
+          some: {
+            status: { in: NOT_YET_SEEN_BY_DOCTOR },
+            OR: [
+              { notes: null },
+              { NOT: { notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE } } },
+            ],
+          },
+        },
       },
-    },
+      {
+        invoices: {
+          some: {
+            status: { in: UNPAID_INVOICE_STATUSES },
+            createdAt: { gte: since },
+          },
+        },
+      },
+    ],
   };
 }
 
@@ -229,12 +248,15 @@ export function receptionistOwnPatientsWhere(
 /**
  * Patient enregistré sur la période : dossier créé, ou nouvelle visite / facture
  * (re-visite, changement de service) à cette période. Si un réceptionniste est ciblé,
- * seules ses visites et factures comptent.
+ * comptent ses visites et factures, plus celles créées par un non-réceptionniste
+ * (médecin qui prescrit des examens…) sur ses propres dossiers : sans cela, son patient
+ * sortait de sa liste alors que l'admin le voyait encore.
  */
 export function patientRegisteredInPeriodWhere(
   range: { gte?: Date; lt?: Date },
   receptionistId?: string | null,
 ): Prisma.PatientWhereInput {
+  const notByReception = { role: { not: UserRole.RECEPTIONNISTE } };
   return {
     OR: [
       { createdAt: range },
@@ -256,6 +278,33 @@ export function patientRegisteredInPeriodWhere(
           },
         },
       },
+      ...(receptionistId
+        ? [
+            {
+              createdById: receptionistId,
+              OR: [
+                {
+                  visits: {
+                    some: {
+                      createdAt: range,
+                      status: { not: VisitStatus.CANCELLED },
+                      OR: [{ createdById: null }, { createdBy: notByReception }],
+                    },
+                  },
+                },
+                {
+                  invoices: {
+                    some: {
+                      createdAt: range,
+                      status: { not: InvoiceStatus.CANCELLED },
+                      issuedBy: notByReception,
+                    },
+                  },
+                },
+              ],
+            },
+          ]
+        : []),
     ],
   };
 }
