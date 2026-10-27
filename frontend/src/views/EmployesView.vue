@@ -32,8 +32,8 @@ import {
 } from '@/lib/employee-job-titles'
 import { employeeNeedsAppAccount, isHiddenPlatformAdminEmployee, isHiddenPlatformAdminJobTitle } from '@/lib/employee-app-account'
 import { inferIsMedecinFromJobTitle } from '@/lib/doctor-job-title'
-import { exportBasename, exportTablePdf, exportTableWord, exportWorkbook, sectionsToMatrix, type ExportColumn, type ExportSection, type WorkbookSheetDef } from '@/lib/table-export'
-import { groupEmployeeExportRows } from '@/lib/employee-list-export'
+import { exportBasename, exportTablePdf, exportTableWord, exportWorkbook, type ExportColumn } from '@/lib/table-export'
+import { listEmployeeExportRows } from '@/lib/employee-list-export'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -453,19 +453,6 @@ const employeeExportColumns = computed<ExportColumn<EmployeeExportRow>[]>(() => 
   return cols
 })
 
-type EmployeeJobRecapRow = { jobTitle: string; count: number; payroll: number }
-
-function employeeExportGroupTitle(jobTitle: string, count: number, payroll: number): string {
-  if (!canExportSalaries.value) {
-    return translateTemplate('{jobTitle} — {count} employés', { jobTitle, count })
-  }
-  return translateTemplate('{jobTitle} — {count} employés — {payroll}', {
-    jobTitle,
-    count,
-    payroll: formatFcfaPlain(payroll),
-  })
-}
-
 function employeeExportGrandTotals(totalCount: number, totalPayroll: number) {
   if (!canExportSalaries.value) {
     return [{ label: uiText('Total général — employés'), value: String(totalCount) }]
@@ -473,16 +460,6 @@ function employeeExportGrandTotals(totalCount: number, totalPayroll: number) {
   return [
     { label: uiText('Total général — employés'), value: String(totalCount) },
     { label: uiText('Total général — masse salariale'), value: formatFcfaPlain(totalPayroll) },
-  ]
-}
-
-function employeeExportGroupTotals(count: number, payroll: number) {
-  if (!canExportSalaries.value) {
-    return [{ label: uiText('Nombre d’employés'), value: String(count) }]
-  }
-  return [
-    { label: uiText('Nombre d’employés'), value: String(count) },
-    { label: uiText('Masse salariale (salaires fixes)'), value: formatFcfaPlain(payroll) },
   ]
 }
 
@@ -499,60 +476,17 @@ function employeeExportFilterCaption(): string {
 
 function employeeExportPayload() {
   localeCode.value
-  // Même périmètre que le tableau affiché (profil, poste, recherche).
-  const grouped = groupEmployeeExportRows(tableRows.value, employeesById.value)
-  const rows = grouped.groups.flatMap((group) => group.rows)
-  const detailColumns = employeeExportColumns.value
-  const recapColumns: ExportColumn<EmployeeJobRecapRow>[] = [
-    { header: uiText('Poste'), value: (r) => r.jobTitle },
-    { header: uiText('Nombre d’employés'), value: (r) => r.count },
-  ]
-  if (canExportSalaries.value) {
-    recapColumns.push({ header: uiText('Masse salariale'), value: (r) => formatFcfaPlain(r.payroll) })
-  }
-  const recapRows: EmployeeJobRecapRow[] = grouped.groups.map((group) => ({
-    jobTitle: group.jobTitle,
-    count: group.count,
-    payroll: group.payroll,
-  }))
-  const recapTotals = employeeExportGrandTotals(grouped.totalCount, grouped.totalPayroll)
-  const recapSection: ExportSection = {
-    title: uiText('Récapitulatif par poste'),
-    columns: recapColumns,
-    rows: recapRows,
-    totalsRows: recapTotals,
-    ownPage: true,
-  }
-  const groupSections: ExportSection[] = grouped.groups.map((group) => ({
-    title: employeeExportGroupTitle(group.jobTitle, group.count, group.payroll),
-    columns: detailColumns,
-    rows: group.rows,
-    totalsRows: employeeExportGroupTotals(group.count, group.payroll),
-  }))
-  const sections: ExportSection[] = [recapSection, ...groupSections]
-  const excelSheets: WorkbookSheetDef[] = [
-    {
-      name: uiText('Récapitulatif par poste'),
-      columns: recapColumns,
-      rows: recapRows,
-      totalsRows: recapTotals,
-    },
-    {
-      name: uiText('Employés par poste'),
-      matrix: sectionsToMatrix(groupSections, { totalsRows: recapTotals }),
-    },
-    ...grouped.groups.map((group) => ({
-      name: group.jobTitle,
-      columns: detailColumns,
-      rows: group.rows,
-      totalsRows: employeeExportGroupTotals(group.count, group.payroll),
-    })),
+  // Même périmètre que le tableau affiché (profil, poste, recherche), un employé par ligne.
+  const list = listEmployeeExportRows(tableRows.value, employeesById.value)
+  const lineNo = new Map(list.rows.map((row, index) => [row, index + 1]))
+  const columns: ExportColumn<EmployeeExportRow>[] = [
+    { header: uiText('N°'), value: (r) => lineNo.get(r) ?? '' },
+    ...employeeExportColumns.value,
   ]
   return {
-    rows,
-    columns: detailColumns,
-    sections,
-    excelSheets,
+    rows: list.rows,
+    columns,
+    totalsRows: employeeExportGrandTotals(list.totalCount, list.totalPayroll),
     captionRows: [{ label: uiText('Périmètre'), value: employeeExportFilterCaption() }],
   }
 }
@@ -561,20 +495,27 @@ function exportPdf() {
   const payload = employeeExportPayload()
   exportTablePdf(uiText('Employés'), payload.columns, payload.rows, {
     captionRows: payload.captionRows,
-    sections: payload.sections,
+    totalsRows: payload.totalsRows,
   })
 }
 
 function exportExcel() {
   const payload = employeeExportPayload()
-  exportWorkbook(exportBasename(uiText('Employés')), payload.excelSheets)
+  exportWorkbook(exportBasename(uiText('Employés')), [
+    {
+      name: uiText('Employés'),
+      columns: payload.columns,
+      rows: payload.rows,
+      totalsRows: payload.totalsRows,
+    },
+  ])
 }
 
 function exportWord() {
   const payload = employeeExportPayload()
   void exportTableWord(uiText('Employés'), payload.columns, payload.rows, {
     captionRows: payload.captionRows,
-    sections: payload.sections,
+    totalsRows: payload.totalsRows,
   })
 }
 
