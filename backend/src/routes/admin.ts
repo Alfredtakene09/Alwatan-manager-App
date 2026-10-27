@@ -1726,7 +1726,7 @@ router.get("/payroll", async (req, res) => {
   );
   const employeeIds = rows.map((row) => row.employeeId);
   const [pendingMap, overtimeMap] = await Promise.all([
-    sumPendingAdvancesByEmployee(employeeIds),
+    sumPendingAdvancesByEmployee(employeeIds, { year: targetYear, month: targetMonth }),
     sumValidatedOvertimeByEmployee(employeeIds, targetYear, targetMonth),
   ]);
 

@@ -64,14 +64,41 @@ export function serializeSalaryAdvance(row: SalaryAdvanceRow) {
   };
 }
 
-/** Somme prévue à la prochaine paie (tranches ou solde restant), avant plafonnement au salaire. */
-export async function sumPendingAdvancesByEmployee(employeeIds: string[]) {
+/**
+ * Une avance se retient à partir de la paie du mois suivant celui où elle a été prise :
+ * avance d'octobre → salaire de novembre. Elle n'apparaît pas sur septembre ni octobre.
+ */
+export function advanceDeductibleBefore(year: number, month: number) {
+  // businessDate est une date pure (minuit UTC) : on compare au 1er du mois de paie en UTC.
+  return new Date(Date.UTC(year, month - 1, 1));
+}
+
+export function advancesDeductibleForPayrollWhere(
+  year: number,
+  month: number,
+): Prisma.SalaryAdvanceWhereInput {
+  return {
+    status: SalaryAdvanceStatus.PENDING,
+    remainingFcfa: { gt: 0 },
+    businessDate: { lt: advanceDeductibleBefore(year, month) },
+  };
+}
+
+/**
+ * Somme prévue à la paie (tranches ou solde restant), avant plafonnement au salaire.
+ * Avec une période : seules les avances prises avant ce mois de paie comptent.
+ */
+export async function sumPendingAdvancesByEmployee(
+  employeeIds: string[],
+  period?: { year: number; month: number },
+) {
   if (!employeeIds.length) return new Map<string, number>();
   const rows = await prisma.salaryAdvance.findMany({
     where: {
       employeeId: { in: employeeIds },
-      status: SalaryAdvanceStatus.PENDING,
-      remainingFcfa: { gt: 0 },
+      ...(period
+        ? advancesDeductibleForPayrollWhere(period.year, period.month)
+        : { status: SalaryAdvanceStatus.PENDING, remainingFcfa: { gt: 0 } }),
     },
     select: {
       employeeId: true,
@@ -106,8 +133,7 @@ export async function deductPendingAdvancesForPayroll(
   const pending = await tx.salaryAdvance.findMany({
     where: {
       employeeId,
-      status: SalaryAdvanceStatus.PENDING,
-      remainingFcfa: { gt: 0 },
+      ...advancesDeductibleForPayrollWhere(year, month),
     },
     orderBy: [{ businessDate: "asc" }, { createdAt: "asc" }],
     select: {
