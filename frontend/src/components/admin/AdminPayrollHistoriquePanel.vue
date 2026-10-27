@@ -7,6 +7,13 @@ import { formatShortDate } from '@/lib/admin-dashboard'
 import { confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
+import {
+  STAFF_CATEGORY_FILTER_OPTIONS,
+  matchesStaffCategory,
+  staffCategoryFilterLabel,
+  type DoctorCategory,
+  type StaffCategoryFilter,
+} from '@/lib/doctor-category'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 
@@ -19,7 +26,13 @@ type HistoryRow = {
   advanceDeductionFcfa: number
   netFcfa: number
   paidAt: string | null
-  employee: { fullName: string; jobTitle: string | null; service: string }
+  employee: {
+    fullName: string
+    jobTitle: string | null
+    service: string
+    isMedecin?: boolean
+    doctorCategory?: DoctorCategory | null
+  }
 }
 
 const emit = defineEmits<{ cancelled: [] }>()
@@ -32,6 +45,7 @@ const dateTo = ref('')
 const searchQuery = ref('')
 /** Filtre par poste ('' = tous) : tableau, totaux et exports. */
 const jobTitleFilter = ref('')
+const categoryFilter = ref<StaffCategoryFilter>('')
 
 const hasRange = computed(() => !!dateFrom.value && !!dateTo.value)
 
@@ -72,6 +86,7 @@ const filteredRows = computed(() => {
   const jobTitle = jobTitleFilter.value
   return rows.value.filter((row) => {
     if (jobTitle && jobTitleOf(row) !== jobTitle) return false
+    if (!matchesStaffCategory(categoryFilter.value, row.employee)) return false
     if (!q) return true
     return normalizeText(
       [
@@ -144,6 +159,7 @@ function historyExportOptions() {
   return {
     captionRows: [
       { label: 'Période', value: description.value },
+      { label: 'Catégorie', value: staffCategoryFilterLabel(categoryFilter.value) },
       { label: 'Poste', value: jobTitleFilter.value || 'Tous les postes' },
     ],
     totalsRows: [
@@ -210,6 +226,11 @@ defineExpose({ reload: loadHistory })
           aria-label="Rechercher un paiement"
         />
       </div>
+      <select v-model="categoryFilter" class="history-input history-job-select" aria-label="Filtrer par catégorie">
+        <option v-for="option in STAFF_CATEGORY_FILTER_OPTIONS" :key="option.value" :value="option.value">
+          {{ option.label }}
+        </option>
+      </select>
       <select v-model="jobTitleFilter" class="history-input history-job-select" aria-label="Filtrer par poste">
         <option value="">Tous les postes</option>
         <option v-for="title in jobTitleOptions" :key="title" :value="title">{{ title }}</option>

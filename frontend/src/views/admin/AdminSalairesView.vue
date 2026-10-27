@@ -6,6 +6,13 @@ import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
 import type { PayrollRow } from '@/lib/admin-dashboard'
+import {
+  STAFF_CATEGORY_FILTER_OPTIONS,
+  matchesStaffCategory,
+  staffCategoryFilterLabel,
+  type DoctorCategory,
+  type StaffCategoryFilter,
+} from '@/lib/doctor-category'
 import { PAYROLL_STATUS_LABEL } from '@/lib/admin-dashboard'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
@@ -34,7 +41,12 @@ type PayrollResponse = {
     pendingAdvancesFcfa?: number
     netFcfa?: number
     status: PayrollRow['status']
-    employee: { fullName: string; jobTitle: string | null }
+    employee: {
+      fullName: string
+      jobTitle: string | null
+      isMedecin?: boolean
+      doctorCategory?: DoctorCategory | null
+    }
   }>
 }
 
@@ -72,6 +84,8 @@ const rows = computed(() =>
     id: row.id,
     employeeName: row.employee.fullName,
     jobTitle: row.employee.jobTitle,
+    isMedecin: row.employee.isMedecin ?? false,
+    doctorCategory: row.employee.doctorCategory ?? null,
     grossFcfa: row.grossFcfa,
     pendingAdvancesFcfa: row.pendingAdvancesFcfa ?? 0,
     netFcfa: row.netFcfa ?? Math.max(0, row.grossFcfa - (row.pendingAdvancesFcfa ?? 0)),
@@ -82,6 +96,8 @@ const rows = computed(() =>
 const searchQuery = ref('')
 /** Filtre par poste ('' = tous) : liste et exports. */
 const jobTitleFilter = ref('')
+/** Personnel / médecins généralistes / spécialistes / autres ('' = toutes). */
+const categoryFilter = ref<StaffCategoryFilter>('')
 
 /** Une fiche validée quitte la liste du mois et reste consultable dans l'Historique. */
 const pendingRows = computed(() => rows.value.filter((row) => row.status !== 'PAID'))
@@ -109,6 +125,7 @@ const filteredRows = computed(() => {
   const jobTitle = jobTitleFilter.value
   return pendingRows.value.filter((row) => {
     if (jobTitle && (row.jobTitle?.trim() || '—') !== jobTitle) return false
+    if (!matchesStaffCategory(categoryFilter.value, row)) return false
     if (!q) return true
     return normalizeText(
       [row.employeeName, row.jobTitle ?? '', PAYROLL_STATUS_LABEL[row.status], String(row.grossFcfa)].join(' '),
@@ -217,14 +234,20 @@ async function payRow(row: (typeof rows.value)[number]) {
 }
 
 /** Paiement groupé : seulement après un filtre (poste ou recherche), sur les fiches affichées. */
-const isFiltered = computed(() => !!jobTitleFilter.value || !!searchQuery.value.trim())
+const isFiltered = computed(
+  () => !!jobTitleFilter.value || !!categoryFilter.value || !!searchQuery.value.trim(),
+)
 const payingFiltered = ref(false)
 
 async function payFilteredRows() {
   const targets = filteredRows.value
   if (!isFiltered.value || !targets.length) return
   const net = targets.reduce((sum, row) => sum + row.netFcfa, 0)
-  const scope = jobTitleFilter.value ? `du poste « ${jobTitleFilter.value} »` : 'filtrées'
+  const scope = jobTitleFilter.value
+    ? `du poste « ${jobTitleFilter.value} »`
+    : categoryFilter.value
+      ? `« ${staffCategoryFilterLabel(categoryFilter.value)} »`
+      : 'filtrées'
   const ok = await confirmAppModal({
     type: 'CONFIRM',
     title: 'Paiement groupé',
@@ -276,6 +299,7 @@ function payrollExportTotals() {
 function payrollExportCaption() {
   return [
     { label: 'Période', value: periodLabel.value },
+    { label: 'Catégorie', value: staffCategoryFilterLabel(categoryFilter.value) },
     { label: 'Poste', value: jobTitleFilter.value || 'Tous les postes' },
   ]
 }
@@ -318,14 +342,6 @@ onMounted(reloadPayrollData)
           aria-label="Période de paie"
         />
         <ExportButtons :disabled="loading || !filteredRows.length" @pdf="exportPayrollPdf" @excel="exportPayrollExcel" @word="exportPayrollWord" />
-        <UiButton
-          v-if="isFiltered"
-          variant="success"
-          :disabled="payingFiltered || loading || !filteredRows.length"
-          @click="payFilteredRows"
-        >
-          {{ payingFiltered ? 'Paiement…' : `Payer la sélection (${filteredRows.length})` }}
-        </UiButton>
       </template>
     </UiPageHeader>
 
@@ -418,12 +434,25 @@ onMounted(reloadPayrollData)
               aria-label="Rechercher une fiche de paie"
             />
           </div>
+          <select v-model="categoryFilter" class="payroll-job-select" aria-label="Filtrer par catégorie">
+            <option v-for="option in STAFF_CATEGORY_FILTER_OPTIONS" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
           <select v-model="jobTitleFilter" class="payroll-job-select" aria-label="Filtrer par poste">
             <option value="">Tous les postes</option>
             <option v-for="title in jobTitleOptions" :key="title" :value="title">{{ title }}</option>
           </select>
-          <span v-if="!isFiltered && pendingRows.length" class="payroll-filters-hint">
-            Filtrez par poste pour payer plusieurs fiches à la fois.
+          <UiButton
+            v-if="isFiltered"
+            variant="success"
+            :disabled="payingFiltered || loading || !filteredRows.length"
+            @click="payFilteredRows"
+          >
+            {{ payingFiltered ? 'Paiement…' : `Payer la sélection (${filteredRows.length})` }}
+          </UiButton>
+          <span v-else-if="pendingRows.length" class="payroll-filters-hint">
+            Filtrez par catégorie ou par poste pour payer plusieurs fiches à la fois.
           </span>
         </div>
 
@@ -499,6 +528,7 @@ onMounted(reloadPayrollData)
 .payroll-filters-row {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.6rem;
   margin-bottom: 0.75rem;
 }

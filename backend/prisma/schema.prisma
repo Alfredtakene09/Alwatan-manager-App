@@ -54,6 +54,13 @@ enum HospitalizationStatus {
   CANCELLED
 }
 
+/// Catégorie médecin pour les filtres (employés, paie, historique).
+enum DoctorCategory {
+  GENERALISTE
+  SPECIALISTE
+  AUTRE
+}
+
 enum DoctorCompensationType {
   QUOTA
   FIXED_SALARY
@@ -188,6 +195,8 @@ model Employee {
   phone                    String?
   jobTitle                 String?
   isMedecin                Boolean                @default(false)
+  /// null = pas encore classé : la catégorie est alors déduite du poste / de la spécialité.
+  doctorCategory           DoctorCategory?
   doctorCompensationType   DoctorCompensationType @default(QUOTA)
   consultationTotalFcfa    Int?
   consultationQuotaMode    ConsultationQuotaMode  @default(PERCENT)

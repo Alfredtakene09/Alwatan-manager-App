@@ -82,6 +82,74 @@ export function isOperationAssistantStaff(profile: {
   return /(^|[^a-z])assistant([^a-z]|$)/.test(title);
 }
 
+export const DOCTOR_CATEGORIES = ["GENERALISTE", "SPECIALISTE", "AUTRE"] as const;
+export type DoctorCategoryValue = (typeof DOCTOR_CATEGORIES)[number];
+
+const GENERALIST_KEYWORDS = ["generaliste", "medecine generale"];
+const OTHER_DOCTOR_KEYWORDS = ["interne", "stagiaire", "kine", "sage-femme", "sage femme"];
+const SPECIALIST_KEYWORDS = [
+  "specialiste",
+  "chirurg",
+  "gyneco",
+  "genecolo",
+  "obstetr",
+  "ophtalm",
+  "radiolog",
+  "anesth",
+  "pediatr",
+  "cardio",
+  "ortho",
+  "trauma",
+  "odonto",
+  "dent",
+  "orl",
+  "dermato",
+  "neuro",
+  "urolog",
+  "gastro",
+  "psychiat",
+  "pneumo",
+  "nephro",
+  "endocrin",
+];
+
+/**
+ * Catégorie déduite du poste puis de la spécialité, pour un médecin pas encore classé.
+ * Le poste prime : « Médecin généraliste » avec une spécialité vide reste généraliste.
+ */
+export function inferDoctorCategory(profile: {
+  jobTitle?: string | null;
+  specialty?: string | null;
+}): DoctorCategoryValue {
+  for (const label of [profile.jobTitle, profile.specialty]) {
+    const folded = normalizeStaffLabel(label);
+    if (!folded) continue;
+    if (GENERALIST_KEYWORDS.some((word) => folded.includes(word))) return "GENERALISTE";
+    if (OTHER_DOCTOR_KEYWORDS.some((word) => folded.includes(word))) return "AUTRE";
+    if (SPECIALIST_KEYWORDS.some((word) => folded.includes(word))) return "SPECIALISTE";
+  }
+  return "AUTRE";
+}
+
+/** Catégorie affichée / filtrée : celle enregistrée, sinon déduite ; null pour le personnel. */
+export function effectiveDoctorCategory(employee: {
+  isMedecin: boolean;
+  doctorCategory?: DoctorCategoryValue | null;
+  jobTitle?: string | null;
+  specialty?: string | null;
+}): DoctorCategoryValue | null {
+  if (!employee.isMedecin) return null;
+  return employee.doctorCategory ?? inferDoctorCategory(employee);
+}
+
+export function normalizeDoctorCategory(
+  value: DoctorCategoryValue | null | undefined,
+  isMedecin: boolean,
+): DoctorCategoryValue | null {
+  if (!isMedecin) return null;
+  return value ?? null;
+}
+
 export function inferIsMedecinFromJobTitle(jobTitle?: string | null): boolean {
   const title = jobTitle?.trim().toLowerCase() ?? "";
   if (!title) return false;
