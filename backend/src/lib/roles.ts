@@ -7,6 +7,7 @@ export const USER_ROLES = [
   "LABORANTIN",
   "SOIGNANT",
   "PHARMACIEN",
+  "GESTIONNAIRE_PHARMACIE",
   "LOGISTIQUE",
 ] as const;
 
@@ -21,6 +22,7 @@ export const ROLE_LABELS: Record<AppUserRole, string> = {
   LABORANTIN: "Laborantin",
   SOIGNANT: "Soignant",
   PHARMACIEN: "Pharmacien",
+  GESTIONNAIRE_PHARMACIE: "Gestionnaire pharmacie",
   LOGISTIQUE: "Logistique",
 };
 
@@ -32,6 +34,7 @@ export const MANAGEABLE_USER_ROLES = [
   "LABORANTIN",
   "SOIGNANT",
   "PHARMACIEN",
+  "GESTIONNAIRE_PHARMACIE",
   "LOGISTIQUE",
 ] as const satisfies readonly AppUserRole[];
 
@@ -58,7 +61,7 @@ export const MODULE_ACCESS: Record<string, AppUserRole[]> = {
   comptabilite: [...DIRECTION_GESTIONNAIRE_ROLES],
   hospitalisation: ["ADMIN", "RECEPTIONNISTE", "COMPTABLE", "GESTIONNAIRE"],
   "bloc-salles": ["ADMIN", "COMPTABLE", "SOIGNANT", "GESTIONNAIRE"],
-  pharmacie: ["ADMIN", "PHARMACIEN", "COMPTABLE", "GESTIONNAIRE"],
+  pharmacie: ["ADMIN", "PHARMACIEN", "GESTIONNAIRE_PHARMACIE", "COMPTABLE", "GESTIONNAIRE"],
   logistique: ["ADMIN", "LOGISTIQUE", "COMPTABLE", "GESTIONNAIRE"],
   laboratoire: ["ADMIN", "LABORANTIN", "COMPTABLE", "GESTIONNAIRE"],
   "dossier-patient": ["ADMIN", "MEDECIN", "LABORANTIN", "COMPTABLE", "GESTIONNAIRE"],
@@ -130,6 +133,19 @@ export function canManagePharmacyCatalog(role: AppUserRole) {
 }
 
 /**
+ * Supervision pharmacie : toutes les ventes, retours et clôtures de tous les pharmaciens.
+ * Le gestionnaire pharmacie a ces droits sur son module, sans accès aux autres modules.
+ */
+export function canSupervisePharmacy(role: string) {
+  return (
+    role === "ADMIN" ||
+    role === "GESTIONNAIRE" ||
+    role === "COMPTABLE" ||
+    role === "GESTIONNAIRE_PHARMACIE"
+  );
+}
+
+/**
  * Stock laboratoire (réactifs / consommables).
  * Réservé gestionnaire et Direction — laborantin exclu.
  */
@@ -161,6 +177,7 @@ export function getDefaultRoute(role: AppUserRole) {
     case "SOIGNANT":
       return "/bloc-salles/tableau-de-bord";
     case "PHARMACIEN":
+    case "GESTIONNAIRE_PHARMACIE":
       return "/pharmacie/tableau-de-bord";
     case "LOGISTIQUE":
       return "/logistique/tableau-de-bord";

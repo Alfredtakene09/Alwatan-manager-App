@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { InvoiceStatus } from "@prisma/client";
 import { applyStockMovement } from "./pharmacy-stock.js";
+import { canSupervisePharmacy } from "./roles.js";
 
 export class PharmacyReturnError extends Error {
   constructor(
@@ -67,7 +68,7 @@ export function canRegisterPharmacyReturn(
 ): boolean {
   if (!isSameCalendarDay(prescription.createdAt, now)) return false;
   if (user.role === "PHARMACIEN") return prescription.pharmacistId === user.id;
-  return user.role === "ADMIN" || user.role === "GESTIONNAIRE" || user.role === "COMPTABLE";
+  return canSupervisePharmacy(user.role);
 }
 
 export type PharmacyReturnLineInput = {

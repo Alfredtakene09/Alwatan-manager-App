@@ -270,7 +270,7 @@ const router = createRouter({
           path: 'pharmacie/categories',
           name: 'pharmacie-categories',
           component: () => import('@/views/pharmacie/PharmacieCategoriesView.vue'),
-          meta: { module: 'pharmacie', pharmacyCatalog: true, roles: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE'] },
+          meta: { module: 'pharmacie', pharmacyCatalog: true, roles: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE', 'GESTIONNAIRE_PHARMACIE'] },
         },
         {
           path: 'pharmacie/produits',
@@ -288,7 +288,7 @@ const router = createRouter({
           path: 'pharmacie/rapports',
           name: 'pharmacie-rapports',
           component: () => import('@/views/pharmacie/PharmacieReportsView.vue'),
-          meta: { module: 'pharmacie', roles: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE'] },
+          meta: { module: 'pharmacie', roles: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE', 'GESTIONNAIRE_PHARMACIE'] },
         },
         {
           path: 'pharmacie/alertes',
@@ -300,7 +300,7 @@ const router = createRouter({
           path: 'pharmacie/fournisseurs',
           name: 'pharmacie-fournisseurs',
           component: () => import('@/views/pharmacie/PharmacieSuppliersView.vue'),
-          meta: { module: 'pharmacie', pharmacyCatalog: true, roles: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE'] },
+          meta: { module: 'pharmacie', pharmacyCatalog: true, roles: ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE', 'GESTIONNAIRE_PHARMACIE'] },
         },
         {
           // Menu « Mouvements » retiré : l'ancienne adresse renvoie vers les produits.

@@ -60,6 +60,7 @@ const roleAccent = computed(() => {
     MEDECIN: '#059669',
     LABORANTIN: '#0891b2',
     PHARMACIEN: '#db2777',
+    GESTIONNAIRE_PHARMACIE: '#be185d',
     LOGISTIQUE: '#4f46e5',
     SOIGNANT: '#ea580c',
   }

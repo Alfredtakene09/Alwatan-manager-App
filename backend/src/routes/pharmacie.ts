@@ -30,6 +30,7 @@ import {
 import { requireAuth, requireModule, requirePharmacyCatalogAccess, requireUiAction } from "../middleware/auth.js";
 import { isValidBusinessDate } from "../lib/cash-shift.js";
 import { recordPharmacyPurchase } from "../lib/pharmacy-purchase.js";
+import { canSupervisePharmacy } from "../lib/roles.js";
 
 const router = Router();
 router.use(requireAuth, requireModule("pharmacie"));
@@ -97,7 +98,7 @@ function canEditPharmacySale(
   prescription: { pharmacistId: string },
 ) {
   if (user.role === "PHARMACIEN") return prescription.pharmacistId === user.id;
-  return user.role === "ADMIN" || user.role === "GESTIONNAIRE" || user.role === "COMPTABLE";
+  return canSupervisePharmacy(user.role);
 }
 
 const pharmacyReturnSchema = z.object({
@@ -950,13 +951,14 @@ router.get("/pharmacists", async (_req, res) => {
   const operators = await prisma.user.findMany({
     where: {
       active: true,
-      role: { in: ["PHARMACIEN", "ADMIN"] },
+      role: { in: ["PHARMACIEN", "GESTIONNAIRE_PHARMACIE", "ADMIN"] },
     },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
     select: { id: true, firstName: true, lastName: true, role: true },
   });
   const ranked = [...operators].sort((a, b) => {
-    const rank = (role: string) => (role === "PHARMACIEN" ? 0 : 1);
+    const rank = (role: string) =>
+      role === "PHARMACIEN" ? 0 : role === "GESTIONNAIRE_PHARMACIE" ? 1 : 2;
     const byRole = rank(a.role) - rank(b.role);
     if (byRole !== 0) return byRole;
     const byLast = a.lastName.localeCompare(b.lastName, "fr");
