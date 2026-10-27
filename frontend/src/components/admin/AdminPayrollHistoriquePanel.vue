@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { CalendarRange, Search, X } from '@lucide/vue'
+import { CalendarRange, Search, Undo2, X } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { formatShortDate } from '@/lib/admin-dashboard'
+import { confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 
@@ -19,8 +20,11 @@ type HistoryRow = {
   employee: { fullName: string; jobTitle: string | null; service: string }
 }
 
+const emit = defineEmits<{ cancelled: [] }>()
+
 const rows = ref<HistoryRow[]>([])
 const loading = ref(false)
+const cancellingId = ref<string | null>(null)
 const dateFrom = ref('')
 const dateTo = ref('')
 const searchQuery = ref('')
@@ -102,6 +106,29 @@ function clearDates() {
   void loadHistory()
 }
 
+async function cancelPayroll(row: HistoryRow) {
+  const period = periodLabel(row.year, row.month)
+  const ok = await confirmAppModal({
+    type: 'WARNING',
+    title: 'Annuler la paie',
+    message: `Annuler le paiement de ${row.employee.fullName} (${period}) ? ${formatFcfa(row.netFcfa)} seront remis en caisse et l'employé réapparaîtra dans la paie de ${period}.`,
+    confirmLabel: 'Annuler la paie',
+    cancelLabel: 'Retour',
+  })
+  if (!ok) return
+  cancellingId.value = row.id
+  try {
+    await api.post(`/admin/payroll/${row.id}/cancel`)
+    await loadHistory()
+    emit('cancelled')
+    await showSuccessModal('Paie annulée', `Le paiement de ${row.employee.fullName} (${period}) a été annulé.`)
+  } catch (error) {
+    await showApiErrorModal(error, "Impossible d'annuler la paie.")
+  } finally {
+    cancellingId.value = null
+  }
+}
+
 onMounted(loadHistory)
 
 defineExpose({ reload: loadHistory })
@@ -173,6 +200,7 @@ defineExpose({ reload: loadHistory })
             <th>Salaire brut</th>
             <th>Avance déduite</th>
             <th>Net versé</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -190,6 +218,17 @@ defineExpose({ reload: loadHistory })
               <span v-else>—</span>
             </td>
             <td class="num-strong">{{ formatFcfa(row.netFcfa) }}</td>
+            <td>
+              <UiButton
+                size="sm"
+                variant="danger"
+                :icon="Undo2"
+                :disabled="cancellingId !== null"
+                @click="cancelPayroll(row)"
+              >
+                Annuler la paie
+              </UiButton>
+            </td>
           </tr>
         </tbody>
         <tfoot>
@@ -201,6 +240,7 @@ defineExpose({ reload: loadHistory })
               <span v-else>—</span>
             </td>
             <td class="num-strong">{{ formatFcfa(totals.net) }}</td>
+            <td></td>
           </tr>
         </tfoot>
       </table>

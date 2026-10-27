@@ -163,16 +163,20 @@ async function loadAdvances() {
   }
 }
 
+let loadSeq = 0
+
 async function loadPayroll() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const [year, month] = periodInput.value.split('-').map(Number)
     const { data } = await api.get<PayrollResponse>('/admin/payroll', {
       params: Number.isFinite(year) && Number.isFinite(month) ? { year, month } : undefined,
     })
-    payload.value = data
+    // Changement de mois rapide : seule la dernière réponse s'affiche.
+    if (seq === loadSeq) payload.value = data
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -422,7 +426,11 @@ onMounted(reloadPayrollData)
       </UiCard>
     </template>
 
-    <AdminPayrollHistoriquePanel v-else-if="activeTab === 'historique'" ref="historiquePanelRef" />
+    <AdminPayrollHistoriquePanel
+      v-else-if="activeTab === 'historique'"
+      ref="historiquePanelRef"
+      @cancelled="reloadPayrollData"
+    />
     <div v-else-if="activeTab === 'avances'" class="salary-advances-admin">
       <p class="salary-advances-admin__hint">
         Les avances en attente sont automatiquement déduites au moment de la validation de la paie.

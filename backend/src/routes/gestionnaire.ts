@@ -77,6 +77,7 @@ import {
   listPaidPayrollExpenseCores,
   payrollExpenseMutationBlockedMessage,
 } from "../lib/payroll-expenses.js";
+import { cancelPaidPayrollById } from "../lib/payroll-cancel.js";
 import {
   deductPendingAdvancesForPayroll,
   salaryAdvanceInclude,
@@ -1342,6 +1343,15 @@ router.post("/payroll/:id/pay", async (req, res) => {
       pendingAdvancesFcfa: pendingMap.get(updated.employeeId) ?? 0,
     }),
   );
+});
+
+router.post("/payroll/:id/cancel", async (req, res) => {
+  if (!canViewEmployeeCompensation(req.user!.role)) {
+    return res.status(403).json({ error: "Accès aux salaires non autorisé." });
+  }
+  const result = await cancelPaidPayrollById(String(req.params.id), req.user!.id);
+  if (result.status !== 200) return res.status(result.status).json({ error: result.error });
+  return res.json({ ok: true, year: result.year, month: result.month });
 });
 
 router.get("/salary-advances", async (req, res) => {

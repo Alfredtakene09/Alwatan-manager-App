@@ -48,7 +48,8 @@ type PayrollResponse = {
   rows: PayrollRow[]
 }
 
-type StatusFilter = 'all' | 'unpaid' | 'PAID' | 'PENDING' | 'LATE'
+/** Les fiches payées quittent la liste du mois : elles sont dans l'Historique. */
+type StatusFilter = 'unpaid' | 'PENDING' | 'LATE'
 
 const props = defineProps<{
   year: number
@@ -105,10 +106,8 @@ const serviceOptions = computed(() => {
 const filteredRows = computed(() => {
   const q = `${searchQuery.value} ${tableFilter.value}`.trim().toLowerCase()
   return rows.value.filter((row) => {
-    if (statusFilter.value === 'unpaid' && row.status === 'PAID') return false
-    if (statusFilter.value !== 'all' && statusFilter.value !== 'unpaid') {
-      if (row.status !== statusFilter.value) return false
-    }
+    if (row.status === 'PAID') return false
+    if (statusFilter.value !== 'unpaid' && row.status !== statusFilter.value) return false
     if (serviceFilter.value !== 'all' && row.employee.service !== serviceFilter.value) {
       return false
     }
@@ -148,15 +147,19 @@ const isComplete = computed(
 const unpaidNetTotal = computed(() => payload.value?.unpaidNetFcfa ?? 0)
 const canUnprepare = computed(() => payload.value?.prepared && paidCount.value === 0)
 
+let loadSeq = 0
+
 async function loadPayroll() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const { data } = await api.get<PayrollResponse>('/gestionnaire/payroll', {
       params: { year: props.year, month: props.month },
     })
-    payload.value = data
+    // Changement de mois rapide : seule la dernière réponse s'affiche.
+    if (seq === loadSeq) payload.value = data
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -417,10 +420,8 @@ defineExpose({ reload: loadPayroll })
         <button
           v-for="option in [
             { id: 'unpaid', label: 'Non payés' },
-            { id: 'all', label: 'Tous' },
             { id: 'PENDING', label: 'En attente' },
             { id: 'LATE', label: 'En retard' },
-            { id: 'PAID', label: 'Payés' },
           ]"
           :key="option.id"
           type="button"
