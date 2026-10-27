@@ -7,6 +7,7 @@ export type AppUserRole =
   | 'LABORANTIN'
   | 'SOIGNANT'
   | 'PHARMACIEN'
+  | 'GESTIONNAIRE_PHARMACIE'
   | 'LOGISTIQUE'
 
 export type SessionUser = {
@@ -31,6 +32,7 @@ export const ROLE_LABELS: Record<AppUserRole, string> = {
   LABORANTIN: 'Laborantin',
   SOIGNANT: 'Soignant',
   PHARMACIEN: 'Pharmacien',
+  GESTIONNAIRE_PHARMACIE: 'Gestionnaire pharmacie',
   LOGISTIQUE: 'Logistique',
 }
 
@@ -42,6 +44,7 @@ export const MANAGEABLE_USER_ROLES = [
   'LABORANTIN',
   'SOIGNANT',
   'PHARMACIEN',
+  'GESTIONNAIRE_PHARMACIE',
   'LOGISTIQUE',
 ] as const satisfies readonly AppUserRole[]
 
@@ -62,13 +65,13 @@ export type AdminAssignableUserRole = (typeof ADMIN_ASSIGNABLE_USER_ROLES)[numbe
 export const DIRECTION_GESTIONNAIRE_ROLES: AppUserRole[] = ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE']
 
 export const MODULE_ACCESS: Record<string, AppUserRole[]> = {
-  dashboard: ['ADMIN', 'RECEPTIONNISTE', 'MEDECIN', 'COMPTABLE', 'LABORANTIN', 'PHARMACIEN', 'GESTIONNAIRE', 'LOGISTIQUE', 'SOIGNANT'],
+  dashboard: ['ADMIN', 'RECEPTIONNISTE', 'MEDECIN', 'COMPTABLE', 'LABORANTIN', 'PHARMACIEN', 'GESTIONNAIRE_PHARMACIE', 'GESTIONNAIRE', 'LOGISTIQUE', 'SOIGNANT'],
   reception: ['ADMIN', 'RECEPTIONNISTE', 'COMPTABLE', 'GESTIONNAIRE'],
   consultation: ['ADMIN', 'MEDECIN', 'COMPTABLE', 'GESTIONNAIRE'],
   comptabilite: [...DIRECTION_GESTIONNAIRE_ROLES],
   hospitalisation: ['ADMIN', 'RECEPTIONNISTE', 'COMPTABLE', 'GESTIONNAIRE'],
   'bloc-salles': ['ADMIN', 'COMPTABLE', 'SOIGNANT', 'GESTIONNAIRE'],
-  pharmacie: ['ADMIN', 'PHARMACIEN', 'COMPTABLE', 'GESTIONNAIRE'],
+  pharmacie: ['ADMIN', 'PHARMACIEN', 'GESTIONNAIRE_PHARMACIE', 'COMPTABLE', 'GESTIONNAIRE'],
   logistique: ['ADMIN', 'LOGISTIQUE', 'COMPTABLE', 'GESTIONNAIRE'],
   laboratoire: ['ADMIN', 'LABORANTIN', 'COMPTABLE', 'GESTIONNAIRE'],
   'dossier-patient': ['ADMIN', 'MEDECIN', 'LABORANTIN', 'COMPTABLE', 'GESTIONNAIRE'],
@@ -129,6 +132,12 @@ export function canManagePharmacyCatalog(role: AppUserRole) {
   return PHARMACY_CATALOG_ROLES.includes(role)
 }
 
+/**
+ * Gestion complète du module pharmacie (catégories, fournisseurs, rapports, ventes de tous).
+ * Le gestionnaire pharmacie a ces droits, limités à son module.
+ */
+export const PHARMACY_MANAGEMENT_ROLES: AppUserRole[] = [...DIRECTION_GESTIONNAIRE_ROLES, 'GESTIONNAIRE_PHARMACIE']
+
 /** Écriture catalogue pharmacie (aligné sur le backend — sans filtre UI granulaire). */
 export function canWritePharmacyCatalog(user: SessionUser | null | undefined) {
   if (!user?.role) return false
@@ -168,6 +177,8 @@ export function getDefaultRoute(role: AppUserRole) {
       return '/bloc-salles/tableau-de-bord'
     case 'PHARMACIEN':
       return '/pharmacie/caisse'
+    case 'GESTIONNAIRE_PHARMACIE':
+      return '/pharmacie/tableau-de-bord'
     case 'LOGISTIQUE':
       return '/logistique/tableau-de-bord'
     case 'LABORANTIN':

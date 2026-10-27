@@ -29,7 +29,7 @@ import {
   Plus,
 } from '@lucide/vue'
 import type { AppUserRole } from './roles'
-import { canAccessModule, canManageLabStock, canManagePharmacyCatalog } from './roles'
+import { canAccessModule, canManageLabStock, canManagePharmacyCatalog, PHARMACY_MANAGEMENT_ROLES } from './roles'
 import { isUiActionAllowed } from './ui-actions'
 import {
   EXAM_CATALOG_KIND_CONFIG,
@@ -98,7 +98,7 @@ export type NavConfig = {
   sections: NavSection[]
 }
 
-const pharmacyManagementRoles: AppUserRole[] = ['ADMIN', 'COMPTABLE', 'GESTIONNAIRE']
+const pharmacyManagementRoles: AppUserRole[] = PHARMACY_MANAGEMENT_ROLES
 
 const pharmacyNavChildren: NavChildItem[] = [
   {
@@ -753,6 +753,7 @@ const NAV_BY_ROLE: Partial<Record<AppUserRole, NavSection[]>> = {
   COMPTABLE: directionNav,
   SOIGNANT: soignantNav,
   PHARMACIEN: pharmacienNav,
+  GESTIONNAIRE_PHARMACIE: pharmacienNav,
   LABORANTIN: laborantinNav,
   LOGISTIQUE: logistiqueNav,
 }
@@ -765,6 +766,7 @@ const SIDEBAR_TITLES: Record<AppUserRole, string> = {
   COMPTABLE: 'Direction',
   SOIGNANT: 'Soins',
   PHARMACIEN: 'Pharmacie',
+  GESTIONNAIRE_PHARMACIE: 'Pharmacie',
   LABORANTIN: 'Laboratoire',
   LOGISTIQUE: 'Logistique',
 }

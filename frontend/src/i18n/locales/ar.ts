@@ -2985,6 +2985,7 @@ export default {
     LABORANTIN: 'فني مختبر',
     SOIGNANT: 'ممرض',
     PHARMACIEN: 'صيدلي',
+    GESTIONNAIRE_PHARMACIE: 'مدير الصيدلية',
     LOGISTIQUE: 'لوجستيك',
   },
   nav: {

@@ -8,6 +8,7 @@ export const UI_ACTION_TARGET_ROLES = [
   "LABORANTIN",
   "SOIGNANT",
   "PHARMACIEN",
+  "GESTIONNAIRE_PHARMACIE",
   "LOGISTIQUE",
 ] as const satisfies readonly AppUserRole[];
 
@@ -54,7 +55,7 @@ export type UiActionId = (typeof UI_ACTION_IDS)[number];
  * Pour ces actions, la liste enregistrée par rôle signifie « activé » au lieu de « masqué ».
  */
 export const UI_ACTION_DEFAULT_ENABLED_ROLES: Partial<Record<UiActionId, readonly UiActionTargetRole[]>> = {
-  "pharmacie.purchase_invoice": ["GESTIONNAIRE"],
+  "pharmacie.purchase_invoice": ["GESTIONNAIRE", "GESTIONNAIRE_PHARMACIE"],
 };
 
 function isVisibleByDefault(role: UiActionTargetRole, actionId: UiActionId) {

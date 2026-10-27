@@ -2986,6 +2986,7 @@ export default {
     LABORANTIN: 'Lab technician',
     SOIGNANT: 'Caregiver',
     PHARMACIEN: 'Pharmacist',
+    GESTIONNAIRE_PHARMACIE: 'Pharmacy manager',
     LOGISTIQUE: 'Logistics',
   },
   nav: {

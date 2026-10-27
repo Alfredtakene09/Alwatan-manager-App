@@ -2854,6 +2854,7 @@ export default {
     LABORANTIN: 'Laborantin',
     SOIGNANT: 'Soignant',
     PHARMACIEN: 'Pharmacien',
+    GESTIONNAIRE_PHARMACIE: 'Gestionnaire pharmacie',
     LOGISTIQUE: 'Logistique',
   },
   nav: {

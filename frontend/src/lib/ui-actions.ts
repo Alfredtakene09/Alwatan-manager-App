@@ -8,6 +8,7 @@ export const UI_ACTION_TARGET_ROLES = [
   'LABORANTIN',
   'SOIGNANT',
   'PHARMACIEN',
+  'GESTIONNAIRE_PHARMACIE',
   'LOGISTIQUE',
 ] as const satisfies readonly AppUserRole[]
 
@@ -224,15 +225,15 @@ export const UI_ACTIONS: UiActionDef[] = [
     id: 'pharmacie.catalog',
     group: 'pharmacy',
     label: 'Catalogue pharmacie (catégories, fournisseurs, produits)',
-    defaultRoles: DIRECTION_STAFF,
+    defaultRoles: ['GESTIONNAIRE', 'GESTIONNAIRE_PHARMACIE'],
   },
   {
     id: 'pharmacie.purchase_invoice',
     group: 'pharmacy',
     label: 'Ajout de produits par facture',
-    hint: 'Entre le stock et sort le prix d’achat de la caisse. Désactivé par défaut sauf Gestionnaire.',
-    defaultRoles: ['GESTIONNAIRE', 'PHARMACIEN'],
-    defaultEnabledRoles: ['GESTIONNAIRE'],
+    hint: 'Entre le stock et sort le prix d’achat de la caisse. Désactivé par défaut sauf Gestionnaire et Gestionnaire pharmacie.',
+    defaultRoles: ['GESTIONNAIRE', 'GESTIONNAIRE_PHARMACIE', 'PHARMACIEN'],
+    defaultEnabledRoles: ['GESTIONNAIRE', 'GESTIONNAIRE_PHARMACIE'],
   },
   {
     id: 'users.create',
