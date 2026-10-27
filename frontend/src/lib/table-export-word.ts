@@ -7,6 +7,7 @@ import {
   ImageRun,
   Packer,
   PageNumber,
+  PageOrientation,
   Paragraph,
   ShadingType,
   Table,
@@ -263,7 +264,12 @@ function captionParagraphs(captionRows: ExportCaptionRow[] | undefined): Paragra
 export function buildWordDocument(
   title: string,
   sheets: WordSheetDef[],
-  options?: { headerLines?: string[]; creator?: string; logo?: WordLogo | null },
+  options?: {
+    headerLines?: string[]
+    creator?: string
+    logo?: WordLogo | null
+    orientation?: 'portrait' | 'landscape'
+  },
 ): Document {
   const children: Array<Paragraph | Table> = [
     ...clinicHeaderBlocks(title, options?.headerLines ?? [], options?.logo),
@@ -302,7 +308,15 @@ export function buildWordDocument(
       {
         properties: {
           page: {
-            size: { width: 11906, height: 16838 },
+            // docx inverse largeur / hauteur en paysage.
+            size: {
+              width: 11906,
+              height: 16838,
+              orientation:
+                options?.orientation === 'landscape'
+                  ? PageOrientation.LANDSCAPE
+                  : PageOrientation.PORTRAIT,
+            },
             margin: { top: 720, right: 720, bottom: 720, left: 720 },
           },
         },

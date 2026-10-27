@@ -227,6 +227,21 @@ describe('export table Word', () => {
     assert.ok(paracetamolPos >= 0 && totalsPos > paracetamolPos)
   })
 
+  it('met la page en paysage quand on le demande', async () => {
+    const sheet = { name: 'Historique', columns: [{ header: 'Employé', value: (r: { n: string }) => r.n }], rows: [{ n: 'A' }] }
+    const pageSize = async (orientation?: 'portrait' | 'landscape') => {
+      const doc = buildWordDocument('Historique', [sheet], { orientation })
+      const xml = await JSZip.loadAsync(Buffer.from(await Packer.toBuffer(doc))).then((zip) =>
+        zip.file('word/document.xml')?.async('string'),
+      )
+      return xml?.match(/<w:pgSz [^>]*\/>/)?.[0] ?? ''
+    }
+    const landscape = await pageSize('landscape')
+    assert.match(landscape, /w:orient="landscape"/)
+    assert.match(landscape, /w:w="16838"/)
+    assert.doesNotMatch(await pageSize(), /landscape/)
+  })
+
   it('supporte un équivalent multi-feuilles (plusieurs sections)', async () => {
     const doc = buildWordDocument('Rapport logistique', [
       { name: 'KPI', columns: [{ header: 'Indicateur', value: (r: { label: string }) => r.label }], rows: [{ label: 'Articles' }] },

@@ -11,6 +11,32 @@ export function currentPayrollPeriod(now = new Date()) {
   return { year: now.getFullYear(), month: now.getMonth() + 1 };
 }
 
+/** « 2026-10 » → { year: 2026, month: 10 } ; null si invalide. */
+export function parseYearMonth(value: unknown): { year: number; month: number } | null {
+  if (typeof value !== "string") return null;
+  const match = /^(\d{4})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return null;
+  return { year, month };
+}
+
+/** Paies dont la période (mois de paie) est comprise entre deux mois inclus. */
+export function payrollMonthRangeWhere(
+  from: { year: number; month: number },
+  to: { year: number; month: number },
+): Prisma.EmployeePayrollWhereInput {
+  const [start, end] =
+    from.year * 12 + from.month <= to.year * 12 + to.month ? [from, to] : [to, from];
+  return {
+    AND: [
+      { OR: [{ year: { gt: start.year } }, { year: start.year, month: { gte: start.month } }] },
+      { OR: [{ year: { lt: end.year } }, { year: end.year, month: { lte: end.month } }] },
+    ],
+  };
+}
+
 export function payrollPeriodBounds(year: number, month: number) {
   const start = new Date(year, month - 1, 1);
   const end = new Date(year, month, 1);

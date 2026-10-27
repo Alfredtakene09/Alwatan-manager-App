@@ -3,7 +3,6 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { CalendarRange, Search, Undo2, X } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
-import { formatShortDate } from '@/lib/admin-dashboard'
 import { confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
@@ -40,26 +39,18 @@ const emit = defineEmits<{ cancelled: [] }>()
 const rows = ref<HistoryRow[]>([])
 const loading = ref(false)
 const cancellingId = ref<string | null>(null)
-const dateFrom = ref('')
-const dateTo = ref('')
+/** Mois de paie « AAAA-MM » : historique d'un mois ou d'une plage de mois. */
+const monthFrom = ref('')
+const monthTo = ref('')
 const searchQuery = ref('')
 /** Filtre par poste ('' = tous) : tableau, totaux et exports. */
 const jobTitleFilter = ref('')
 const categoryFilter = ref<StaffCategoryFilter>('')
 
-const hasRange = computed(() => !!dateFrom.value && !!dateTo.value)
+const hasRange = computed(() => !!monthFrom.value && !!monthTo.value)
 
 function periodLabel(year: number, month: number) {
   return new Date(year, month - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
-}
-
-/** Horodatage → jour local (et non le jour UTC des 10 premiers caractères). */
-function formatPaidAt(iso: string) {
-  const date = new Date(iso)
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  return formatShortDate(`${y}-${m}-${d}`)
 }
 
 function normalizeText(value: string) {
@@ -110,46 +101,59 @@ const totals = computed(() =>
   ),
 )
 
-const description = computed(() =>
-  hasRange.value
-    ? `Salaires payés du ${formatShortDate(dateFrom.value)} au ${formatShortDate(dateTo.value)}`
-    : 'Les 100 derniers salaires payés',
-)
+function monthInputLabel(value: string) {
+  const [year, month] = value.split('-').map(Number)
+  return periodLabel(year, month)
+}
+
+/** « de septembre » / « d'octobre » (élision devant voyelle). */
+function deMonth(label: string) {
+  return /^[aeiouyéè]/i.test(label) ? `d'${label}` : `de ${label}`
+}
+
+const description = computed(() => {
+  if (!hasRange.value) return 'Les 100 derniers salaires payés'
+  const from = monthInputLabel(monthFrom.value)
+  if (monthFrom.value === monthTo.value) return `Salaires ${deMonth(from)}`
+  return `Salaires ${deMonth(from)} à ${monthInputLabel(monthTo.value)}`
+})
+
+let loadSeq = 0
 
 async function loadHistory() {
-  if (hasRange.value && dateFrom.value > dateTo.value) dateTo.value = dateFrom.value
+  if (hasRange.value && monthFrom.value > monthTo.value) monthTo.value = monthFrom.value
+  const seq = ++loadSeq
   loading.value = true
   try {
     const { data } = await api.get<{ rows: HistoryRow[] }>('/admin/payroll/history', {
-      params: hasRange.value ? { from: dateFrom.value, to: dateTo.value } : undefined,
+      params: hasRange.value ? { fromMonth: monthFrom.value, toMonth: monthTo.value } : undefined,
     })
-    rows.value = data.rows
+    // Changement de mois rapide : seule la dernière réponse s'affiche.
+    if (seq === loadSeq) rows.value = data.rows
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
-function onDateChange() {
-  if (!dateFrom.value && !dateTo.value) return loadHistory()
-  if (!dateFrom.value) dateFrom.value = dateTo.value
-  if (!dateTo.value) dateTo.value = dateFrom.value
+function onMonthChange() {
+  if (!monthFrom.value && !monthTo.value) return loadHistory()
+  if (!monthFrom.value) monthFrom.value = monthTo.value
+  if (!monthTo.value) monthTo.value = monthFrom.value
   void loadHistory()
 }
 
-function clearDates() {
-  dateFrom.value = ''
-  dateTo.value = ''
+function clearMonths() {
+  monthFrom.value = ''
+  monthTo.value = ''
   void loadHistory()
 }
 
 /** Export : un paiement (un employé) par ligne, dans l'ordre affiché. */
 const historyExportColumns: ExportColumn<HistoryRow>[] = [
   { header: 'N°', value: (r) => filteredRows.value.indexOf(r) + 1 },
-  { header: 'Date de paiement', value: (r) => (r.paidAt ? formatPaidAt(r.paidAt) : '—') },
   { header: 'Période', value: (r) => periodLabel(r.year, r.month) },
   { header: 'Employé', value: (r) => r.employee.fullName },
   { header: 'Poste', value: (r) => r.employee.jobTitle ?? '—' },
-  { header: 'Service', value: (r) => r.employee.service },
   { header: 'Salaire brut', value: (r) => formatFcfa(r.grossFcfa) },
   { header: 'Avance déduite', value: (r) => (r.advanceDeductionFcfa > 0 ? formatFcfa(r.advanceDeductionFcfa) : '—') },
   { header: 'Net versé', value: (r) => formatFcfa(r.netFcfa) },
@@ -157,6 +161,7 @@ const historyExportColumns: ExportColumn<HistoryRow>[] = [
 
 function historyExportOptions() {
   return {
+    orientation: 'landscape' as const,
     captionRows: [
       { label: 'Période', value: description.value },
       { label: 'Catégorie', value: staffCategoryFilterLabel(categoryFilter.value) },
@@ -238,35 +243,35 @@ defineExpose({ reload: loadHistory })
       <div class="history-dates">
         <CalendarRange :size="16" class="history-dates__icon" />
         <label class="history-dates__field">
-          <span>Du</span>
+          <span>De</span>
           <input
-            v-model="dateFrom"
-            type="date"
+            v-model="monthFrom"
+            type="month"
             class="history-input"
-            :max="dateTo || undefined"
-            aria-label="Payé à partir du"
-            @change="onDateChange"
+            :max="monthTo || undefined"
+            aria-label="Mois de paie de début"
+            @change="onMonthChange"
           />
         </label>
         <label class="history-dates__field">
-          <span>Au</span>
+          <span>À</span>
           <input
-            v-model="dateTo"
-            type="date"
+            v-model="monthTo"
+            type="month"
             class="history-input"
-            :min="dateFrom || undefined"
-            aria-label="Payé jusqu'au"
-            @change="onDateChange"
+            :min="monthFrom || undefined"
+            aria-label="Mois de paie de fin"
+            @change="onMonthChange"
           />
         </label>
         <UiButton
-          v-if="dateFrom || dateTo"
+          v-if="monthFrom || monthTo"
           size="sm"
           variant="ghost"
           :icon="X"
-          title="Effacer les dates"
-          aria-label="Effacer les dates"
-          @click="clearDates"
+          title="Effacer les mois"
+          aria-label="Effacer les mois"
+          @click="clearMonths"
         />
         <ExportButtons
           :disabled="loading || !filteredRows.length"
@@ -286,11 +291,9 @@ defineExpose({ reload: loadHistory })
       <table class="admin-table">
         <thead>
           <tr>
-            <th>Date de paiement</th>
             <th>Période</th>
             <th>Employé</th>
             <th>Poste</th>
-            <th>Service</th>
             <th>Salaire brut</th>
             <th>Avance déduite</th>
             <th>Net versé</th>
@@ -299,11 +302,9 @@ defineExpose({ reload: loadHistory })
         </thead>
         <tbody>
           <tr v-for="row in filteredRows" :key="row.id">
-            <td>{{ row.paidAt ? formatPaidAt(row.paidAt) : '—' }}</td>
             <td>{{ periodLabel(row.year, row.month) }}</td>
             <td>{{ row.employee.fullName }}</td>
             <td>{{ row.employee.jobTitle ?? '—' }}</td>
-            <td>{{ row.employee.service }}</td>
             <td>{{ formatFcfa(row.grossFcfa) }}</td>
             <td>
               <span v-if="row.advanceDeductionFcfa > 0" class="advance-deduct">
@@ -327,7 +328,7 @@ defineExpose({ reload: loadHistory })
         </tbody>
         <tfoot>
           <tr>
-            <td colspan="5">{{ filteredRows.length }} paiement(s)</td>
+            <td colspan="3">{{ filteredRows.length }} paiement(s)</td>
             <td>{{ formatFcfa(totals.gross) }}</td>
             <td>
               <span v-if="totals.advances > 0" class="advance-deduct">-{{ formatFcfa(totals.advances) }}</span>
