@@ -307,13 +307,28 @@ describe("Salaires — avances déduites et historique", () => {
   });
 
   it("déduit les avances, plafonnées au salaire, à la validation", async () => {
+    // Une avance se retient sur la paie du mois suivant sa prise : on les date du mois précédent.
+    const now = new Date();
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 15);
+    const lastMonthDate = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, "0")}-15`;
     for (const [employeeId, amountFcfa] of [
       [fx.employees.salaried.id, 30_000],
       [fx.employees.bigAdvanceEmployee.id, 150_000],
     ] as const) {
-      const res = await api.admin.post("/admin/salary-advances", { employeeId, amountFcfa, businessDate: today });
+      const res = await api.admin.post("/admin/salary-advances", {
+        employeeId,
+        amountFcfa,
+        businessDate: lastMonthDate,
+      });
       assert.equal(res.status, 201, JSON.stringify(res.data));
     }
+    // Avance prise ce mois-ci : elle attend la paie du mois prochain.
+    const thisMonth = await api.admin.post("/admin/salary-advances", {
+      employeeId: fx.employees.salaried.id,
+      amountFcfa: 10_000,
+      businessDate: today,
+    });
+    assert.equal(thisMonth.status, 201, JSON.stringify(thisMonth.data));
 
     const small = await payrollRow(fx.employees.salaried.id);
     assert.equal(small.pendingAdvancesFcfa, 30_000);
@@ -331,6 +346,11 @@ describe("Salaires — avances déduites et historique", () => {
     });
     assert.equal(remaining?.remainingFcfa, 50_000);
     assert.equal(remaining?.status, "PENDING");
+    const nextMonthAdvance = await db.salaryAdvance.findFirst({
+      where: { employeeId: fx.employees.salaried.id, amountFcfa: 10_000 },
+    });
+    assert.equal(nextMonthAdvance?.remainingFcfa, 10_000, "avance du mois non retenue");
+    assert.equal(nextMonthAdvance?.status, "PENDING");
   });
 
   it("retrouve les paies validées dans l'historique filtré par date", async () => {
