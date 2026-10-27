@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import JSZip from 'jszip'
 import { Packer } from 'docx'
-import { exportableRows, isExportableRow, rowsToHtmlTable, rowsToMatrix, sectionsToHtml, sectionsToMatrix, uniqueExcelSheetNames, type ExportColumn } from './table-export-html.ts'
+import { exportableRows, isExportableRow, rowsToHtmlTable, rowsToMatrix, sectionsToHtml, sectionsToMatrix, uniqueExcelSheetNames, withLineNumberColumn, type ExportColumn } from './table-export-html.ts'
 import { buildWordDocument } from './table-export-word.ts'
 import { isUiActionAllowed } from './ui-actions.ts'
 
@@ -225,6 +225,38 @@ describe('export table Word', () => {
     const paracetamolPos = xml.indexOf('Paracétamol')
     const totalsPos = xml.indexOf('Nombre de fiches')
     assert.ok(paracetamolPos >= 0 && totalsPos > paracetamolPos)
+  })
+
+  it('élargit la colonne des noms et garde « # » étroite', async () => {
+    const doc = buildWordDocument('Employés', [
+      {
+        name: 'Employés',
+        columns: [
+          { header: 'Nom', value: (r: { n: string }) => r.n, widthWeight: 2.5 },
+          { header: 'Poste', value: () => 'Infirmier' },
+          { header: 'Services', value: () => '—' },
+        ],
+        rows: [{ n: 'ABDALLAH FANTOUGOU' }],
+      },
+    ])
+    const xml = await JSZip.loadAsync(Buffer.from(await Packer.toBuffer(doc))).then((zip) =>
+      zip.file('word/document.xml')?.async('string'),
+    )
+    const grid = xml?.match(/<w:tblGrid>(.*?)<\/w:tblGrid>/g)?.at(-1) ?? ''
+    const widths = [...grid.matchAll(/w:w="(\d+)"/g)].map((m) => Number(m[1]))
+    assert.equal(widths.length, 4)
+    assert.ok(widths[1] > widths[2] * 2, `nom ${widths[1]} vs poste ${widths[2]}`)
+    assert.ok(widths[0] < widths[2], '« # » plus étroite')
+  })
+
+  it('ajoute la colonne N° pour Excel', () => {
+    const rows = [{ n: 'A' }, { n: 'B' }]
+    const columns = withLineNumberColumn([{ header: 'Nom', value: (r: { n: string }) => r.n }], rows)
+    assert.deepEqual(rowsToMatrix(columns, rows), [
+      ['N°', 'Nom'],
+      ['1', 'A'],
+      ['2', 'B'],
+    ])
   })
 
   it('met la page en paysage quand on le demande', async () => {

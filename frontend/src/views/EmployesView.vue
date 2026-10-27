@@ -33,6 +33,7 @@ import {
 import { employeeNeedsAppAccount, isHiddenPlatformAdminEmployee, isHiddenPlatformAdminJobTitle } from '@/lib/employee-app-account'
 import { inferIsMedecinFromJobTitle } from '@/lib/doctor-job-title'
 import { exportBasename, exportTablePdf, exportTableWord, exportWorkbook, type ExportColumn } from '@/lib/table-export'
+import { withLineNumberColumn } from '@/lib/table-export-html'
 import { listEmployeeExportRows } from '@/lib/employee-list-export'
 import {
   DOCTOR_CATEGORY_OPTIONS,
@@ -450,20 +451,13 @@ const tableRows = computed(() => {
 type EmployeeExportRow = ReturnType<typeof toEmployeeExportRow>
 
 /** Colonnes d’export : salaire numérique seul (pas le libellé écran « Salaire + quota · … »). */
-const employeeExportColumns = computed<ExportColumn<EmployeeExportRow>[]>(() => {
-  const cols: ExportColumn<EmployeeExportRow>[] = [
-    { header: uiText('Nom'), value: (r) => r.name },
-    { header: uiText('Profil'), value: (r) => r.profileLabel },
-    { header: uiText('Poste'), value: (r) => r.jobTitle },
-    { header: uiText('Spécialité'), value: (r) => r.specialty },
-    { header: uiText('Services'), value: (r) => r.servicesLabel },
-  ]
-  if (canExportSalaries.value) {
-    cols.push({ header: uiText('Salaire'), value: (r) => r.salaryExportValue })
-  }
-  cols.push({ header: uiText('Statut'), value: (r) => r.statusLabel })
-  return cols
-})
+/** Numérotée automatiquement (« # ») ; nom élargi ; sans spécialité, salaire ni statut. */
+const employeeExportColumns = computed<ExportColumn<EmployeeExportRow>[]>(() => [
+  { header: uiText('Nom'), value: (r) => r.name, widthWeight: 2.5 },
+  { header: uiText('Profil'), value: (r) => r.profileLabel },
+  { header: uiText('Poste'), value: (r) => r.jobTitle },
+  { header: uiText('Services'), value: (r) => r.servicesLabel },
+])
 
 function employeeExportGrandTotals(totalCount: number, totalPayroll: number) {
   if (!canExportSalaries.value) {
@@ -489,14 +483,9 @@ function employeeExportPayload() {
   localeCode.value
   // Même périmètre que le tableau affiché (profil, poste, recherche), un employé par ligne.
   const list = listEmployeeExportRows(tableRows.value, employeesById.value)
-  const lineNo = new Map(list.rows.map((row, index) => [row, index + 1]))
-  const columns: ExportColumn<EmployeeExportRow>[] = [
-    { header: uiText('N°'), value: (r) => lineNo.get(r) ?? '' },
-    ...employeeExportColumns.value,
-  ]
   return {
     rows: list.rows,
-    columns,
+    columns: employeeExportColumns.value,
     totalsRows: employeeExportGrandTotals(list.totalCount, list.totalPayroll),
     captionRows: [{ label: uiText('Périmètre'), value: employeeExportFilterCaption() }],
   }
@@ -515,7 +504,7 @@ function exportExcel() {
   exportWorkbook(exportBasename(uiText('Employés')), [
     {
       name: uiText('Employés'),
-      columns: payload.columns,
+      columns: withLineNumberColumn(payload.columns, payload.rows),
       rows: payload.rows,
       totalsRows: payload.totalsRows,
     },
@@ -1208,10 +1197,7 @@ onMounted(async () => {
                     <th>Nom</th>
                     <th>Profil</th>
                     <th>Poste</th>
-                    <th>Spécialité</th>
                     <th class="simple-table__grow">Services</th>
-                    <th v-if="canExportSalaries">Rémunération</th>
-                    <th>Statut</th>
                     <th class="simple-table__actions-head">Actions</th>
                   </tr>
                 </thead>
@@ -1221,20 +1207,9 @@ onMounted(async () => {
                     <td><span class="st-name">{{ row.name }}</span></td>
                     <td>{{ row.profileLabel }}</td>
                     <td>{{ row.jobTitle }}</td>
-                    <td>
-                      <span v-if="row.specialty === '—'" class="st-muted">—</span>
-                      <span v-else class="st-date">{{ row.specialty }}</span>
-                    </td>
                     <td class="simple-table__grow">
                       <span v-if="row.servicesLabel === '—'" class="st-muted">—</span>
                       <span v-else class="st-date">{{ row.servicesLabel }}</span>
-                    </td>
-                    <td v-if="canExportSalaries">
-                      <span v-if="row.compensationLabel === '—'" class="st-muted">—</span>
-                      <span v-else class="st-date">{{ row.compensationLabel }}</span>
-                    </td>
-                    <td>
-                      <span class="st-badge" :class="`st-badge--${row.statusVariant}`">{{ row.statusLabel }}</span>
                     </td>
                     <td class="simple-table__actions">
                       <StCatalogActions

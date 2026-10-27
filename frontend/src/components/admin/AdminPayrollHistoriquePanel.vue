@@ -6,6 +6,7 @@ import { formatFcfa } from '@/lib/roles'
 import { confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { withLineNumberColumn } from '@/lib/table-export-html'
 import {
   STAFF_CATEGORY_FILTER_OPTIONS,
   matchesStaffCategory,
@@ -150,9 +151,8 @@ function clearMonths() {
 
 /** Export : un paiement (un employé) par ligne, dans l'ordre affiché. */
 const historyExportColumns: ExportColumn<HistoryRow>[] = [
-  { header: 'N°', value: (r) => filteredRows.value.indexOf(r) + 1 },
   { header: 'Période', value: (r) => periodLabel(r.year, r.month) },
-  { header: 'Employé', value: (r) => r.employee.fullName },
+  { header: 'Employé', value: (r) => r.employee.fullName, widthWeight: 2 },
   { header: 'Poste', value: (r) => r.employee.jobTitle ?? '—' },
   { header: 'Salaire brut', value: (r) => formatFcfa(r.grossFcfa) },
   { header: 'Avance déduite', value: (r) => (r.advanceDeductionFcfa > 0 ? formatFcfa(r.advanceDeductionFcfa) : '—') },
@@ -181,9 +181,14 @@ function exportHistoryPdf() {
 }
 
 function exportHistoryExcel() {
-  exportTableExcel('Historique des paiements', historyExportColumns, filteredRows.value, {
-    totalsRows: historyExportOptions().totalsRows,
-  })
+  exportTableExcel(
+    'Historique des paiements',
+    withLineNumberColumn(historyExportColumns, filteredRows.value),
+    filteredRows.value,
+    {
+      totalsRows: historyExportOptions().totalsRows,
+    },
+  )
 }
 
 function exportHistoryWord() {
