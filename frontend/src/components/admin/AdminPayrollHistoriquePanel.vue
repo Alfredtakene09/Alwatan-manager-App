@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { CalendarRange, Search, Undo2, X } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
@@ -30,6 +30,8 @@ const cancellingId = ref<string | null>(null)
 const dateFrom = ref('')
 const dateTo = ref('')
 const searchQuery = ref('')
+/** Filtre par poste ('' = tous) : tableau, totaux et exports. */
+const jobTitleFilter = ref('')
 
 const hasRange = computed(() => !!dateFrom.value && !!dateTo.value)
 
@@ -50,19 +52,36 @@ function normalizeText(value: string) {
   return value.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 }
 
+function jobTitleOf(row: HistoryRow) {
+  return row.employee.jobTitle?.trim() || '—'
+}
+
+const jobTitleOptions = computed(() =>
+  [...new Set(rows.value.map(jobTitleOf))].sort((a, b) =>
+    a.localeCompare(b, 'fr', { sensitivity: 'base' }),
+  ),
+)
+
+// Poste absent de la période chargée : on revient à « Tous les postes ».
+watch(jobTitleOptions, (options) => {
+  if (jobTitleFilter.value && !options.includes(jobTitleFilter.value)) jobTitleFilter.value = ''
+})
+
 const filteredRows = computed(() => {
   const q = normalizeText(searchQuery.value.trim())
-  if (!q) return rows.value
-  return rows.value.filter((row) =>
-    normalizeText(
+  const jobTitle = jobTitleFilter.value
+  return rows.value.filter((row) => {
+    if (jobTitle && jobTitleOf(row) !== jobTitle) return false
+    if (!q) return true
+    return normalizeText(
       [
         row.employee.fullName,
         row.employee.jobTitle ?? '',
         row.employee.service,
         periodLabel(row.year, row.month),
       ].join(' '),
-    ).includes(q),
-  )
+    ).includes(q)
+  })
 })
 
 const totals = computed(() =>
@@ -123,7 +142,10 @@ const historyExportColumns: ExportColumn<HistoryRow>[] = [
 
 function historyExportOptions() {
   return {
-    captionRows: [{ label: 'Période', value: description.value }],
+    captionRows: [
+      { label: 'Période', value: description.value },
+      { label: 'Poste', value: jobTitleFilter.value || 'Tous les postes' },
+    ],
     totalsRows: [
       { label: 'Nombre de paiements', value: String(filteredRows.value.length) },
       { label: 'Total brut', value: formatFcfa(totals.value.gross) },
@@ -188,6 +210,10 @@ defineExpose({ reload: loadHistory })
           aria-label="Rechercher un paiement"
         />
       </div>
+      <select v-model="jobTitleFilter" class="history-input history-job-select" aria-label="Filtrer par poste">
+        <option value="">Tous les postes</option>
+        <option v-for="title in jobTitleOptions" :key="title" :value="title">{{ title }}</option>
+      </select>
       <div class="history-dates">
         <CalendarRange :size="16" class="history-dates__icon" />
         <label class="history-dates__field">
@@ -318,6 +344,11 @@ defineExpose({ reload: loadHistory })
 .history-input:focus {
   outline: none;
   border-color: var(--primary-400);
+}
+
+.history-job-select {
+  flex: 0 1 14rem;
+  min-width: 0;
 }
 
 .history-search {
