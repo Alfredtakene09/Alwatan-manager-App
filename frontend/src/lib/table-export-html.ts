@@ -7,6 +7,11 @@ export type ExportColumn<T> = {
   value: (row: T) => ExportCell
   /** Taille PDF du texte de la colonne quand la cellule contient plusieurs lignes. */
   fontSize?: number
+  /**
+   * Colonne élargie (ex. noms) : en PDF le texte n'est pas coupé, en Word la colonne
+   * prend ce poids relatif (1 par défaut, la colonne « # » vaut 0,5).
+   */
+  widthWeight?: number
 }
 
 export type ExportCaptionRow = { label: string; value: string }
@@ -57,6 +62,12 @@ export function escapeHtml(value: ExportCell): string {
 export function totalsToMatrix(totalsRows: ExportCaptionRow[] | undefined): string[][] {
   if (!totalsRows?.length) return []
   return [[], ...totalsRows.map((row) => [row.label, row.value])]
+}
+
+/** Excel n'a pas la colonne « # » automatique du PDF / Word : on l'ajoute en tête. */
+export function withLineNumberColumn<T>(columns: ExportColumn<T>[], rows: T[]): ExportColumn<T>[] {
+  const lineNo = new Map(rows.map((row, index) => [row, index + 1]))
+  return [{ header: 'N°', value: (row) => lineNo.get(row) ?? '' }, ...columns]
 }
 
 export function rowsToMatrix<T>(

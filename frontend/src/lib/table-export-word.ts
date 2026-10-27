@@ -87,14 +87,18 @@ function makeCell(
 
 function dataTable<T>(columns: ExportColumn<T>[], rows: T[], emptyLabel: string): Table {
   const colCount = columns.length + 1
-  const widthPct = 100 / colCount
+  // « # » étroite, colonnes élargies selon widthWeight, les autres à parts égales.
+  const weights = [0.5, ...columns.map((col) => col.widthWeight ?? 1)]
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
+  const pcts = weights.map((weight) => (weight / totalWeight) * 100)
+  const widthPct = pcts[0]
   const header = new TableRow({
     tableHeader: true,
     cantSplit: true,
     children: [
       makeCell('#', { bold: true, fill: '0F766E', color: 'FFFFFF', widthPct }),
-      ...columns.map((col) =>
-        makeCell(col.header, { bold: true, fill: '0F766E', color: 'FFFFFF', widthPct }),
+      ...columns.map((col, index) =>
+        makeCell(col.header, { bold: true, fill: '0F766E', color: 'FFFFFF', widthPct: pcts[index + 1] }),
       ),
     ],
   })
@@ -119,14 +123,16 @@ function dataTable<T>(columns: ExportColumn<T>[], rows: T[], emptyLabel: string)
             cantSplit: true,
             children: [
               makeCell(String(index + 1), { fill, widthPct, align: AlignmentType.CENTER }),
-              ...columns.map((col) => makeCell(cellText(col.value(row)), { fill, widthPct })),
+              ...columns.map((col, colIndex) =>
+                makeCell(cellText(col.value(row)), { fill, widthPct: pcts[colIndex + 1] }),
+              ),
             ],
           })
         })
 
   return new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
-    columnWidths: Array.from({ length: colCount }, () => Math.round(PAGE_WIDTH_DXA / colCount)),
+    columnWidths: pcts.map((pct) => Math.round((PAGE_WIDTH_DXA * pct) / 100)),
     rows: [header, ...body],
   })
 }

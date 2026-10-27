@@ -235,6 +235,14 @@ function drawClinicHeader(
   return y
 }
 
+/** Colonnes élargies (widthWeight > 1) : texte sur une ligne, la colonne prend la place nécessaire. */
+function wideColumnStyles(columns: ExportColumn<any>[]) {
+  const entries = columns.flatMap((col, index) =>
+    (col.widthWeight ?? 1) > 1 ? [[index + 1, { cellWidth: 'wrap' as const }] as const] : [],
+  )
+  return entries.length ? { columnStyles: Object.fromEntries(entries) } : {}
+}
+
 function applyCellFont(
   data: {
     section?: string
@@ -306,7 +314,7 @@ function drawTable<T>(
       ? {
           columnStyles: Object.fromEntries(columnWidths.map((cellWidth, index) => [index, { cellWidth }])),
         }
-      : {}),
+      : wideColumnStyles(columns)),
     didParseCell: (data) => applyCellFont(data, columns),
   })
   const tableY = lastTableY(doc, y)
