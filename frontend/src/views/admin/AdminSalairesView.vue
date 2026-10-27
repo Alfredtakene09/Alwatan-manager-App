@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Coins, Banknote, History, HandCoins, CheckCircle2, Clock, Search } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
-import { confirmAppModal } from '@/lib/api-modal-helper'
+import { confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
 import type { PayrollRow } from '@/lib/admin-dashboard'
 import { PAYROLL_STATUS_LABEL } from '@/lib/admin-dashboard'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
@@ -80,6 +80,8 @@ const rows = computed(() =>
 )
 
 const searchQuery = ref('')
+/** Filtre par poste ('' = tous) : liste et exports. */
+const jobTitleFilter = ref('')
 
 /** Une fiche validée quitte la liste du mois et reste consultable dans l'Historique. */
 const pendingRows = computed(() => rows.value.filter((row) => row.status !== 'PAID'))
@@ -91,14 +93,27 @@ function normalizeText(value: string) {
     .toLowerCase()
 }
 
+const jobTitleOptions = computed(() =>
+  [...new Set(pendingRows.value.map((row) => row.jobTitle?.trim() || '—'))].sort((a, b) =>
+    a.localeCompare(b, 'fr', { sensitivity: 'base' }),
+  ),
+)
+
+// Poste absent du mois choisi : on revient à « Tous les postes ».
+watch(jobTitleOptions, (options) => {
+  if (jobTitleFilter.value && !options.includes(jobTitleFilter.value)) jobTitleFilter.value = ''
+})
+
 const filteredRows = computed(() => {
   const q = normalizeText(searchQuery.value.trim())
-  if (!q) return pendingRows.value
-  return pendingRows.value.filter((row) =>
-    normalizeText(
+  const jobTitle = jobTitleFilter.value
+  return pendingRows.value.filter((row) => {
+    if (jobTitle && (row.jobTitle?.trim() || '—') !== jobTitle) return false
+    if (!q) return true
+    return normalizeText(
       [row.employeeName, row.jobTitle ?? '', PAYROLL_STATUS_LABEL[row.status], String(row.grossFcfa)].join(' '),
-    ).includes(q),
-  )
+    ).includes(q)
+  })
 })
 
 const paidCount = computed(() => rows.value.filter((row) => row.status === 'PAID').length)
@@ -201,22 +216,38 @@ async function payRow(row: (typeof rows.value)[number]) {
   avancesPanelRef.value?.reload()
 }
 
-async function payAllPending() {
-  const pending = pendingRows.value
-  if (!pending.length) return
+/** Paiement groupé : seulement après un filtre (poste ou recherche), sur les fiches affichées. */
+const isFiltered = computed(() => !!jobTitleFilter.value || !!searchQuery.value.trim())
+const payingFiltered = ref(false)
+
+async function payFilteredRows() {
+  const targets = filteredRows.value
+  if (!isFiltered.value || !targets.length) return
+  const net = targets.reduce((sum, row) => sum + row.netFcfa, 0)
+  const scope = jobTitleFilter.value ? `du poste « ${jobTitleFilter.value} »` : 'filtrées'
   const ok = await confirmAppModal({
     type: 'CONFIRM',
-    title: 'Valider la paie du mois',
-    message: `Confirmer le paiement de ${pending.length} salaire(s) en attente ?`,
-    confirmLabel: 'Tout valider',
+    title: 'Paiement groupé',
+    message: `Confirmer le paiement des ${targets.length} fiche(s) ${scope} pour ${periodLabel.value} (${formatFcfa(net)} net à verser) ?`,
+    confirmLabel: 'Tout payer',
   })
   if (!ok) return
-  for (const row of pending) {
-    await api.post(`/admin/payroll/${row.id}/pay`)
+  payingFiltered.value = true
+  let paid = 0
+  try {
+    for (const row of targets) {
+      await api.post(`/admin/payroll/${row.id}/pay`)
+      paid += 1
+    }
+    await showSuccessModal('Paiement groupé', `${paid} salaire(s) payé(s) pour ${periodLabel.value}.`)
+  } catch (error) {
+    await showApiErrorModal(error, `Paiement interrompu après ${paid} fiche(s) sur ${targets.length}.`)
+  } finally {
+    payingFiltered.value = false
+    await reloadPayrollData()
+    historiquePanelRef.value?.reload()
+    avancesPanelRef.value?.reload()
   }
-  await reloadPayrollData()
-  historiquePanelRef.value?.reload()
-  avancesPanelRef.value?.reload()
 }
 
 type PayrollExportRow = (typeof rows.value)[number]
@@ -231,33 +262,40 @@ const payrollExportColumns: ExportColumn<PayrollExportRow>[] = [
 ]
 
 function payrollExportTotals() {
-  const gross = rows.value.reduce((sum, row) => sum + row.grossFcfa, 0)
-  const advances = rows.value.reduce((sum, row) => sum + row.pendingAdvancesFcfa, 0)
-  const net = rows.value.reduce((sum, row) => sum + row.netFcfa, 0)
+  const gross = filteredRows.value.reduce((sum, row) => sum + row.grossFcfa, 0)
+  const advances = filteredRows.value.reduce((sum, row) => sum + row.pendingAdvancesFcfa, 0)
+  const net = filteredRows.value.reduce((sum, row) => sum + row.netFcfa, 0)
   return [
-    { label: 'Nombre de fiches', value: String(rows.value.length) },
+    { label: 'Nombre de fiches', value: String(filteredRows.value.length) },
     { label: 'Total brut', value: formatFcfa(gross) },
     { label: 'Total avances', value: formatFcfa(advances) },
     { label: 'Total net', value: formatFcfa(net) },
   ]
 }
 
+function payrollExportCaption() {
+  return [
+    { label: 'Période', value: periodLabel.value },
+    { label: 'Poste', value: jobTitleFilter.value || 'Tous les postes' },
+  ]
+}
+
 function exportPayrollPdf() {
-  exportTablePdf('Paie du mois', payrollExportColumns, rows.value, {
-    captionRows: [{ label: 'Période', value: periodLabel.value }],
+  exportTablePdf('Paie du mois', payrollExportColumns, filteredRows.value, {
+    captionRows: payrollExportCaption(),
     totalsRows: payrollExportTotals(),
   })
 }
 
 function exportPayrollExcel() {
-  exportTableExcel('Paie du mois', payrollExportColumns, rows.value, {
+  exportTableExcel('Paie du mois', payrollExportColumns, filteredRows.value, {
     totalsRows: payrollExportTotals(),
   })
 }
 
 function exportPayrollWord() {
-  void exportTableWord('Paie du mois', payrollExportColumns, rows.value, {
-    captionRows: [{ label: 'Période', value: periodLabel.value }],
+  void exportTableWord('Paie du mois', payrollExportColumns, filteredRows.value, {
+    captionRows: payrollExportCaption(),
     totalsRows: payrollExportTotals(),
   })
 }
@@ -279,8 +317,15 @@ onMounted(reloadPayrollData)
           class="salaires-month-input"
           aria-label="Période de paie"
         />
-        <ExportButtons :disabled="loading || !rows.length" @pdf="exportPayrollPdf" @excel="exportPayrollExcel" @word="exportPayrollWord" />
-        <UiButton :disabled="!pendingRows.length" @click="payAllPending">Valider la paie</UiButton>
+        <ExportButtons :disabled="loading || !filteredRows.length" @pdf="exportPayrollPdf" @excel="exportPayrollExcel" @word="exportPayrollWord" />
+        <UiButton
+          v-if="isFiltered"
+          variant="success"
+          :disabled="payingFiltered || loading || !filteredRows.length"
+          @click="payFilteredRows"
+        >
+          {{ payingFiltered ? 'Paiement…' : `Payer la sélection (${filteredRows.length})` }}
+        </UiButton>
       </template>
     </UiPageHeader>
 
@@ -362,15 +407,24 @@ onMounted(reloadPayrollData)
           <span>{{ paidCount }}/{{ totalCount }} employés payés ce mois</span>
         </div>
 
-        <div class="payroll-search">
-          <Search :size="16" class="payroll-search__icon" />
-          <input
-            v-model="searchQuery"
-            type="search"
-            class="payroll-search__input"
-            placeholder="Rechercher un employé, un poste…"
-            aria-label="Rechercher une fiche de paie"
-          />
+        <div class="payroll-filters-row">
+          <div class="payroll-search">
+            <Search :size="16" class="payroll-search__icon" />
+            <input
+              v-model="searchQuery"
+              type="search"
+              class="payroll-search__input"
+              placeholder="Rechercher un employé, un poste…"
+              aria-label="Rechercher une fiche de paie"
+            />
+          </div>
+          <select v-model="jobTitleFilter" class="payroll-job-select" aria-label="Filtrer par poste">
+            <option value="">Tous les postes</option>
+            <option v-for="title in jobTitleOptions" :key="title" :value="title">{{ title }}</option>
+          </select>
+          <span v-if="!isFiltered && pendingRows.length" class="payroll-filters-hint">
+            Filtrez par poste pour payer plusieurs fiches à la fois.
+          </span>
         </div>
 
         <div v-if="loading" class="chart-empty">Chargement…</div>
@@ -442,10 +496,35 @@ onMounted(reloadPayrollData)
 </template>
 
 <style scoped>
+.payroll-filters-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
 .payroll-search {
   position: relative;
+  flex: 1 1 16rem;
   max-width: 22rem;
-  margin-bottom: 0.75rem;
+}
+
+.payroll-filters-hint {
+  align-self: center;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.payroll-job-select {
+  flex: 0 1 14rem;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.875rem;
 }
 
 .payroll-search__icon {
