@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Search, History, Eye, Download, Printer } from '@lucide/vue'
+import { Search, History, Eye, Download, Printer, Undo2 } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { formatShortDate } from '@/lib/admin-dashboard'
+import { confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -40,9 +41,12 @@ const PAYMENT_LABELS: Record<string, string> = {
   CHEQUE: 'Chèque',
 }
 
+const emit = defineEmits<{ cancelled: [] }>()
+
 const rows = ref<HistoryRow[]>([])
 const periods = ref<PeriodSummary[]>([])
 const loading = ref(false)
+const cancellingId = ref<string | null>(null)
 
 const periodFilter = ref('all')
 const serviceFilter = ref('all')
@@ -159,6 +163,29 @@ function printPayslipFromModal() {
 
 function downloadPayslip(id: string) {
   window.open(payslipDownloadUrl(id), '_blank', 'noopener')
+}
+
+async function cancelPayroll(row: HistoryRow) {
+  const period = periodLabel(row.year, row.month)
+  const ok = await confirmAppModal({
+    type: 'WARNING',
+    title: 'Annuler la paie',
+    message: `Annuler le paiement de ${row.employee.fullName} (${period}) ? ${formatFcfa(row.netFcfa)} seront remis en caisse et l'employé réapparaîtra dans la paie de ${period}.`,
+    confirmLabel: 'Annuler la paie',
+    cancelLabel: 'Retour',
+  })
+  if (!ok) return
+  cancellingId.value = row.id
+  try {
+    await api.post(`/gestionnaire/payroll/${row.id}/cancel`)
+    await Promise.all([loadHistory(), loadPeriods()])
+    emit('cancelled')
+    await showSuccessModal('Paie annulée', `Le paiement de ${row.employee.fullName} (${period}) a été annulé.`)
+  } catch (error) {
+    await showApiErrorModal(error, "Impossible d'annuler la paie.")
+  } finally {
+    cancellingId.value = null
+  }
 }
 
 function toggleAllVisible() {
@@ -369,6 +396,13 @@ defineExpose({ reload: loadHistory })
                 label="Voir"
                 variant="neutral"
                 @click="openPayslipModal(row)"
+              />
+              <GestionnaireRowAction
+                :icon="Undo2"
+                label="Annuler la paie"
+                variant="danger"
+                :disabled="cancellingId !== null"
+                @click="cancelPayroll(row)"
               />
             </GestionnaireRowActionGroup>
           </td>
