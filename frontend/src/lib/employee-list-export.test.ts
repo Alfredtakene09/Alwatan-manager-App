@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { groupEmployeeExportRows, payrollOfExportRow } from './employee-list-export.ts'
+import { listEmployeeExportRows, payrollOfExportRow } from './employee-list-export.ts'
 
-describe('groupEmployeeExportRows', () => {
-  it('regroupe par poste les actifs seulement, masse salariale, puis total général', () => {
+describe('listEmployeeExportRows', () => {
+  it('liste un employé actif par ligne, sans regroupement, avec effectif et masse salariale', () => {
     const rows = [
       { id: '2', name: 'Béatrice', jobTitle: 'Infirmier', salaryExportValue: 200_000 },
-      { id: '1', name: 'Ahmed', jobTitle: 'Infirmier', salaryExportValue: 150_000 },
       { id: '3', name: 'Dr Camara', jobTitle: 'Médecin', salaryExportValue: 400_000 },
+      { id: '1', name: 'Ahmed', jobTitle: 'Infirmier', salaryExportValue: 150_000 },
       { id: '4', name: 'Inactif', jobTitle: 'Médecin', salaryExportValue: 400_000 },
     ]
     const employeesById = new Map([
@@ -16,34 +16,23 @@ describe('groupEmployeeExportRows', () => {
       ['3', { active: true, user: { active: true } }],
       ['4', { active: false }],
     ])
-    const grouped = groupEmployeeExportRows(rows, employeesById)
-    assert.equal(grouped.groups.length, 2)
-    assert.equal(grouped.groups[0].jobTitle, 'Infirmier')
+    const list = listEmployeeExportRows(rows, employeesById)
     assert.deepEqual(
-      grouped.groups[0].rows.map((r) => r.name),
-      ['Ahmed', 'Béatrice'],
+      list.rows.map((r) => r.name),
+      ['Ahmed', 'Béatrice', 'Dr Camara'],
     )
-    assert.equal(grouped.groups[0].count, 2)
-    assert.equal(grouped.groups[0].payroll, 350_000)
-    assert.equal(grouped.groups[1].jobTitle, 'Médecin')
-    assert.equal(grouped.groups[1].count, 1)
-    assert.deepEqual(
-      grouped.groups[1].rows.map((r) => r.name),
-      ['Dr Camara'],
-    )
-    assert.equal(grouped.groups[1].payroll, 400_000)
-    assert.equal(grouped.totalCount, 3)
-    assert.equal(grouped.totalPayroll, 750_000)
+    assert.equal(list.totalCount, 3)
+    assert.equal(list.totalPayroll, 750_000)
   })
 
-  it('n’exporte pas un poste dont tous les employés sont inactifs', () => {
-    const grouped = groupEmployeeExportRows(
+  it('n’exporte aucun employé inactif', () => {
+    const list = listEmployeeExportRows(
       [{ id: '4', name: 'Inactif', jobTitle: 'Médecin', salaryExportValue: 400_000 }],
       new Map([['4', { active: false }]]),
     )
-    assert.equal(grouped.groups.length, 0)
-    assert.equal(grouped.totalCount, 0)
-    assert.equal(grouped.totalPayroll, 0)
+    assert.equal(list.rows.length, 0)
+    assert.equal(list.totalCount, 0)
+    assert.equal(list.totalPayroll, 0)
   })
 
   it('exclut du payroll un compte application désactivé', () => {

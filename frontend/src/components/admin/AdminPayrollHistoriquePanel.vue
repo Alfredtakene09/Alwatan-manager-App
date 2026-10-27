@@ -5,6 +5,8 @@ import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
 import { formatShortDate } from '@/lib/admin-dashboard'
 import { confirmAppModal, showApiErrorModal, showSuccessModal } from '@/lib/api-modal-helper'
+import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 
@@ -106,6 +108,45 @@ function clearDates() {
   void loadHistory()
 }
 
+/** Export : un paiement (un employé) par ligne, dans l'ordre affiché. */
+const historyExportColumns: ExportColumn<HistoryRow>[] = [
+  { header: 'N°', value: (r) => filteredRows.value.indexOf(r) + 1 },
+  { header: 'Date de paiement', value: (r) => (r.paidAt ? formatPaidAt(r.paidAt) : '—') },
+  { header: 'Période', value: (r) => periodLabel(r.year, r.month) },
+  { header: 'Employé', value: (r) => r.employee.fullName },
+  { header: 'Poste', value: (r) => r.employee.jobTitle ?? '—' },
+  { header: 'Service', value: (r) => r.employee.service },
+  { header: 'Salaire brut', value: (r) => formatFcfa(r.grossFcfa) },
+  { header: 'Avance déduite', value: (r) => (r.advanceDeductionFcfa > 0 ? formatFcfa(r.advanceDeductionFcfa) : '—') },
+  { header: 'Net versé', value: (r) => formatFcfa(r.netFcfa) },
+]
+
+function historyExportOptions() {
+  return {
+    captionRows: [{ label: 'Période', value: description.value }],
+    totalsRows: [
+      { label: 'Nombre de paiements', value: String(filteredRows.value.length) },
+      { label: 'Total brut', value: formatFcfa(totals.value.gross) },
+      { label: 'Total avances', value: formatFcfa(totals.value.advances) },
+      { label: 'Total net', value: formatFcfa(totals.value.net) },
+    ],
+  }
+}
+
+function exportHistoryPdf() {
+  exportTablePdf('Historique des paiements', historyExportColumns, filteredRows.value, historyExportOptions())
+}
+
+function exportHistoryExcel() {
+  exportTableExcel('Historique des paiements', historyExportColumns, filteredRows.value, {
+    totalsRows: historyExportOptions().totalsRows,
+  })
+}
+
+function exportHistoryWord() {
+  void exportTableWord('Historique des paiements', historyExportColumns, filteredRows.value, historyExportOptions())
+}
+
 async function cancelPayroll(row: HistoryRow) {
   const period = periodLabel(row.year, row.month)
   const ok = await confirmAppModal({
@@ -179,6 +220,12 @@ defineExpose({ reload: loadHistory })
           title="Effacer les dates"
           aria-label="Effacer les dates"
           @click="clearDates"
+        />
+        <ExportButtons
+          :disabled="loading || !filteredRows.length"
+          @pdf="exportHistoryPdf"
+          @excel="exportHistoryExcel"
+          @word="exportHistoryWord"
         />
       </div>
     </div>
