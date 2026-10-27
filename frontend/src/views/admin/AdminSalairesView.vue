@@ -56,6 +56,15 @@ type SalaryAdvanceSummary = {
   remainingFcfa: number
 }
 
+type PayrollCardTotals = {
+  advancesFcfa: number
+  advancesCount: number
+  paidFcfa: number
+  paidCount: number
+  unpaidFcfa: number
+  unpaidCount: number
+}
+
 const route = useRoute()
 const router = useRouter()
 
@@ -78,6 +87,14 @@ const advanceRows = ref<SalaryAdvanceSummary[]>([])
 const loading = ref(false)
 const historiquePanelRef = ref<InstanceType<typeof AdminPayrollHistoriquePanel> | null>(null)
 const avancesPanelRef = ref<InstanceType<typeof GestionnaireSalaryAdvancesPanel> | null>(null)
+const historyCardTotals = ref<PayrollCardTotals>({
+  advancesFcfa: 0,
+  advancesCount: 0,
+  paidFcfa: 0,
+  paidCount: 0,
+  unpaidFcfa: 0,
+  unpaidCount: 0,
+})
 
 const rows = computed(() =>
   (payload.value?.rows ?? []).map((row) => ({
@@ -120,10 +137,10 @@ watch(jobTitleOptions, (options) => {
   if (jobTitleFilter.value && !options.includes(jobTitleFilter.value)) jobTitleFilter.value = ''
 })
 
-const filteredRows = computed(() => {
+const filteredPeriodRows = computed(() => {
   const q = normalizeText(searchQuery.value.trim())
   const jobTitle = jobTitleFilter.value
-  return pendingRows.value.filter((row) => {
+  return rows.value.filter((row) => {
     if (jobTitle && (row.jobTitle?.trim() || '—') !== jobTitle) return false
     if (!matchesStaffCategory(categoryFilter.value, row)) return false
     if (!q) return true
@@ -133,9 +150,11 @@ const filteredRows = computed(() => {
   })
 })
 
-const paidCount = computed(() => rows.value.filter((row) => row.status === 'PAID').length)
-const unpaidCount = computed(() => rows.value.filter((row) => row.status !== 'PAID').length)
-const totalCount = computed(() => rows.value.length)
+const filteredRows = computed(() => filteredPeriodRows.value.filter((row) => row.status !== 'PAID'))
+
+const paidCount = computed(() => filteredPeriodRows.value.filter((row) => row.status === 'PAID').length)
+const unpaidCount = computed(() => filteredPeriodRows.value.filter((row) => row.status !== 'PAID').length)
+const totalCount = computed(() => filteredPeriodRows.value.length)
 const progress = computed(() =>
   totalCount.value ? Math.round((paidCount.value / totalCount.value) * 100) : 0,
 )
@@ -143,7 +162,7 @@ const progress = computed(() =>
 /** Cartes du mois choisi : montants nets et effectifs. */
 const monthCardTotals = computed(() => {
   const totals = { advancesFcfa: 0, advancesCount: 0, paidFcfa: 0, unpaidFcfa: 0 }
-  for (const row of rows.value) {
+  for (const row of filteredPeriodRows.value) {
     // Fiche payée : avance retenue ; non payée : avance qui sera retenue.
     if (row.pendingAdvancesFcfa > 0) {
       totals.advancesFcfa += row.pendingAdvancesFcfa
@@ -154,6 +173,20 @@ const monthCardTotals = computed(() => {
   }
   return totals
 })
+
+const cardTotals = computed<PayrollCardTotals>(() =>
+  activeTab.value === 'historique'
+    ? historyCardTotals.value
+    : {
+        ...monthCardTotals.value,
+        paidCount: paidCount.value,
+        unpaidCount: unpaidCount.value,
+      },
+)
+
+function updateHistoryCardTotals(totals: PayrollCardTotals) {
+  historyCardTotals.value = totals
+}
 
 const periodLabel = computed(() => {
   if (!payload.value) return 'Mois en cours'
@@ -403,22 +436,22 @@ onMounted(reloadPayrollData)
 
       <div class="salaires-toolbar-row__stats" aria-label="Synthèse paie">
         <UiStatCard
-          :label="`Avances · ${monthCardTotals.advancesCount}`"
-          :value="formatF(monthCardTotals.advancesFcfa)"
+          :label="`Avances · ${cardTotals.advancesCount}`"
+          :value="formatF(cardTotals.advancesFcfa)"
           :icon="HandCoins"
           variant="amber"
           mini
         />
         <UiStatCard
-          :label="`Payés · ${paidCount}`"
-          :value="formatF(monthCardTotals.paidFcfa)"
+          :label="`Payés · ${cardTotals.paidCount}`"
+          :value="formatF(cardTotals.paidFcfa)"
           :icon="CheckCircle2"
           variant="green"
           mini
         />
         <UiStatCard
-          :label="`Non payés · ${unpaidCount}`"
-          :value="formatF(monthCardTotals.unpaidFcfa)"
+          :label="`Non payés · ${cardTotals.unpaidCount}`"
+          :value="formatF(cardTotals.unpaidFcfa)"
           :icon="Clock"
           variant="rose"
           mini
@@ -525,6 +558,7 @@ onMounted(reloadPayrollData)
       v-else-if="activeTab === 'historique'"
       ref="historiquePanelRef"
       @cancelled="reloadPayrollData"
+      @summary-change="updateHistoryCardTotals"
     />
     <div v-else-if="activeTab === 'avances'" class="salary-advances-admin">
       <p class="salary-advances-admin__hint">

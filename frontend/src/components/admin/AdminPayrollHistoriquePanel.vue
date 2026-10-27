@@ -35,7 +35,19 @@ type HistoryRow = {
   }
 }
 
-const emit = defineEmits<{ cancelled: [] }>()
+type HistoryCardSummary = {
+  advancesFcfa: number
+  advancesCount: number
+  paidFcfa: number
+  paidCount: number
+  unpaidFcfa: number
+  unpaidCount: number
+}
+
+const emit = defineEmits<{
+  cancelled: []
+  'summary-change': [summary: HistoryCardSummary]
+}>()
 
 const rows = ref<HistoryRow[]>([])
 const loading = ref(false)
@@ -100,6 +112,21 @@ const totals = computed(() =>
     }),
     { gross: 0, advances: 0, net: 0 },
   ),
+)
+
+const cardSummary = computed<HistoryCardSummary>(() => ({
+  advancesFcfa: totals.value.advances,
+  advancesCount: filteredRows.value.filter((row) => row.advanceDeductionFcfa > 0).length,
+  paidFcfa: totals.value.net,
+  paidCount: filteredRows.value.length,
+  unpaidFcfa: 0,
+  unpaidCount: 0,
+}))
+
+watch(
+  cardSummary,
+  (summary) => emit('summary-change', summary),
+  { immediate: true },
 )
 
 function monthInputLabel(value: string) {
