@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { UserRole, VisitStatus } from "@prisma/client";
+import { InvoiceStatus, UserRole, VisitStatus } from "@prisma/client";
 import {
   patientsInDoctorScopeWhere,
   otherReceptionistsUntreatedPatientsWhere,
+  patientRegisteredInPeriodWhere,
   receptionistOwnPatientsWhere,
   receptionistOwnVisitsWhere,
   registrationSummaryInvoiceWhere,
@@ -25,27 +26,74 @@ describe("périmètre réceptionniste", () => {
     const since = new Date("2026-10-15T10:00:00.000Z");
     const where = otherReceptionistsUntreatedPatientsWhere(null, since);
     assert.equal(Object.hasOwn(where, "createdById"), false);
-    assert.deepEqual(where.createdAt, { gte: since });
     assert.deepEqual(where.createdBy, { role: UserRole.RECEPTIONNISTE });
   });
 
-  it("liste les patients des autres réceptionnistes pas encore vus par le médecin", () => {
+  it("liste les patients des autres réceptionnistes pas encore vus ou pas encore payés", () => {
     const since = new Date("2026-10-15T10:00:00.000Z");
     const where = otherReceptionistsUntreatedPatientsWhere("rec-1", since);
     assert.deepEqual(where, {
       createdById: { not: "rec-1" },
-      createdAt: { gte: since },
       createdBy: { role: UserRole.RECEPTIONNISTE },
-      visits: {
-        some: {
-          status: { in: [VisitStatus.WAITING_CONSULTATION, VisitStatus.IN_CONSULTATION] },
-          OR: [
-            { notes: null },
-            { NOT: { notes: { contains: "PATIENT_EXTERNE" } } },
-          ],
+      OR: [
+        {
+          createdAt: { gte: since },
+          visits: {
+            some: {
+              status: { in: [VisitStatus.WAITING_CONSULTATION, VisitStatus.IN_CONSULTATION] },
+              OR: [
+                { notes: null },
+                { NOT: { notes: { contains: "PATIENT_EXTERNE" } } },
+              ],
+            },
+          },
         },
-      },
+        {
+          invoices: {
+            some: {
+              status: {
+                in: [InvoiceStatus.DRAFT, InvoiceStatus.PENDING, InvoiceStatus.PARTIALLY_PAID],
+              },
+              createdAt: { gte: since },
+            },
+          },
+        },
+      ],
     });
+  });
+
+  it("garde dans la liste du jour le dossier du réceptionniste revu par le médecin", () => {
+    const range = { gte: new Date("2026-10-27T00:00:00"), lt: new Date("2026-10-28T00:00:00") };
+    const where = patientRegisteredInPeriodWhere(range, "rec-1");
+    const ownActivity = where.OR?.[3];
+    assert.deepEqual(ownActivity, {
+      createdById: "rec-1",
+      OR: [
+        {
+          visits: {
+            some: {
+              createdAt: range,
+              status: { not: VisitStatus.CANCELLED },
+              OR: [
+                { createdById: null },
+                { createdBy: { role: { not: UserRole.RECEPTIONNISTE } } },
+              ],
+            },
+          },
+        },
+        {
+          invoices: {
+            some: {
+              createdAt: range,
+              status: { not: InvoiceStatus.CANCELLED },
+              issuedBy: { role: { not: UserRole.RECEPTIONNISTE } },
+            },
+          },
+        },
+      ],
+    });
+    // Sans réceptionniste ciblé (admin) : toute activité de la période compte déjà.
+    assert.equal(patientRegisteredInPeriodWhere(range, null).OR?.length, 3);
   });
 
   it("inclut les dossiers réenregistrés (facture émise par le réceptionniste)", () => {
