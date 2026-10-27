@@ -182,7 +182,7 @@ const router = createRouter({
         },
         {
           path: 'comptabilite/compte-rendu-caisse',
-          redirect: { path: '/gestionnaire/livre-journal', query: { tab: 'historique' } },
+          redirect: { name: 'dashboard' },
         },
         {
           path: 'comptabilite/depenses',
@@ -411,14 +411,10 @@ const router = createRouter({
         },
         {
           path: 'gestionnaire/caisse',
-          redirect: { path: '/gestionnaire/livre-journal', query: { tab: 'historique' } },
+          redirect: { name: 'dashboard' },
         },
-        {
-          path: 'gestionnaire/livre-journal',
-          name: 'gestionnaire-journal',
-          component: () => import('@/views/gestionnaire/GestionnaireJournalView.vue'),
-          meta: { module: 'gestionnaire', uiAction: 'comptabilite.journal' },
-        },
+        // Livre-journal et caisse gestionnaire supprimés : anciens liens vers le tableau de bord.
+        { path: 'gestionnaire/livre-journal', redirect: { name: 'dashboard' } },
         { path: 'gestionnaire/depenses', redirect: '/admin/depenses' },
         { path: 'gestionnaire/depenses/categories', redirect: '/admin/depenses' },
         { path: 'gestionnaire/services', redirect: '/admin/services' },
