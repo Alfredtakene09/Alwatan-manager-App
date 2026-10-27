@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
 import axios from 'axios'
 import { UserRound, Plus, Save, Briefcase, Stethoscope, Banknote, Info, Phone, Users, UserCheck, Building2, Palmtree, UserX, Search, Camera } from '@lucide/vue'
@@ -34,6 +34,15 @@ import { employeeNeedsAppAccount, isHiddenPlatformAdminEmployee, isHiddenPlatfor
 import { inferIsMedecinFromJobTitle } from '@/lib/doctor-job-title'
 import { exportBasename, exportTablePdf, exportTableWord, exportWorkbook, type ExportColumn } from '@/lib/table-export'
 import { listEmployeeExportRows } from '@/lib/employee-list-export'
+import {
+  DOCTOR_CATEGORY_OPTIONS,
+  STAFF_CATEGORY_FILTER_OPTIONS,
+  matchesStaffCategory,
+  staffCategoryFilterLabel,
+  staffCategoryLabel,
+  type DoctorCategory,
+  type StaffCategoryFilter,
+} from '@/lib/doctor-category'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -65,6 +74,9 @@ type Employee = {
   jobTitle?: string | null
   isMedecin: boolean
   specialty?: string | null
+  /** Catégorie enregistrée, ou déduite du poste si `doctorCategorySet` est faux. */
+  doctorCategory?: DoctorCategory | null
+  doctorCategorySet?: boolean
   availabilitySlots?: DoctorAvailabilitySlot[] | null
   hasPhoto?: boolean
   photoPath?: string | null
@@ -141,7 +153,7 @@ const jobTitleLabels = ref<string[]>([])
 const activeTab = ref<'employees' | 'job-titles'>('employees')
 const searchQuery = ref('')
 const filterJobTitle = ref('')
-const filterProfile = ref<'ALL' | 'MEDECIN' | 'STAFF'>('ALL')
+const filterCategory = ref<StaffCategoryFilter>('')
 const loading = ref(false)
 const saving = ref(false)
 const message = ref('')
@@ -158,6 +170,7 @@ const form = ref({
   jobTitle: '',
   profile: 'STAFF' as 'STAFF' | 'MEDECIN',
   specialty: '',
+  doctorCategory: '' as DoctorCategory | '',
   availabilitySlots: [] as DoctorAvailabilitySlot[],
   hasPhoto: false,
   doctorCompensationType: 'QUOTA' as DoctorCompensationType,
@@ -319,8 +332,7 @@ const filteredEmployees = computed(() => {
   const jobTitle = filterJobTitle.value.trim().toLowerCase()
   return employees.value
     .filter((employee) => {
-      if (filterProfile.value === 'MEDECIN' && !employee.isMedecin) return false
-      if (filterProfile.value === 'STAFF' && employee.isMedecin) return false
+      if (!matchesStaffCategory(filterCategory.value, employee)) return false
       if (jobTitle && (employee.jobTitle?.trim().toLowerCase() ?? '') !== jobTitle) return false
       if (!q) return true
       const haystack = [
@@ -421,7 +433,7 @@ function toEmployeeExportRow(employee: Employee) {
               .join(', ')
           : clinicServiceText(employee.clinicService?.name || employee.service || '') || '—')
       : '—',
-    profileLabel: employee.isMedecin ? uiText('Médecin') : uiText('Personnel'),
+    profileLabel: uiText(staffCategoryLabel(employee)),
     compensationLabel: canExportSalaries.value ? employeeCompensationLabel(employee) : '—',
     /** Export PDF / Excel / Word : montant seul, sans FCFA ni détail quota. */
     salaryExportValue: employeeSalaryExportValue(employee),
@@ -465,8 +477,7 @@ function employeeExportGrandTotals(totalCount: number, totalPayroll: number) {
 
 function employeeExportFilterCaption(): string {
   const parts: string[] = []
-  if (filterProfile.value === 'MEDECIN') parts.push(uiText('Médecins'))
-  else if (filterProfile.value === 'STAFF') parts.push(uiText('Personnel'))
+  if (filterCategory.value) parts.push(uiText(staffCategoryFilterLabel(filterCategory.value)))
   const jobTitle = filterJobTitle.value.trim()
   if (jobTitle) parts.push(jobTitle)
   const q = searchQuery.value.trim()
@@ -535,6 +546,7 @@ function resetForm() {
     jobTitle: '',
     profile: 'STAFF',
     specialty: '',
+    doctorCategory: '',
     availabilitySlots: [],
     hasPhoto: false,
     doctorCompensationType: 'QUOTA',
@@ -603,6 +615,7 @@ function openEditModal(id: string) {
     jobTitle: employee.jobTitle ?? '',
     profile: employee.isMedecin ? 'MEDECIN' : 'STAFF',
     specialty: employee.specialty ?? '',
+    doctorCategory: employee.isMedecin ? (employee.doctorCategory ?? '') : '',
     availabilitySlots: parseDoctorAvailabilitySlots(employee.availabilitySlots),
     hasPhoto: Boolean(employee.hasPhoto || employee.photoPath),
     doctorCompensationType: employee.doctorCompensationType ?? 'QUOTA',
@@ -621,7 +634,14 @@ function openEditModal(id: string) {
     surgeryQuotaPercent:
       employee.surgeryQuotaPercent != null ? String(employee.surgeryQuotaPercent) : '',
     service: employee.service ?? '',
-    clinicServiceId: employee.clinicServiceId ?? employee.clinicService?.id ?? '',
+    // Médecin rattaché à des services sans service par défaut : le premier devient le défaut,
+    // sinon la mise à jour restait bloquée sur « Sélectionnez au moins un service clinique ».
+    clinicServiceId:
+      employee.clinicServiceId ??
+      employee.clinicService?.id ??
+      employee.clinicServiceIds?.[0] ??
+      employee.clinicServices?.[0]?.id ??
+      '',
     clinicServiceIds: (() => {
       const defaultId = employee.clinicServiceId ?? employee.clinicService?.id ?? ''
       const ids =
@@ -645,6 +665,16 @@ function openEditModal(id: string) {
   modalOpen.value = true
   message.value = ''
 }
+
+const modalAlertRef = ref<HTMLElement | null>(null)
+
+// Erreur affichée en haut du formulaire : on la ramène à l'écran, sinon l'enregistrement
+// semble ne rien faire quand on clique depuis le bas de la fenêtre.
+watch(message, async (value) => {
+  if (!value || !modalOpen.value || messageType.value !== 'error') return
+  await nextTick()
+  modalAlertRef.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+})
 
 function closeModal() {
   modalOpen.value = false
@@ -799,6 +829,7 @@ function onProfileChange(profile: 'STAFF' | 'MEDECIN') {
   form.value.profile = profile
   if (profile !== 'MEDECIN') {
     form.value.specialty = ''
+    form.value.doctorCategory = ''
     form.value.clinicServiceId = ''
     form.value.clinicServiceIds = []
     form.value.availabilitySlots = []
@@ -908,7 +939,15 @@ async function saveEmployee() {
     messageType.value = 'error'
     return
   }
+  if (isMedecinProfile.value && !form.value.doctorCategory) {
+    message.value = 'Choisissez la catégorie du médecin : généraliste, spécialiste ou autre.'
+    messageType.value = 'error'
+    return
+  }
   if (isMedecinProfile.value) {
+    if (!form.value.clinicServiceId.trim() && form.value.clinicServiceIds.length) {
+      form.value.clinicServiceId = form.value.clinicServiceIds[0]
+    }
     if (!form.value.clinicServiceId.trim()) {
       message.value = 'Sélectionnez au moins un service clinique pour ce médecin.'
       messageType.value = 'error'
@@ -926,6 +965,7 @@ async function saveEmployee() {
       jobTitle: form.value.jobTitle.trim() || undefined,
       active: form.value.active,
       specialty: isMedecinProfile.value ? form.value.specialty.trim() || null : null,
+      doctorCategory: isMedecinProfile.value ? form.value.doctorCategory || null : null,
       availabilitySlots: isMedecinProfile.value ? [] : null,
       ...compensationPayload(),
       ...payrollPayload(),
@@ -1087,13 +1127,13 @@ onMounted(async () => {
             />
           </label>
           <select
-            v-model="filterProfile"
+            v-model="filterCategory"
             class="personnel-job-filter"
-            aria-label="Filtrer par profil"
+            aria-label="Filtrer par catégorie"
           >
-            <option value="ALL">Tous les profils</option>
-            <option value="MEDECIN">Médecins</option>
-            <option value="STAFF">Personnel</option>
+            <option v-for="option in STAFF_CATEGORY_FILTER_OPTIONS" :key="option.value" :value="option.value">
+              {{ uiText(option.label) }}
+            </option>
           </select>
           <select
             v-model="filterJobTitle"
@@ -1265,7 +1305,9 @@ onMounted(async () => {
         </div>
       </div>
 
-      <UiAlert v-if="message && modalOpen" :type="messageType" :message="message" />
+      <div ref="modalAlertRef">
+        <UiAlert v-if="message && modalOpen" :type="messageType" :message="message" />
+      </div>
 
       <section class="form-panel">
         <h3 class="form-panel__title">
@@ -1355,6 +1397,30 @@ onMounted(async () => {
           <RouterLink to="/admin/utilisateurs">créez le compte utilisateur</RouterLink>
           lié à cet employé.
         </p>
+        <div class="doctor-category-field" role="radiogroup" aria-label="Catégorie du médecin">
+          <p class="specialty-field__label">
+            {{ uiText('Catégorie') }} <span class="req">*</span>
+          </p>
+          <p v-if="editingId && employeesById.get(editingId)?.doctorCategorySet === false" class="form-panel__hint">
+            Catégorie proposée d'après le poste — vérifiez puis enregistrez.
+          </p>
+          <div class="doctor-category-picker">
+            <button
+              v-for="option in DOCTOR_CATEGORY_OPTIONS"
+              :key="option.value"
+              type="button"
+              role="radio"
+              :aria-checked="form.doctorCategory === option.value"
+              class="profile-picker__option"
+              :class="{ 'profile-picker__option--active': form.doctorCategory === option.value }"
+              @click="form.doctorCategory = option.value"
+            >
+              <span class="profile-picker__label">{{ uiText(option.label) }}</span>
+              <span class="profile-picker__hint">{{ uiText(option.hint) }}</span>
+            </button>
+          </div>
+        </div>
+
         <div class="specialty-field">
           <label class="specialty-field__label" for="employee-specialty">{{ uiText('Spécialité') }}</label>
           <input
@@ -1845,6 +1911,16 @@ onMounted(async () => {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+.doctor-category-field {
+  margin-bottom: 0.85rem;
+}
+
+.doctor-category-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.5rem;
 }
 
 .specialty-field {

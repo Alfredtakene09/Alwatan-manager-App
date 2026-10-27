@@ -1,5 +1,6 @@
 import { DoctorCompensationType, ConsultationQuotaMode, ConsultationRenewalPolicy, EmployeeContractStatus, ContractType } from "@prisma/client";
 import { DOCTOR_COMPENSATION_LABELS } from "./doctor-compensation.js";
+import { effectiveDoctorCategory, type DoctorCategoryValue } from "./doctor-profile.js";
 
 export type EmployeeRecord = {
   id: string;
@@ -30,6 +31,7 @@ export type EmployeeRecord = {
   bonusFcfa?: number | null;
   overtimeHourlyRateFcfa?: number | null;
   specialty?: string | null;
+  doctorCategory?: DoctorCategoryValue | null;
   availabilitySlots?: unknown;
   photoPath?: string | null;
   active: boolean;
@@ -85,6 +87,9 @@ export function serializeEmployee(employee: EmployeeRecord) {
       ? (employee.overtimeHourlyRateFcfa ?? null)
       : null,
     specialty: employee.isMedecin ? (employee.specialty ?? null) : null,
+    doctorCategory: effectiveDoctorCategory(employee),
+    /** false : catégorie déduite du poste, pas encore choisie sur la fiche. */
+    doctorCategorySet: employee.isMedecin && employee.doctorCategory != null,
     availabilitySlots: employee.isMedecin ? (employee.availabilitySlots ?? null) : null,
     photoPath: employee.photoPath ?? null,
     hasPhoto: Boolean(employee.photoPath),
@@ -213,6 +218,7 @@ export const employeeSelect = {
   bonusFcfa: true,
   overtimeHourlyRateFcfa: true,
   specialty: true,
+  doctorCategory: true,
   availabilitySlots: true,
   photoPath: true,
   active: true,

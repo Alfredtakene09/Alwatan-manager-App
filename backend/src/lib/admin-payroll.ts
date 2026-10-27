@@ -5,6 +5,7 @@ import {
 } from "@prisma/client";
 import { prisma } from "./db.js";
 import { dedupeEmployeesForSelection } from "./employee.js";
+import { effectiveDoctorCategory } from "./doctor-profile.js";
 
 export function currentPayrollPeriod(now = new Date()) {
   return { year: now.getFullYear(), month: now.getMonth() + 1 };
@@ -217,6 +218,8 @@ export const employeePayrollInclude = {
       lastName: true,
       jobTitle: true,
       isMedecin: true,
+      doctorCategory: true,
+      specialty: true,
       fixedSalaryFcfa: true,
       bonusFcfa: true,
       user: { select: { role: true, active: true } },
@@ -259,6 +262,8 @@ export function serializePayrollRow(
       fullName: `${employee.firstName} ${employee.lastName}`.trim(),
       jobTitle: employee.jobTitle,
       service: mapEmployeeService(employee),
+      isMedecin: employee.isMedecin,
+      doctorCategory: effectiveDoctorCategory(employee),
     },
   };
 }

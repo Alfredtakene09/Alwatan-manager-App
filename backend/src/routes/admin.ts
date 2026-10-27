@@ -44,6 +44,8 @@ import {
   hardDeleteUserAccount,
   normalizeAvailabilitySlots,
   normalizeSpecialty,
+  normalizeDoctorCategory,
+  DOCTOR_CATEGORIES,
   resolveEmployeeIsMedecin,
 } from "../lib/doctor-profile.js";
 import {
@@ -198,6 +200,7 @@ const createEmployeeSchema = z
     isMedecin: z.boolean().optional(),
     active: z.boolean().optional(),
     specialty: z.string().max(120).optional().nullable(),
+    doctorCategory: z.enum(DOCTOR_CATEGORIES).optional().nullable(),
     availabilitySlots: doctorAvailabilitySlotsSchema,
     clinicServiceId: z.string().min(1).optional().nullable(),
     clinicServiceIds: z.array(z.string().min(1)).optional().nullable(),
@@ -626,6 +629,7 @@ router.post("/employees", requireModule("utilisateurs"), requireUiAction("employ
         clinicServiceId: serviceLink.clinicServiceId,
         isMedecin,
         specialty: normalizeSpecialty(body.specialty, isMedecin),
+        doctorCategory: normalizeDoctorCategory(body.doctorCategory, isMedecin),
         ...(availabilitySlots !== undefined ? { availabilitySlots } : {}),
         active: body.active ?? true,
         overtimeHourlyRateFcfa: isMedecin
@@ -750,6 +754,14 @@ router.put("/employees/:id", requireModule("utilisateurs"), async (req, res) => 
           ? {
               specialty: normalizeSpecialty(
                 body.specialty !== undefined ? body.specialty : existing.specialty,
+                nextIsMedecin,
+              ),
+            }
+          : {}),
+        ...(body.doctorCategory !== undefined || !nextIsMedecin
+          ? {
+              doctorCategory: normalizeDoctorCategory(
+                body.doctorCategory !== undefined ? body.doctorCategory : existing.doctorCategory,
                 nextIsMedecin,
               ),
             }
