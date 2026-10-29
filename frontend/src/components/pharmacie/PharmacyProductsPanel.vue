@@ -466,10 +466,10 @@ async function saveItem() {
   if (!Number.isFinite(unitPriceFcfa) || unitPriceFcfa <= 0) {
     issues.push('Indiquez un prix de vente en FCFA (nombre entier > 0).')
   }
-  if (
-    asTrimmedText(formPurchasePrice.value) &&
-    (!Number.isFinite(purchasePriceFcfa) || purchasePriceFcfa <= 0)
-  ) {
+  const purchaseFilled = Boolean(asTrimmedText(formPurchasePrice.value))
+  if (!isEditing.value && !purchaseFilled) {
+    issues.push("Indiquez le prix d'achat par boîte en FCFA (obligatoire pour un nouveau produit).")
+  } else if (purchaseFilled && (!Number.isFinite(purchasePriceFcfa) || purchasePriceFcfa <= 0)) {
     issues.push("Le prix d'achat doit être un nombre entier positif.")
   }
   if (!formNoExpiry.value && !frDisplayToIsoDate(formExpiryDate.value)) {
@@ -855,13 +855,16 @@ defineExpose({
 
       <div class="product-form__row product-form__row--purchase-expiry">
         <div class="amount-field">
-          <span class="amount-field__label">{{ uiText("Prix d'achat (par boîte)") }}</span>
+          <span class="amount-field__label">
+            {{ uiText("Prix d'achat (par boîte)") }} <span v-if="!isEditing" class="req">*</span>
+          </span>
           <div class="amount-field__wrap">
             <input
               v-model="formPurchasePrice"
               class="amount-field__input"
               type="number"
               min="1"
+              :required="!isEditing"
               placeholder="0"
             />
             <span class="amount-field__suffix">FCFA</span>

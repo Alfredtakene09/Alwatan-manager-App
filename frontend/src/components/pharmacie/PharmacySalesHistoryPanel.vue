@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { RefreshCw, Printer, Eye, Pencil, Save, Trash2, RotateCcw } from '@lucide/vue'
+import { RefreshCw, Printer, Eye, Pencil, Save, Trash2, RotateCcw, Wallet } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { formatFcfa, fullName } from '@/lib/roles'
@@ -119,6 +119,19 @@ const tableRows = computed(() => {
     totalSort: saleRemainingFcfa(item),
     invoice: item.invoiceNumber ?? '—',
   }))
+})
+
+/** Somme des ventes affichées (retours déduits), comme la colonne Total. */
+const salesTotals = computed(() => {
+  let amountFcfa = 0
+  let units = 0
+  for (const item of items.value) {
+    amountFcfa += saleRemainingFcfa(item)
+    for (const line of item.lines) {
+      units += line.quantityReturnable ?? Math.max(0, line.quantity - (line.quantityReturned ?? 0))
+    }
+  }
+  return { amountFcfa, units, salesCount: items.value.length }
 })
 
 const expandedSale = computed(() => items.value.find((item) => item.id === expandedId.value) ?? null)
@@ -466,6 +479,22 @@ defineExpose({ reload: loadItems })
 
     <UiAlert v-if="message" :type="messageType" :message="message" class="panel-alert" />
 
+    <div v-if="items.length" class="sales-total-card" role="status">
+      <span class="sales-total-card__icon" aria-hidden="true"><Wallet :size="18" /></span>
+      <div class="sales-total-card__body">
+        <span class="sales-total-card__label">{{ uiText('Total des produits vendus') }}</span>
+        <strong class="sales-total-card__value">{{ formatFcfa(salesTotals.amountFcfa) }}</strong>
+        <small class="sales-total-card__hint">
+          {{
+            translateTemplate('{sales} vente(s) · {units} produit(s)', {
+              sales: salesTotals.salesCount,
+              units: salesTotals.units,
+            })
+          }}
+        </small>
+      </div>
+    </div>
+
     <p v-if="!loading && !items.length" class="empty">{{ uiText('Aucune vente enregistrée pour cette période.') }}</p>
     <div v-else class="simple-table-shell" :class="{ 'simple-table-shell--fill': true }">
       <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
@@ -697,6 +726,51 @@ defineExpose({ reload: loadItems })
 
 .filter-field {
   min-width: 9rem;
+}
+
+.sales-total-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  align-self: flex-start;
+  margin-bottom: 0.85rem;
+  padding: 0.65rem 1rem;
+  border: 1px solid #86efac;
+  border-radius: var(--radius-sm);
+  background: #f0fdf4;
+}
+
+.sales-total-card__icon {
+  display: inline-grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.sales-total-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.sales-total-card__label {
+  font-size: 0.75rem;
+  font-weight: 650;
+  color: var(--text-muted);
+}
+
+.sales-total-card__value {
+  font-size: 1.15rem;
+  color: #15803d;
+  font-variant-numeric: tabular-nums;
+}
+
+.sales-total-card__hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
 .empty {

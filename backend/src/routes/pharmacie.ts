@@ -245,8 +245,18 @@ function resolveProductSku(input: { sku?: string; barcode?: string; name: string
   return `MED-${slug || "PRODUIT"}-${Date.now().toString(36).toUpperCase()}`;
 }
 
+/** Nouveau produit : prix d'achat (par boîte) et de vente obligatoires pour calculer le bénéfice. */
+const productCreateSchema = productSchema.extend({ purchasePriceFcfa: fcfaInt });
+
+const PRICE_FIELD_ERRORS: Record<string, string> = {
+  purchasePriceFcfa: "Le prix d'achat est obligatoire.",
+  unitPriceFcfa: "Le prix de vente est obligatoire.",
+};
+
 function mapProductCatalogError(error: unknown, res: import("express").Response) {
   if (error instanceof z.ZodError) {
+    const priceError = PRICE_FIELD_ERRORS[String(error.issues[0]?.path.at(-1) ?? "")];
+    if (priceError) return res.status(400).json({ error: priceError });
     const field = error.issues[0]?.path.join(".") || "champ";
     return res.status(400).json({ error: `Données invalides — vérifiez le ${field}.` });
   }
@@ -1102,7 +1112,7 @@ router.post("/products/:id/retire-expired", async (req, res) => {
 
 router.post("/products", ...catalogAccess, async (req, res) => {
   try {
-    const body = productSchema.parse(req.body);
+    const body = productCreateSchema.parse(req.body);
     const duplicateId = await findCatalogDuplicateId(body);
     if (duplicateId) {
       const item = await restockExistingProduct(duplicateId, body, req.user!.id);
@@ -1142,7 +1152,8 @@ router.put("/products/:id", ...catalogAccess, async (req, res) => {
     else if (body.expiryDate !== undefined) data.expiryDate = parseExpiryDate(body.expiryDate);
     if (body.quantity !== undefined) data.quantity = body.quantity;
     if (body.unitPriceFcfa !== undefined) data.unitPriceFcfa = body.unitPriceFcfa;
-    if (body.purchasePriceFcfa !== undefined) data.purchasePriceFcfa = body.purchasePriceFcfa;
+    // Une modification ne peut pas effacer un prix d'achat déjà connu.
+    if (body.purchasePriceFcfa != null) data.purchasePriceFcfa = body.purchasePriceFcfa;
     if (body.minStock !== undefined) data.minStock = body.minStock;
     if (body.sachetsPerBox !== undefined) data.sachetsPerBox = body.sachetsPerBox;
     if (body.sachetPriceFcfa !== undefined) data.sachetPriceFcfa = body.sachetPriceFcfa;
@@ -1389,7 +1400,7 @@ const purchaseSchema = z.object({
             .nullable(),
           quantity: z.number().int().positive().max(100_000),
           purchasePriceFcfa: z.number().int().positive(),
-          unitPriceFcfa: z.number().int().positive().optional().nullable(),
+          unitPriceFcfa: z.number().int().positive(),
           expiryDate: z.string().optional().nullable(),
           noExpiry: z.boolean().optional(),
         })
@@ -1427,6 +1438,10 @@ router.post("/purchases", ...purchaseAccess, async (req, res) => {
     return res.status(201).json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
+      const priceError = PRICE_FIELD_ERRORS[String(error.issues[0]?.path.at(-1) ?? "")];
+      if (priceError) {
+        return res.status(400).json({ error: `${priceError} Renseignez-le sur chaque ligne de la facture.` });
+      }
       return res.status(400).json({ error: "Facture incomplète — vérifiez fournisseur, n° de facture et lignes." });
     }
     if (error instanceof Error) {
