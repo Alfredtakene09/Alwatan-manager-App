@@ -1183,7 +1183,11 @@ router.delete("/users/:id", requireModule("user-accounts"), async (req, res) => 
     }
   }
 
-  await prisma.user.delete({ where: { id: userId } });
+  // Le journal d'audit garde les actions du compte (nom conservé dans metadata) sans le bloquer.
+  await prisma.$transaction([
+    prisma.auditLog.updateMany({ where: { userId }, data: { userId: null } }),
+    prisma.user.delete({ where: { id: userId } }),
+  ]);
   return res.json({
     ok: true,
     message: `Le compte de ${existing.firstName} ${existing.lastName} a été supprimé.`,

@@ -18,6 +18,7 @@ import blocSallesRoutes from "./routes/bloc-salles.js";
 import pharmacieRoutes from "./routes/pharmacie.js";
 import facturesRoutes from "./routes/factures.js";
 import adminRoutes from "./routes/admin.js";
+import auditLogsRoutes from "./routes/audit-logs.js";
 import dashboardRoutes from "./routes/dashboard.js";
 import hospitalisationRoutes from "./routes/hospitalisation.js";
 import { refreshExamPriceCache } from "./lib/lab-exam-prices.js";
@@ -55,6 +56,7 @@ import { prisma, prismaRaw } from "./lib/db.js";
 import { blockRemoteDeletes } from "./lib/remote-access.js";
 import { assertJwtSecret } from "./lib/auth.js";
 import { startDataBackupScheduler } from "./lib/data-backup.js";
+import { auditTrailMiddleware, startAuditLogPurgeScheduler } from "./lib/audit-log.js";
 import { startHospitalizationReleaseScheduler } from "./lib/hospitalization-auto-release.js";
 import {
   ensureDbDeleteGuard,
@@ -134,6 +136,9 @@ app.use((req, _res, next) => {
   runWithAppDataDeleteUnlock("api", () => next());
 });
 
+/** Journal d'audit : créations, modifications, suppressions, connexions. */
+app.use(auditTrailMiddleware);
+
 app.get("/api/health", async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
@@ -182,6 +187,7 @@ app.use("/api/bloc-salles", blocSallesRoutes);
 app.use("/api/pharmacie", pharmacieRoutes);
 app.use("/api/factures", facturesRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/audit-logs", auditLogsRoutes);
 app.use("/api/clinic-info", clinicInfoRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/hospitalisation", hospitalisationRoutes);
@@ -514,5 +520,7 @@ function startServer() {
 startServer();
 /** Sauvegarde auto (SQL + uploads) toutes les 2 h — manifests prêts pour cloud. */
 startDataBackupScheduler({ projectRoot });
+/** Journal d'audit : ne garde que les 2 derniers mois (purge au démarrage puis toutes les 12 h). */
+startAuditLogPurgeScheduler();
 /** Libère les salles des séjours soldés dont la date de fin est atteinte. */
 startHospitalizationReleaseScheduler();

@@ -380,6 +380,28 @@ describe("Salaires — avances déduites et historique", () => {
   });
 });
 
+describe("Journal d'audit des actions utilisateurs", () => {
+  it("enregistre connexions et écritures, consultable par l'admin uniquement", async () => {
+    const res = await api.admin.get(`/audit-logs?from=${today}&to=${today}&pageSize=500`);
+    assert.equal(res.status, 200, JSON.stringify(res.data));
+    const items = res.data.items as any[];
+    assert.ok(items.some((row) => row.action === "LOGIN"), "connexion non journalisée");
+    const purchase = items.find((row) => row.path === "/api/pharmacie/purchases" && row.status === 201);
+    assert.ok(purchase, "facture fournisseur non journalisée");
+    assert.equal(purchase.action, "CREATE");
+    assert.equal(purchase.moduleLabel, "Pharmacie");
+    assert.ok(purchase.userName && purchase.userName !== "Système / inconnu");
+    assert.ok(
+      !items.some((row) => JSON.stringify(row.details ?? "").includes("password\":\"") &&
+        !JSON.stringify(row.details).includes("\"***\"")),
+      "mot de passe recopié dans le journal",
+    );
+
+    const denied = await api.gest.get("/audit-logs");
+    assert.equal(denied.status, 403);
+  });
+});
+
 describe("Audit global des flux sur les données de test", () => {
   it("ne trouve aucun écart", () => {
     const result = spawnSync("npx", ["tsx", "scripts/audit-flows.ts", today, today], {
