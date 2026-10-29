@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Wallet, Plus, Pencil, ListOrdered, Search, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Wallet, Plus, Pencil, ListOrdered, Search, Trash2, ArrowDownLeft, ArrowUpRight } from '@lucide/vue'
 import api from '@/api/client'
 import { canAccessModule, formatFcfa } from '@/lib/roles'
 import type { AdminExpenseRow } from '@/lib/admin-dashboard'
@@ -246,15 +246,26 @@ const expensePeriodLabel = computed(() => {
   return `${formatShortDate(dateFrom.value)} – ${formatShortDate(dateTo.value)}`
 })
 
-const expenseTotalFcfa = computed(() =>
-  rows.value
-    .filter((row) => row.status !== 'REJECTED' && row.flow !== 'ENTREE')
-    .reduce((sum, row) => sum + row.amountFcfa, 0),
-)
+/** Totaux de la liste affichée : période, type et recherche appliqués, lignes rejetées exclues. */
+const flowTotals = computed(() => {
+  const totals = { entreeFcfa: 0, entreeCount: 0, sortieFcfa: 0, sortieCount: 0 }
+  for (const row of filteredRows.value) {
+    if (row.status === 'REJECTED') continue
+    if (row.flow === 'ENTREE') {
+      totals.entreeFcfa += row.amountFcfa
+      totals.entreeCount += 1
+    } else {
+      totals.sortieFcfa += row.amountFcfa
+      totals.sortieCount += 1
+    }
+  }
+  return totals
+})
 
 const expenseExportColumns: ExportColumn<AdminExpenseRow>[] = [
   { header: 'Date', value: (row) => formatShortDate(row.date) },
   { header: 'Catégorie', value: (row) => row.category },
+  { header: 'Type', value: (row) => (row.flow === 'ENTREE' ? 'Entrée' : 'Sortie') },
   { header: 'Description', value: (row) => row.description },
   { header: 'Montant', value: (row) => formatFcfa(row.amountFcfa) },
   { header: 'Commentaire', value: (row) => row.comment?.trim() || '—' },
@@ -264,7 +275,8 @@ function expenseExportShared() {
   return {
     captionRows: [
       { label: 'Période', value: expensePeriodLabel.value },
-      { label: 'Total', value: formatFcfa(expenseTotalFcfa.value) },
+      { label: 'Total des entrées', value: formatFcfa(flowTotals.value.entreeFcfa) },
+      { label: 'Total des sorties', value: formatFcfa(flowTotals.value.sortieFcfa) },
     ],
   }
 }
@@ -312,7 +324,7 @@ onMounted(() => {
         </UiButton>
         <ExportButtons
           v-if="canManageExpenses && activeSection === 'liste'"
-          :disabled="loading || !rows.length"
+          :disabled="loading || !filteredRows.length"
           @pdf="exportExpensesPdf"
           @excel="exportExpensesExcel"
           @word="exportExpensesWord"
@@ -405,15 +417,31 @@ onMounted(() => {
 
     <template v-if="activeSection === 'liste'">
       <UiCard v-if="canManageExpenses" title="Liste des dépenses">
-        <div class="depenses-search">
-          <Search :size="16" class="depenses-search__icon" />
-          <input
-            v-model="search"
-            type="search"
-            class="depenses-search__input"
-            :placeholder="uiText('Rechercher une dépense…')"
-            :aria-label="uiText('Rechercher une dépense…')"
-          />
+        <div class="depenses-list-head">
+          <div class="depenses-search">
+            <Search :size="16" class="depenses-search__icon" />
+            <input
+              v-model="search"
+              type="search"
+              class="depenses-search__input"
+              :placeholder="uiText('Rechercher une dépense…')"
+              :aria-label="uiText('Rechercher une dépense…')"
+            />
+          </div>
+          <div class="flow-totals" :aria-label="uiText('Synthèse des dépenses')">
+            <div v-if="flowFilter !== 'SORTIE'" class="flow-total flow-total--in">
+              <ArrowDownLeft :size="16" class="flow-total__icon" />
+              <span class="flow-total__label">{{ uiText('Total des entrées') }}</span>
+              <strong class="flow-total__amount">{{ formatFcfa(flowTotals.entreeFcfa) }}</strong>
+              <span class="flow-total__count">({{ flowTotals.entreeCount }})</span>
+            </div>
+            <div v-if="flowFilter !== 'ENTREE'" class="flow-total flow-total--out">
+              <ArrowUpRight :size="16" class="flow-total__icon" />
+              <span class="flow-total__label">{{ uiText('Total des sorties') }}</span>
+              <strong class="flow-total__amount">{{ formatFcfa(flowTotals.sortieFcfa) }}</strong>
+              <span class="flow-total__count">({{ flowTotals.sortieCount }})</span>
+            </div>
+          </div>
         </div>
         <div v-if="loading" class="chart-empty">{{ uiText('Chargement…') }}</div>
         <div v-else-if="!filteredRows.length" class="chart-empty">
@@ -505,10 +533,62 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.depenses-list-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
 .depenses-search {
   position: relative;
+  flex: 1 1 16rem;
   max-width: 22rem;
-  margin-bottom: 0.75rem;
+}
+
+.flow-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.flow-total {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+}
+
+.flow-total--in {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #15803d;
+}
+
+.flow-total--out {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.flow-total__label {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.flow-total__amount {
+  font-size: 0.9rem;
+}
+
+.flow-total__count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
 .depenses-search__icon {
