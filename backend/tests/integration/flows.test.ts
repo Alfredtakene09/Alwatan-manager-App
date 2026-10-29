@@ -257,9 +257,20 @@ describe("Pharmacie — achat par facture et vente", () => {
       supplierId: fx.supplier.id,
       invoiceNumber: "FT-REFUS",
       businessDate: today,
-      lines: [{ productId: fx.product.id, quantity: 1, purchasePriceFcfa: 600 }],
+      lines: [{ productId: fx.product.id, quantity: 1, purchasePriceFcfa: 600, unitPriceFcfa: FEES.productSalePrice }],
     });
     assert.equal(res.status, 403);
+  });
+
+  it("refuse une ligne de facture sans prix de vente", async () => {
+    const res = await api.gest.post("/pharmacie/purchases", {
+      supplierId: fx.supplier.id,
+      invoiceNumber: "FT-SANS-PRIX",
+      businessDate: today,
+      lines: [{ productId: fx.product.id, quantity: 1, purchasePriceFcfa: 600 }],
+    });
+    assert.equal(res.status, 400);
+    assert.match(String(res.data.error), /prix de vente/i);
   });
 
   it("entre le stock et sort le total de la caisse du gestionnaire", async () => {
@@ -267,7 +278,14 @@ describe("Pharmacie — achat par facture et vente", () => {
       supplierId: fx.supplier.id,
       invoiceNumber: "FT-001",
       businessDate: today,
-      lines: [{ productId: fx.product.id, quantity: 10, purchasePriceFcfa: FEES.productPurchasePrice }],
+      lines: [
+        {
+          productId: fx.product.id,
+          quantity: 10,
+          purchasePriceFcfa: FEES.productPurchasePrice,
+          unitPriceFcfa: FEES.productSalePrice,
+        },
+      ],
     });
     assert.equal(res.status, 201, JSON.stringify(res.data));
     assert.equal(res.data.totalFcfa, 10 * FEES.productPurchasePrice);

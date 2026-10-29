@@ -135,8 +135,8 @@ function validate(): string {
     if (!toInt(line.purchasePrice)) {
       return translateTemplate("Prix d'achat manquant pour « {name} ».", { name: line.name })
     }
-    if (!line.productId && !toInt(line.salePrice)) {
-      return translateTemplate('Prix de vente requis pour le nouveau produit « {name} ».', { name: line.name })
+    if (!toInt(line.salePrice)) {
+      return translateTemplate('Prix de vente manquant pour « {name} ».', { name: line.name })
     }
   }
   return ''
@@ -156,7 +156,7 @@ async function save() {
           : { name: line.name.trim(), dosage: line.dosage.trim() || null },
         quantity: toInt(line.quantity),
         purchasePriceFcfa: toInt(line.purchasePrice),
-        unitPriceFcfa: toInt(line.salePrice) || null,
+        unitPriceFcfa: toInt(line.salePrice),
         expiryDate: line.noExpiry ? null : line.expiryDate || null,
         noExpiry: line.noExpiry,
       }))
@@ -243,8 +243,15 @@ businessDate.value = todayIso()
             <input v-model="line.quantity" class="purchase-line__input" type="number" min="1" />
           </label>
           <label class="purchase-field purchase-field--purchase">
-            <span class="purchase-field__label">{{ uiText("Prix d'achat unit.") }}</span>
-            <input v-model="line.purchasePrice" class="purchase-line__input" type="number" min="1" placeholder="FCFA" />
+            <span class="purchase-field__label">{{ uiText("Prix d'achat (boîte)") }} *</span>
+            <input
+              v-model="line.purchasePrice"
+              class="purchase-line__input"
+              type="number"
+              min="1"
+              placeholder="FCFA"
+              required
+            />
           </label>
           <button
             type="button"
@@ -255,8 +262,15 @@ businessDate.value = todayIso()
             <Trash2 :size="15" />
           </button>
           <label class="purchase-field purchase-field--sale">
-            <span class="purchase-field__label">{{ uiText('Prix de vente') }}</span>
-            <input v-model="line.salePrice" class="purchase-line__input" type="number" min="1" placeholder="FCFA" />
+            <span class="purchase-field__label">{{ uiText('Prix de vente') }} *</span>
+            <input
+              v-model="line.salePrice"
+              class="purchase-line__input"
+              type="number"
+              min="1"
+              placeholder="FCFA"
+              required
+            />
           </label>
           <div class="purchase-field purchase-field--expiry">
             <span class="purchase-field__label">{{ uiText('Expiration') }}</span>
