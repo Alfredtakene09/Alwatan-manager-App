@@ -500,7 +500,7 @@ onUnmounted(() => {
     <section v-if="showProfitSection" class="profit-section" :aria-label="uiText('Bénéfice pharmacie')">
       <h2 class="profit-section__title">{{ uiText('Bénéfice') }}</h2>
       <p class="profit-section__hint">
-        {{ uiText('Marge brute = ventes nettes (remises déduites) − coût d’achat figé au moment de la vente') }}
+        {{ uiText('Bénéfice réalisé = ventes nettes après remises et retours − coût des produits vendus non retournés') }}
       </p>
       <p v-if="profitExclusionNote" class="profit-section__warning">{{ profitExclusionNote }}</p>
       <div class="profit-cards">
