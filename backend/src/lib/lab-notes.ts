@@ -1072,6 +1072,18 @@ export function prescribedExamSetsEqual(
   return true;
 }
 
+/** Vrai si `next` garde tous les examens de `previous` (ajouts seulement, rien retiré). */
+export function prescribedExamSetIncludes(
+  next: Partial<Record<ExamKindSlug, string[]>> | null | undefined,
+  previous: Partial<Record<ExamKindSlug, string[]>> | null | undefined,
+): boolean {
+  for (const kind of EXAM_KIND_ORDER) {
+    const nextSet = new Set(uniqueExamLabels(next?.[kind]));
+    if (!uniqueExamLabels(previous?.[kind]).every((label) => nextSet.has(label))) return false;
+  }
+  return true;
+}
+
 export function removePaidExamKindMarker(
   notes: string | null | undefined,
   kind: ExamKindSlug,

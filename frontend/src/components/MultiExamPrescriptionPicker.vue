@@ -677,7 +677,8 @@ function emitActiveService() {
   }
   const operationServiceId = props.operationServiceId?.trim() || ''
   if (activePanel.value === 'operation' && operationServiceId) {
-    const tab = specialtyTabs.value.find((svc) => svc.id === operationServiceId)
+    // Tous les services : en mode « opération seule », specialtyTabs est vide (ex. Odontologie).
+    const tab = specialtyServiceTabs.value.find((svc) => svc.id === operationServiceId)
     if (tab) {
       emit('active-service-change', {
         kind: 'operation',
@@ -705,7 +706,13 @@ function emitActiveService() {
 
 watch(
   () =>
-    [activePanel.value, specialtyTabs.value, catalogEpoch.value, props.operationServiceId] as const,
+    [
+      activePanel.value,
+      specialtyTabs.value,
+      specialtyServiceTabs.value,
+      catalogEpoch.value,
+      props.operationServiceId,
+    ] as const,
   () => {
     emitActiveService()
   },
