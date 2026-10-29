@@ -79,6 +79,28 @@ function netRatio(prescription: { grossTotalFcfa: number | null; netTotalFcfa: n
   return Math.min(1, Math.max(0, net / gross));
 }
 
+export function allocateNetRevenueByLine(
+  lines: Array<{ lineTotalFcfa: number }>,
+  prescription: { grossTotalFcfa: number | null; netTotalFcfa: number | null },
+): number[] {
+  const grossLines = lines.map((line) => Math.max(0, line.lineTotalFcfa));
+  const grossTotal = grossLines.reduce((sum, amount) => sum + amount, 0);
+  if (grossTotal <= 0) return lines.map(() => 0);
+
+  const targetNet = Math.round(grossTotal * netRatio(prescription));
+  const exactShares = grossLines.map((amount) => (amount * targetNet) / grossTotal);
+  const allocated = exactShares.map(Math.floor);
+  let remainder = targetNet - allocated.reduce((sum, amount) => sum + amount, 0);
+  const remainderOrder = exactShares
+    .map((amount, index) => ({ index, fraction: amount - allocated[index] }))
+    .sort((a, b) => b.fraction - a.fraction || a.index - b.index);
+
+  for (let index = 0; remainder > 0; index += 1, remainder -= 1) {
+    allocated[remainderOrder[index % remainderOrder.length].index] += 1;
+  }
+  return allocated;
+}
+
 /**
  * Marge brute réalisée sur la période :
  * - CA = montant net des lignes (remises et gratuités réparties au prorata), moins les retours nets ;
@@ -100,6 +122,7 @@ export async function computePharmacyProfit(
         },
       },
       select: {
+        prescriptionId: true,
         quantity: true,
         unitPriceFcfa: true,
         lineTotalFcfa: true,
@@ -132,16 +155,37 @@ export async function computePharmacyProfit(
   const result = emptyProfit();
   let revenueFcfa = 0;
   let costFcfa = 0;
-  for (const line of saleLines) {
-    const lineNet = Math.round(line.lineTotalFcfa * netRatio(line.prescription));
-    const unitCost = lineUnitCost(line);
-    if (unitCost == null) {
-      result.excludedLinesCount += 1;
-      result.excludedRevenueFcfa += lineNet;
-      continue;
+  const linesByPrescription = new Map<
+    string,
+    {
+      prescription: (typeof saleLines)[number]["prescription"];
+      lines: typeof saleLines;
     }
-    revenueFcfa += lineNet;
-    costFcfa += line.quantity * unitCost;
+  >();
+  for (const line of saleLines) {
+    const group = linesByPrescription.get(line.prescriptionId);
+    if (group) {
+      group.lines.push(line);
+    } else {
+      linesByPrescription.set(line.prescriptionId, {
+        prescription: line.prescription,
+        lines: [line],
+      });
+    }
+  }
+  for (const group of linesByPrescription.values()) {
+    const lineNetAmounts = allocateNetRevenueByLine(group.lines, group.prescription);
+    for (const [index, line] of group.lines.entries()) {
+      const lineNet = lineNetAmounts[index];
+      const unitCost = lineUnitCost(line);
+      if (unitCost == null) {
+        result.excludedLinesCount += 1;
+        result.excludedRevenueFcfa += lineNet;
+        continue;
+      }
+      revenueFcfa += lineNet;
+      costFcfa += line.quantity * unitCost;
+    }
   }
   for (const row of returns) {
     const unitCost = lineUnitCost(row.saleLine);

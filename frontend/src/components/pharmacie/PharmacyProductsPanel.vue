@@ -142,6 +142,14 @@ function toProductExportRow(item: PharmacyProductRecord) {
   const purchase = item.purchasePriceFcfa
   const hasPurchase = purchase != null && purchase > 0
   const profitFcfa = hasPurchase ? item.unitPriceFcfa - purchase : null
+  const detailProfitFcfa =
+    hasPurchase &&
+    item.sellBySachet &&
+    item.sachetsPerBox > 1 &&
+    item.sachetPriceFcfa != null &&
+    item.sachetPriceFcfa > 0
+      ? item.sachetPriceFcfa - Math.round(purchase / item.sachetsPerBox)
+      : null
   return {
     id: item.id,
     name: item.dosage ? `${item.name} — ${item.dosage}` : item.name,
@@ -152,7 +160,12 @@ function toProductExportRow(item: PharmacyProductRecord) {
     purchasePrice: hasPurchase ? formatFcfa(purchase) : '—',
     purchasePriceSort: hasPurchase ? purchase : -1,
     profit: profitFcfa != null ? formatFcfa(profitFcfa) : '—',
+    detailProfit: detailProfitFcfa != null ? formatFcfa(detailProfitFcfa) : '—',
     profitSort: profitFcfa ?? Number.NEGATIVE_INFINITY,
+    detailProfitLabel:
+      detailProfitFcfa != null
+        ? translateTemplate('Sachet : {amount}', { amount: formatFcfa(detailProfitFcfa) })
+        : '',
     quantity: item.quantity,
     minStock: item.minStock,
     stockLabel: translateTemplate('{n} en stock', { n: item.quantity }),
@@ -197,7 +210,7 @@ function stockUnitPrices(item: PharmacyProductRecord) {
   return { sale, purchase }
 }
 
-/** Totaux calculés sur les seuls produits dont le prix d'achat est connu : vente − achat = bénéfice. */
+/** Potentiel du stock actuel aux prix catalogue, limité aux coûts d'achat connus. */
 const priceTotals = computed(() => {
   let purchase = 0
   let sale = 0
@@ -600,9 +613,10 @@ const productExportColumns = computed<ExportColumn<ProductExportRow>[]>(() => {
     { header: uiText('Médicament'), value: (r) => r.name },
     { header: uiText('Catégorie'), value: (r) => r.category },
     { header: uiText('Forme'), value: (r) => r.form },
-    { header: uiText('Prix vente'), value: (r) => r.price },
-    { header: uiText("Prix d'achat"), value: (r) => r.purchasePrice },
-    { header: uiText('Bénéfice'), value: (r) => r.profit },
+    { header: uiText('Prix vente boîte'), value: (r) => r.price },
+    { header: uiText("Prix d'achat boîte"), value: (r) => r.purchasePrice },
+    { header: uiText('Bénéfice boîte'), value: (r) => r.profit },
+    { header: uiText('Bénéfice sachet'), value: (r) => r.detailProfit },
     { header: uiText('Seuil'), value: (r) => r.minStock },
     { header: uiText('Disponible'), value: (r) => r.quantity },
     { header: uiText('Statut'), value: (r) => r.statusLabel },
@@ -615,7 +629,7 @@ function productExportTotals() {
     { label: uiText('Nombre de médicaments'), value: String(valuedStockItems.value.length) },
     { label: uiText('Valeur stock (prix vente)'), value: formatFcfa(totals.sale) },
     { label: uiText('Valeur stock (prix achat)'), value: formatFcfa(totals.purchase) },
-    { label: uiText('Bénéfice stock (vente − achat)'), value: formatFcfa(totals.profit) },
+    { label: uiText('Bénéfice potentiel du stock (vente − achat)'), value: formatFcfa(totals.profit) },
   ]
   if (totals.missingPurchaseCount) {
     rows.push({
@@ -719,9 +733,9 @@ defineExpose({
           <div
             class="products-total"
             :class="priceTotals.profit < 0 ? 'products-total--loss' : 'products-total--profit'"
-            :title="uiText('Bénéfice stock (vente − achat)')"
+            :title="uiText('Bénéfice potentiel du stock (vente − achat)')"
           >
-            <span class="products-total__label">{{ uiText('Total bénéfice') }}</span>
+            <span class="products-total__label">{{ uiText('Bénéfice potentiel') }}</span>
             <strong class="products-total__value">{{ formatFcfa(priceTotals.profit) }}</strong>
           </div>
           <div
@@ -754,9 +768,9 @@ defineExpose({
                 <th>Médicament</th>
                 <th>Catégorie</th>
                 <th>Forme</th>
-                <th>Prix vente</th>
-                <th>Prix d'achat</th>
-                <th>Bénéfice</th>
+                <th>{{ uiText('Prix vente boîte') }}</th>
+                <th>{{ uiText("Prix d'achat boîte") }}</th>
+                <th>{{ uiText('Bénéfice (boîte / sachet)') }}</th>
                 <th>Seuil</th>
                 <th>Disponible</th>
                 <th>Statut</th>
@@ -771,7 +785,11 @@ defineExpose({
                 <td>{{ row.form }}</td>
                 <td><span class="st-amount">{{ row.price }}</span></td>
                 <td><span class="st-amount">{{ row.purchasePrice }}</span></td>
-                <td><span class="st-amount">{{ row.profit }}</span></td>
+                <td>
+                  <span class="st-amount">{{ row.profit }}</span>
+                  <small v-if="row.detailProfitLabel" class="st-profit-detail">{{ row.detailProfitLabel }}</small>
+                  <small v-else class="st-profit-detail">—</small>
+                </td>
                 <td>{{ row.minStock }}</td>
                 <td>
                   <span class="st-badge" :class="`st-badge--${row.stockVariant}`">{{ row.stockLabel }}</span>
@@ -1015,6 +1033,13 @@ defineExpose({
   font-weight: 700;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+.st-profit-detail {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  white-space: nowrap;
 }
 
 .products-total--count {
