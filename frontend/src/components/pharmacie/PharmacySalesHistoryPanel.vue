@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { RefreshCw, Printer, Eye, Pencil, Save, Trash2, RotateCcw, Wallet } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
-import { formatFcfa, fullName } from '@/lib/roles'
+import { formatFcfa, fullName, ROLE_LABELS, type AppUserRole } from '@/lib/roles'
 import { CLINIC } from '@/lib/clinic'
 import { formatPatientTableDate } from '@/lib/patient-datatable-columns'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
@@ -18,6 +18,7 @@ import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiInput from '@/components/ui/UiInput.vue'
+import UiSelect from '@/components/ui/UiSelect.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import PharmacySaleReturnModal, {
   type PharmacySaleForReturn,
@@ -92,6 +93,10 @@ const message = ref('')
 const messageType = ref<'success' | 'error'>('error')
 const filterFrom = ref('')
 const filterTo = ref('')
+const filterPharmacistId = ref('')
+
+type PharmacistOption = { id: string; firstName: string; lastName: string; role?: AppUserRole }
+const pharmacists = ref<PharmacistOption[]>([])
 const expandedId = ref<string | null>(null)
 const editId = ref<string | null>(null)
 const editingLines = ref<EditableSaleLine[]>([])
@@ -103,7 +108,24 @@ const returnSale = ref<PharmacySaleForReturn | null>(null)
 
 const auth = useAuthStore()
 const canDeleteSaleLine = computed(() => auth.user?.role === 'ADMIN')
+/** Un pharmacien ne voit que ses propres ventes : pas de choix du vendeur. */
+const canFilterPharmacist = computed(() => Boolean(auth.user && auth.user.role !== 'PHARMACIEN'))
 const { uiText, localeCode } = useAppI18n()
+
+function pharmacistOptionLabel(row: PharmacistOption) {
+  const name = fullName(row.firstName, row.lastName)
+  return row.role && row.role !== 'PHARMACIEN' ? `${name} · ${uiText(ROLE_LABELS[row.role] ?? row.role)}` : name
+}
+
+async function loadPharmacists() {
+  if (!canFilterPharmacist.value) return
+  try {
+    const { data } = await api.get<PharmacistOption[]>('/pharmacie/pharmacists')
+    pharmacists.value = data
+  } catch {
+    pharmacists.value = []
+  }
+}
 
 const tableRows = computed(() => {
   void localeCode.value
@@ -175,16 +197,27 @@ async function onReturnSuccess(sale: PharmacySaleForReturn) {
   expandedId.value = sale.id
 }
 
+let loadRequest = 0
+
 async function loadItems() {
+  if (filterFrom.value && filterTo.value && filterFrom.value > filterTo.value) {
+    message.value = uiText('La date de début doit précéder la date de fin.')
+    messageType.value = 'error'
+    return
+  }
+  const request = ++loadRequest
   loading.value = true
   message.value = ''
   try {
     const params: Record<string, string> = {}
     if (filterFrom.value) params.from = filterFrom.value
     if (filterTo.value) params.to = filterTo.value
+    if (canFilterPharmacist.value && filterPharmacistId.value) params.pharmacistId = filterPharmacistId.value
     const { data } = await api.get<SaleRecord[]>('/pharmacie/sales', { params })
+    if (request !== loadRequest) return
     items.value = data
   } catch (error: unknown) {
+    if (request !== loadRequest) return
     const responseMessage = axios.isAxiosError(error)
       ? error.response?.data?.detail ?? error.response?.data?.error ?? error.response?.data?.message
       : null
@@ -195,9 +228,13 @@ async function loadItems() {
     messageType.value = 'error'
     items.value = []
   } finally {
-    loading.value = false
+    if (request === loadRequest) loading.value = false
   }
 }
+
+watch([filterFrom, filterTo, filterPharmacistId], () => {
+  void loadItems()
+})
 
 async function printSale(sale: SaleRecord) {
   const invoiceNumber = sale.invoiceNumber ?? sale.id.slice(0, 8).toUpperCase()
@@ -419,8 +456,13 @@ function exportCaption() {
   const fromLabel = filterFrom.value || uiText('début')
   const toLabel = filterTo.value || uiText("aujourd’hui")
   const totalGlobal = formatFcfa(items.value.reduce((sum, item) => sum + saleRemainingFcfa(item), 0))
+  const pharmacist = pharmacists.value.find((row) => row.id === filterPharmacistId.value)
   return [
     { label: uiText('Période'), value: `${fromLabel} → ${toLabel}` },
+    {
+      label: uiText('Pharmacien'),
+      value: pharmacist ? pharmacistOptionLabel(pharmacist) : uiText('Tous les pharmaciens'),
+    },
     { label: uiText('Nombre de ventes'), value: String(items.value.length) },
     { label: uiText('Total cumulé'), value: totalGlobal },
   ]
@@ -460,6 +502,7 @@ function exportWord() {
 }
 
 onMounted(() => {
+  void loadPharmacists()
   void loadItems()
 })
 
@@ -470,10 +513,19 @@ defineExpose({ reload: loadItems })
   <PageTableSection embedded>
     <template #toolbar>
       <ExportButtons :disabled="loading || !items.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
+      <UiSelect
+        v-if="canFilterPharmacist"
+        v-model="filterPharmacistId"
+        label="Pharmacien"
+        class="filter-field filter-field--pharmacist"
+      >
+        <option value="">{{ uiText('Tous les pharmaciens') }}</option>
+        <option v-for="p in pharmacists" :key="p.id" :value="p.id">{{ pharmacistOptionLabel(p) }}</option>
+      </UiSelect>
       <UiInput v-model="filterFrom" label="Du" type="date" class="filter-field" />
       <UiInput v-model="filterTo" label="Au" type="date" class="filter-field" />
       <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">
-        {{ uiText('Filtrer') }}
+        {{ uiText('Actualiser') }}
       </UiButton>
     </template>
 
@@ -726,6 +778,10 @@ defineExpose({ reload: loadItems })
 
 .filter-field {
   min-width: 9rem;
+}
+
+.filter-field--pharmacist {
+  min-width: 13rem;
 }
 
 .sales-total-card {
