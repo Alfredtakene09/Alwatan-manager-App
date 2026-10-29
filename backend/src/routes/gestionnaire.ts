@@ -39,7 +39,6 @@ import { buildGestionnaireDashboardOverview, buildGestionnaireNavBadges } from "
 import { refreshUnvalidatedDayClosureForExpense } from "../lib/cashier-personal-stats.js";
 import { buildAdminDashboardOverview } from "../lib/admin-dashboard-stats.js";
 import {
-  businessDateToLocalStart,
   toBusinessDateBound,
   formatBusinessDate,
   parseBusinessDate,
@@ -55,7 +54,6 @@ import {
 } from "../lib/admin-payroll.js";
 import {
   isPayrollLinkedExpenseId,
-  listPaidPayrollExpenseCores,
   payrollExpenseMutationBlockedMessage,
 } from "../lib/payroll-expenses.js";
 import { cancelPaidPayrollById } from "../lib/payroll-cancel.js";
@@ -388,40 +386,8 @@ router.get("/expenses", async (req, res) => {
     orderBy: { createdAt: "desc" },
     take: 200,
   });
-  const clinicRows = rows.map(serializeGestionnaireExpense);
-  const payrollRows =
-    filter === "pending"
-      ? []
-      : (
-          await listPaidPayrollExpenseCores(
-            filter === "month"
-              ? { from: businessDateToLocalStart(monthStart), to: businessDateToLocalStart(monthEnd) }
-              : undefined,
-          )
-        ).map((row) => ({
-          id: row.id,
-          date: row.date,
-          category: row.category,
-          categoryIcon: null,
-          categoryColor: "#7c3aed",
-          expenseCategoryId: null,
-          description: row.description,
-          amountFcfa: row.amountFcfa,
-          beneficiary: row.beneficiary,
-          paymentMethod: null,
-          receiptPath: null,
-          status: ClinicExpenseStatus.VALIDATED,
-          statusLabel: "Validée",
-          comment: row.comment,
-          source: row.source,
-          recordedByName: row.recordedByName,
-          recordedByRole: row.recordedByRole,
-          recordedByRoleLabel: row.recordedByRoleLabel,
-        }));
-  const merged = [...clinicRows, ...payrollRows].sort((a, b) =>
-    a.date === b.date ? 0 : a.date < b.date ? 1 : -1,
-  );
-  return res.json(merged);
+  // Les salaires versés restent dans l'historique de paie : pas de copie dans les dépenses.
+  return res.json(rows.map(serializeGestionnaireExpense));
 });
 
 router.post("/expenses", requireUiAction("comptabilite.depenses"), expenseUpload.single("receipt"), async (req, res) => {

@@ -86,7 +86,6 @@ import {
 } from "../lib/admin-payroll.js";
 import {
   isPayrollLinkedExpenseId,
-  listPaidPayrollExpenseCores,
   payrollExpenseMutationBlockedMessage,
 } from "../lib/payroll-expenses.js";
 import {
@@ -1443,38 +1442,8 @@ router.get("/expenses", async (req, res) => {
     orderBy: { createdAt: "desc" },
     take: 500,
   });
-  const clinicRows = rows.map(serializeAdminExpense);
-  const payrollRange = where.businessDate
-    ? {
-        from: businessDateToLocalStart(where.businessDate.gte),
-        to: businessDateToLocalStart(where.businessDate.lt),
-      }
-    : undefined;
-  const payrollRows =
-    where.status === ClinicExpenseStatus.PENDING
-      ? []
-      : (await listPaidPayrollExpenseCores(payrollRange)).map((row) => ({
-          id: row.id,
-          date: row.date,
-          businessDate: row.date,
-          categoryCode: "AUTRE" as const,
-          flow: ClinicExpenseFlow.SORTIE,
-          amountFcfa: row.amountFcfa,
-          label: row.description,
-          description: row.description,
-          category: row.category,
-          status: ClinicExpenseStatus.VALIDATED,
-          statusLabel: "Validée",
-          comment: row.comment,
-          rejectionReason: null,
-          createdAt: row.paidAt.toISOString(),
-          source: row.source,
-        }));
-  const merged = [...clinicRows, ...payrollRows].sort((a, b) =>
-    a.date === b.date ? 0 : a.date < b.date ? 1 : -1,
-  );
-
-  return res.json(merged);
+  // Les salaires versés restent dans l'historique de paie : pas de copie dans les dépenses.
+  return res.json(rows.map(serializeAdminExpense));
 });
 
 router.post("/expenses", requireUiAction("comptabilite.depenses"), async (req, res) => {

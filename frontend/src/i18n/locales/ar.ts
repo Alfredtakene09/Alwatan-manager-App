@@ -2442,6 +2442,8 @@ export default {
     'Ma recette du jour': 'مقبوضاتي اليوم',
     '{n} vente(s)': '{n} عملية بيع',
     'Tous les pharmaciens': 'كل الصيادلة',
+    'Total des entrées': 'مجموع المداخيل',
+    'Total des sorties': 'مجموع المصاريف',
     "Journal d'audit": 'سجل التدقيق',
     'Historique détaillé des actions de tous les utilisateurs du système': 'سجل مفصل لإجراءات جميع مستخدمي النظام',
     'Tous les utilisateurs': 'كل المستخدمين',

@@ -2365,6 +2365,8 @@ export default {
     'Ma recette du jour': 'Ma recette du jour',
     '{n} vente(s)': '{n} vente(s)',
     'Tous les pharmaciens': 'Tous les pharmaciens',
+    'Total des entrées': 'Total des entrées',
+    'Total des sorties': 'Total des sorties',
     "Journal d'audit": "Journal d'audit",
     'Historique détaillé des actions de tous les utilisateurs du système': 'Historique détaillé des actions de tous les utilisateurs du système',
     'Tous les utilisateurs': 'Tous les utilisateurs',
