@@ -7,12 +7,8 @@ import {
   UserRound,
   TrendingUp,
   Wallet,
-  Percent,
-  ShoppingBag,
-  Receipt,
   ShoppingCart,
   Package,
-  RotateCcw,
   ChevronDown,
   Printer,
 } from '@lucide/vue'
@@ -33,6 +29,8 @@ type PharmacyProfit = {
   costFcfa: number
   profitFcfa: number
   marginPercent: number
+  excludedLinesCount?: number
+  excludedRevenueFcfa?: number
 }
 
 type PharmacieDashboardStats = {
@@ -204,30 +202,14 @@ const salesSummaryCards = computed(() => {
       trend: uiText('Avant remise'),
     },
     {
-      id: 'reduction',
-      label: uiText('Remises'),
-      value: formatFcfa(s.reductionFcfa),
-      icon: Percent,
-      variant: 'amber' as const,
-      trend: uiText('Réductions accordées'),
-    },
-    {
       id: 'net-total',
       label: uiText('Total net'),
       value: formatFcfa(s.netTotalFcfa),
       icon: Wallet,
       variant: 'violet' as const,
-      trend: uiText('Montant encaissé'),
-    },
-    {
-      id: 'returns',
-      label: uiText('Retours'),
-      value: s.returnsCount,
-      icon: RotateCcw,
-      variant: 'rose' as const,
-      trend: s.returnsNetFcfa
-        ? translateTemplate('Remboursé {amount}', { amount: formatFcfa(s.returnsNetFcfa) })
-        : uiText('Aucun remboursement'),
+      trend: s.reductionFcfa
+        ? translateTemplate('Remises {amount}', { amount: formatFcfa(s.reductionFcfa) })
+        : uiText('Montant encaissé'),
     },
   ]
 })
@@ -266,17 +248,17 @@ const summaryStats = computed((): SummaryStat[] => {
       trend: translateTemplate('{n} produits actifs', { n: s.productsCount }),
     },
   ]
-  if (showProfitSection.value) {
-    cards.push({
-      id: 'purchases-total',
-      label: uiText("Coût d'achat période"),
-      value: formatFcfa(s.profitPeriod.costFcfa),
-      icon: Receipt,
-      variant: 'cyan',
-      trend: selectedPeriodTrend.value,
-    })
-  }
   return cards
+})
+
+const profitExclusionNote = computed(() => {
+  void localeCode.value
+  const period = stats.value?.profitPeriod
+  if (!period?.excludedLinesCount) return ''
+  return translateTemplate(
+    '{n} ligne(s) vendue(s) sans prix d’achat exclue(s) du bénéfice ({amount}) — renseignez le prix d’achat de ces produits.',
+    { n: period.excludedLinesCount, amount: formatFcfa(period.excludedRevenueFcfa ?? 0) },
+  )
 })
 
 const profitCards = computed(() => {
@@ -298,14 +280,6 @@ const profitCards = computed(() => {
       icon: Wallet,
       variant: 'violet' as const,
       trend: translateTemplate('Coût {amount}', { amount: formatFcfa(period.costFcfa) }),
-    },
-    {
-      id: 'cost-period',
-      label: uiText("Coût d'achat période"),
-      value: formatFcfa(period.costFcfa),
-      icon: ShoppingBag,
-      variant: 'amber' as const,
-      trend: selectedPeriodTrend.value,
     },
   ]
 })
@@ -526,8 +500,9 @@ onUnmounted(() => {
     <section v-if="showProfitSection" class="profit-section" :aria-label="uiText('Bénéfice pharmacie')">
       <h2 class="profit-section__title">{{ uiText('Bénéfice') }}</h2>
       <p class="profit-section__hint">
-        {{ uiText('Marge brute = ventes − coût d’achat (prix d’achat des produits)') }}
+        {{ uiText('Marge brute = ventes nettes (remises déduites) − coût d’achat figé au moment de la vente') }}
       </p>
+      <p v-if="profitExclusionNote" class="profit-section__warning">{{ profitExclusionNote }}</p>
       <div class="profit-cards">
         <UiStatCard
           v-for="card in profitCards"
@@ -632,9 +607,18 @@ onUnmounted(() => {
   color: var(--text-muted);
 }
 
+.profit-section__warning {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.8125rem;
+}
+
 .profit-cards {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
 }
 
@@ -808,7 +792,7 @@ onUnmounted(() => {
 
 .sales-summary-cards {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.85rem;
 }
 

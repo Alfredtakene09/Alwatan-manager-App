@@ -9,6 +9,7 @@ import { shouldCreateImmediateInvoice, withPatientDiscount } from "../lib/patien
 import { applyStockMovement, recordDispensationMovement } from "../lib/pharmacy-stock.js";
 import { listPharmacyStockAlerts, listPharmacyExpiryAlerts } from "../lib/pharmacy-alerts.js";
 import { buildPharmacyReport } from "../lib/pharmacy-reports.js";
+import { productUnitCostFcfa } from "../lib/pharmacy-profit.js";
 import { buildPharmacyRevenueReport } from "../lib/pharmacy-revenue.js";
 import {
   buildPharmacyDayClosureSnapshot,
@@ -1731,6 +1732,7 @@ router.post("/", async (req, res) => {
             quantity: line.quantity,
             unitPriceFcfa: line.unitPriceFcfa,
             lineTotalFcfa: line.lineTotal,
+            unitCostFcfa: productUnitCostFcfa(line.product, line.sellByDetail),
           },
         });
         await recordDispensationMovement(tx, {
