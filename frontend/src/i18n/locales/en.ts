@@ -2439,6 +2439,12 @@ export default {
     'Vente au comptoir et dispensation': 'Over-the-counter sales and dispensing',
     'Ma recette du jour': 'My sales today',
     '{n} vente(s)': '{n} sale(s)',
+    'Tous les pharmaciens': 'All pharmacists',
+    'Produits les plus vendus': 'Best-selling products',
+    'Meilleurs vendeurs': 'Top sellers',
+    "Chiffre d'affaires — {period}": 'Revenue — {period}',
+    '{n} unité(s) vendue(s)': '{n} unit(s) sold',
+    'Aucune vente sur cette période': 'No sales in this period',
     'Ordonnances médecin': 'Doctor prescriptions',
     'Aucune ordonnance envoyée depuis moins de 24 h.':
       'No prescription sent in the last 24 hours.',
