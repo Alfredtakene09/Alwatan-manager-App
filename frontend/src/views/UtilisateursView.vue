@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { confirmAppModal } from '@/lib/api-modal-helper'
-import { Users, Plus, Save, Eye, Search, Unlock, Shield } from '@lucide/vue'
+import { Users, Plus, Save, Eye, Search, Unlock, Shield, History } from '@lucide/vue'
 import api from '@/api/client'
 import {
   fullName,
@@ -32,6 +32,7 @@ import UiFormModal from '@/components/ui/UiFormModal.vue'
 import StCatalogActions from '@/components/ui/StCatalogActions.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import RoleUiPermissionsPanel from '@/components/admin/RoleUiPermissionsPanel.vue'
+import AuditLogPanel from '@/components/admin/AuditLogPanel.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import { useAuthStore } from '@/stores/auth'
@@ -77,7 +78,9 @@ const isAdmin = computed(() => auth.user?.role === 'ADMIN')
 const canConfigureUiButtons = computed(
   () => auth.user?.role === 'ADMIN' || auth.user?.role === 'COMPTABLE',
 )
-const usersTab = ref<'accounts' | 'buttons'>('accounts')
+const usersTab = ref<'accounts' | 'buttons' | 'audit'>('accounts')
+/** Journal d'audit : réservé à l'administrateur. */
+const showUsersTabs = computed(() => canConfigureUiButtons.value || isAdmin.value)
 
 const users = ref<PlatformUser[]>([])
 const employeeOptions = ref<EmployeeOption[]>([])
@@ -798,7 +801,7 @@ onMounted(loadUsers)
 
       <UiAlert v-if="message && !modalOpen && usersTab === 'accounts'" :type="messageType" :message="message" />
 
-      <div v-if="canConfigureUiButtons" class="page-tabs" role="tablist" :aria-label="uiText('Sections utilisateurs')">
+      <div v-if="showUsersTabs" class="page-tabs" role="tablist" :aria-label="uiText('Sections utilisateurs')">
         <button
           type="button"
           class="page-tab"
@@ -809,6 +812,7 @@ onMounted(loadUsers)
           {{ uiText('Comptes') }}
         </button>
         <button
+          v-if="canConfigureUiButtons"
           type="button"
           class="page-tab"
           :class="{ 'page-tab--active': usersTab === 'buttons' }"
@@ -817,10 +821,33 @@ onMounted(loadUsers)
           <Shield :size="14" />
           {{ uiText('Boutons') }}
         </button>
+        <button
+          v-if="isAdmin"
+          type="button"
+          class="page-tab"
+          :class="{ 'page-tab--active': usersTab === 'audit' }"
+          @click="usersTab = 'audit'"
+        >
+          <History :size="14" />
+          {{ uiText("Journal d'audit") }}
+        </button>
       </div>
     </section>
 
-    <section v-if="canConfigureUiButtons && usersTab === 'buttons'" class="page-with-table__body">
+    <section v-if="isAdmin && usersTab === 'audit'" class="page-with-table__body">
+      <UiCard
+        direct
+        title="Journal d'audit"
+        description="Historique détaillé des actions de tous les utilisateurs du système"
+        class="ui-card--table-panel"
+        :icon="History"
+        icon-variant="violet"
+      >
+        <AuditLogPanel :users="users" />
+      </UiCard>
+    </section>
+
+    <section v-else-if="canConfigureUiButtons && usersTab === 'buttons'" class="page-with-table__body">
       <UiCard
         direct
         title="Boutons par type d’utilisateur"

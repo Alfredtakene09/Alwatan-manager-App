@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
-import { RefreshCw, Printer, Eye, Pencil, Save, Trash2, RotateCcw, Wallet } from '@lucide/vue'
+import { Printer, Eye, Pencil, Save, Trash2, RotateCcw, Wallet } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { formatFcfa, fullName, ROLE_LABELS, type AppUserRole } from '@/lib/roles'
 import { CLINIC } from '@/lib/clinic'
 import { formatPatientTableDate } from '@/lib/patient-datatable-columns'
-import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
+import { exportTablePdf, type ExportColumn } from '@/lib/table-export'
 import { buildPharmacyTicketItemsTableHtml, buildThermalTicketHeadHtml, openPrintDocument, reservePrintWindow, thermalIsRtl, thermalLocaleMetaRow, thermalThanksHtml, thermalTicketDirAttrs, thermalTicketRootClass } from '@/lib/print-document'
 import { formatReceiptDateTimeFr } from '@/i18n/locale-format'
 import { useAppI18n } from '@/i18n/useAppI18n'
@@ -479,28 +479,6 @@ function exportPdf() {
   })
 }
 
-function exportExcel() {
-  if (!tableRows.value.length) {
-    message.value = uiText('Aucune vente à exporter.')
-    messageType.value = 'error'
-    return
-  }
-  exportTableExcel(uiText('Historique des ventes pharmacie'), exportColumns.value, tableRows.value, {
-    captionRows: exportCaption(),
-  })
-}
-
-function exportWord() {
-  if (!tableRows.value.length) {
-    message.value = uiText('Aucune vente à exporter.')
-    messageType.value = 'error'
-    return
-  }
-  void exportTableWord(uiText('Historique des ventes pharmacie'), exportColumns.value, tableRows.value, {
-    captionRows: exportCaption(),
-  })
-}
-
 onMounted(() => {
   void loadPharmacists()
   void loadItems()
@@ -512,40 +490,56 @@ defineExpose({ reload: loadItems })
 <template>
   <PageTableSection embedded>
     <template #toolbar>
-      <ExportButtons :disabled="loading || !items.length" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-      <UiSelect
-        v-if="canFilterPharmacist"
-        v-model="filterPharmacistId"
-        label="Pharmacien"
-        class="filter-field filter-field--pharmacist"
-      >
-        <option value="">{{ uiText('Tous les pharmaciens') }}</option>
-        <option v-for="p in pharmacists" :key="p.id" :value="p.id">{{ pharmacistOptionLabel(p) }}</option>
-      </UiSelect>
-      <UiInput v-model="filterFrom" label="Du" type="date" class="filter-field" />
-      <UiInput v-model="filterTo" label="Au" type="date" class="filter-field" />
-      <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadItems">
-        {{ uiText('Actualiser') }}
-      </UiButton>
+      <div class="sales-toolbar">
+        <div class="sales-toolbar__filters">
+          <UiSelect
+            v-if="canFilterPharmacist"
+            v-model="filterPharmacistId"
+            label="Pharmacien"
+            class="filter-field filter-field--pharmacist"
+          >
+            <option value="">{{ uiText('Tous les pharmaciens') }}</option>
+            <option v-for="p in pharmacists" :key="p.id" :value="p.id">{{ pharmacistOptionLabel(p) }}</option>
+          </UiSelect>
+          <UiInput v-model="filterFrom" label="Du" type="date" class="filter-field" />
+          <UiInput v-model="filterTo" label="Au" type="date" class="filter-field" />
+        </div>
+        <div class="sales-toolbar__end">
+          <div
+            class="sales-total-card"
+            role="status"
+            :title="
+              translateTemplate('{sales} vente(s) · {units} produit(s)', {
+                sales: salesTotals.salesCount,
+                units: salesTotals.units,
+              })
+            "
+          >
+            <Wallet :size="16" class="sales-total-card__icon" aria-hidden="true" />
+            <div class="sales-total-card__body">
+              <span class="sales-total-card__label">{{ uiText('Total des produits vendus') }}</span>
+              <strong class="sales-total-card__value">{{ formatFcfa(salesTotals.amountFcfa) }}</strong>
+            </div>
+            <small class="sales-total-card__hint">
+              {{
+                translateTemplate('{sales} vente(s) · {units} produit(s)', {
+                  sales: salesTotals.salesCount,
+                  units: salesTotals.units,
+                })
+              }}
+            </small>
+          </div>
+          <ExportButtons
+            :show-excel="false"
+            :show-word="false"
+            :disabled="loading || !items.length"
+            @pdf="exportPdf"
+          />
+        </div>
+      </div>
     </template>
 
     <UiAlert v-if="message" :type="messageType" :message="message" class="panel-alert" />
-
-    <div v-if="items.length" class="sales-total-card" role="status">
-      <span class="sales-total-card__icon" aria-hidden="true"><Wallet :size="18" /></span>
-      <div class="sales-total-card__body">
-        <span class="sales-total-card__label">{{ uiText('Total des produits vendus') }}</span>
-        <strong class="sales-total-card__value">{{ formatFcfa(salesTotals.amountFcfa) }}</strong>
-        <small class="sales-total-card__hint">
-          {{
-            translateTemplate('{sales} vente(s) · {units} produit(s)', {
-              sales: salesTotals.salesCount,
-              units: salesTotals.units,
-            })
-          }}
-        </small>
-      </div>
-    </div>
 
     <p v-if="!loading && !items.length" class="empty">{{ uiText('Aucune vente enregistrée pour cette période.') }}</p>
     <div v-else class="simple-table-shell" :class="{ 'simple-table-shell--fill': true }">
@@ -784,49 +778,74 @@ defineExpose({ reload: loadItems })
   min-width: 13rem;
 }
 
+.sales-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.sales-toolbar__filters,
+.sales-toolbar__end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem;
+}
+
+/* Champs alignés sur la même ligne de base : pas de marge sous les libellés de formulaire. */
+.sales-toolbar__filters :deep(.ui-field) {
+  margin-bottom: 0;
+}
+
 .sales-total-card {
   display: inline-flex;
   align-items: center;
-  gap: 0.75rem;
-  align-self: flex-start;
-  margin-bottom: 0.85rem;
-  padding: 0.65rem 1rem;
+  gap: 0.55rem;
+  min-height: var(--app-control-height, 2.4rem);
+  padding: 0.3rem 0.75rem;
   border: 1px solid #86efac;
   border-radius: var(--radius-sm);
   background: #f0fdf4;
 }
 
 .sales-total-card__icon {
-  display: inline-grid;
-  place-items: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 999px;
-  background: #dcfce7;
+  flex: none;
   color: #15803d;
 }
 
 .sales-total-card__body {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  line-height: 1.15;
 }
 
 .sales-total-card__label {
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 650;
   color: var(--text-muted);
 }
 
 .sales-total-card__value {
-  font-size: 1.15rem;
+  font-size: 0.95rem;
   color: #15803d;
   font-variant-numeric: tabular-nums;
 }
 
 .sales-total-card__hint {
-  font-size: 0.75rem;
+  padding-left: 0.55rem;
+  border-left: 1px solid #bbf7d0;
+  font-size: 0.6875rem;
   color: var(--text-muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 700px) {
+  .sales-total-card__hint {
+    display: none;
+  }
 }
 
 .empty {
