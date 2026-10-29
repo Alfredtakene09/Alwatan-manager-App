@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { BarChart3, RefreshCw } from '@lucide/vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { BarChart3 } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName, ROLE_LABELS, type AppUserRole } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth'
@@ -17,7 +17,6 @@ import {
   type ExportColumn,
 } from '@/lib/table-export'
 import UiCard from '@/components/ui/UiCard.vue'
-import UiButton from '@/components/ui/UiButton.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
@@ -37,6 +36,8 @@ type PharmacyReport = {
     costFcfa: number
     profitFcfa: number
     marginPercent: number
+    excludedLinesCount?: number
+    excludedRevenueFcfa?: number
   }
   salesByDay: Array<{ date: string; dayLabel: string; totalFcfa: number }>
   topProducts: Array<{ name: string; quantity: number; revenueFcfa: number }>
@@ -71,17 +72,16 @@ const revenueReport = ref<PharmacyRevenueReport | null>(null)
 const pharmacists = ref<PharmacistOption[]>([])
 const loading = ref(false)
 const message = ref('')
-const period = ref<'today' | 'week' | 'month' | 'quarter' | '7d' | '30d' | 'custom'>('today')
 const pharmacistId = ref('')
-const today = new Date()
 const localIsoDate = (date: Date) => {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
-const dateFrom = ref(localIsoDate(today))
-const dateTo = ref(localIsoDate(today))
+const todayIso = localIsoDate(new Date())
+const dateFrom = ref(todayIso)
+const dateTo = ref(todayIso)
 let reportRequest = 0
 
 const auth = useAuthStore()
@@ -136,7 +136,7 @@ const categoryBars = computed(() => {
 })
 
 async function loadReport() {
-  if (period.value === 'custom' && !customRangeValid.value) {
+  if (!customRangeValid.value) {
     message.value = uiText('La date de début doit précéder la date de fin.')
     return
   }
@@ -144,10 +144,10 @@ async function loadReport() {
   loading.value = true
   message.value = ''
   try {
-    const params: Record<string, string> = { period: period.value }
-    if (period.value === 'custom') {
-      params.from = dateFrom.value
-      params.to = dateTo.value
+    const params: Record<string, string> = {
+      period: 'custom',
+      from: dateFrom.value,
+      to: dateTo.value,
     }
     if (canFilterPharmacist.value && pharmacistId.value) {
       params.pharmacistId = pharmacistId.value
@@ -169,9 +169,9 @@ async function loadReport() {
   }
 }
 
-function handlePeriodChange() {
-  if (period.value !== 'custom') void loadReport()
-}
+watch([dateFrom, dateTo], () => {
+  void loadReport()
+})
 
 async function loadPharmacists() {
   if (!canFilterPharmacist.value) return
@@ -185,12 +185,6 @@ async function loadPharmacists() {
 
 const periodLabel = computed(() => {
   void localeCode.value
-  if (period.value === 'today') return uiText("Aujourd'hui")
-  if (period.value === 'week') return uiText('Semaine en cours')
-  if (period.value === 'month') return uiText('Mois en cours')
-  if (period.value === 'quarter') return uiText('Trimestre en cours')
-  if (period.value === '7d') return uiText('7 derniers jours')
-  if (period.value === '30d') return uiText('30 derniers jours')
   const from = formatPeriodDate(dateFrom.value)
   const to = formatPeriodDate(dateTo.value)
   return from === to ? from : `${from} – ${to}`
@@ -323,37 +317,22 @@ onMounted(() => {
             }}
           </option>
         </UiSelect>
-        <UiSelect v-model="period" label="Période" class="period-select" @change="handlePeriodChange">
-          <option value="today">{{ uiText("Aujourd'hui") }}</option>
-          <option value="week">{{ uiText('Semaine en cours') }}</option>
-          <option value="month">{{ uiText('Mois en cours') }}</option>
-          <option value="quarter">{{ uiText('Trimestre en cours') }}</option>
-          <option value="7d">{{ uiText('7 derniers jours') }}</option>
-          <option value="30d">{{ uiText('30 derniers jours') }}</option>
-          <option value="custom">{{ uiText('Période personnalisée') }}</option>
-        </UiSelect>
-        <div v-if="period === 'custom'" class="report-date-range">
+        <div class="report-date-range">
           <label>
             <span>{{ uiText('Du') }}</span>
-            <input v-model="dateFrom" type="date" :max="dateTo || undefined" />
+            <input v-model="dateFrom" type="date" :max="dateTo || todayIso" :aria-label="uiText('Du')" />
           </label>
           <label>
             <span>{{ uiText('Au') }}</span>
-            <input v-model="dateTo" type="date" :min="dateFrom || undefined" />
+            <input
+              v-model="dateTo"
+              type="date"
+              :min="dateFrom || undefined"
+              :max="todayIso"
+              :aria-label="uiText('Au')"
+            />
           </label>
-          <UiButton
-            variant="primary"
-            size="sm"
-            :disabled="loading || !customRangeValid"
-            @click="loadReport"
-          >
-            {{ uiText('Afficher') }}
-          </UiButton>
         </div>
-        <ExportButtons :disabled="loading || !report" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-        <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadReport">
-          {{ uiText('Actualiser') }}
-        </UiButton>
       </template>
 
       <UiAlert v-if="message" type="error" :message="message" />
@@ -383,6 +362,13 @@ onMounted(() => {
             ·
             {{ translateTemplate('Coût {amount}', { amount: formatFcfa(report.profitPeriod.costFcfa) }) }}
           </small>
+          <small v-if="report.profitPeriod.excludedLinesCount">
+            {{
+              translateTemplate('{n} ligne(s) sans prix d’achat exclue(s)', {
+                n: report.profitPeriod.excludedLinesCount,
+              })
+            }}
+          </small>
         </div>
       </div>
     </UiCard>
@@ -406,6 +392,11 @@ onMounted(() => {
         <div v-if="!categoryBars.length" class="chart-empty">{{ uiText('Aucune vente sur la période') }}</div>
         <DashboardPendingBars v-else :items="categoryBars" />
       </UiCard>
+    </div>
+
+    <div class="report-exports">
+      <span class="report-exports__label">{{ uiText('Exporter le rapport') }}</span>
+      <ExportButtons :disabled="loading || !report" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
     </div>
   </div>
 </template>
@@ -497,6 +488,24 @@ onMounted(() => {
 
 .charts-grid > :first-child {
   grid-column: 1 / -1;
+}
+
+.report-exports {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+}
+
+.report-exports__label {
+  font-size: 0.8125rem;
+  font-weight: 650;
+  color: var(--text-muted);
 }
 
 .chart-empty {

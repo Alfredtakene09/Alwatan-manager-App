@@ -939,6 +939,9 @@ model PharmacySaleLine {
   quantity       Int
   unitPriceFcfa  Int
   lineTotalFcfa  Int
+  /// Coût d'achat d'une unité vendue (boîte ou détail) figé au moment de la vente.
+  /// Null : ligne antérieure (repli sur le prix d'achat actuel) ou produit sans prix d'achat.
+  unitCostFcfa   Int?
 
   prescription Prescription         @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
   product      Product              @relation(fields: [productId], references: [id])

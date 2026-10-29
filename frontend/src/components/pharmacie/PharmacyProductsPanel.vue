@@ -179,20 +179,41 @@ const hasActiveFilters = computed(
 /** Stock encore au catalogue : une ligne supprimée ou désactivée sort des totaux. */
 const valuedStockItems = computed(() => filteredItems.value.filter((item) => item.active))
 
+function hasPurchasePrice(item: PharmacyProductRecord) {
+  return item.purchasePriceFcfa != null && item.purchasePriceFcfa > 0
+}
+
+/**
+ * Valeur d'une unité de stock. Un produit vendu au détail est stocké en sachets / comprimés,
+ * alors que ses prix de vente et d'achat de la fiche sont ceux d'une boîte.
+ */
+function stockUnitPrices(item: PharmacyProductRecord) {
+  const perBox = item.sellBySachet && item.sachetsPerBox > 1 ? item.sachetsPerBox : 1
+  const sale =
+    perBox > 1 && item.sachetPriceFcfa && item.sachetPriceFcfa > 0
+      ? item.sachetPriceFcfa
+      : item.unitPriceFcfa / perBox
+  const purchase = hasPurchasePrice(item) ? item.purchasePriceFcfa! / perBox : null
+  return { sale, purchase }
+}
+
+/** Totaux calculés sur les seuls produits dont le prix d'achat est connu : vente − achat = bénéfice. */
 const priceTotals = computed(() => {
   let purchase = 0
   let sale = 0
-  let profit = 0
+  let missingPurchaseCount = 0
   for (const item of valuedStockItems.value) {
-    const qty = item.quantity
-    sale += qty * item.unitPriceFcfa
-    const purchaseUnit = item.purchasePriceFcfa
-    if (purchaseUnit != null && purchaseUnit > 0) {
-      purchase += qty * purchaseUnit
-      profit += qty * (item.unitPriceFcfa - purchaseUnit)
+    const unit = stockUnitPrices(item)
+    if (unit.purchase == null) {
+      missingPurchaseCount += 1
+      continue
     }
+    sale += item.quantity * unit.sale
+    purchase += item.quantity * unit.purchase
   }
-  return { purchase, sale, profit }
+  sale = Math.round(sale)
+  purchase = Math.round(purchase)
+  return { purchase, sale, profit: sale - purchase, missingPurchaseCount }
 })
 
 const exportDisabled = computed(() => loading.value || !catalogExportRows.value.length)
@@ -589,17 +610,20 @@ const productExportColumns = computed<ExportColumn<ProductExportRow>[]>(() => {
 })
 
 function productExportTotals() {
-  const source = valuedStockItems.value
-  const saleValue = source.reduce((sum, item) => sum + item.quantity * item.unitPriceFcfa, 0)
-  const purchaseValue = source.reduce(
-    (sum, item) => sum + item.quantity * (item.purchasePriceFcfa ?? 0),
-    0,
-  )
-  return [
-    { label: uiText('Nombre de médicaments'), value: String(source.length) },
-    { label: uiText('Valeur stock (prix vente)'), value: formatFcfa(saleValue) },
-    { label: uiText('Valeur stock (prix achat)'), value: formatFcfa(purchaseValue) },
+  const totals = priceTotals.value
+  const rows = [
+    { label: uiText('Nombre de médicaments'), value: String(valuedStockItems.value.length) },
+    { label: uiText('Valeur stock (prix vente)'), value: formatFcfa(totals.sale) },
+    { label: uiText('Valeur stock (prix achat)'), value: formatFcfa(totals.purchase) },
+    { label: uiText('Bénéfice stock (vente − achat)'), value: formatFcfa(totals.profit) },
   ]
+  if (totals.missingPurchaseCount) {
+    rows.push({
+      label: uiText('Produits sans prix d’achat (non valorisés)'),
+      value: String(totals.missingPurchaseCount),
+    })
+  }
+  return rows
 }
 
 function productExportShared() {
@@ -682,7 +706,7 @@ defineExpose({
         <div class="products-totals" role="group" :aria-label="uiText('Totaux du stock filtré')">
           <div class="products-total products-total--count" :title="uiText('Nombre de médicaments')">
             <span class="products-total__label">{{ uiText('Produits') }}</span>
-            <strong class="products-total__value">{{ filteredItems.length }}</strong>
+            <strong class="products-total__value">{{ valuedStockItems.length }}</strong>
           </div>
           <div class="products-total products-total--achat" :title="uiText('Valeur stock (prix achat)')">
             <span class="products-total__label">{{ uiText('Total achat') }}</span>
@@ -699,6 +723,14 @@ defineExpose({
           >
             <span class="products-total__label">{{ uiText('Total bénéfice') }}</span>
             <strong class="products-total__value">{{ formatFcfa(priceTotals.profit) }}</strong>
+          </div>
+          <div
+            v-if="priceTotals.missingPurchaseCount"
+            class="products-total products-total--missing"
+            :title="uiText('Ces produits ne sont pas comptés dans les totaux achat, vente et bénéfice.')"
+          >
+            <span class="products-total__label">{{ uiText('Sans prix d’achat') }}</span>
+            <strong class="products-total__value">{{ priceTotals.missingPurchaseCount }}</strong>
           </div>
         </div>
       </div>
@@ -823,7 +855,7 @@ defineExpose({
 
       <div class="product-form__row product-form__row--purchase-expiry">
         <div class="amount-field">
-          <span class="amount-field__label">{{ uiText("Prix d'achat") }}</span>
+          <span class="amount-field__label">{{ uiText("Prix d'achat (par boîte)") }}</span>
           <div class="amount-field__wrap">
             <input
               v-model="formPurchasePrice"
@@ -1011,6 +1043,12 @@ defineExpose({
   border-color: #fda4af;
   background: #fff1f2;
   color: #be123c;
+}
+
+.products-total--missing {
+  border-color: #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
 }
 
 .filter-input,
