@@ -3501,5 +3501,11 @@ export default {
     'Montant total des produits': 'Total product amount',
     'Retour enregistré — {amount}. Stock mis à jour.':
       'Return recorded — {amount}. Stock updated.',
+    'Dossiers': 'Files',
+    'Envoyés au labo ({n})': 'Sent to lab ({n})',
+    'Payés ({n})': 'Paid ({n})',
+    'Réductions': 'Discounts',
+    '100 derniers dossiers': 'Last 100 files',
+    'Aucun patient externe sur cette période': 'No external patient for this period',
   },
 }

@@ -3498,5 +3498,11 @@ export default {
     'Montant total des produits': 'المبلغ الإجمالي للمنتجات',
     'Retour enregistré — {amount}. Stock mis à jour.':
       'تم تسجيل الإرجاع — {amount}. تم تحديث المخزون.',
+    'Dossiers': 'الملفات',
+    'Envoyés au labo ({n})': 'مرسلة إلى المختبر ({n})',
+    'Payés ({n})': 'مدفوعة ({n})',
+    'Réductions': 'التخفيضات',
+    '100 derniers dossiers': 'آخر 100 ملف',
+    'Aucun patient externe sur cette période': 'لا يوجد مريض خارجي في هذه الفترة',
   },
 }

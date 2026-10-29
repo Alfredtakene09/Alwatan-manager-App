@@ -1170,9 +1170,30 @@ const externalPatientSchema = z
   })
   .superRefine(refinePatientAge);
 
+/** Jour local AAAA-MM-JJ → Date (début de journée, + `dayOffset` jours). */
+function localDayStart(value: unknown, dayOffset = 0): Date | null {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const [y, m, d] = raw.split("-").map(Number);
+  const date = new Date(y, m - 1, d + dayOffset);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 router.get("/external-queue", requireModule("reception"), async (req, res) => {
+  // Filtre facultatif par date d'enregistrement (?from=AAAA-MM-JJ&to=AAAA-MM-JJ).
+  const from = localDayStart(req.query.from);
+  const toExclusive = localDayStart(req.query.to, 1);
+  const hasPeriod = !!(from || toExclusive);
   const consultations = await prisma.consultation.findMany({
     where: {
+      ...(hasPeriod
+        ? {
+            createdAt: {
+              ...(from ? { gte: from } : {}),
+              ...(toExclusive ? { lt: toExclusive } : {}),
+            },
+          }
+        : {}),
       visit: {
         notes: { contains: EXTERNAL_PATIENT_VISIT_NOTE },
         status: { not: VisitStatus.CANCELLED },
@@ -1195,7 +1216,7 @@ router.get("/external-queue", requireModule("reception"), async (req, res) => {
       },
     },
     orderBy: { updatedAt: "desc" },
-    take: 100,
+    take: hasPeriod ? 2000 : 100,
   });
 
   const rows = consultations
@@ -1210,6 +1231,7 @@ router.get("/external-queue", requireModule("reception"), async (req, res) => {
         id: row.id,
         visitId: row.visitId,
         patientId: row.visit.patientId,
+        createdAt: row.createdAt,
         updatedAt: row.updatedAt,
         labSentToLabAt: row.labSentToLabAt,
         patient: row.visit.patient,
