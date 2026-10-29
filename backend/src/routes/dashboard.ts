@@ -328,6 +328,10 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
     periodPrescriptions,
     periodLineAgg,
     periodReturnsAgg,
+    productLineGroups,
+    productReturnGroups,
+    sellerSaleGroups,
+    periodReturnRows,
   ] = await Promise.all([
     prisma.product.count({ where: { active: true } }),
     countLowStockProducts(),
@@ -376,7 +380,96 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
       _sum: { netRefundFcfa: true, grossRefundFcfa: true, quantity: true },
       _count: { _all: true },
     }),
+    prisma.pharmacySaleLine.groupBy({
+      by: ["productId"],
+      where: { prescription: salesPeriodWhere },
+      _sum: { quantity: true, lineTotalFcfa: true },
+    }),
+    prisma.pharmacySaleReturn.groupBy({
+      by: ["productId"],
+      where: {
+        createdAt: { gte: summaryFrom, lt: summaryToExclusive },
+        prescription: pharmacistFilter,
+      },
+      _sum: { quantity: true, grossRefundFcfa: true },
+    }),
+    prisma.prescription.groupBy({
+      by: ["pharmacistId"],
+      where: salesPeriodWhere,
+      _sum: { netTotalFcfa: true },
+      _count: { _all: true },
+    }),
+    prisma.pharmacySaleReturn.findMany({
+      where: {
+        createdAt: { gte: summaryFrom, lt: summaryToExclusive },
+        prescription: pharmacistFilter,
+      },
+      select: { netRefundFcfa: true, prescription: { select: { pharmacistId: true } } },
+    }),
   ]);
+
+  // Top produits : CA des lignes (prix catalogue) moins les retours de la période.
+  const productReturns = new Map(
+    productReturnGroups.map((row) => [row.productId, row._sum]),
+  );
+  const rankedProducts = productLineGroups
+    .map((row) => {
+      const ret = productReturns.get(row.productId);
+      return {
+        productId: row.productId,
+        quantity: Math.max(0, (row._sum.quantity ?? 0) - (ret?.quantity ?? 0)),
+        revenueFcfa: Math.max(0, (row._sum.lineTotalFcfa ?? 0) - (ret?.grossRefundFcfa ?? 0)),
+      };
+    })
+    .filter((row) => row.quantity > 0 || row.revenueFcfa > 0)
+    .sort((a, b) => b.revenueFcfa - a.revenueFcfa || b.quantity - a.quantity)
+    .slice(0, 8);
+  const productNames = new Map(
+    (
+      await prisma.product.findMany({
+        where: { id: { in: rankedProducts.map((row) => row.productId) } },
+        select: { id: true, name: true },
+      })
+    ).map((row) => [row.id, row.name]),
+  );
+  const topProducts = rankedProducts.map((row) => ({
+    ...row,
+    name: productNames.get(row.productId) ?? "Produit",
+  }));
+
+  // Top vendeurs : montant net encaissé par opérateur, retours déduits.
+  const sellerReturns = new Map<string, number>();
+  for (const row of periodReturnRows) {
+    const id = row.prescription.pharmacistId;
+    sellerReturns.set(id, (sellerReturns.get(id) ?? 0) + row.netRefundFcfa);
+  }
+  const rankedSellers = sellerSaleGroups
+    .map((row) => ({
+      userId: row.pharmacistId,
+      salesCount: row._count._all,
+      revenueFcfa: Math.max(
+        0,
+        (row._sum.netTotalFcfa ?? 0) - (sellerReturns.get(row.pharmacistId) ?? 0),
+      ),
+    }))
+    .sort((a, b) => b.revenueFcfa - a.revenueFcfa || b.salesCount - a.salesCount)
+    .slice(0, 8);
+  const sellerUsers = new Map(
+    (
+      await prisma.user.findMany({
+        where: { id: { in: rankedSellers.map((row) => row.userId) } },
+        select: { id: true, firstName: true, lastName: true, role: true },
+      })
+    ).map((row) => [row.id, row]),
+  );
+  const topSellers = rankedSellers.map((row) => {
+    const seller = sellerUsers.get(row.userId);
+    return {
+      ...row,
+      name: seller ? `${seller.firstName} ${seller.lastName}`.trim() : "—",
+      role: seller?.role ?? null,
+    };
+  });
 
   const topLowStock = stockAlerts.slice(0, 5).map((row) => ({
     name: row.name,
@@ -447,6 +540,8 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
     salesLast7Days,
     salesSummary,
     topLowStock,
+    topProducts,
+    topSellers,
     profitPeriod,
   });
 });

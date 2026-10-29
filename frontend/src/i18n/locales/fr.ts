@@ -2362,6 +2362,12 @@ export default {
     'Vente au comptoir et dispensation': 'Vente au comptoir et dispensation',
     'Ma recette du jour': 'Ma recette du jour',
     '{n} vente(s)': '{n} vente(s)',
+    'Tous les pharmaciens': 'Tous les pharmaciens',
+    'Produits les plus vendus': 'Produits les plus vendus',
+    'Meilleurs vendeurs': 'Meilleurs vendeurs',
+    "Chiffre d'affaires — {period}": "Chiffre d'affaires — {period}",
+    '{n} unité(s) vendue(s)': '{n} unité(s) vendue(s)',
+    'Aucune vente sur cette période': 'Aucune vente sur cette période',
     'Ordonnances médecin': 'Ordonnances médecin',
     'Aucune ordonnance envoyée depuis moins de 24 h.':
       'Aucune ordonnance envoyée depuis moins de 24 h.',

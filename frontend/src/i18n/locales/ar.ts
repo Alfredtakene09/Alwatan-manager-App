@@ -2439,6 +2439,12 @@ export default {
     'Vente au comptoir et dispensation': 'البيع من الكاونتر والصرف',
     'Ma recette du jour': 'مقبوضاتي اليوم',
     '{n} vente(s)': '{n} عملية بيع',
+    'Tous les pharmaciens': 'كل الصيادلة',
+    'Produits les plus vendus': 'المنتجات الأكثر مبيعًا',
+    'Meilleurs vendeurs': 'أفضل البائعين',
+    "Chiffre d'affaires — {period}": 'رقم الأعمال — {period}',
+    '{n} unité(s) vendue(s)': '{n} وحدة مباعة',
+    'Aucune vente sur cette période': 'لا توجد مبيعات خلال هذه الفترة',
     'Ordonnances médecin': 'وصفات الطبيب',
     'Aucune ordonnance envoyée depuis moins de 24 h.':
       'لا وصفة أُرسلت منذ أقل من 24 ساعة.',

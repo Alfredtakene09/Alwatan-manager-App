@@ -22,8 +22,6 @@ import { canAccessModule, formatFcfa, fullName, ROLE_LABELS, type AppUserRole } 
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import RoleDashboardShell from '@/components/dashboard/RoleDashboardShell.vue'
-import DashboardMetricBars, { type MetricBar } from '@/components/dashboard/DashboardMetricBars.vue'
-import DashboardPendingBars from '@/components/dashboard/DashboardPendingBars.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
 import type { SummaryStat } from '@/lib/dashboard-summary'
 import { useAppI18n } from '@/i18n/useAppI18n'
@@ -51,6 +49,14 @@ type PharmacieDashboardStats = {
     externalFcfa: number
   }>
   topLowStock: Array<{ name: string; quantity: number; minStock: number; level: string }>
+  topProducts?: Array<{ productId: string; name: string; quantity: number; revenueFcfa: number }>
+  topSellers?: Array<{
+    userId: string
+    name: string
+    role: AppUserRole | null
+    salesCount: number
+    revenueFcfa: number
+  }>
   profitPeriod: PharmacyProfit
   salesSummary?: {
     from?: string
@@ -88,13 +94,6 @@ function localIsoDate(date = new Date()) {
   return `${year}-${month}-${day}`
 }
 
-function shiftIsoDate(iso: string, days: number) {
-  const [year, month, day] = iso.split('-').map(Number)
-  const next = new Date(year, month - 1, day)
-  next.setDate(next.getDate() + days)
-  return localIsoDate(next)
-}
-
 type PharmacistOption = {
   id: string
   firstName: string
@@ -114,8 +113,6 @@ function pharmacyOperatorRoleLabel(row: PharmacistOption) {
 const todayIso = localIsoDate()
 const dateFrom = ref(todayIso)
 const dateTo = ref(todayIso)
-type SalesPeriodPreset = 'today' | '7d' | '30d' | 'custom'
-const salesPeriodPreset = ref<SalesPeriodPreset>('today')
 const pharmacists = ref<PharmacistOption[]>([])
 const selectedPharmacistId = ref('')
 const pharmacistMenuOpen = ref(false)
@@ -126,9 +123,9 @@ const canFilterPharmacist = computed(() => !isPharmacist.value)
 
 const selectedPharmacistLabel = computed(() => {
   void localeCode.value
-  if (!selectedPharmacistId.value) return uiText('Pharmaciens')
+  if (!selectedPharmacistId.value) return uiText('Tous les pharmaciens')
   const found = pharmacists.value.find((row) => row.id === selectedPharmacistId.value)
-  if (!found) return uiText('Pharmaciens')
+  if (!found) return uiText('Tous les pharmaciens')
   const role = pharmacyOperatorRoleLabel(found)
   const name = pharmacyOperatorName(found)
   return role ? `${name} · ${uiText(role)}` : name
@@ -143,51 +140,6 @@ const dashboardSubtitle = computed(() => {
   if (isPharmacist.value) return uiText('Mes ventes, ordonnances et stock')
   if (showProfitSection.value) return uiText('Résumé pharmacie — bénéfice, ventes, ordonnances et stock')
   return uiText('Résumé pharmacie — ventes, ordonnances et stock')
-})
-
-const activityChartTitle = computed(() => {
-  void localeCode.value
-  return isPharmacist.value
-    ? uiText('Mon activité sur la période')
-    : uiText('Activité sur la période')
-})
-
-const activityLegend = computed(() => {
-  void localeCode.value
-  return [
-    { key: 'ordonnances', label: uiText('Ordonnances'), colorClass: 'legend-dot--b' },
-    { key: 'externes', label: uiText('Externes'), colorClass: 'legend-dot--c' },
-    { key: 'alertes', label: uiText('Alertes stock'), colorClass: 'legend-dot--e' },
-  ]
-})
-
-const activityMetrics = computed((): MetricBar[] => {
-  void localeCode.value
-  if (!stats.value) return []
-  const s = stats.value
-  return [
-    {
-      key: 'ordonnances',
-      label: uiText('Ordonnances'),
-      value: s.prescriptionsInPeriod,
-      color: '#0d9488',
-      hint: translateTemplate('Ordonnances patients : {n}', { n: s.prescriptionsInPeriod }),
-    },
-    {
-      key: 'externes',
-      label: uiText('Externes'),
-      value: s.prescriptionsExternalInPeriod,
-      color: '#d97706',
-      hint: translateTemplate('Clients externes : {n}', { n: s.prescriptionsExternalInPeriod }),
-    },
-    {
-      key: 'alertes',
-      label: uiText('Alertes stock'),
-      value: s.lowStock,
-      color: '#e11d48',
-      hint: translateTemplate('Alertes stock : {n}', { n: s.lowStock }),
-    },
-  ]
 })
 
 const emptySalesSummary = () => ({
@@ -358,51 +310,38 @@ const profitCards = computed(() => {
   ]
 })
 
-const stockBars = computed(() => {
-  if (!stats.value) return []
-  return stats.value.topLowStock.map((product) => ({
-    label: product.name,
-    count: product.quantity,
-    scaleMax: Math.max(product.minStock, 1),
-    color: product.quantity <= 0 ? '#e11d48' : product.quantity <= Math.max(1, Math.floor(product.minStock / 2)) ? '#e11d48' : '#d97706',
+function barWidth(value: number, max: number) {
+  return `${Math.max(2, (value / Math.max(1, max)) * 100)}%`
+}
+
+const topProductBars = computed(() => {
+  void localeCode.value
+  const rows = stats.value?.topProducts ?? []
+  const max = Math.max(0, ...rows.map((row) => row.revenueFcfa))
+  return rows.map((row) => ({
+    key: row.productId,
+    label: row.name,
+    amountFcfa: row.revenueFcfa,
+    width: barWidth(row.revenueFcfa, max),
+    hint: translateTemplate('{n} unité(s) vendue(s)', { n: row.quantity }),
   }))
 })
 
-function applyPreset(preset: SalesPeriodPreset) {
-  salesPeriodPreset.value = preset
-  const today = localIsoDate()
-  if (preset === 'today') {
-    dateFrom.value = today
-    dateTo.value = today
-    return
-  }
-  if (preset === '7d') {
-    dateFrom.value = shiftIsoDate(today, -6)
-    dateTo.value = today
-    return
-  }
-  if (preset === '30d') {
-    dateFrom.value = shiftIsoDate(today, -29)
-    dateTo.value = today
-  }
-}
-
-function syncPresetFromDates() {
-  const today = localIsoDate()
-  if (dateFrom.value === today && dateTo.value === today) {
-    salesPeriodPreset.value = 'today'
-    return
-  }
-  if (dateTo.value === today && dateFrom.value === shiftIsoDate(today, -6)) {
-    salesPeriodPreset.value = '7d'
-    return
-  }
-  if (dateTo.value === today && dateFrom.value === shiftIsoDate(today, -29)) {
-    salesPeriodPreset.value = '30d'
-    return
-  }
-  salesPeriodPreset.value = 'custom'
-}
+const topSellerBars = computed(() => {
+  void localeCode.value
+  const rows = stats.value?.topSellers ?? []
+  const max = Math.max(0, ...rows.map((row) => row.revenueFcfa))
+  return rows.map((row) => {
+    const role = row.role && row.role !== 'PHARMACIEN' ? ROLE_LABELS[row.role] : ''
+    return {
+      key: row.userId,
+      label: role ? `${row.name} · ${uiText(role)}` : row.name,
+      amountFcfa: row.revenueFcfa,
+      width: barWidth(row.revenueFcfa, max),
+      hint: translateTemplate('{n} vente(s)', { n: row.salesCount }),
+    }
+  })
+})
 
 async function loadPharmacists() {
   if (!canFilterPharmacist.value) {
@@ -477,7 +416,6 @@ watch([dateFrom, dateTo, selectedPharmacistId], () => {
     dateTo.value = dateFrom.value
     return
   }
-  syncPresetFromDates()
   void loadStats()
 })
 
@@ -536,9 +474,53 @@ onUnmounted(() => {
         >
           {{ uiText('Imprimer le cumul') }}
         </UiButton>
-        <UiButton variant="ghost" size="sm" :disabled="loading" @click="loadStats">
-          {{ uiText('Actualiser') }}
-        </UiButton>
+        <div
+          v-if="canFilterPharmacist && pharmacists.length"
+          ref="pharmacistFilterRef"
+          class="pharmacist-dropdown"
+        >
+          <button
+            type="button"
+            class="pharmacist-dropdown__trigger"
+            :class="{ 'pharmacist-dropdown__trigger--active': Boolean(selectedPharmacistId) }"
+            :aria-expanded="pharmacistMenuOpen"
+            :aria-haspopup="true"
+            @click="togglePharmacistMenu"
+          >
+            <UserRound :size="15" />
+            <span>{{ selectedPharmacistLabel }}</span>
+            <ChevronDown :size="16" :class="{ 'pharmacist-dropdown__chevron--open': pharmacistMenuOpen }" />
+          </button>
+          <ul v-if="pharmacistMenuOpen" class="pharmacist-dropdown__list" role="listbox">
+            <li role="none">
+              <button
+                type="button"
+                class="pharmacist-dropdown__option"
+                :class="{ 'pharmacist-dropdown__option--active': !selectedPharmacistId }"
+                role="option"
+                :aria-selected="!selectedPharmacistId"
+                @click="selectPharmacist('')"
+              >
+                <span>{{ uiText('Tous les pharmaciens') }}</span>
+              </button>
+            </li>
+            <li v-for="pharmacist in pharmacists" :key="pharmacist.id" role="none">
+              <button
+                type="button"
+                class="pharmacist-dropdown__option"
+                :class="{ 'pharmacist-dropdown__option--active': selectedPharmacistId === pharmacist.id }"
+                role="option"
+                :aria-selected="selectedPharmacistId === pharmacist.id"
+                @click="selectPharmacist(pharmacist.id)"
+              >
+                <span>{{ pharmacyOperatorName(pharmacist) }}</span>
+                <small v-if="pharmacyOperatorRoleLabel(pharmacist)" class="pharmacist-dropdown__role">
+                  {{ uiText(pharmacyOperatorRoleLabel(pharmacist)) }}
+                </small>
+              </button>
+            </li>
+          </ul>
+        </div>
       </div>
     </template>
     <section v-if="showProfitSection" class="profit-section" :aria-label="uiText('Bénéfice pharmacie')">
@@ -562,78 +544,6 @@ onUnmounted(() => {
 
     <section class="pharma-dashboard">
       <UiCard class="pharma-dashboard__sales" icon-variant="green">
-        <div class="sales-period-bar" role="group" :aria-label="uiText('Période')">
-          <div class="sales-period-pills" role="tablist">
-            <button
-              type="button"
-              class="sales-period-pill"
-              :class="{ 'sales-period-pill--active': salesPeriodPreset === 'today' }"
-              @click="applyPreset('today')"
-            >
-              {{ uiText("Aujourd'hui") }}
-            </button>
-            <button
-              type="button"
-              class="sales-period-pill"
-              :class="{ 'sales-period-pill--active': salesPeriodPreset === '7d' }"
-              @click="applyPreset('7d')"
-            >
-              {{ uiText('7 derniers jours') }}
-            </button>
-            <button
-              type="button"
-              class="sales-period-pill"
-              :class="{ 'sales-period-pill--active': salesPeriodPreset === '30d' }"
-              @click="applyPreset('30d')"
-            >
-              {{ uiText('30 derniers jours') }}
-            </button>
-          </div>
-          <div
-            v-if="canFilterPharmacist && pharmacists.length"
-            ref="pharmacistFilterRef"
-            class="pharmacist-filter"
-          >
-            <button
-              type="button"
-              class="sales-period-pill"
-              :class="{ 'sales-period-pill--active': !selectedPharmacistId }"
-              @click="selectPharmacist('')"
-            >
-              {{ uiText('Tous') }}
-            </button>
-            <div class="pharmacist-dropdown">
-              <button
-                type="button"
-                class="sales-period-pill pharmacist-dropdown__trigger"
-                :class="{ 'sales-period-pill--active': Boolean(selectedPharmacistId) }"
-                :aria-expanded="pharmacistMenuOpen"
-                :aria-haspopup="true"
-                @click="togglePharmacistMenu"
-              >
-                <span>{{ selectedPharmacistLabel }}</span>
-                <ChevronDown :size="16" :class="{ 'pharmacist-dropdown__chevron--open': pharmacistMenuOpen }" />
-              </button>
-              <ul v-if="pharmacistMenuOpen" class="pharmacist-dropdown__list" role="listbox">
-                <li v-for="pharmacist in pharmacists" :key="pharmacist.id" role="none">
-                  <button
-                    type="button"
-                    class="pharmacist-dropdown__option"
-                    :class="{ 'pharmacist-dropdown__option--active': selectedPharmacistId === pharmacist.id }"
-                    role="option"
-                    :aria-selected="selectedPharmacistId === pharmacist.id"
-                    @click="selectPharmacist(pharmacist.id)"
-                  >
-                    <span>{{ pharmacyOperatorName(pharmacist) }}</span>
-                    <small v-if="pharmacyOperatorRoleLabel(pharmacist)" class="pharmacist-dropdown__role">
-                      {{ uiText(pharmacyOperatorRoleLabel(pharmacist)) }}
-                    </small>
-                  </button>
-                </li>
-              </ul>
-            </div>
-          </div>
-        </div>
         <div class="sales-summary-cards">
           <UiStatCard
             v-for="card in salesSummaryCards"
@@ -648,36 +558,54 @@ onUnmounted(() => {
         </div>
       </UiCard>
 
-      <div class="pharma-dashboard__row">
+      <div class="pharma-dashboard__row" :class="{ 'pharma-dashboard__row--single': !canFilterPharmacist }">
         <UiCard
-          class="pharma-dashboard__activity"
-          :title="activityChartTitle"
-          :description="uiText('Ordonnances et ventes externes sur la période ; alertes de stock actuelles')"
-          :icon="PillBottle"
+          :title="uiText('Produits les plus vendus')"
+          :description="selectedPeriodTrend"
+          :icon="Package"
           icon-variant="teal"
         >
-          <DashboardMetricBars
-            :items="activityMetrics"
-            :loading="loading"
-            :empty-label="uiText('Aucune activité sur cette période')"
-          />
-          <div class="pharma-dashboard__activity-legend chart-legend">
-            <span v-for="item in activityLegend" :key="item.key" class="chart-legend__item">
-              <i class="legend-dot" :class="item.colorClass" />
-              <span>{{ item.label }}</span>
-            </span>
+          <div v-if="!topProductBars.length" class="chart-empty">
+            {{ uiText('Aucune vente sur cette période') }}
           </div>
+          <ol v-else class="rank-bars">
+            <li v-for="(row, index) in topProductBars" :key="row.key" class="rank-bars__row">
+              <div class="rank-bars__head">
+                <span class="rank-bars__rank">{{ index + 1 }}</span>
+                <span class="rank-bars__label" :title="row.label">{{ row.label }}</span>
+                <strong class="rank-bars__value">{{ formatFcfa(row.amountFcfa) }}</strong>
+              </div>
+              <div class="rank-bars__track">
+                <div class="rank-bars__fill rank-bars__fill--teal" :style="{ width: row.width }" />
+              </div>
+              <small class="rank-bars__hint">{{ row.hint }}</small>
+            </li>
+          </ol>
         </UiCard>
 
         <UiCard
-          class="pharma-dashboard__stock"
-          :title="uiText('Stocks critiques')"
-          :description="uiText('Niveau par rapport au seuil d\'alerte')"
-          :icon="PackageX"
-          icon-variant="amber"
+          v-if="canFilterPharmacist"
+          :title="uiText('Meilleurs vendeurs')"
+          :description="translateTemplate('Chiffre d\'affaires — {period}', { period: selectedPeriodLabel })"
+          :icon="TrendingUp"
+          icon-variant="violet"
         >
-          <div v-if="!stockBars.length" class="chart-empty">{{ uiText('Aucune alerte stock') }}</div>
-          <DashboardPendingBars v-else :items="stockBars" />
+          <div v-if="!topSellerBars.length" class="chart-empty">
+            {{ uiText('Aucune vente sur cette période') }}
+          </div>
+          <ol v-else class="rank-bars">
+            <li v-for="(row, index) in topSellerBars" :key="row.key" class="rank-bars__row">
+              <div class="rank-bars__head">
+                <span class="rank-bars__rank">{{ index + 1 }}</span>
+                <span class="rank-bars__label" :title="row.label">{{ row.label }}</span>
+                <strong class="rank-bars__value">{{ formatFcfa(row.amountFcfa) }}</strong>
+              </div>
+              <div class="rank-bars__track">
+                <div class="rank-bars__fill rank-bars__fill--violet" :style="{ width: row.width }" />
+              </div>
+              <small class="rank-bars__hint">{{ row.hint }}</small>
+            </li>
+          </ol>
         </UiCard>
       </div>
     </section>
@@ -723,14 +651,6 @@ onUnmounted(() => {
   gap: 0.85rem;
 }
 
-.sales-period-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.75rem;
-}
-
 .pharmacy-header-actions {
   display: flex;
   flex-wrap: wrap;
@@ -743,38 +663,6 @@ onUnmounted(() => {
   margin-left: 0;
 }
 
-.sales-period-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.sales-period-pill {
-  height: 2.15rem;
-  padding: 0 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg-card);
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 0.8125rem;
-  font-weight: 650;
-  cursor: pointer;
-}
-
-.sales-period-pill--active {
-  border-color: var(--primary-500, #0d9488);
-  background: color-mix(in srgb, var(--primary-500, #0d9488) 12%, white);
-  color: var(--primary-700, #0f766e);
-}
-
-.pharmacist-filter {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem;
-}
-
 .pharmacist-dropdown {
   position: relative;
 }
@@ -782,8 +670,24 @@ onUnmounted(() => {
 .pharmacist-dropdown__trigger {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
+  height: 2.15rem;
   max-width: 16rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.pharmacist-dropdown__trigger--active {
+  border-color: var(--primary-500, #0d9488);
+  background: color-mix(in srgb, var(--primary-500, #0d9488) 12%, white);
+  color: var(--primary-700, #0f766e);
 }
 
 .pharmacist-dropdown__trigger span {
@@ -799,7 +703,7 @@ onUnmounted(() => {
 .pharmacist-dropdown__list {
   position: absolute;
   top: calc(100% + 0.3rem);
-  left: 0;
+  right: 0;
   z-index: 8;
   min-width: 12rem;
   max-width: 18rem;
@@ -910,18 +814,89 @@ onUnmounted(() => {
 
 .pharma-dashboard__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
   align-items: stretch;
 }
 
-.pharma-dashboard__activity-legend {
-  margin-top: 1.15rem;
+.pharma-dashboard__row--single {
+  grid-template-columns: 1fr;
 }
 
-.pharma-dashboard__activity-legend .legend-dot--b { background: #0d9488; }
-.pharma-dashboard__activity-legend .legend-dot--c { background: #d97706; }
-.pharma-dashboard__activity-legend .legend-dot--e { background: #e11d48; }
+.rank-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rank-bars__row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.rank-bars__head {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.rank-bars__rank {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+.rank-bars__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.rank-bars__value {
+  flex: none;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.rank-bars__track {
+  height: 0.55rem;
+  margin-left: 1.9rem;
+  border-radius: 999px;
+  background: #f1f5f9;
+  overflow: hidden;
+}
+
+.rank-bars__fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+.rank-bars__fill--teal { background: #0d9488; }
+.rank-bars__fill--violet { background: #7c3aed; }
+
+.rank-bars__hint {
+  margin-left: 1.9rem;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
 
 .chart-empty {
   padding: 2rem 1rem;
