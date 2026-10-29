@@ -12,6 +12,8 @@ import {
   appendPaidExamKindMarker,
   buildPrescribedExamsNotes,
   buildPrescribedExamsNotesByKind,
+  clearExamBillingMarkers,
+  parsePrescribedExamCommentsByKind,
   flattenPrescribedExams,
   isExamKindPaid,
   isOperationOnlyPrescription,
@@ -1773,7 +1775,13 @@ router.patch(
           return res.status(400).json({ error: "Le montant à facturer doit être supérieur à 0." });
         }
         grossFcfa = catalogGrossFcfa;
-        clinicalNotes = buildPrescribedExamsNotesByKind(examsByKind);
+        // Garder les saisies labo en cours et les commentaires ; les marqueurs payés sont recalculés plus bas.
+        clinicalNotes = buildPrescribedExamsNotesByKind(
+          examsByKind,
+          clearExamBillingMarkers(existing.clinicalNotes),
+          undefined,
+          parsePrescribedExamCommentsByKind(existing.clinicalNotes),
+        );
       }
 
       const service = body.service?.trim() || null;

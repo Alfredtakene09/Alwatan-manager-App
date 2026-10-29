@@ -6,6 +6,7 @@ import {
   hasExamListContent,
   hasPaidLabWorkPending,
   paidExamLabels,
+  prescribedExamSetIncludes,
   hasUnpaidCashierQueueExams,
   isExamKindPaid,
   isOperationOnlyPrescription,
@@ -233,5 +234,17 @@ describe("file laboratoire — examens payés", () => {
     assert.ok(dumped.includes("Examens payés (Laboratoire)"));
     assert.ok(dumped.includes("Examens payés (Examen)"));
     assert.ok(dumped.includes("billingExamKind"));
+  });
+});
+
+describe("prescribedExamSetIncludes", () => {
+  it("accepte un ajout d'examens et refuse un retrait", () => {
+    const previous = { examen: ["NFS", "Glycémie"], radio: ["Thorax"] };
+    assert.equal(
+      prescribedExamSetIncludes({ examen: ["NFS", "Glycémie", "CRP"], radio: ["Thorax"] }, previous),
+      true,
+    );
+    assert.equal(prescribedExamSetIncludes({ examen: ["NFS", "CRP"], radio: ["Thorax"] }, previous), false);
+    assert.equal(prescribedExamSetIncludes({ examen: ["NFS", "Glycémie"] }, previous), false);
   });
 });

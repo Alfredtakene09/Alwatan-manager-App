@@ -22,6 +22,7 @@ import {
   mergeExamsByKind,
   clearExamBillingMarkers,
   countNewExamsInAppend,
+  prescribedExamSetIncludes,
   prescribedExamSetsEqual,
   syncBillingForDoctorLineChange,
   parseLatestLabResultAt,
@@ -776,11 +777,18 @@ router.post("/prescribe-exams", async (req, res) => {
 
       const nextExamSet =
         examsByKind ?? (legacyExams?.length ? { examen: legacyExams } : null);
+      const previousExamSet = parsePrescribedExamsByKind(existingNotes);
+      /** Ajout d'examens à une prescription existante : les lignes déjà payées /
+       *  envoyées au labo restent acquises, seule la différence revient à la caisse. */
+      const examsOnlyAdded =
+        body.append ||
+        (hasExamsPrescribed(existingNotes) && prescribedExamSetIncludes(nextExamSet, previousExamSet));
       const prescriptionReplaced =
         hasExams &&
         !hasResults &&
+        !examsOnlyAdded &&
         hasExamsPrescribed(existingNotes) &&
-        !prescribedExamSetsEqual(parsePrescribedExamsByKind(existingNotes), nextExamSet);
+        !prescribedExamSetsEqual(previousExamSet, nextExamSet);
 
       if (prescriptionReplaced) {
         await voidReplacedExamPayments(tx, { visitId: body.visitId, userId: user.id });
@@ -840,7 +848,7 @@ router.post("/prescribe-exams", async (req, res) => {
             (shouldCreateImmediateInvoice(visit.patient.category) &&
               hasExams &&
               requiresLabWork &&
-              !body.append))
+              !examsOnlyAdded))
             ? {
                 labSentToLabAt: null,
                 labApprovedById: null,
