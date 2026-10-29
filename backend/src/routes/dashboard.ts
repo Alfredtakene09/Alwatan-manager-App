@@ -296,8 +296,6 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
 
   const todayStart = startOfDay(new Date());
   const dayStarts = last7DayStarts();
-  const tomorrow = new Date(todayStart);
-  tomorrow.setDate(tomorrow.getDate() + 1);
 
   const weekFrom = dayStarts[0];
   let summaryFrom = parseDashboardDay(req.query.from, todayStart);
@@ -322,71 +320,63 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
   const [
     products,
     lowStock,
-    prescriptionsToday,
-    prescriptionsExternalToday,
-    revenueAgg,
+    prescriptionsInPeriod,
+    prescriptionsExternalInPeriod,
     sales,
     stockAlerts,
-    profitToday,
-    profitWeek,
-    weekPrescriptions,
-    weekLineAgg,
-    weekReturnsAgg,
+    profitPeriod,
+    periodPrescriptions,
+    periodLineAgg,
+    periodReturnsAgg,
   ] = await Promise.all([
-      prisma.product.count({ where: { active: true } }),
-      countLowStockProducts(),
-      prisma.prescription.count({
-        where: {
-          createdAt: { gte: todayStart },
-          patientId: { not: null },
-          ...pharmacistFilter,
-        },
-      }),
-      prisma.prescription.count({
-        where: {
-          createdAt: { gte: todayStart },
-          externalClientId: { not: null },
-          ...pharmacistFilter,
-        },
-      }),
-      prisma.invoice.aggregate({
-        where: {
-          type: InvoiceType.PHARMACY,
-          status: InvoiceStatus.PAID,
-          paidAt: { gte: todayStart },
-          ...(pharmacistId ? { issuedById: pharmacistId } : {}),
-        },
-        _sum: { amountFcfa: true },
-      }),
-      prisma.invoice.findMany({
-        where: {
-          type: InvoiceType.PHARMACY,
-          status: InvoiceStatus.PAID,
-          paidAt: { gte: weekFrom },
-          ...(pharmacistId ? { issuedById: pharmacistId } : {}),
-        },
-        select: { paidAt: true, amountFcfa: true, patientId: true, externalClientId: true },
-      }),
-      listPharmacyStockAlerts(),
-      computePharmacyProfit(todayStart, tomorrow, pharmacistId ? { pharmacistId } : undefined),
-      computePharmacyProfit(weekFrom, tomorrow, pharmacistId ? { pharmacistId } : undefined),
-      prisma.prescription.findMany({
-        where: salesPeriodWhere,
-        select: { grossTotalFcfa: true, netTotalFcfa: true },
-      }),
-      prisma.pharmacySaleLine.aggregate({
-        where: { prescription: salesPeriodWhere },
-        _sum: { quantity: true },
-      }),
-      prisma.pharmacySaleReturn.aggregate({
-        where: {
-          createdAt: { gte: summaryFrom, lt: summaryToExclusive },
-          prescription: pharmacistFilter,
-        },
-        _sum: { netRefundFcfa: true, grossRefundFcfa: true, quantity: true },
-        _count: { _all: true },
-      }),
-    ]);
+    prisma.product.count({ where: { active: true } }),
+    countLowStockProducts(),
+    prisma.prescription.count({
+      where: {
+        createdAt: { gte: summaryFrom, lt: summaryToExclusive },
+        patientId: { not: null },
+        ...pharmacistFilter,
+      },
+    }),
+    prisma.prescription.count({
+      where: {
+        createdAt: { gte: summaryFrom, lt: summaryToExclusive },
+        externalClientId: { not: null },
+        ...pharmacistFilter,
+      },
+    }),
+    prisma.invoice.findMany({
+      where: {
+        type: InvoiceType.PHARMACY,
+        status: InvoiceStatus.PAID,
+        paidAt: { gte: weekFrom },
+        ...(pharmacistId ? { issuedById: pharmacistId } : {}),
+      },
+      select: { paidAt: true, amountFcfa: true, patientId: true, externalClientId: true },
+    }),
+    listPharmacyStockAlerts(),
+    computePharmacyProfit(
+      summaryFrom,
+      summaryToExclusive,
+      pharmacistId ? { pharmacistId } : undefined,
+    ),
+    prisma.prescription.findMany({
+      where: salesPeriodWhere,
+      select: { grossTotalFcfa: true, netTotalFcfa: true },
+    }),
+    prisma.pharmacySaleLine.aggregate({
+      where: { prescription: salesPeriodWhere },
+      _sum: { quantity: true },
+    }),
+    prisma.pharmacySaleReturn.aggregate({
+      where: {
+        createdAt: { gte: summaryFrom, lt: summaryToExclusive },
+        prescription: pharmacistFilter,
+      },
+      _sum: { netRefundFcfa: true, grossRefundFcfa: true, quantity: true },
+      _count: { _all: true },
+    }),
+  ]);
 
   const topLowStock = stockAlerts.slice(0, 5).map((row) => ({
     name: row.name,
@@ -421,16 +411,16 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
   let grossTotalFcfa = 0;
   let netTotalFcfa = 0;
   let freeSalesCount = 0;
-  for (const row of weekPrescriptions) {
+  for (const row of periodPrescriptions) {
     const gross = row.grossTotalFcfa ?? row.netTotalFcfa ?? 0;
     const net = row.netTotalFcfa ?? gross;
     grossTotalFcfa += gross;
     netTotalFcfa += net;
     if (net <= 0 && gross > 0) freeSalesCount += 1;
   }
-  const returnsGrossFcfa = weekReturnsAgg._sum.grossRefundFcfa ?? 0;
-  const returnsNetFcfa = weekReturnsAgg._sum.netRefundFcfa ?? 0;
-  const returnsQuantity = weekReturnsAgg._sum.quantity ?? 0;
+  const returnsGrossFcfa = periodReturnsAgg._sum.grossRefundFcfa ?? 0;
+  const returnsNetFcfa = periodReturnsAgg._sum.netRefundFcfa ?? 0;
+  const returnsQuantity = periodReturnsAgg._sum.quantity ?? 0;
   // Un retour retire l'argent du produit de la somme encaissée (et du brut correspondant).
   grossTotalFcfa = Math.max(0, grossTotalFcfa - returnsGrossFcfa);
   netTotalFcfa = Math.max(0, netTotalFcfa - returnsNetFcfa);
@@ -438,27 +428,26 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
   const salesSummary = {
     from: toIsoDay(summaryFrom),
     to: toIsoDay(summaryToStart),
-    salesCount: weekPrescriptions.length,
-    productsSoldCount: Math.max(0, (weekLineAgg._sum.quantity ?? 0) - returnsQuantity),
+    salesCount: periodPrescriptions.length,
+    productsSoldCount: Math.max(0, (periodLineAgg._sum.quantity ?? 0) - returnsQuantity),
     grossTotalFcfa,
     reductionFcfa,
     netTotalFcfa,
     freeSalesCount,
-    returnsCount: weekReturnsAgg._count._all,
+    returnsCount: periodReturnsAgg._count._all,
     returnsNetFcfa,
   };
 
   return res.json({
     productsCount: products,
     lowStock,
-    prescriptionsToday,
-    prescriptionsExternalToday,
-    revenueTodayFcfa: revenueAgg._sum.amountFcfa ?? 0,
+    prescriptionsInPeriod,
+    prescriptionsExternalInPeriod,
+    revenueInPeriodFcfa: netTotalFcfa,
     salesLast7Days,
     salesSummary,
     topLowStock,
-    profitToday,
-    profitWeek,
+    profitPeriod,
   });
 });
 

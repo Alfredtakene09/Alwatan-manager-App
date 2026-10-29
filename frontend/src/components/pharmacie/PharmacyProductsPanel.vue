@@ -225,6 +225,9 @@ function apiErrorMessage(error: unknown, fallback: string) {
     if (typeof error.response?.data?.error === 'string') {
       return error.response.data.error
     }
+    if (typeof error.response?.data?.detail === 'string') {
+      return error.response.data.detail
+    }
     if (typeof error.response?.data?.message === 'string') {
       return error.response.data.message
     }
@@ -290,8 +293,8 @@ async function loadItems(options?: { clearMessage?: boolean }) {
     await Promise.all([loadCategories(), loadForms()])
     const { data } = await api.get<PharmacyProductRecord[]>('/pharmacie/products')
     items.value = data
-  } catch {
-    message.value = 'Impossible de charger les produits.'
+  } catch (error: unknown) {
+    message.value = apiErrorMessage(error, uiText('Impossible de charger les produits.'))
     messageType.value = 'error'
     items.value = []
   } finally {

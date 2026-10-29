@@ -40,9 +40,9 @@ type PharmacyProfit = {
 type PharmacieDashboardStats = {
   productsCount: number
   lowStock: number
-  prescriptionsToday: number
-  prescriptionsExternalToday: number
-  revenueTodayFcfa: number
+  prescriptionsInPeriod: number
+  prescriptionsExternalInPeriod: number
+  revenueInPeriodFcfa: number
   salesLast7Days: Array<{
     date: string
     dayLabel: string
@@ -51,8 +51,7 @@ type PharmacieDashboardStats = {
     externalFcfa: number
   }>
   topLowStock: Array<{ name: string; quantity: number; minStock: number; level: string }>
-  profitToday: PharmacyProfit
-  profitWeek: PharmacyProfit
+  profitPeriod: PharmacyProfit
   salesSummary?: {
     from?: string
     to?: string
@@ -80,6 +79,7 @@ const { closingSales, printPharmacyCumul } = usePharmacyDayClosure()
 const stats = ref<PharmacieDashboardStats | null>(null)
 const loading = ref(false)
 const loadError = ref('')
+let statsLoadRequest = 0
 
 function localIsoDate(date = new Date()) {
   const year = date.getFullYear()
@@ -147,7 +147,9 @@ const dashboardSubtitle = computed(() => {
 
 const activityChartTitle = computed(() => {
   void localeCode.value
-  return isPharmacist.value ? uiText('Mon activité du jour') : uiText('Activité du jour')
+  return isPharmacist.value
+    ? uiText('Mon activité sur la période')
+    : uiText('Activité sur la période')
 })
 
 const activityLegend = computed(() => {
@@ -167,16 +169,16 @@ const activityMetrics = computed((): MetricBar[] => {
     {
       key: 'ordonnances',
       label: uiText('Ordonnances'),
-      value: s.prescriptionsToday,
+      value: s.prescriptionsInPeriod,
       color: '#0d9488',
-      hint: translateTemplate('Ordonnances patients : {n}', { n: s.prescriptionsToday }),
+      hint: translateTemplate('Ordonnances patients : {n}', { n: s.prescriptionsInPeriod }),
     },
     {
       key: 'externes',
       label: uiText('Externes'),
-      value: s.prescriptionsExternalToday,
+      value: s.prescriptionsExternalInPeriod,
       color: '#d97706',
-      hint: translateTemplate('Clients externes : {n}', { n: s.prescriptionsExternalToday }),
+      hint: translateTemplate('Clients externes : {n}', { n: s.prescriptionsExternalInPeriod }),
     },
     {
       key: 'alertes',
@@ -198,6 +200,26 @@ const emptySalesSummary = () => ({
   returnsCount: 0,
   returnsNetFcfa: 0,
 })
+
+function formatSelectedDate(iso: string) {
+  const [year, month, day] = iso.split('-').map(Number)
+  return new Date(year, month - 1, day).toLocaleDateString(localeCode.value, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+}
+
+const selectedPeriodLabel = computed(() => {
+  void localeCode.value
+  const from = formatSelectedDate(dateFrom.value)
+  const to = formatSelectedDate(dateTo.value)
+  return from === to ? from : `${from} – ${to}`
+})
+
+const selectedPeriodTrend = computed(() =>
+  translateTemplate('Période : {period}', { period: selectedPeriodLabel.value }),
+)
 
 const salesSummaryCards = computed(() => {
   void localeCode.value
@@ -262,23 +284,23 @@ const summaryStats = computed((): SummaryStat[] => {
   void localeCode.value
   if (!stats.value) return []
   const s = stats.value
-  const today = s.profitToday ?? emptyProfit()
-  const week = s.profitWeek ?? emptyProfit()
   const cards: SummaryStat[] = [
     {
       id: 'prescriptions',
-      label: isPharmacist.value ? uiText('Mes ordonnances (jour)') : uiText('Ordonnances (jour)'),
-      value: s.prescriptionsToday,
+      label: isPharmacist.value
+        ? uiText('Mes ordonnances (période)')
+        : uiText('Ordonnances (période)'),
+      value: s.prescriptionsInPeriod,
       icon: PillBottle,
       variant: 'teal',
-      trend: formatFcfa(s.revenueTodayFcfa),
+      trend: formatFcfa(s.revenueInPeriodFcfa),
     },
     {
       id: 'external-today',
       label: isPharmacist.value
-        ? uiText('Mes ventes externes (jour)')
-        : uiText('Clients externes (jour)'),
-      value: s.prescriptionsExternalToday,
+        ? uiText('Mes ventes externes (période)')
+        : uiText('Clients externes (période)'),
+      value: s.prescriptionsExternalInPeriod,
       icon: UserRound,
       variant: 'blue',
       trend: uiText('Ventes comptoir'),
@@ -295,11 +317,11 @@ const summaryStats = computed((): SummaryStat[] => {
   if (showProfitSection.value) {
     cards.push({
       id: 'purchases-total',
-      label: uiText('Prix total des achats'),
-      value: formatFcfa(week.costFcfa),
+      label: uiText("Coût d'achat période"),
+      value: formatFcfa(s.profitPeriod.costFcfa),
       icon: Receipt,
       variant: 'cyan',
-      trend: translateTemplate('7 jours · jour {amount}', { amount: formatFcfa(today.costFcfa) }),
+      trend: selectedPeriodTrend.value,
     })
   }
   return cards
@@ -307,40 +329,31 @@ const summaryStats = computed((): SummaryStat[] => {
 
 const profitCards = computed(() => {
   void localeCode.value
-  const today = stats.value?.profitToday ?? emptyProfit()
-  const week = stats.value?.profitWeek ?? emptyProfit()
+  const period = stats.value?.profitPeriod ?? emptyProfit()
   return [
     {
-      id: 'profit-today',
-      label: uiText('Bénéfice du jour'),
-      value: formatFcfa(today.profitFcfa),
+      id: 'profit-period',
+      label: uiText('Bénéfice période'),
+      value: formatFcfa(period.profitFcfa),
       icon: TrendingUp,
-      variant: today.profitFcfa >= 0 ? ('green' as const) : ('rose' as const),
-      trend: translateTemplate('CA {amount}', { amount: formatFcfa(today.revenueFcfa) }),
+      variant: period.profitFcfa >= 0 ? ('green' as const) : ('rose' as const),
+      trend: translateTemplate('CA {amount}', { amount: formatFcfa(period.revenueFcfa) }),
     },
     {
-      id: 'profit-week',
-      label: uiText('Bénéfice 7 jours'),
-      value: formatFcfa(week.profitFcfa),
+      id: 'margin-period',
+      label: uiText('Marge période'),
+      value: `${period.marginPercent} %`,
       icon: Wallet,
-      variant: week.profitFcfa >= 0 ? ('teal' as const) : ('rose' as const),
-      trend: translateTemplate('CA {amount}', { amount: formatFcfa(week.revenueFcfa) }),
-    },
-    {
-      id: 'margin-today',
-      label: uiText('Marge du jour'),
-      value: `${today.marginPercent} %`,
-      icon: Percent,
       variant: 'violet' as const,
-      trend: translateTemplate('Coût {amount}', { amount: formatFcfa(today.costFcfa) }),
+      trend: translateTemplate('Coût {amount}', { amount: formatFcfa(period.costFcfa) }),
     },
     {
-      id: 'cost-today',
-      label: uiText("Coût d'achat (jour)"),
-      value: formatFcfa(today.costFcfa),
+      id: 'cost-period',
+      label: uiText("Coût d'achat période"),
+      value: formatFcfa(period.costFcfa),
       icon: ShoppingBag,
       variant: 'amber' as const,
-      trend: translateTemplate('Marge 7 j. {n} %', { n: week.marginPercent }),
+      trend: selectedPeriodTrend.value,
     },
   ]
 })
@@ -422,6 +435,7 @@ function onDocumentPointerDown(event: PointerEvent) {
 }
 
 async function loadStats() {
+  const request = ++statsLoadRequest
   loading.value = true
   loadError.value = ''
   try {
@@ -434,16 +448,17 @@ async function loadStats() {
           : {}),
       },
     })
+    if (request !== statsLoadRequest) return
     stats.value = {
       ...data,
-      profitToday: data.profitToday ?? emptyProfit(),
-      profitWeek: data.profitWeek ?? emptyProfit(),
+      profitPeriod: data.profitPeriod ?? emptyProfit(),
     }
   } catch {
+    if (request !== statsLoadRequest) return
     loadError.value = 'Impossible de charger le tableau de bord pharmacie.'
     stats.value = null
   } finally {
-    loading.value = false
+    if (request === statsLoadRequest) loading.value = false
   }
 }
 
@@ -488,18 +503,43 @@ onUnmounted(() => {
     @refresh="loadStats"
   >
     <template #actions>
-      <UiButton
-        variant="secondary"
-        size="sm"
-        :icon="Printer"
-        :disabled="closingSales || loading"
-        @click="printFilteredCumul"
-      >
-        {{ uiText('Imprimer le cumul') }}
-      </UiButton>
-      <UiButton variant="ghost" size="sm" :disabled="loading" @click="loadStats">
-        {{ uiText('Actualiser') }}
-      </UiButton>
+      <div class="pharmacy-header-actions">
+        <div class="sales-date-range sales-date-range--header">
+          <label class="sales-date-filter">
+            <span class="sales-date-filter__label">{{ uiText('Du') }}</span>
+            <input
+              v-model="dateFrom"
+              type="date"
+              class="sales-date-filter__input"
+              :max="dateTo || undefined"
+              :aria-label="uiText('Du')"
+            />
+          </label>
+          <label class="sales-date-filter">
+            <span class="sales-date-filter__label">{{ uiText('Au') }}</span>
+            <input
+              v-model="dateTo"
+              type="date"
+              class="sales-date-filter__input"
+              :min="dateFrom || undefined"
+              :max="todayIso"
+              :aria-label="uiText('Au')"
+            />
+          </label>
+        </div>
+        <UiButton
+          variant="secondary"
+          size="sm"
+          :icon="Printer"
+          :disabled="closingSales || loading"
+          @click="printFilteredCumul"
+        >
+          {{ uiText('Imprimer le cumul') }}
+        </UiButton>
+        <UiButton variant="ghost" size="sm" :disabled="loading" @click="loadStats">
+          {{ uiText('Actualiser') }}
+        </UiButton>
+      </div>
     </template>
     <section v-if="showProfitSection" class="profit-section" :aria-label="uiText('Bénéfice pharmacie')">
       <h2 class="profit-section__title">{{ uiText('Bénéfice') }}</h2>
@@ -593,38 +633,6 @@ onUnmounted(() => {
               </ul>
             </div>
           </div>
-          <div class="sales-date-range">
-            <label class="sales-date-filter">
-              <span class="sales-date-filter__label">{{ uiText('Du') }}</span>
-              <input
-                v-model="dateFrom"
-                type="date"
-                class="sales-date-filter__input"
-                :max="dateTo || undefined"
-                :aria-label="uiText('Du')"
-              />
-            </label>
-            <label class="sales-date-filter">
-              <span class="sales-date-filter__label">{{ uiText('Au') }}</span>
-              <input
-                v-model="dateTo"
-                type="date"
-                class="sales-date-filter__input"
-                :min="dateFrom || undefined"
-                :max="todayIso"
-                :aria-label="uiText('Au')"
-              />
-            </label>
-            <UiButton
-              variant="secondary"
-              size="sm"
-              :icon="Printer"
-              :disabled="closingSales || loading"
-              @click="printFilteredCumul"
-            >
-              {{ uiText('Imprimer le cumul') }}
-            </UiButton>
-          </div>
         </div>
         <div class="sales-summary-cards">
           <UiStatCard
@@ -644,14 +652,14 @@ onUnmounted(() => {
         <UiCard
           class="pharma-dashboard__activity"
           :title="activityChartTitle"
-          :description="uiText('Répartition du jour — ordonnances, ventes externes et alertes')"
+          :description="uiText('Ordonnances et ventes externes sur la période ; alertes de stock actuelles')"
           :icon="PillBottle"
           icon-variant="teal"
         >
           <DashboardMetricBars
             :items="activityMetrics"
             :loading="loading"
-            :empty-label="uiText('Aucune activité aujourd’hui')"
+            :empty-label="uiText('Aucune activité sur cette période')"
           />
           <div class="pharma-dashboard__activity-legend chart-legend">
             <span v-for="item in activityLegend" :key="item.key" class="chart-legend__item">
@@ -721,6 +729,18 @@ onUnmounted(() => {
   align-items: center;
   justify-content: flex-start;
   gap: 0.75rem;
+}
+
+.pharmacy-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.sales-date-range--header {
+  margin-left: 0;
 }
 
 .sales-period-pills {
@@ -861,6 +881,25 @@ onUnmounted(() => {
   color: var(--text);
   font: inherit;
   font-size: 0.8125rem;
+}
+
+@media (max-width: 760px) {
+  .pharmacy-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .sales-date-range--header {
+    flex: 1 1 100%;
+  }
+
+  .sales-date-range--header .sales-date-filter {
+    flex: 1 1 8rem;
+  }
+
+  .sales-date-range--header .sales-date-filter__input {
+    width: 100%;
+  }
 }
 
 .sales-summary-cards {

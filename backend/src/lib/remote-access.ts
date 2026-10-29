@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 
 /**
- * Verrou des suppressions à distance (Tailscale / hors réseau local).
+ * Verrou des suppressions hors réseau local et hors pair Tailscale direct.
  *
  * Une requête est « à distance » dès qu’un seul indice le montre :
  * - IP cliente Tailscale (100.64.0.0/10, fd7a:115c:a1e0::/48) ou IP publique ;
@@ -111,11 +111,29 @@ export function isDeleteLikeRequest(method: string, path: string): boolean {
   return DELETE_LIKE_PATH.test(path);
 }
 
+export function shouldBlockRemoteDelete(
+  method: string,
+  path: string,
+  input: RemoteAccessInput,
+): boolean {
+  if (!isDeleteLikeRequest(method, path) || !isRemoteAccess(input)) return false;
+  return !isTailscaleAddress(input.socketAddress ?? "");
+}
+
 export const REMOTE_DELETE_BLOCKED_CODE = "REMOTE_DELETE_BLOCKED";
 
-/** Middleware /api : refuse toute suppression demandée à distance (Tailscale). */
+/** Middleware /api : les suppressions distantes ne sont permises que depuis une IP Tailscale directe. */
 export function blockRemoteDeletes(req: Request, res: Response, next: NextFunction) {
-  if (!isDeleteLikeRequest(req.method, req.path) || !isRemoteRequest(req)) {
+  if (
+    !shouldBlockRemoteDelete(req.method, req.path, {
+      socketAddress: req.socket?.remoteAddress ?? null,
+      host: headerValue(req.headers.host),
+      forwardedFor: headerValue(req.headers["x-forwarded-for"]),
+      tailscaleHeader:
+        req.headers["tailscale-user-login"] != null ||
+        req.headers["tailscale-funnel-request"] != null,
+    })
+  ) {
     next();
     return;
   }
@@ -124,7 +142,7 @@ export function blockRemoteDeletes(req: Request, res: Response, next: NextFuncti
   );
   res.status(403).json({
     error:
-      "Suppression verrouillée à distance (Tailscale). Effectuez cette action depuis un poste du réseau local de la clinique.",
+      "Suppression bloquée depuis Internet. Connectez-vous au réseau local de la clinique ou directement depuis Tailscale.",
     code: REMOTE_DELETE_BLOCKED_CODE,
   });
 }
