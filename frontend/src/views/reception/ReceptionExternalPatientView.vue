@@ -12,6 +12,11 @@ import {
   Printer,
   Percent,
   Trash2,
+  Users,
+  Clock,
+  Send,
+  CircleDollarSign,
+  CalendarRange,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { operationAnesthetistReady, resolveOperationServiceName } from '@/lib/operation-anesthetist'
@@ -58,6 +63,14 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiBadge from '@/components/ui/UiBadge.vue'
+import UiStatCard from '@/components/ui/UiStatCard.vue'
+import {
+  currentMonthRangeToToday,
+  formatPeriodLabel,
+  lastDaysRange,
+  todayDateKey,
+  yesterdayDateKey,
+} from '@/lib/date-filters'
 import ReceptionQueueRowActions, {
   type QueueRowAction,
 } from '@/components/reception/ReceptionQueueRowActions.vue'
@@ -91,6 +104,7 @@ type ExternalQueueRow = {
   id: string
   visitId: string
   patientId: string
+  createdAt: string
   updatedAt: string
   hasExams: boolean
   examsSummary: string
@@ -321,6 +335,73 @@ const searchLabel = computed(() => {
 const queueCountLabel = computed(() => {
   void localeCode.value
   return translateTemplate('{n} dossier(s)', { n: queue.value.length })
+})
+
+type PeriodPreset = 'today' | 'yesterday' | 'week' | 'month' | 'all'
+
+const PERIOD_PRESETS: { id: PeriodPreset; label: string }[] = [
+  { id: 'today', label: "Aujourd'hui" },
+  { id: 'yesterday', label: 'Hier' },
+  { id: 'week', label: '7 derniers jours' },
+  { id: 'month', label: 'Ce mois' },
+  { id: 'all', label: 'Tout' },
+]
+
+function presetRange(preset: PeriodPreset): { from: string; to: string } {
+  if (preset === 'today') return { from: todayDateKey(), to: todayDateKey() }
+  if (preset === 'yesterday') return { from: yesterdayDateKey(), to: yesterdayDateKey() }
+  if (preset === 'week') return lastDaysRange(7)
+  if (preset === 'month') return currentMonthRangeToToday()
+  return { from: '', to: '' }
+}
+
+const filterFrom = ref(todayDateKey())
+const filterTo = ref(todayDateKey())
+
+const activePreset = computed<PeriodPreset | null>(() => {
+  for (const preset of PERIOD_PRESETS) {
+    const range = presetRange(preset.id)
+    if (range.from === filterFrom.value && range.to === filterTo.value) return preset.id
+  }
+  return null
+})
+
+function applyPreset(preset: PeriodPreset) {
+  const range = presetRange(preset)
+  filterFrom.value = range.from
+  filterTo.value = range.to
+}
+
+const periodLabel = computed(() => {
+  void localeCode.value
+  if (!filterFrom.value && !filterTo.value) return uiText('100 derniers dossiers')
+  const from = filterFrom.value
+  const to = filterTo.value
+  const start = from && to && from > to ? to : from
+  const end = from && to && from > to ? from : to
+  return formatPeriodLabel('custom', '', '', start, end)
+})
+
+watch([filterFrom, filterTo], () => {
+  void loadQueue()
+})
+
+const queueStats = computed(() => {
+  const rows = queue.value
+  const pending = rows.filter((row) => !row.hasExams)
+  const sent = rows.filter((row) => row.hasExams && !row.invoiced)
+  const paid = rows.filter((row) => row.invoiced)
+  const withExams = rows.filter((row) => row.hasExams)
+  return {
+    count: rows.length,
+    pendingCount: pending.length,
+    sentCount: sent.length,
+    sentFcfa: sent.reduce((sum, row) => sum + row.netFcfa, 0),
+    paidCount: paid.length,
+    paidFcfa: paid.reduce((sum, row) => sum + row.netFcfa, 0),
+    totalFcfa: withExams.reduce((sum, row) => sum + row.netFcfa, 0),
+    reductionFcfa: withExams.reduce((sum, row) => sum + Math.max(0, row.grossFcfa - row.netFcfa), 0),
+  }
 })
 
 const examsModalSubtitle = computed(() => {
@@ -787,7 +868,14 @@ async function deleteExternalRow(row: ExternalQueueRow) {
 async function loadQueue() {
   loadingQueue.value = true
   try {
-    const { data } = await api.get<ExternalQueueRow[]>('/visits/external-queue')
+    const from = filterFrom.value
+    const to = filterTo.value
+    const { data } = await api.get<ExternalQueueRow[]>('/visits/external-queue', {
+      params: {
+        from: (from && to && from > to ? to : from) || undefined,
+        to: (from && to && from > to ? from : to) || undefined,
+      },
+    })
     queue.value = data
   } catch {
     message.value = uiText("Impossible de charger la file des patients externes.")
@@ -1057,6 +1145,77 @@ onMounted(() => {
 
     <UiAlert v-if="message" :type="messageType" :message="message" />
 
+    <div class="stats-grid">
+      <UiStatCard mini label="Dossiers" :value="String(queueStats.count)" :icon="Users" variant="teal" />
+      <UiStatCard
+        mini
+        label="En attente examens"
+        :value="String(queueStats.pendingCount)"
+        :icon="Clock"
+        variant="amber"
+      />
+      <UiStatCard
+        mini
+        :label="translateTemplate('Envoyés au labo ({n})', { n: queueStats.sentCount })"
+        :value="formatFcfa(queueStats.sentFcfa)"
+        :icon="Send"
+        variant="blue"
+      />
+      <UiStatCard
+        mini
+        :label="translateTemplate('Payés ({n})', { n: queueStats.paidCount })"
+        :value="formatFcfa(queueStats.paidFcfa)"
+        :icon="CheckCircle2"
+        variant="green"
+      />
+      <UiStatCard
+        mini
+        label="Montant total"
+        :value="formatFcfa(queueStats.totalFcfa)"
+        :icon="CircleDollarSign"
+        variant="violet"
+      />
+      <UiStatCard
+        mini
+        label="Réductions"
+        :value="formatFcfa(queueStats.reductionFcfa)"
+        :icon="Percent"
+        variant="rose"
+      />
+    </div>
+
+    <div class="filter-bar" role="region" :aria-label="uiText('Filtres')">
+      <div class="filter-bar__controls">
+        <div class="filter-bar__quick">
+          <button
+            v-for="preset in PERIOD_PRESETS"
+            :key="preset.id"
+            type="button"
+            class="filter-bar__chip"
+            :class="{ 'filter-bar__chip--active': activePreset === preset.id }"
+            :aria-pressed="activePreset === preset.id"
+            @click="applyPreset(preset.id)"
+          >
+            {{ uiText(preset.label) }}
+          </button>
+        </div>
+        <label class="filter-bar__field">
+          <span class="filter-bar__field-label">{{ uiText('Du') }}</span>
+          <input v-model="filterFrom" type="date" class="filter-bar__input" />
+        </label>
+        <label class="filter-bar__field">
+          <span class="filter-bar__field-label">{{ uiText('Au') }}</span>
+          <input v-model="filterTo" type="date" class="filter-bar__input" />
+        </label>
+      </div>
+      <div class="filter-bar__footer">
+        <CalendarRange :size="15" class="filter-bar__footer-icon" />
+        <span class="filter-bar__period">{{ periodLabel }}</span>
+        <span aria-hidden="true">·</span>
+        <span class="filter-bar__count">{{ queueCountLabel }}</span>
+      </div>
+    </div>
+
     <div class="page-create-bar">
       <UiButton variant="primary" :icon="UserPlus" @click="openNewPatientModal">
         {{ uiText('Nouveau') }}
@@ -1111,7 +1270,7 @@ onMounted(() => {
       </template>
 
       <p v-if="!loadingQueue && !queue.length" class="empty">
-        {{ uiText('Aucun patient externe enregistré pour le moment') }}
+        {{ uiText('Aucun patient externe sur cette période') }}
       </p>
       <div v-else class="queue-table-wrap">
         <table class="queue-table">
@@ -1508,6 +1667,100 @@ onMounted(() => {
 <style scoped>
 .patient-card {
   margin-bottom: 1rem;
+}
+
+.filter-bar {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.55rem 0.75rem;
+  box-shadow: var(--shadow-sm);
+  margin: 0.35rem 0 0.75rem;
+}
+
+.filter-bar__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.65rem 0.85rem;
+}
+
+.filter-bar__quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.filter-bar__chip {
+  height: 2.25rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.filter-bar__chip:hover {
+  border-color: var(--primary-200);
+  color: var(--primary-800);
+}
+
+.filter-bar__chip--active {
+  border-color: var(--primary-200);
+  background: var(--primary-50);
+  color: var(--primary-800);
+}
+
+.filter-bar__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.filter-bar__field-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-light);
+}
+
+.filter-bar__input {
+  height: 2.25rem;
+  padding: 0 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 0.875rem;
+  min-width: 10.5rem;
+}
+
+.filter-bar__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+  padding-top: 0.55rem;
+  border-top: 1px dashed var(--border);
+  font-size: 0.8125rem;
+}
+
+.filter-bar__footer-icon {
+  color: var(--primary-600);
+}
+
+.filter-bar__period {
+  font-weight: 600;
+}
+
+.filter-bar__count {
+  color: var(--text-muted);
 }
 
 .search-block {
