@@ -642,14 +642,18 @@ router.get("/sales", async (req, res) => {
     createdAt.lt = to;
   }
 
-  const ownSalesOnly = user.role === "PHARMACIEN";
+  const requestedPharmacistId =
+    typeof req.query.pharmacistId === "string" && req.query.pharmacistId.trim()
+      ? req.query.pharmacistId.trim()
+      : undefined;
+  const pharmacistId = user.role === "PHARMACIEN" ? user.id : requestedPharmacistId;
 
   const items = await prisma.prescription.findMany({
     where: {
       ...(Object.keys(createdAt).length ? { createdAt } : {}),
       ...(patientId ? { patientId } : {}),
       ...(productId ? { saleLines: { some: { productId } } } : {}),
-      ...(ownSalesOnly ? { pharmacistId: user.id } : {}),
+      ...(pharmacistId ? { pharmacistId } : {}),
     },
     orderBy: { createdAt: "desc" },
     take: 200,
