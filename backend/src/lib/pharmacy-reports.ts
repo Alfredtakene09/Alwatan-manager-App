@@ -1,4 +1,5 @@
 import { prisma } from "./db.js";
+import { computePharmacyProfit } from "./pharmacy-profit.js";
 
 function startOfDay(date: Date) {
   const d = new Date(date);
@@ -68,28 +69,27 @@ export async function buildPharmacyReport(options?: {
     ? { pharmacistId: options.pharmacistId }
     : {};
 
-  const saleLines = await prisma.pharmacySaleLine.findMany({
-    where: {
-      prescription: {
-        createdAt: { gte: from, lt: to },
-        ...pharmacistFilter,
-      },
-    },
-    select: {
-      quantity: true,
-      lineTotalFcfa: true,
-      product: {
-        select: {
-          id: true,
-          name: true,
-          category: { select: { id: true, name: true } },
+  const [saleLines, prescriptions, returns, profitPeriod] = await Promise.all([
+    prisma.pharmacySaleLine.findMany({
+      where: {
+        prescription: {
+          createdAt: { gte: from, lt: to },
+          ...pharmacistFilter,
         },
       },
-      prescription: { select: { createdAt: true } },
-    },
-  });
-
-  const [prescriptions, returns] = await Promise.all([
+      select: {
+        quantity: true,
+        lineTotalFcfa: true,
+        product: {
+          select: {
+            id: true,
+            name: true,
+            category: { select: { id: true, name: true } },
+          },
+        },
+        prescription: { select: { createdAt: true } },
+      },
+    }),
     prisma.prescription.findMany({
       where: {
         createdAt: { gte: from, lt: to },
@@ -116,6 +116,11 @@ export async function buildPharmacyReport(options?: {
         },
       },
     }),
+    computePharmacyProfit(
+      from,
+      to,
+      options?.pharmacistId ? { pharmacistId: options.pharmacistId } : undefined,
+    ),
   ]);
 
   let totalRevenueFcfa = 0;
@@ -215,6 +220,7 @@ export async function buildPharmacyReport(options?: {
     prescriptionsCount: prescriptions.length,
     totalUnitsSold,
     totalRevenueFcfa,
+    profitPeriod,
     salesByDay,
     topProducts,
     salesByCategory,

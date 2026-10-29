@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import axios from 'axios'
 import { RefreshCw, Printer, Eye, Pencil, Save, Trash2, RotateCcw } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
@@ -170,8 +171,14 @@ async function loadItems() {
     if (filterTo.value) params.to = filterTo.value
     const { data } = await api.get<SaleRecord[]>('/pharmacie/sales', { params })
     items.value = data
-  } catch {
-    message.value = uiText("Impossible de charger l'historique des ventes.")
+  } catch (error: unknown) {
+    const responseMessage = axios.isAxiosError(error)
+      ? error.response?.data?.detail ?? error.response?.data?.error ?? error.response?.data?.message
+      : null
+    message.value =
+      typeof responseMessage === 'string'
+        ? responseMessage
+        : uiText("Impossible de charger l'historique des ventes.")
     messageType.value = 'error'
     items.value = []
   } finally {

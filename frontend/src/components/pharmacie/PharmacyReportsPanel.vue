@@ -32,6 +32,12 @@ type PharmacyReport = {
   prescriptionsCount: number
   totalUnitsSold: number
   totalRevenueFcfa: number
+  profitPeriod: {
+    revenueFcfa: number
+    costFcfa: number
+    profitFcfa: number
+    marginPercent: number
+  }
   salesByDay: Array<{ date: string; dayLabel: string; totalFcfa: number }>
   topProducts: Array<{ name: string; quantity: number; revenueFcfa: number }>
   salesByCategory: Array<{ name: string; quantity: number; revenueFcfa: number }>
@@ -65,8 +71,18 @@ const revenueReport = ref<PharmacyRevenueReport | null>(null)
 const pharmacists = ref<PharmacistOption[]>([])
 const loading = ref(false)
 const message = ref('')
-const period = ref<'today' | 'week' | 'month' | 'quarter' | '7d' | '30d'>('today')
+const period = ref<'today' | 'week' | 'month' | 'quarter' | '7d' | '30d' | 'custom'>('today')
 const pharmacistId = ref('')
+const today = new Date()
+const localIsoDate = (date: Date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+const dateFrom = ref(localIsoDate(today))
+const dateTo = ref(localIsoDate(today))
+let reportRequest = 0
 
 const auth = useAuthStore()
 const canFilterPharmacist = computed(() =>
@@ -120,26 +136,41 @@ const categoryBars = computed(() => {
 })
 
 async function loadReport() {
+  if (period.value === 'custom' && !customRangeValid.value) {
+    message.value = uiText('La date de début doit précéder la date de fin.')
+    return
+  }
+  const request = ++reportRequest
   loading.value = true
   message.value = ''
   try {
     const params: Record<string, string> = { period: period.value }
+    if (period.value === 'custom') {
+      params.from = dateFrom.value
+      params.to = dateTo.value
+    }
     if (canFilterPharmacist.value && pharmacistId.value) {
       params.pharmacistId = pharmacistId.value
     }
     const [reportRes, revenueRes] = await Promise.all([
-      api.get<PharmacyReport>('/pharmacie/reports', { params: { period: period.value } }),
+      api.get<PharmacyReport>('/pharmacie/reports', { params }),
       api.get<PharmacyRevenueReport>('/pharmacie/revenue-report', { params }),
     ])
+    if (request !== reportRequest) return
     report.value = reportRes.data
     revenueReport.value = revenueRes.data
   } catch {
+    if (request !== reportRequest) return
     message.value = 'Impossible de charger le rapport.'
     report.value = null
     revenueReport.value = null
   } finally {
-    loading.value = false
+    if (request === reportRequest) loading.value = false
   }
+}
+
+function handlePeriodChange() {
+  if (period.value !== 'custom') void loadReport()
 }
 
 async function loadPharmacists() {
@@ -159,8 +190,25 @@ const periodLabel = computed(() => {
   if (period.value === 'month') return uiText('Mois en cours')
   if (period.value === 'quarter') return uiText('Trimestre en cours')
   if (period.value === '7d') return uiText('7 derniers jours')
-  return uiText('30 derniers jours')
+  if (period.value === '30d') return uiText('30 derniers jours')
+  const from = formatPeriodDate(dateFrom.value)
+  const to = formatPeriodDate(dateTo.value)
+  return from === to ? from : `${from} – ${to}`
 })
+
+function formatPeriodDate(iso: string) {
+  if (!iso) return ''
+  const [year, month, day] = iso.split('-').map(Number)
+  return new Date(year, month - 1, day).toLocaleDateString(localeCode.value, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+}
+
+const customRangeValid = computed(
+  () => Boolean(dateFrom.value && dateTo.value && dateFrom.value <= dateTo.value),
+)
 
 const salesLegend = computed(() => {
   void localeCode.value
@@ -172,6 +220,12 @@ const kpiRows = computed(() => {
   if (!revenueReport.value) return []
   const rev = revenueReport.value
   const rows = [
+    ...(report.value
+      ? [{
+          label: uiText('Bénéfice période'),
+          value: formatFcfa(report.value.profitPeriod.profitFcfa),
+        }]
+      : []),
     { label: uiText('Ventes (net encaissé)'), value: formatFcfa(rev.netRevenueFcfa) },
     { label: uiText('Retours'), value: formatFcfa(rev.returnsNetFcfa) },
     { label: uiText('CA net'), value: formatFcfa(rev.netRevenueFcfa) },
@@ -269,14 +323,33 @@ onMounted(() => {
             }}
           </option>
         </UiSelect>
-        <UiSelect v-model="period" label="Période" class="period-select" @change="loadReport">
+        <UiSelect v-model="period" label="Période" class="period-select" @change="handlePeriodChange">
           <option value="today">{{ uiText("Aujourd'hui") }}</option>
           <option value="week">{{ uiText('Semaine en cours') }}</option>
           <option value="month">{{ uiText('Mois en cours') }}</option>
           <option value="quarter">{{ uiText('Trimestre en cours') }}</option>
           <option value="7d">{{ uiText('7 derniers jours') }}</option>
           <option value="30d">{{ uiText('30 derniers jours') }}</option>
+          <option value="custom">{{ uiText('Période personnalisée') }}</option>
         </UiSelect>
+        <div v-if="period === 'custom'" class="report-date-range">
+          <label>
+            <span>{{ uiText('Du') }}</span>
+            <input v-model="dateFrom" type="date" :max="dateTo || undefined" />
+          </label>
+          <label>
+            <span>{{ uiText('Au') }}</span>
+            <input v-model="dateTo" type="date" :min="dateFrom || undefined" />
+          </label>
+          <UiButton
+            variant="primary"
+            size="sm"
+            :disabled="loading || !customRangeValid"
+            @click="loadReport"
+          >
+            {{ uiText('Afficher') }}
+          </UiButton>
+        </div>
         <ExportButtons :disabled="loading || !report" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
         <UiButton variant="ghost" size="sm" :icon="RefreshCw" :disabled="loading" @click="loadReport">
           {{ uiText('Actualiser') }}
@@ -301,6 +374,15 @@ onMounted(() => {
         <div class="kpi">
           <span>{{ uiText('Ventes / retours') }}</span>
           <strong>{{ revenueReport.prescriptionsCount }} / {{ revenueReport.returnsCount }}</strong>
+        </div>
+        <div v-if="report" class="kpi kpi--profit">
+          <span>{{ uiText('Bénéfice période') }}</span>
+          <strong>{{ formatFcfa(report.profitPeriod.profitFcfa) }}</strong>
+          <small>
+            {{ translateTemplate('CA {amount}', { amount: formatFcfa(report.profitPeriod.revenueFcfa) }) }}
+            ·
+            {{ translateTemplate('Coût {amount}', { amount: formatFcfa(report.profitPeriod.costFcfa) }) }}
+          </small>
         </div>
       </div>
     </UiCard>
@@ -341,6 +423,32 @@ onMounted(() => {
   min-width: 11rem;
 }
 
+.report-date-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.report-date-range label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.report-date-range input {
+  min-height: 2.25rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text);
+  font: inherit;
+}
+
 .report-kpis {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -367,6 +475,18 @@ onMounted(() => {
 
 .kpi--accent strong {
   color: var(--action);
+}
+
+.kpi--profit {
+  border-color: var(--primary-500, #0d9488);
+}
+
+.kpi--profit strong {
+  color: var(--primary-700, #0f766e);
+}
+
+.kpi--profit small {
+  color: var(--text-muted);
 }
 
 .charts-grid {

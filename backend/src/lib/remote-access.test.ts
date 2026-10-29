@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isDeleteLikeRequest, isRemoteAccess, isTailscaleAddress } from "./remote-access.js";
+import {
+  isDeleteLikeRequest,
+  isRemoteAccess,
+  isTailscaleAddress,
+  shouldBlockRemoteDelete,
+} from "./remote-access.js";
 
 describe("remote-access", () => {
   it("reconnaît les adresses Tailscale", () => {
@@ -35,5 +40,40 @@ describe("remote-access", () => {
     assert.equal(isDeleteLikeRequest("GET", "/api/patients/delete"), false);
     assert.equal(isDeleteLikeRequest("POST", "/api/patients"), false);
     assert.equal(isDeleteLikeRequest("PATCH", "/api/visits/5"), false);
+  });
+
+  it("permet les suppressions depuis un pair Tailscale, mais conserve le verrou public", () => {
+    assert.equal(
+      shouldBlockRemoteDelete("DELETE", "/api/pharmacie/products/1", {
+        socketAddress: "100.101.5.7",
+      }),
+      false,
+    );
+    assert.equal(
+      shouldBlockRemoteDelete("DELETE", "/api/pharmacie/products/1", {
+        socketAddress: "::ffff:100.64.0.1",
+      }),
+      false,
+    );
+    assert.equal(
+      shouldBlockRemoteDelete("DELETE", "/api/pharmacie/products/1", {
+        socketAddress: "41.202.10.3",
+      }),
+      true,
+    );
+    assert.equal(
+      shouldBlockRemoteDelete("DELETE", "/api/pharmacie/products/1", {
+        socketAddress: "192.168.1.5",
+        host: "serveur.tail1234.ts.net",
+        tailscaleHeader: true,
+      }),
+      true,
+    );
+    assert.equal(
+      shouldBlockRemoteDelete("DELETE", "/api/pharmacie/products/1", {
+        socketAddress: "192.168.1.5",
+      }),
+      false,
+    );
   });
 });
