@@ -18,6 +18,11 @@ import type { PrismaClient } from "@prisma/client";
 export type AppDeleteContext = {
   /** api = boutons/routes Express ; startup = seeds ; script = CLI confirmé */
   source: "api" | "startup" | "script";
+  /** Requête API : identifiant du lot de corbeille, méthode, chemin et auteur. */
+  requestId?: string;
+  method?: string;
+  path?: string;
+  userId?: string;
 };
 
 export const appDeleteContext = new AsyncLocalStorage<AppDeleteContext>();
@@ -28,8 +33,42 @@ const guardedTxContext = new AsyncLocalStorage<boolean>();
 export function runWithAppDataDeleteUnlock<T>(
   source: AppDeleteContext["source"],
   fn: () => T,
+  request?: Pick<AppDeleteContext, "requestId" | "method" | "path">,
 ): T {
-  return appDeleteContext.run({ source }, fn);
+  return appDeleteContext.run({ source, ...request }, fn);
+}
+
+/** Auteur de la requête en cours (posé par requireAuth), pour la corbeille. */
+export function setAppDeleteActor(userId: string) {
+  const ctx = appDeleteContext.getStore();
+  if (ctx) ctx.userId = userId;
+}
+
+/**
+ * Seuls les boutons « Supprimer » (requêtes DELETE) remplissent la corbeille :
+ * les modifications qui remplacent des sous-lignes en interne n'y vont pas.
+ */
+function trashSettings() {
+  const ctx = appDeleteContext.getStore();
+  const enabled = ctx?.source === "api" && ctx.method === "DELETE" && Boolean(ctx.requestId);
+  return {
+    trash: enabled ? "1" : "0",
+    requestId: enabled ? ctx!.requestId! : "",
+    actorId: enabled ? ctx!.userId ?? "" : "",
+    requestPath: enabled ? `${ctx!.method} ${ctx!.path ?? ""}` : "",
+  };
+}
+
+/** Déverrouille la suppression pour la transaction et transmet le contexte de corbeille au trigger. */
+function unlockStatement(client: PrismaClient) {
+  const t = trashSettings();
+  return client.$executeRaw`
+    SELECT set_config('alwatan.allow_delete', '1', true),
+           set_config('alwatan.trash', ${t.trash}, true),
+           set_config('alwatan.request_id', ${t.requestId}, true),
+           set_config('alwatan.actor_id', ${t.actorId}, true),
+           set_config('alwatan.request_path', ${t.requestPath}, true)
+  `;
 }
 
 export function isAppDataDeleteAllowed(): boolean {
@@ -65,6 +104,23 @@ BEGIN
       'ALWATAN_LOCK: suppression interdite hors application (table %). Utilisez l''interface Alwatan, ou en maintenance: SELECT set_config(''alwatan.allow_delete'', ''1'', false);',
       TG_TABLE_NAME
       USING ERRCODE = '42501';
+  END IF;
+  -- Corbeille : copie de la ligne (cascades comprises) pour un bouton « Supprimer ».
+  -- Ignorée tant que la table n'existe pas (schéma pas encore poussé).
+  IF current_setting('alwatan.trash', true) = '1'
+     AND TG_TABLE_NAME NOT IN ('DeletedRecord', 'AuditLog')
+     AND to_regclass('public."DeletedRecord"') IS NOT NULL THEN
+    INSERT INTO "DeletedRecord" (id, "batchId", "tableName", "rowId", data, "actorId", "requestPath", "deletedAt")
+    VALUES (
+      gen_random_uuid()::text,
+      COALESCE(NULLIF(current_setting('alwatan.request_id', true), ''), txid_current()::text),
+      TG_TABLE_NAME,
+      to_jsonb(OLD) ->> 'id',
+      to_jsonb(OLD),
+      NULLIF(current_setting('alwatan.actor_id', true), ''),
+      NULLIF(current_setting('alwatan.request_path', true), ''),
+      clock_timestamp()
+    );
   END IF;
   RETURN OLD;
 END;
@@ -191,9 +247,7 @@ export function extendPrismaWithDeleteGuard(base: PrismaClient): PrismaClient {
           return (base.$transaction as Function)(
             async (tx: unknown) => {
               if (isAppDataDeleteAllowed()) {
-                await (tx as PrismaClient).$executeRaw`
-                  SELECT set_config('alwatan.allow_delete', '1', true)
-                `;
+                await unlockStatement(tx as PrismaClient);
               }
               return guardedTxContext.run(true, () => fn(tx));
             },
@@ -208,10 +262,7 @@ export function extendPrismaWithDeleteGuard(base: PrismaClient): PrismaClient {
           return guardedTxContext.run(true, () => {
             if (isAppDataDeleteAllowed()) {
               return (base.$transaction as Function)(
-                [
-                  base.$executeRaw`SELECT set_config('alwatan.allow_delete', '1', true)`,
-                  ...operations,
-                ],
+                [unlockStatement(base), ...operations],
                 options,
               );
             }
@@ -244,7 +295,7 @@ export function extendPrismaWithDeleteGuard(base: PrismaClient): PrismaClient {
 
         // Delete hors $transaction : GUC + delete sur la même connexion (client de base).
         return base.$transaction(async (tx) => {
-          await tx.$executeRaw`SELECT set_config('alwatan.allow_delete', '1', true)`;
+          await unlockStatement(tx as unknown as PrismaClient);
           const delegate = (
             tx as unknown as Record<string, { delete: Function; deleteMany: Function }>
           )[modelDelegateName(model)];

@@ -521,6 +521,59 @@ describe("Journal d'audit des actions utilisateurs", () => {
   });
 });
 
+describe("Corbeille des suppressions", () => {
+  it("garde le patient supprimé avec ses éléments liés, puis le restaure", async () => {
+    const created = await api.gest.post("/patients/register-consultation", {
+      ...patient("Corbeille"),
+      service: "Gynécologie",
+      doctorId: fx.users.drGyn.id,
+    });
+    assert.ok(created.status < 300, JSON.stringify(created.data));
+    const patientId = created.data.patient.id as string;
+    const visitsBefore = await db.visit.count({ where: { patientId } });
+    const invoicesBefore = await db.invoice.count({ where: { patientId } });
+    assert.ok(visitsBefore > 0 && invoicesBefore > 0);
+
+    const del = await api.admin.delete(`/patients/${patientId}`);
+    assert.ok(del.status < 300, JSON.stringify(del.data));
+    assert.equal(await db.patient.count({ where: { id: patientId } }), 0);
+
+    const list = await api.admin.get(`/trash?from=${today}&to=${today}`);
+    assert.equal(list.status, 200, JSON.stringify(list.data));
+    const entry = list.data.items.find((row: any) => row.title.startsWith("Corbeille Testeur"));
+    assert.ok(entry, JSON.stringify(list.data.items));
+    assert.equal(entry.summary, "Suppression d'un patient");
+    assert.equal(entry.tableLabel, "Patient");
+    assert.ok(entry.relatedCount >= visitsBefore + invoicesBefore, `éléments liés : ${entry.relatedCount}`);
+    assert.equal(entry.actorName, `${fx.users.admin.firstName} ${fx.users.admin.lastName}`.trim());
+    assert.equal(entry.restoredAt, null);
+
+    // Le journal d'audit pointe vers ce lot de la corbeille.
+    const audit = await api.admin.get(`/audit-logs?from=${today}&to=${today}&action=DELETE&pageSize=500`);
+    const auditRow = audit.data.items.find((row: any) => row.path === `/api/patients/${patientId}`);
+    assert.equal(auditRow?.trashBatchId, entry.batchId);
+
+    const detail = await api.admin.get(`/trash/${entry.batchId}`);
+    assert.equal(detail.status, 200);
+    assert.equal(detail.data.items[0].isMain, true);
+    assert.equal(detail.data.items[0].tableLabel, "Patient");
+    assert.ok(detail.data.items[0].readable.fields.some((f: any) => f.label === "Prénom" && f.value === "Corbeille"));
+
+    const restored = await api.admin.post(`/trash/${entry.batchId}/restore`);
+    assert.equal(restored.status, 200, JSON.stringify(restored.data));
+    assert.equal(await db.patient.count({ where: { id: patientId } }), 1);
+    assert.equal(await db.visit.count({ where: { patientId } }), visitsBefore);
+    assert.equal(await db.invoice.count({ where: { patientId } }), invoicesBefore);
+
+    const again = await api.admin.post(`/trash/${entry.batchId}/restore`);
+    assert.equal(again.status, 409);
+    const after = await api.admin.get(`/trash/${entry.batchId}`);
+    assert.ok(after.data.restoredAt);
+
+    assert.equal((await api.gest.get("/trash")).status, 403);
+  });
+});
+
 describe("Audit global des flux sur les données de test", () => {
   it("ne trouve aucun écart", () => {
     const result = spawnSync("npx", ["tsx", "scripts/audit-flows.ts", today, today], {

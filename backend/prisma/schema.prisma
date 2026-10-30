@@ -1617,3 +1617,22 @@ model RoleUiSettings {
   updatedAt    DateTime @updatedAt
   updatedById  String?
 }
+
+/// Corbeille : copie de chaque ligne supprimée par un bouton « Supprimer » de l'application
+/// (lignes supprimées en cascade comprises). Écrite par le trigger PostgreSQL alwatan_guard_row_delete.
+model DeletedRecord {
+  id           String    @id @default(cuid())
+  /// Une suppression demandée = un lot (élément principal + éléments supprimés avec lui).
+  batchId      String
+  tableName    String
+  rowId        String?
+  data         Json
+  actorId      String?
+  requestPath  String?
+  deletedAt    DateTime  @default(now())
+  restoredAt   DateTime?
+  restoredById String?
+
+  @@index([deletedAt])
+  @@index([batchId])
+}

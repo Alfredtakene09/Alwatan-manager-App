@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -19,6 +20,7 @@ import pharmacieRoutes from "./routes/pharmacie.js";
 import facturesRoutes from "./routes/factures.js";
 import adminRoutes from "./routes/admin.js";
 import auditLogsRoutes from "./routes/audit-logs.js";
+import trashRoutes from "./routes/trash.js";
 import dashboardRoutes from "./routes/dashboard.js";
 import hospitalisationRoutes from "./routes/hospitalisation.js";
 import { refreshExamPriceCache } from "./lib/lab-exam-prices.js";
@@ -133,7 +135,11 @@ app.use((req, _res, next) => {
     next();
     return;
   }
-  runWithAppDataDeleteUnlock("api", () => next());
+  runWithAppDataDeleteUnlock("api", () => next(), {
+    requestId: randomUUID(),
+    method: req.method,
+    path: req.originalUrl.split("?")[0],
+  });
 });
 
 /** Journal d'audit : créations, modifications, suppressions, connexions. */
@@ -188,6 +194,7 @@ app.use("/api/pharmacie", pharmacieRoutes);
 app.use("/api/factures", facturesRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/audit-logs", auditLogsRoutes);
+app.use("/api/trash", trashRoutes);
 app.use("/api/clinic-info", clinicInfoRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/hospitalisation", hospitalisationRoutes);

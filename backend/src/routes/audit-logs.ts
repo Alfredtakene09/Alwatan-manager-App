@@ -113,6 +113,8 @@ router.get("/", async (req, res) => {
       moduleLabel,
       entityId: row.entityId,
       entityName: row.entityId ? names.get(row.entityId) ?? null : null,
+      // Suppression : lot de la corbeille où l'élément peut être consulté et restauré.
+      trashBatchId: isHttp && typeof meta.trashBatchId === "string" ? meta.trashBatchId : null,
       method,
       path,
       status,
