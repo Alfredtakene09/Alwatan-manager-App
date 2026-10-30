@@ -13,6 +13,7 @@ import AdminExpenseFormModal, {
 import CaisseToolbar from '@/components/caisse/CaisseToolbar.vue'
 import CaisseCompactDateField from '@/components/caisse/CaisseCompactDateField.vue'
 import CaisseDepensesPanel from '@/components/caisse/CaisseDepensesPanel.vue'
+import ExpensePurchaseDetails, { purchaseDetailsText } from '@/components/caisse/ExpensePurchaseDetails.vue'
 import ExpenseIndicesPanel from '@/components/caisse/ExpenseIndicesPanel.vue'
 import { useExpenseIndices } from '@/composables/useExpenseIndices'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -269,6 +270,7 @@ const expenseExportColumns: ExportColumn<AdminExpenseRow>[] = [
   { header: 'Description', value: (row) => row.description },
   { header: 'Montant', value: (row) => formatFcfa(row.amountFcfa) },
   { header: 'Commentaire', value: (row) => row.comment?.trim() || '—' },
+  { header: 'Produits achetés', value: (row) => purchaseDetailsText(row.purchase) || '—' },
 ]
 
 function expenseExportShared() {
@@ -471,7 +473,10 @@ onMounted(() => {
               <td :class="row.flow === 'ENTREE' ? 'flow-in' : 'flow-out'">
                 {{ row.flow === 'ENTREE' ? uiText('Entrée') : uiText('Sortie') }}
               </td>
-              <td>{{ row.description }}</td>
+              <td>
+                {{ row.description }}
+                <ExpensePurchaseDetails v-if="row.purchase" :purchase="row.purchase" />
+              </td>
               <td>{{ formatFcfa(row.amountFcfa) }}</td>
               <td class="actions">
                 <template v-if="row.source !== 'payroll'">

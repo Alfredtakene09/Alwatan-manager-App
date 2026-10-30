@@ -16,6 +16,10 @@ import UiFormModal from '@/components/ui/UiFormModal.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import type { ExpenseIndiceOption } from '@/lib/expense-indices'
+import ExpensePurchaseDetails, {
+  purchaseDetailsText,
+  type ExpensePurchaseDetails as PurchaseDetails,
+} from '@/components/caisse/ExpensePurchaseDetails.vue'
 import {
   categoryCodeFromIndiceName,
   EXPENSE_CATEGORY_CODE_LABELS,
@@ -112,6 +116,7 @@ type ExpenseRow = {
   categoryLabel?: string
   comment: string | null
   createdAt: string
+  purchase?: PurchaseDetails | null
 }
 
 const totalFcfa = ref(0)
@@ -254,6 +259,7 @@ const tableRows = computed(() =>
     flow: row.flow,
     comment: row.comment?.trim() || '—',
     hasComment: Boolean(row.comment?.trim()),
+    purchase: row.purchase ?? null,
     amountLabel: `${row.flow === 'ENTREE' ? '+ ' : ''}${formatFcfa(row.amountFcfa)}`,
     amountSort: row.amountFcfa,
   })),
@@ -267,6 +273,7 @@ const expenseExportColumns = computed<ExportColumn<ExpenseExportRow>[]>(() => {
     { header: uiText('Heure'), value: (r) => r.time },
     { header: uiText('Libellé'), value: (r) => r.label },
     { header: uiText('Commentaire'), value: (r) => r.comment },
+    { header: uiText('Produits achetés'), value: (r) => purchaseDetailsText(r.purchase) || '—' },
     { header: uiText('Montant'), value: (r) => r.amountLabel },
   ]
 })
@@ -584,6 +591,7 @@ onMounted(async () => {
                     <td>
                       <span v-if="row.hasComment">{{ row.comment }}</span>
                       <span v-else class="st-muted">{{ row.comment }}</span>
+                      <ExpensePurchaseDetails v-if="row.purchase" :purchase="row.purchase" />
                     </td>
                     <td><strong class="st-amount">{{ row.amountLabel }}</strong></td>
                     <td class="simple-table__actions">
@@ -656,6 +664,10 @@ onMounted(async () => {
         <div class="expense-detail__row">
           <dt>{{ uiText('Commentaire') }}</dt>
           <dd>{{ viewExpense.comment?.trim() || '—' }}</dd>
+          <template v-if="viewExpense.purchase?.lines.length">
+            <dt>{{ uiText('Produits achetés') }}</dt>
+            <dd><ExpensePurchaseDetails :purchase="viewExpense.purchase" /></dd>
+          </template>
         </div>
       </dl>
       <template #footer>

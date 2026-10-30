@@ -18,7 +18,8 @@ const LOGOUT_PATH = "/api/auth/logout";
 const SECRET_KEY_PATTERN = /pass|token|secret|pin|otp|signature|base64|content|file|photo|image|data[_-]?url/i;
 const MAX_STRING = 160;
 const MAX_ARRAY = 15;
-const MAX_DEPTH = 3;
+// 4 niveaux : facture → lignes → ligne → nouveau produit (nom, dosage).
+const MAX_DEPTH = 4;
 const MAX_BODY_CHARS = 3_000;
 
 /** Libellés des modules, d'après le premier segment de l'URL /api/<module>/… */

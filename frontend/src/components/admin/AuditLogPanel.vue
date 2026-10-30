@@ -4,6 +4,7 @@ import axios from 'axios'
 import { ChevronLeft, ChevronRight, Eye } from '@lucide/vue'
 import api from '@/api/client'
 import { ROLE_LABELS, type AppUserRole } from '@/lib/roles'
+import { UI_ACTIONS } from '@/lib/ui-actions'
 import { formatPatientTableDate } from '@/lib/patient-datatable-columns'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
@@ -34,6 +35,13 @@ type AuditEntry = {
   success: boolean
   ip: string | null
   durationMs: number | null
+  entityName: string | null
+  summary: string
+  resultLabel: string
+  readable: {
+    fields: Array<{ label: string; value: string }>
+    groups: Array<{ label: string; columns: string[]; rows: string[][] }>
+  }
   details: unknown
 }
 
@@ -121,6 +129,16 @@ function formatDateTime(iso: string) {
     minute: '2-digit',
     second: '2-digit',
   })}`
+}
+
+const uiActionLabels = new Map(UI_ACTIONS.map((action) => [action.id, action.label]))
+
+/** Codes de boutons (ex. « export.pdf ») remplacés par leur libellé. */
+function readableValue(value: string) {
+  return value.replace(/\b[a-z_]+\.[a-z_]+\b/g, (code) => {
+    const label = uiActionLabels.get(code)
+    return label ? uiText(label) : code
+  })
 }
 
 function detailsText(value: unknown) {
@@ -241,14 +259,11 @@ onMounted(() => {
                   </span>
                 </td>
                 <td>{{ uiText(entry.moduleLabel) }}</td>
-                <td class="audit-path">
-                  <template v-if="entry.path">
-                    <code>{{ entry.method }} {{ entry.path }}</code>
-                    <small class="audit-sub" :class="{ 'audit-sub--error': !entry.success }">
-                      {{ entry.success ? uiText('Réussi') : translateTemplate('Échec ({status})', { status: entry.status ?? '' }) }}
-                    </small>
-                  </template>
-                  <span v-else>{{ entry.entityId ?? '—' }}</span>
+                <td class="audit-summary">
+                  <span>{{ uiText(entry.summary) }}</span>
+                  <small class="audit-sub" :class="{ 'audit-sub--error': !entry.success }">
+                    {{ uiText(entry.resultLabel) }}
+                  </small>
                 </td>
                 <td>{{ entry.ip ?? '—' }}</td>
                 <td class="simple-table__actions">
@@ -296,34 +311,82 @@ onMounted(() => {
     size="large"
     @close="selected = null"
   >
+    <p class="audit-detail__summary">
+      {{ uiText(selected.summary) }}
+      <span class="audit-badge" :class="selected.success ? 'audit-badge--success' : 'audit-badge--danger'">
+        {{ uiText(selected.resultLabel) }}
+      </span>
+    </p>
+
     <dl class="audit-detail">
-      <dt>{{ uiText('Utilisateur') }}</dt>
+      <dt>{{ uiText('Fait par') }}</dt>
       <dd>
         {{ selected.userName }}
-        <template v-if="selected.username"> ({{ selected.username }})</template>
         <template v-if="selected.userRole"> · {{ roleLabel(selected.userRole) }}</template>
       </dd>
-      <dt>{{ uiText('Action') }}</dt>
-      <dd>{{ uiText(selected.actionLabel) }} — {{ uiText(selected.moduleLabel) }}</dd>
-      <template v-if="selected.path">
-        <dt>{{ uiText('Requête') }}</dt>
-        <dd><code>{{ selected.method }} {{ selected.path }}</code></dd>
-        <dt>{{ uiText('Résultat') }}</dt>
-        <dd>
-          {{ selected.success ? uiText('Réussi') : uiText('Échec') }} ({{ selected.status }})
-          <template v-if="selected.durationMs != null"> · {{ selected.durationMs }} ms</template>
-        </dd>
-      </template>
-      <template v-if="selected.entityId">
+      <dt>{{ uiText('Le') }}</dt>
+      <dd>{{ formatDateTime(selected.createdAt) }}</dd>
+      <dt>{{ uiText('Rubrique') }}</dt>
+      <dd>{{ uiText(selected.moduleLabel) }}</dd>
+      <template v-if="selected.entityName">
         <dt>{{ uiText('Élément concerné') }}</dt>
-        <dd><code>{{ selected.entityId }}</code></dd>
+        <dd>{{ selected.entityName }}</dd>
       </template>
-      <dt>{{ uiText('Adresse IP') }}</dt>
-      <dd>{{ selected.ip ?? '—' }}</dd>
     </dl>
-    <h4 class="audit-detail__title">{{ uiText('Données envoyées') }}</h4>
-    <pre v-if="detailsText(selected.details)" class="audit-detail__json">{{ detailsText(selected.details) }}</pre>
-    <p v-else class="audit-sub">{{ uiText('Aucune donnée.') }}</p>
+
+    <template v-if="selected.readable.fields.length || selected.readable.groups.length">
+      <h4 class="audit-detail__title">{{ uiText('Informations saisies') }}</h4>
+      <dl v-if="selected.readable.fields.length" class="audit-detail">
+        <template v-for="field in selected.readable.fields" :key="field.label">
+          <dt>{{ uiText(field.label) }}</dt>
+          <dd>{{ readableValue(field.value) }}</dd>
+        </template>
+      </dl>
+      <div v-for="group in selected.readable.groups" :key="group.label" class="audit-detail__group">
+        <h5>{{ group.label }}</h5>
+        <div class="audit-detail__table-wrap">
+          <table class="audit-detail__table">
+            <thead>
+              <tr>
+                <th v-for="column in group.columns" :key="column">{{ uiText(column) }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(row, index) in group.rows" :key="index">
+                <td v-for="(cell, cellIndex) in row" :key="cellIndex">{{ cell }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </template>
+    <p v-else class="audit-sub">{{ uiText('Aucune information saisie pour cette action.') }}</p>
+
+    <details class="audit-tech">
+      <summary>{{ uiText('Détails techniques (pour le support informatique)') }}</summary>
+      <dl class="audit-detail">
+        <template v-if="selected.username">
+          <dt>{{ uiText('Identifiant') }}</dt>
+          <dd>{{ selected.username }}</dd>
+        </template>
+        <template v-if="selected.path">
+          <dt>{{ uiText('Requête') }}</dt>
+          <dd><code>{{ selected.method }} {{ selected.path }}</code></dd>
+          <dt>{{ uiText('Code réponse') }}</dt>
+          <dd>
+            {{ selected.status }}
+            <template v-if="selected.durationMs != null"> · {{ selected.durationMs }} ms</template>
+          </dd>
+        </template>
+        <template v-if="selected.entityId">
+          <dt>{{ uiText('Identifiant de l’élément') }}</dt>
+          <dd><code>{{ selected.entityId }}</code></dd>
+        </template>
+        <dt>{{ uiText('Adresse IP') }}</dt>
+        <dd>{{ selected.ip ?? '—' }}</dd>
+      </dl>
+      <pre v-if="detailsText(selected.details)" class="audit-detail__json">{{ detailsText(selected.details) }}</pre>
+    </details>
     <template #footer>
       <UiButton variant="ghost" @click="selected = null">{{ uiText('Fermer') }}</UiButton>
     </template>
@@ -381,9 +444,8 @@ onMounted(() => {
   color: #be123c;
 }
 
-.audit-path code {
-  font-size: 0.75rem;
-  word-break: break-all;
+.audit-summary {
+  min-width: 14rem;
 }
 
 .audit-badge {
@@ -432,6 +494,68 @@ onMounted(() => {
 .audit-detail__title {
   margin: 0 0 0.4rem;
   font-size: 0.8125rem;
+}
+
+.audit-detail__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.9rem;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.audit-detail__group {
+  margin-bottom: 1rem;
+}
+
+.audit-detail__group h5 {
+  margin: 0 0 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.audit-detail__table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.audit-detail__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.audit-detail__table th,
+.audit-detail__table td {
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.audit-detail__table th {
+  background: var(--surface-muted, #f8fafc);
+  color: var(--text-muted);
+  font-weight: 650;
+}
+
+.audit-detail__table td {
+  border-top: 1px solid var(--border);
+}
+
+.audit-tech {
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+}
+
+.audit-tech summary {
+  margin-bottom: 0.6rem;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-weight: 600;
 }
 
 .audit-detail__json {

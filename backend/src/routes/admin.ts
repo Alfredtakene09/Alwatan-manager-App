@@ -18,6 +18,7 @@ import { parseShiftSlot } from "../lib/cash-shift.js";
 import { refreshUnvalidatedDayClosureForExpense } from "../lib/cashier-personal-stats.js";
 import { resolveExpenseClassification } from "../lib/expense-flow.js";
 import { prisma } from "../lib/db.js";
+import { withPurchaseDetails } from "../lib/pharmacy-purchase.js";
 import { excludeLegacyEmiratesTariffWhere } from "../lib/printed-tariff-catalog.js";
 import { ensureDefaultBedsForRoom } from "../lib/hospitalization-rooms.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
@@ -1443,7 +1444,7 @@ router.get("/expenses", async (req, res) => {
     take: 500,
   });
   // Les salaires versés restent dans l'historique de paie : pas de copie dans les dépenses.
-  return res.json(rows.map(serializeAdminExpense));
+  return res.json(await withPurchaseDetails(rows.map(serializeAdminExpense)));
 });
 
 router.post("/expenses", requireUiAction("comptabilite.depenses"), async (req, res) => {

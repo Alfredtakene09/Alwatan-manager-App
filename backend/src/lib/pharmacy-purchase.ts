@@ -211,6 +211,62 @@ type PurchaseAuditMetadata = {
   lines?: Array<{ productId: string; quantity: number; unitCostFcfa: number | null }>;
 };
 
+export type PurchaseExpenseDetails = {
+  invoiceNumber: string | null;
+  lines: Array<{ productName: string; quantity: number; unitCostFcfa: number; totalFcfa: number }>;
+};
+
+/**
+ * Produits achetés de chaque facture fournisseur, par id de dépense
+ * (lus dans le journal d'audit écrit à l'enregistrement de la facture).
+ */
+export async function loadPurchaseDetails(expenseIds: string[]) {
+  const audits = expenseIds.length
+    ? await prisma.auditLog.findMany({
+        where: { entity: "PharmacyPurchase", entityId: { in: expenseIds } },
+        select: { entityId: true, metadata: true },
+      })
+    : [];
+  const metadataRows = audits.map((row) => ({
+    expenseId: row.entityId!,
+    metadata: (row.metadata ?? {}) as PurchaseAuditMetadata,
+  }));
+
+  const productIds = [
+    ...new Set(metadataRows.flatMap((row) => row.metadata.lines ?? []).map((line) => line.productId)),
+  ];
+  const products = productIds.length
+    ? await prisma.product.findMany({
+        where: { id: { in: productIds } },
+        select: { id: true, name: true, dosage: true },
+      })
+    : [];
+  const productName = new Map(
+    products.map((row) => [row.id, row.dosage ? `${row.name} ${row.dosage}` : row.name]),
+  );
+
+  return new Map<string, PurchaseExpenseDetails>(
+    metadataRows.map(({ expenseId, metadata }) => [
+      expenseId,
+      {
+        invoiceNumber: metadata.invoiceNumber ?? null,
+        lines: (metadata.lines ?? []).map((line) => ({
+          productName: productName.get(line.productId) ?? "Produit supprimé",
+          quantity: line.quantity,
+          unitCostFcfa: line.unitCostFcfa ?? 0,
+          totalFcfa: line.quantity * (line.unitCostFcfa ?? 0),
+        })),
+      },
+    ]),
+  );
+}
+
+/** Ajoute `purchase` (produits achetés) aux dépenses issues d'une facture fournisseur. */
+export async function withPurchaseDetails<T extends { id: string }>(rows: T[]) {
+  const details = await loadPurchaseDetails(rows.map((row) => row.id));
+  return rows.map((row) => ({ ...row, purchase: details.get(row.id) ?? null }));
+}
+
 /**
  * Factures fournisseur saisies sur la période (date comptable) : nombre, montant total
  * et produits entrés en stock pour chaque facture (lus dans le journal d'audit).
@@ -226,42 +282,15 @@ export async function buildPharmacyPurchaseReport(fromIso: string, toIso: string
     select: { id: true, businessDate: true, amountFcfa: true, label: true, beneficiary: true },
   });
 
-  const audits = expenses.length
-    ? await prisma.auditLog.findMany({
-        where: { entity: "PharmacyPurchase", entityId: { in: expenses.map((row) => row.id) } },
-        select: { entityId: true, metadata: true },
-      })
-    : [];
-  const metadataByExpense = new Map(
-    audits.map((row) => [row.entityId, (row.metadata ?? {}) as PurchaseAuditMetadata]),
-  );
-
-  const productIds = [
-    ...new Set(audits.flatMap((row) => ((row.metadata ?? {}) as PurchaseAuditMetadata).lines ?? []).map((line) => line.productId)),
-  ];
-  const products = productIds.length
-    ? await prisma.product.findMany({
-        where: { id: { in: productIds } },
-        select: { id: true, name: true, dosage: true },
-      })
-    : [];
-  const productName = new Map(
-    products.map((row) => [row.id, row.dosage ? `${row.name} ${row.dosage}` : row.name]),
-  );
+  const detailsByExpense = await loadPurchaseDetails(expenses.map((row) => row.id));
 
   const invoices = expenses.map((expense) => {
-    const metadata = metadataByExpense.get(expense.id) ?? {};
-    const lines = (metadata.lines ?? []).map((line) => ({
-      productName: productName.get(line.productId) ?? "Produit supprimé",
-      quantity: line.quantity,
-      unitCostFcfa: line.unitCostFcfa ?? 0,
-      totalFcfa: line.quantity * (line.unitCostFcfa ?? 0),
-    }));
+    const lines = detailsByExpense.get(expense.id)?.lines ?? [];
     return {
       id: expense.id,
       businessDate: expense.businessDate.toISOString().slice(0, 10),
       invoiceNumber:
-        metadata.invoiceNumber ?? expense.label.match(/facture n° (.+)$/)?.[1] ?? "—",
+        detailsByExpense.get(expense.id)?.invoiceNumber ?? expense.label.match(/facture n° (.+)$/)?.[1] ?? "—",
       supplierName: expense.beneficiary ?? "—",
       amountFcfa: expense.amountFcfa,
       productsCount: lines.length,

@@ -296,6 +296,44 @@ describe("Pharmacie — achat par facture et vente", () => {
     assert.equal(expense?.paidById, fx.users.gestionnaire.id);
   });
 
+  it("enregistre la facture en dépense détaillée, déduite du solde de la clinique", async () => {
+    const kpis = async () =>
+      (await api.admin.get(`/dashboard/admin?from=${today}&to=${today}`)).data.financialKpis;
+    const before = await kpis();
+    const res = await api.gest.post("/pharmacie/purchases", {
+      supplierId: fx.supplier.id,
+      invoiceNumber: "FT-DEPENSE",
+      businessDate: today,
+      lines: [
+        { productId: fx.product.id, quantity: 4, purchasePriceFcfa: FEES.productPurchasePrice, unitPriceFcfa: FEES.productSalePrice },
+        { newProduct: { name: "Ibuprofene Test", dosage: "400 mg" }, quantity: 2, purchasePriceFcfa: 900, unitPriceFcfa: 1_500 },
+      ],
+    });
+    assert.equal(res.status, 201, JSON.stringify(res.data));
+    const amount = 4 * FEES.productPurchasePrice + 2 * 900;
+    assert.equal(res.data.totalFcfa, amount);
+
+    const after = await kpis();
+    assert.equal(after.expensesMonthFcfa, before.expensesMonthFcfa + amount);
+    assert.equal(after.netMonthFcfa, before.netMonthFcfa - amount);
+
+    const expectedLines = [
+      ["Paracetamol Test", 4, FEES.productPurchasePrice, 4 * FEES.productPurchasePrice],
+      ["Ibuprofene Test 400 mg", 2, 900, 1_800],
+    ];
+    type Line = { productName: string; quantity: number; unitCostFcfa: number; totalFcfa: number };
+    const linesOf = (row: { purchase?: { lines: Line[] } | null } | undefined) =>
+      row?.purchase?.lines.map((l) => [l.productName, l.quantity, l.unitCostFcfa, l.totalFcfa]);
+
+    const adminList = await api.admin.get("/admin/expenses");
+    assert.deepEqual(linesOf(adminList.data.find((row: { id: string }) => row.id === res.data.expenseId)), expectedLines);
+    const gestList = await api.gest.get("/gestionnaire/expenses");
+    assert.deepEqual(linesOf(gestList.data.find((row: { id: string }) => row.id === res.data.expenseId)), expectedLines);
+    const desk = await api.gest.get(`/cash-desk/expenses?from=${today}&to=${today}`);
+    assert.equal(desk.status, 200, JSON.stringify(desk.data));
+    assert.deepEqual(linesOf(desk.data.rows.find((row: { id: string }) => row.id === res.data.expenseId)), expectedLines);
+  });
+
   it("compte les boîtes en sachets et met à jour les prix d'un produit existant", async () => {
     const sachetProduct = await db.product.create({
       data: {
@@ -448,6 +486,30 @@ describe("Journal d'audit des actions utilisateurs", () => {
     assert.equal(purchase.action, "CREATE");
     assert.equal(purchase.moduleLabel, "Pharmacie");
     assert.ok(purchase.userName && purchase.userName !== "Système / inconnu");
+
+    // Lisible par un non-informaticien : phrase, noms à la place des identifiants, montants en FCFA.
+    const invoice = items.find(
+      (row) => row.path === "/api/pharmacie/purchases" && row.details?.invoiceNumber === "FT-DEPENSE",
+    );
+    assert.ok(invoice, "facture FT-DEPENSE non journalisée");
+    assert.equal(invoice.summary, "Ajout de produits par facture fournisseur");
+    assert.equal(invoice.resultLabel, "Réussi");
+    const fields = Object.fromEntries(invoice.readable.fields.map((f: any) => [f.label, f.value]));
+    assert.equal(fields["Fournisseur"], "Fournisseur Test");
+    assert.equal(fields["N° de facture"], "FT-DEPENSE");
+    const [group] = invoice.readable.groups;
+    assert.equal(group.label, "Produits (2)");
+    assert.equal(group.columns[0], "Produit");
+    assert.deepEqual(group.rows.map((row: string[]) => row[0]), [
+      "Paracetamol Test",
+      "Ibuprofene Test 400 mg (nouveau produit)",
+    ]);
+    const priceColumn = group.columns.indexOf("Prix d'achat");
+    assert.equal(group.rows[1][priceColumn], "900 FCFA");
+    assert.ok(!JSON.stringify(invoice.readable).match(/c[a-z0-9]{20,}/), "identifiant brut affiché");
+
+    const refused = items.find((row) => row.path === "/api/pharmacie/purchases" && row.status === 403);
+    assert.equal(refused?.resultLabel, "Échec — l'utilisateur n'a pas le droit de faire cette action");
     assert.ok(
       !items.some((row) => JSON.stringify(row.details ?? "").includes("password\":\"") &&
         !JSON.stringify(row.details).includes("\"***\"")),

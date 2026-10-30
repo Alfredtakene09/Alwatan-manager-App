@@ -9,6 +9,7 @@ import {
   UserRole,
 } from "@prisma/client";
 import { prisma } from "../lib/db.js";
+import { withPurchaseDetails } from "../lib/pharmacy-purchase.js";
 import {
   CASH_COLLECTOR_ROLES,
   formatBusinessDate,
@@ -212,7 +213,7 @@ router.get("/expenses", async (req, res) => {
     totalFcfa,
     entriesTotalFcfa,
     categories: EXPENSE_CATEGORY_LABELS,
-    rows: rows.map((row) => ({
+    rows: await withPurchaseDetails(rows.map((row) => ({
       id: row.id,
       businessDate: formatBusinessDate(row.businessDate),
       amountFcfa: row.amountFcfa,
@@ -224,7 +225,7 @@ router.get("/expenses", async (req, res) => {
       paidBy: { ...row.paidBy, fullName: mapUserLabel(row.paidBy) },
       recordedBy: { ...row.recordedBy, fullName: mapUserLabel(row.recordedBy) },
       createdAt: row.createdAt.toISOString(),
-    })),
+    }))),
   });
 });
 
