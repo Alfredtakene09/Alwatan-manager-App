@@ -71,7 +71,35 @@ function lineTotal(line: PurchaseLine) {
   return toInt(line.quantity) * toInt(line.purchasePrice)
 }
 
+function lineSaleTotal(line: PurchaseLine) {
+  return toInt(line.quantity) * toInt(line.salePrice)
+}
+
 const totalFcfa = computed(() => lines.value.reduce((sum, line) => sum + lineTotal(line), 0))
+const saleTotalFcfa = computed(() => lines.value.reduce((sum, line) => sum + lineSaleTotal(line), 0))
+const profitTotalFcfa = computed(() => saleTotalFcfa.value - totalFcfa.value)
+
+function pickedProduct(line: PurchaseLine) {
+  return line.productId ? productsById.value.get(line.productId) ?? null : null
+}
+
+/** Nombre d'unités de stock par boîte facturée (sachets pour un produit vendu au détail). */
+function unitsPerBox(product: PharmacyProductRecord) {
+  return product.sellBySachet && product.sachetsPerBox > 1 ? product.sachetsPerBox : 1
+}
+
+function currentPriceHint(line: PurchaseLine, field: 'purchase' | 'sale') {
+  const product = pickedProduct(line)
+  if (!product) return null
+  const current = field === 'purchase' ? product.purchasePriceFcfa : product.unitPriceFcfa
+  const entered = toInt(field === 'purchase' ? line.purchasePrice : line.salePrice)
+  return {
+    text: current
+      ? translateTemplate('Actuel : {amount}', { amount: formatFcfa(current) })
+      : uiText('Aucun prix enregistré'),
+    changed: entered > 0 && entered !== (current ?? 0),
+  }
+}
 
 
 function emptyLine(): PurchaseLine {
@@ -104,6 +132,12 @@ function onNameInput(line: PurchaseLine, value: string) {
     const product = productsById.value.get(line.productId)
     if (!product || product.name !== value) line.productId = null
   }
+  // Nom saisi en entier sans passer par la liste : on reconnaît le produit existant.
+  if (!line.productId) {
+    const typed = value.trim().toLocaleLowerCase()
+    const matches = typed ? props.products.filter((p) => p.name.trim().toLocaleLowerCase() === typed) : []
+    if (matches.length === 1) onPick(line, matches[0])
+  }
 }
 
 function onPick(line: PurchaseLine, item: SuggestProduct) {
@@ -111,6 +145,7 @@ function onPick(line: PurchaseLine, item: SuggestProduct) {
   if (!product) return
   line.productId = product.id
   line.name = product.name
+  // Prix actuels de la fiche, modifiables : la facture les met à jour.
   line.dosage = product.dosage ?? ''
   line.purchasePrice = product.purchasePriceFcfa ? String(product.purchasePriceFcfa) : ''
   line.salePrice = String(product.unitPriceFcfa)
@@ -119,9 +154,17 @@ function onPick(line: PurchaseLine, item: SuggestProduct) {
 }
 
 function productLabel(line: PurchaseLine) {
-  if (!line.productId) return ''
-  const product = productsById.value.get(line.productId)
-  return product ? translateTemplate('En stock : {qty}', { qty: product.quantity }) : ''
+  const product = pickedProduct(line)
+  if (!product) return ''
+  const perBox = unitsPerBox(product)
+  const after = product.quantity + toInt(line.quantity) * perBox
+  return perBox > 1
+    ? translateTemplate('En stock : {qty} → {after} sachets ({n} par boîte)', {
+        qty: product.quantity,
+        after,
+        n: perBox,
+      })
+    : translateTemplate('En stock : {qty} → {after}', { qty: product.quantity, after })
 }
 
 function validate(): string {
@@ -252,6 +295,14 @@ businessDate.value = todayIso()
               placeholder="FCFA"
               required
             />
+            <span
+              v-if="currentPriceHint(line, 'purchase')"
+              class="purchase-line__hint"
+              :class="{ 'purchase-line__hint--changed': currentPriceHint(line, 'purchase')!.changed }"
+            >
+              {{ currentPriceHint(line, 'purchase')!.text }}
+              <template v-if="currentPriceHint(line, 'purchase')!.changed"> · {{ uiText('sera modifié') }}</template>
+            </span>
           </label>
           <button
             type="button"
@@ -271,6 +322,14 @@ businessDate.value = todayIso()
               placeholder="FCFA"
               required
             />
+            <span
+              v-if="currentPriceHint(line, 'sale')"
+              class="purchase-line__hint"
+              :class="{ 'purchase-line__hint--changed': currentPriceHint(line, 'sale')!.changed }"
+            >
+              {{ currentPriceHint(line, 'sale')!.text }}
+              <template v-if="currentPriceHint(line, 'sale')!.changed"> · {{ uiText('sera modifié') }}</template>
+            </span>
           </label>
           <div class="purchase-field purchase-field--expiry">
             <span class="purchase-field__label">{{ uiText('Expiration') }}</span>
@@ -291,6 +350,14 @@ businessDate.value = todayIso()
           <div class="purchase-field purchase-field--total">
             <span class="purchase-field__label">{{ uiText('Total ligne') }}</span>
             <span class="purchase-line__total">{{ formatFcfa(lineTotal(line)) }}</span>
+            <span v-if="lineSaleTotal(line)" class="purchase-line__hint">
+              {{
+                translateTemplate('Vente {sale} · bénéfice {profit}', {
+                  sale: formatFcfa(lineSaleTotal(line)),
+                  profit: formatFcfa(lineSaleTotal(line) - lineTotal(line)),
+                })
+              }}
+            </span>
           </div>
         </div>
       </div>
@@ -307,6 +374,14 @@ businessDate.value = todayIso()
         <span>{{ uiText('Total facture (sortie de caisse)') }}</span>
         <strong>{{ formatFcfa(totalFcfa) }}</strong>
         <small v-if="payerName">{{ translateTemplate('Caisse de {name}', { name: payerName }) }}</small>
+      </div>
+      <div class="purchase-form__sum purchase-form__sum--plain">
+        <span>{{ uiText('Total vente') }}</span>
+        <strong>{{ formatFcfa(saleTotalFcfa) }}</strong>
+      </div>
+      <div class="purchase-form__sum purchase-form__sum--plain">
+        <span>{{ uiText('Bénéfice prévu') }}</span>
+        <strong :class="{ 'is-negative': profitTotalFcfa < 0 }">{{ formatFcfa(profitTotalFcfa) }}</strong>
       </div>
       <UiButton variant="ghost" type="button" @click="emit('close')">{{ uiText('Annuler') }}</UiButton>
       <UiButton
@@ -475,6 +550,28 @@ businessDate.value = todayIso()
   font-size: 1.05rem;
   color: #be123c;
   font-variant-numeric: tabular-nums;
+}
+
+.purchase-form__sum--plain {
+  margin-right: 0.5rem;
+}
+
+.purchase-form__sum--plain strong {
+  color: var(--primary-800);
+}
+
+.purchase-form__sum--plain strong.is-negative {
+  color: #be123c;
+}
+
+.purchase-line__hint {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+.purchase-line__hint--changed {
+  color: #b45309;
+  font-weight: 600;
 }
 
 @media (max-width: 900px) {
