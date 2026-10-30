@@ -2,7 +2,8 @@ import type { NextFunction, Request, Response } from "express";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db.js";
 import { COOKIE_NAME, verifySessionToken } from "./auth.js";
-import { runWithAppDataDeleteUnlock } from "./db-delete-guard.js";
+import { appDeleteContext, runWithAppDataDeleteUnlock } from "./db-delete-guard.js";
+import { purgeOldTrash } from "./trash.js";
 
 /**
  * Journal d'audit : chaque action d'écriture (création, modification, suppression),
@@ -136,7 +137,13 @@ async function resolveLogoutUser(req: Request) {
 
 type AuditActor = { id: string; firstName: string; lastName: string; role: string } | null;
 
-async function writeHttpAudit(req: Request, res: Response, startedAt: number, preResolved: AuditActor) {
+async function writeHttpAudit(
+  req: Request,
+  res: Response,
+  startedAt: number,
+  preResolved: AuditActor,
+  trashBatchId: string | null,
+) {
   const path = req.originalUrl.split("?")[0];
   const isLogin = path === LOGIN_PATH;
   const isLogout = path === LOGOUT_PATH;
@@ -172,6 +179,8 @@ async function writeHttpAudit(req: Request, res: Response, startedAt: number, pr
     userRole: actor?.role ?? null,
     ...(isLogin ? { login: typeof req.body?.username === "string" ? req.body.username.trim() : null } : {}),
     ...(isLogin || isLogout ? {} : { body: sanitizeAuditBody(req.body) }),
+    // Suppression : lot correspondant dans la corbeille.
+    ...(req.method === "DELETE" && trashBatchId ? { trashBatchId } : {}),
   };
 
   await prisma.auditLog.create({
@@ -197,9 +206,11 @@ export function auditTrailMiddleware(req: Request, res: Response, next: NextFunc
   const actorPromise: Promise<AuditActor> =
     path === LOGOUT_PATH ? resolveLogoutUser(req) : Promise.resolve(null);
 
+  const trashBatchId = appDeleteContext.getStore()?.requestId ?? null;
+
   res.on("finish", () => {
     void actorPromise
-      .then((actor) => writeHttpAudit(req, res, startedAt, actor))
+      .then((actor) => writeHttpAudit(req, res, startedAt, actor, trashBatchId))
       .catch((error) => console.error("[audit] écriture impossible:", error));
   });
 
@@ -242,7 +253,10 @@ export async function purgeOldAuditLogs(now = new Date()): Promise<number> {
 /** Purge au démarrage puis toutes les 12 h : le journal ne garde que les 2 derniers mois. */
 export function startAuditLogPurgeScheduler(): void {
   if (purgeTimer) return;
-  const run = () => void purgeOldAuditLogs().catch((error) => console.error("[audit] purge impossible:", error));
+  const run = () => {
+    void purgeOldAuditLogs().catch((error) => console.error("[audit] purge impossible:", error));
+    void purgeOldTrash().catch((error) => console.error("[corbeille] purge impossible:", error));
+  };
   run();
   purgeTimer = setInterval(run, PURGE_CHECK_INTERVAL_MS);
   if (typeof purgeTimer.unref === "function") purgeTimer.unref();

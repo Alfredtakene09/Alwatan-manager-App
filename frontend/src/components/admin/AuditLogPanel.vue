@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
-import { ChevronLeft, ChevronRight, Eye } from '@lucide/vue'
+import { ChevronLeft, ChevronRight, Eye, Trash2 } from '@lucide/vue'
 import api from '@/api/client'
 import { ROLE_LABELS, type AppUserRole } from '@/lib/roles'
 import { UI_ACTIONS } from '@/lib/ui-actions'
@@ -13,6 +13,7 @@ import UiButton from '@/components/ui/UiButton.vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
+import TrashPanel from '@/components/admin/TrashPanel.vue'
 import '@/assets/simple-table.css'
 
 type AuditUserOption = { id: string; firstName: string; lastName: string }
@@ -36,6 +37,7 @@ type AuditEntry = {
   ip: string | null
   durationMs: number | null
   entityName: string | null
+  trashBatchId: string | null
   summary: string
   resultLabel: string
   readable: {
@@ -81,6 +83,20 @@ const modules = ref<Array<{ id: string; label: string }>>([])
 const loading = ref(false)
 const message = ref('')
 const selected = ref<AuditEntry | null>(null)
+/** Corbeille affichée à la place du journal, éventuellement ouverte sur une suppression précise. */
+const showTrash = ref(false)
+const trashBatchId = ref<string | null>(null)
+
+function openTrash(batchId: string | null = null) {
+  selected.value = null
+  trashBatchId.value = batchId
+  showTrash.value = true
+}
+
+function closeTrash() {
+  showTrash.value = false
+  trashBatchId.value = null
+}
 let loadRequest = 0
 
 const sortedUsers = computed(() =>
@@ -198,6 +214,8 @@ onMounted(() => {
 </script>
 
 <template>
+  <TrashPanel v-if="showTrash" :initial-batch-id="trashBatchId" @back="closeTrash" />
+  <template v-else>
   <div class="audit-panel">
     <div class="audit-toolbar">
       <UiInput v-model="dateFrom" label="Du" type="date" class="audit-field" />
@@ -213,6 +231,9 @@ onMounted(() => {
         <option value="">{{ uiText('Tous les modules') }}</option>
         <option v-for="m in modules" :key="m.id" :value="m.id">{{ uiText(m.label) }}</option>
       </UiSelect>
+      <UiButton variant="ghost" size="sm" :icon="Trash2" class="audit-trash-link" @click="openTrash()">
+        {{ uiText('Corbeille') }}
+      </UiButton>
     </div>
 
     <p class="audit-hint">
@@ -389,8 +410,17 @@ onMounted(() => {
     </details>
     <template #footer>
       <UiButton variant="ghost" @click="selected = null">{{ uiText('Fermer') }}</UiButton>
+      <UiButton
+        v-if="selected.trashBatchId"
+        variant="primary"
+        :icon="Trash2"
+        @click="openTrash(selected.trashBatchId)"
+      >
+        {{ uiText('Voir dans la corbeille') }}
+      </UiButton>
     </template>
   </UiFormModal>
+  </template>
 </template>
 
 <style scoped>
@@ -419,6 +449,10 @@ onMounted(() => {
 
 .audit-field--wide {
   min-width: 13rem;
+}
+
+.audit-trash-link {
+  margin-left: auto;
 }
 
 .audit-hint {

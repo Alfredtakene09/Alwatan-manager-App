@@ -303,6 +303,23 @@ const FIELD_LABELS: Record<string, string> = {
   grossFcfa: "Salaire brut",
   hiddenByRole: "Éléments masqués par rôle",
   login: "Identifiant",
+  createdAt: "Créé le",
+  code: "Code",
+  service: "Service",
+  recommendedByName: "Recommandé par",
+  invoiceType: "Type de facture",
+  paidAt: "Payé le",
+  paidFcfa: "Montant payé",
+  netTotalFcfa: "Total net",
+  grossTotalFcfa: "Total brut",
+  validatedAt: "Validé le",
+  startedAt: "Commencé le",
+  completedAt: "Terminé le",
+  stockAfter: "Stock après",
+  birthDate: "Date de naissance",
+  profession: "Profession",
+  clinicalNotes: "Notes cliniques",
+  diagnosis: "Diagnostic",
 };
 
 /** Objet désigné par un champ « …Id » (pour le libellé du champ). */

@@ -7,6 +7,7 @@ import {
   type SessionUser,
 } from "../lib/auth.js";
 import { prisma } from "../lib/db.js";
+import { setAppDeleteActor } from "../lib/db-delete-guard.js";
 import {
   isAccountLocked,
   isSessionIdle,
@@ -109,6 +110,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     }
 
     // Toujours reprendre le role / identite depuis la DB (evite JWT perime -> Acces refuse).
+    setAppDeleteActor(dbUser.id);
     req.user = {
       id: dbUser.id,
       username: dbUser.username,
