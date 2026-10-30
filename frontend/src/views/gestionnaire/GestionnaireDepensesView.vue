@@ -18,6 +18,10 @@ import GestionnaireExpenseFormModal, {
 } from '@/components/gestionnaire/GestionnaireExpenseFormModal.vue'
 import GestionnaireDepensesCategoriesPanel from '@/components/gestionnaire/GestionnaireDepensesCategoriesPanel.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
+import ExpensePurchaseDetails, {
+  purchaseDetailsText,
+  type ExpensePurchaseDetails as PurchaseDetails,
+} from '@/components/caisse/ExpensePurchaseDetails.vue'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import '@/assets/gestionnaire-page.css'
 
@@ -37,6 +41,7 @@ type ExpenseRow = {
   recordedByRoleLabel: string | null
   status?: string
   source?: 'clinic' | 'payroll'
+  purchase?: PurchaseDetails | null
 }
 
 type ExpenseCategory = ExpenseCategoryOption
@@ -123,6 +128,7 @@ const expenseExportColumns: ExportColumn<ExpenseRow>[] = [
   },
   { header: 'Bénéficiaire', value: (r) => r.beneficiary ?? '—' },
   { header: 'Commentaire', value: (r) => r.comment ?? '—' },
+  { header: 'Produits achetés', value: (r) => purchaseDetailsText(r.purchase) || '—' },
 ]
 
 function expenseExportShared() {
@@ -389,7 +395,10 @@ onMounted(async () => {
                     {{ row.category }}
                   </span>
                 </td>
-                <td class="depenses-table__desc">{{ row.description }}</td>
+                <td class="depenses-table__desc">
+                  {{ row.description }}
+                  <ExpensePurchaseDetails v-if="row.purchase" :purchase="row.purchase" />
+                </td>
                 <td class="col-amount">{{ formatFcfa(row.amountFcfa) }}</td>
                 <td>
                   <span v-if="row.recordedByName" class="recorded-by">

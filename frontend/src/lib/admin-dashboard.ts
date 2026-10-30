@@ -55,6 +55,11 @@ export type AdminExpenseRow = {
   comment?: string | null
   rejectionReason?: string | null
   source?: 'clinic' | 'payroll'
+  /** Produits achetés quand la sortie vient d'une facture fournisseur pharmacie. */
+  purchase?: {
+    invoiceNumber: string | null
+    lines: Array<{ productName: string; quantity: number; unitCostFcfa: number; totalFcfa: number }>
+  } | null
 }
 
 export type PayrollRow = {

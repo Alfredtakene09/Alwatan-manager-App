@@ -17,6 +17,7 @@ import {
   SalaryAdvanceStatus,
 } from "@prisma/client";
 import { prisma } from "../lib/db.js";
+import { withPurchaseDetails } from "../lib/pharmacy-purchase.js";
 import { ensureDefaultClinicServices } from "../lib/clinic-services-seed.js";
 import { listRecordedDiagnoses } from "../lib/recorded-diagnoses.js";
 import { resolveEmployeeClinicServiceLink } from "../lib/clinic-service-exam.js";
@@ -387,7 +388,7 @@ router.get("/expenses", async (req, res) => {
     take: 200,
   });
   // Les salaires versés restent dans l'historique de paie : pas de copie dans les dépenses.
-  return res.json(rows.map(serializeGestionnaireExpense));
+  return res.json(await withPurchaseDetails(rows.map(serializeGestionnaireExpense)));
 });
 
 router.post("/expenses", requireUiAction("comptabilite.depenses"), expenseUpload.single("receipt"), async (req, res) => {

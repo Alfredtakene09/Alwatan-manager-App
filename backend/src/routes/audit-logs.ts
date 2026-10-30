@@ -3,6 +3,13 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/db.js";
 import { requireAdmin, requireAuth } from "../middleware/auth.js";
 import { AUDIT_MODULE_LABELS, AUDIT_RETENTION_MONTHS } from "../lib/audit-log.js";
+import {
+  collectAuditIds,
+  describeAuditAction,
+  describeAuditResult,
+  readableAuditDetails,
+  resolveAuditNames,
+} from "../lib/audit-describe.js";
 
 const router = Router();
 router.use(requireAuth, requireAdmin);
@@ -68,9 +75,24 @@ router.get("/", async (req, res) => {
     }),
   ]);
 
+  // Noms des patients, produits, fournisseurs… cités dans la page, en une fois.
+  const ids = new Set<string>();
+  for (const row of rows) {
+    const meta = readMetadata(row.metadata);
+    collectAuditIds(meta.source === "http" ? meta.body : row.metadata, ids);
+    if (row.entityId) collectAuditIds(row.entityId, ids);
+  }
+  const names = await resolveAuditNames(ids);
+
   const items = rows.map((row) => {
     const meta = readMetadata(row.metadata);
     const isHttp = meta.source === "http";
+    const moduleLabel = AUDIT_MODULE_LABELS[row.entity] ?? row.entity;
+    const method = isHttp && typeof meta.method === "string" ? meta.method : null;
+    const path = isHttp && typeof meta.path === "string" ? meta.path : null;
+    const status = isHttp && typeof meta.status === "number" ? meta.status : null;
+    const success = isHttp ? meta.success !== false : true;
+    const rawDetails = isHttp ? meta.body ?? null : row.metadata;
     const userName = row.user
       ? `${row.user.firstName} ${row.user.lastName}`.trim()
       : typeof meta.userName === "string" && meta.userName
@@ -88,16 +110,21 @@ router.get("/", async (req, res) => {
       action: row.action,
       actionLabel: ACTION_LABELS[row.action] ?? row.action,
       entity: row.entity,
-      moduleLabel: AUDIT_MODULE_LABELS[row.entity] ?? row.entity,
+      moduleLabel,
       entityId: row.entityId,
-      method: isHttp ? meta.method ?? null : null,
-      path: isHttp ? meta.path ?? null : null,
-      status: isHttp ? meta.status ?? null : null,
-      success: isHttp ? meta.success !== false : true,
+      entityName: row.entityId ? names.get(row.entityId) ?? null : null,
+      method,
+      path,
+      status,
+      success,
       ip: isHttp ? meta.ip ?? null : null,
       durationMs: isHttp ? meta.durationMs ?? null : null,
-      // Détails : corps de requête nettoyé (HTTP) ou métadonnées métier d'origine.
-      details: isHttp ? meta.body ?? null : row.metadata,
+      // En clair pour l'utilisateur : ce qui a été fait, le résultat et les informations saisies.
+      summary: describeAuditAction({ method, path, action: row.action, entity: row.entity, moduleLabel }),
+      resultLabel: describeAuditResult(status, success),
+      readable: readableAuditDetails(rawDetails, names),
+      // Détails techniques : corps de requête nettoyé (HTTP) ou métadonnées métier d'origine.
+      details: rawDetails,
     };
   });
 
