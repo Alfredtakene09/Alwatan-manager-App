@@ -30,7 +30,7 @@ import {
 } from "../lib/lab-notes.js";
 import { requireAuth, requireModule, requirePharmacyCatalogAccess, requireUiAction } from "../middleware/auth.js";
 import { isValidBusinessDate } from "../lib/cash-shift.js";
-import { recordPharmacyPurchase } from "../lib/pharmacy-purchase.js";
+import { buildPharmacyPurchaseReport, recordPharmacyPurchase } from "../lib/pharmacy-purchase.js";
 import { canSupervisePharmacy } from "../lib/roles.js";
 
 const router = Router();
@@ -998,6 +998,16 @@ router.get("/reports", async (req, res) => {
     ...(pharmacistId ? { pharmacistId } : {}),
   });
   return res.json(report);
+});
+
+/** Factures fournisseur de la période : nombre, montant et produits ajoutés par facture. */
+router.get("/purchases/report", async (req, res) => {
+  const from = typeof req.query.from === "string" ? req.query.from : "";
+  const to = typeof req.query.to === "string" ? req.query.to : "";
+  if (!isValidBusinessDate(from) || !isValidBusinessDate(to) || from > to) {
+    return res.status(400).json({ error: "Période invalide." });
+  }
+  return res.json(await buildPharmacyPurchaseReport(from, to));
 });
 
 router.get("/alerts", async (_req, res) => {

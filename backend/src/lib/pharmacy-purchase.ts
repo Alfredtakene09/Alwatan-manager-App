@@ -87,8 +87,11 @@ export async function recordPharmacyPurchase(input: PharmacyPurchaseInput) {
 
   const result = await prisma.$transaction(async (tx) => {
     const movements = [];
+    const auditLines = [];
     for (const line of lines) {
       let productId = line.productId ?? null;
+      // La facture compte des boîtes ; un produit vendu au détail est stocké en sachets.
+      let unitsPerBox = 1;
       const expiryData =
         line.noExpiry
           ? { expiryDate: null, noExpiry: true }
@@ -99,6 +102,7 @@ export async function recordPharmacyPurchase(input: PharmacyPurchaseInput) {
       if (productId) {
         const existing = await tx.product.findUnique({ where: { id: productId } });
         if (!existing) throw new Error("PRODUCT_NOT_FOUND");
+        if (existing.sellBySachet && existing.sachetsPerBox > 1) unitsPerBox = existing.sachetsPerBox;
         await tx.product.update({
           where: { id: productId },
           data: {
@@ -133,14 +137,23 @@ export async function recordPharmacyPurchase(input: PharmacyPurchaseInput) {
         await applyStockMovement(tx, {
           productId,
           type: "ENTRY",
-          quantity: line.quantity,
-          unitCostFcfa: line.purchasePriceFcfa,
+          quantity: line.quantity * unitsPerBox,
+          unitCostFcfa: Math.round(line.purchasePriceFcfa / unitsPerBox),
           supplierId: supplier.id,
           reference,
-          notes: `Facture fournisseur n° ${invoiceNumber}`,
+          notes:
+            unitsPerBox > 1
+              ? `Facture fournisseur n° ${invoiceNumber} — ${line.quantity} boîte(s) × ${unitsPerBox}`
+              : `Facture fournisseur n° ${invoiceNumber}`,
           userId: input.userId,
         }),
       );
+      auditLines.push({
+        productId,
+        quantity: line.quantity,
+        unitCostFcfa: line.purchasePriceFcfa,
+        stockQuantity: line.quantity * unitsPerBox,
+      });
     }
 
     const indice = await ensurePurchaseIndice(tx);
@@ -174,11 +187,7 @@ export async function recordPharmacyPurchase(input: PharmacyPurchaseInput) {
           supplierId: supplier.id,
           invoiceNumber,
           totalFcfa,
-          lines: movements.map((row) => ({
-            productId: row.productId,
-            quantity: row.quantity,
-            unitCostFcfa: row.unitCostFcfa,
-          })),
+          lines: auditLines,
         },
       },
     });
@@ -194,5 +203,79 @@ export async function recordPharmacyPurchase(input: PharmacyPurchaseInput) {
     linesCount: result.movements.length,
     supplierName: supplier.name,
     invoiceNumber,
+  };
+}
+
+type PurchaseAuditMetadata = {
+  invoiceNumber?: string;
+  lines?: Array<{ productId: string; quantity: number; unitCostFcfa: number | null }>;
+};
+
+/**
+ * Factures fournisseur saisies sur la période (date comptable) : nombre, montant total
+ * et produits entrés en stock pour chaque facture (lus dans le journal d'audit).
+ */
+export async function buildPharmacyPurchaseReport(fromIso: string, toIso: string) {
+  const expenses = await prisma.clinicExpense.findMany({
+    where: {
+      indice: { name: PHARMACY_PURCHASE_INDICE.name },
+      status: ClinicExpenseStatus.VALIDATED,
+      businessDate: { gte: parseBusinessDate(fromIso), lte: parseBusinessDate(toIso) },
+    },
+    orderBy: [{ businessDate: "desc" }, { createdAt: "desc" }],
+    select: { id: true, businessDate: true, amountFcfa: true, label: true, beneficiary: true },
+  });
+
+  const audits = expenses.length
+    ? await prisma.auditLog.findMany({
+        where: { entity: "PharmacyPurchase", entityId: { in: expenses.map((row) => row.id) } },
+        select: { entityId: true, metadata: true },
+      })
+    : [];
+  const metadataByExpense = new Map(
+    audits.map((row) => [row.entityId, (row.metadata ?? {}) as PurchaseAuditMetadata]),
+  );
+
+  const productIds = [
+    ...new Set(audits.flatMap((row) => ((row.metadata ?? {}) as PurchaseAuditMetadata).lines ?? []).map((line) => line.productId)),
+  ];
+  const products = productIds.length
+    ? await prisma.product.findMany({
+        where: { id: { in: productIds } },
+        select: { id: true, name: true, dosage: true },
+      })
+    : [];
+  const productName = new Map(
+    products.map((row) => [row.id, row.dosage ? `${row.name} ${row.dosage}` : row.name]),
+  );
+
+  const invoices = expenses.map((expense) => {
+    const metadata = metadataByExpense.get(expense.id) ?? {};
+    const lines = (metadata.lines ?? []).map((line) => ({
+      productName: productName.get(line.productId) ?? "Produit supprimé",
+      quantity: line.quantity,
+      unitCostFcfa: line.unitCostFcfa ?? 0,
+      totalFcfa: line.quantity * (line.unitCostFcfa ?? 0),
+    }));
+    return {
+      id: expense.id,
+      businessDate: expense.businessDate.toISOString().slice(0, 10),
+      invoiceNumber:
+        metadata.invoiceNumber ?? expense.label.match(/facture n° (.+)$/)?.[1] ?? "—",
+      supplierName: expense.beneficiary ?? "—",
+      amountFcfa: expense.amountFcfa,
+      productsCount: lines.length,
+      unitsCount: lines.reduce((sum, line) => sum + line.quantity, 0),
+      lines,
+    };
+  });
+
+  return {
+    from: fromIso,
+    to: toIso,
+    invoicesCount: invoices.length,
+    totalFcfa: invoices.reduce((sum, row) => sum + row.amountFcfa, 0),
+    productsCount: invoices.reduce((sum, row) => sum + row.productsCount, 0),
+    invoices,
   };
 }

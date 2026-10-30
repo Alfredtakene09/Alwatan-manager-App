@@ -296,6 +296,63 @@ describe("Pharmacie — achat par facture et vente", () => {
     assert.equal(expense?.paidById, fx.users.gestionnaire.id);
   });
 
+  it("compte les boîtes en sachets et met à jour les prix d'un produit existant", async () => {
+    const sachetProduct = await db.product.create({
+      data: {
+        name: "Amoxicilline Sachet Test",
+        sku: "TEST-AMOX-SACHET",
+        quantity: 15,
+        unitPriceFcfa: 2_000,
+        purchasePriceFcfa: 1_200,
+        sellBySachet: true,
+        sachetsPerBox: 10,
+        sachetPriceFcfa: 250,
+        supplierId: fx.supplier.id,
+      },
+    });
+    const res = await api.gest.post("/pharmacie/purchases", {
+      supplierId: fx.supplier.id,
+      invoiceNumber: "FT-SACHET",
+      businessDate: today,
+      lines: [{ productId: sachetProduct.id, quantity: 3, purchasePriceFcfa: 1_500, unitPriceFcfa: 2_500 }],
+    });
+    assert.equal(res.status, 201, JSON.stringify(res.data));
+    assert.equal(res.data.totalFcfa, 3 * 1_500);
+
+    const product = await db.product.findUnique({ where: { id: sachetProduct.id } });
+    assert.equal(product?.quantity, 15 + 3 * 10);
+    assert.equal(product?.purchasePriceFcfa, 1_500);
+    assert.equal(product?.unitPriceFcfa, 2_500);
+    const movement = await db.stockMovement.findFirst({
+      where: { productId: sachetProduct.id, reference: "FACT-FT-SACHET" },
+    });
+    assert.equal(movement?.quantity, 30);
+    assert.equal(movement?.unitCostFcfa, 150);
+    assert.equal(movement?.stockAfter, 45);
+
+    const report = await api.gest.get(`/pharmacie/purchases/report?from=${today}&to=${today}`);
+    assert.equal(report.status, 200, JSON.stringify(report.data));
+    const invoice = report.data.invoices.find((row: { invoiceNumber: string }) => row.invoiceNumber === "FT-SACHET");
+    assert.equal(invoice?.amountFcfa, 4_500);
+    assert.deepEqual(
+      invoice?.lines.map((line: { quantity: number; unitCostFcfa: number; totalFcfa: number }) => [
+        line.quantity,
+        line.unitCostFcfa,
+        line.totalFcfa,
+      ]),
+      [[3, 1_500, 4_500]],
+    );
+
+    // Une boîte vendue retire bien 10 sachets du stock entré par la facture.
+    const sale = await api.pharma.post("/pharmacie", {
+      patientId: ids.staff,
+      items: [{ productId: sachetProduct.id, quantity: 1 }],
+    });
+    assert.ok(sale.status < 300, JSON.stringify(sale.data));
+    const afterSale = await db.product.findUnique({ where: { id: sachetProduct.id } });
+    assert.equal(afterSale?.quantity, 35);
+  });
+
   it("applique la réduction personnel sur une vente", async () => {
     const res = await api.pharma.post("/pharmacie", {
       patientId: ids.staff,

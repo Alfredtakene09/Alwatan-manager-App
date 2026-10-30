@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { BarChart3 } from '@lucide/vue'
+import { BarChart3, FileText } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, fullName, ROLE_LABELS, type AppUserRole } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth'
@@ -65,10 +65,29 @@ type PharmacyRevenueReport = {
   }>
 }
 
+type PharmacyPurchaseReport = {
+  from: string
+  to: string
+  invoicesCount: number
+  totalFcfa: number
+  productsCount: number
+  invoices: Array<{
+    id: string
+    businessDate: string
+    invoiceNumber: string
+    supplierName: string
+    amountFcfa: number
+    productsCount: number
+    unitsCount: number
+    lines: Array<{ productName: string; quantity: number; unitCostFcfa: number; totalFcfa: number }>
+  }>
+}
+
 type PharmacistOption = { id: string; firstName: string; lastName: string; role?: AppUserRole }
 
 const report = ref<PharmacyReport | null>(null)
 const revenueReport = ref<PharmacyRevenueReport | null>(null)
+const purchaseReport = ref<PharmacyPurchaseReport | null>(null)
 const pharmacists = ref<PharmacistOption[]>([])
 const loading = ref(false)
 const message = ref('')
@@ -152,18 +171,23 @@ async function loadReport() {
     if (canFilterPharmacist.value && pharmacistId.value) {
       params.pharmacistId = pharmacistId.value
     }
-    const [reportRes, revenueRes] = await Promise.all([
+    const [reportRes, revenueRes, purchaseRes] = await Promise.all([
       api.get<PharmacyReport>('/pharmacie/reports', { params }),
       api.get<PharmacyRevenueReport>('/pharmacie/revenue-report', { params }),
+      api.get<PharmacyPurchaseReport>('/pharmacie/purchases/report', {
+        params: { from: dateFrom.value, to: dateTo.value },
+      }),
     ])
     if (request !== reportRequest) return
     report.value = reportRes.data
     revenueReport.value = revenueRes.data
+    purchaseReport.value = purchaseRes.data
   } catch {
     if (request !== reportRequest) return
     message.value = 'Impossible de charger le rapport.'
     report.value = null
     revenueReport.value = null
+    purchaseReport.value = null
   } finally {
     if (request === reportRequest) loading.value = false
   }
@@ -262,6 +286,36 @@ const categoryColumns = computed<ExportColumn<PharmacyReport['salesByCategory'][
   ]
 })
 
+type PurchaseLineRow = PharmacyPurchaseReport['invoices'][number]['lines'][number] & {
+  invoiceNumber: string
+  supplierName: string
+  businessDate: string
+}
+
+const purchaseLineRows = computed((): PurchaseLineRow[] =>
+  (purchaseReport.value?.invoices ?? []).flatMap((invoice) =>
+    invoice.lines.map((line) => ({
+      ...line,
+      invoiceNumber: invoice.invoiceNumber,
+      supplierName: invoice.supplierName,
+      businessDate: invoice.businessDate,
+    })),
+  ),
+)
+
+const purchaseColumns = computed<ExportColumn<PurchaseLineRow>[]>(() => {
+  void localeCode.value
+  return [
+    { header: uiText('Date'), value: (r) => formatPeriodDate(r.businessDate) },
+    { header: uiText('N° facture'), value: (r) => r.invoiceNumber },
+    { header: uiText('Fournisseur'), value: (r) => r.supplierName },
+    { header: uiText('Produit'), value: (r) => r.productName },
+    { header: uiText('Quantité'), value: (r) => r.quantity },
+    { header: uiText("Prix d'achat"), value: (r) => formatFcfa(r.unitCostFcfa) },
+    { header: uiText('Total'), value: (r) => formatFcfa(r.totalFcfa) },
+  ]
+})
+
 function exportPdf() {
   if (!report.value) return
   const body = `${buildClinicPrintHeader(uiText('Rapport des ventes pharmacie'))}
@@ -270,7 +324,9 @@ ${rowsToHtmlTable(kpiColumns.value, kpiRows.value, { captionRows: [{ label: uiTe
 <h3>${uiText('Top produits')}</h3>
 ${rowsToHtmlTable(topProductColumns.value, report.value.topProducts)}
 <h3>${uiText('Ventes par catégorie')}</h3>
-${rowsToHtmlTable(categoryColumns.value, report.value.salesByCategory)}`
+${rowsToHtmlTable(categoryColumns.value, report.value.salesByCategory)}
+<h3>${uiText('Factures fournisseur')}</h3>
+${rowsToHtmlTable(purchaseColumns.value, purchaseLineRows.value)}`
   openPrintDocument(uiText('Rapport des ventes pharmacie'), body, { pageSize: 'A4', autoPrint: true })
 }
 
@@ -280,6 +336,7 @@ function exportExcel() {
     { name: 'KPI', columns: kpiColumns.value, rows: kpiRows.value },
     { name: uiText('Top produits'), columns: topProductColumns.value, rows: report.value.topProducts },
     { name: uiText('Catégories'), columns: categoryColumns.value, rows: report.value.salesByCategory },
+    { name: uiText('Factures'), columns: purchaseColumns.value, rows: purchaseLineRows.value },
   ])
 }
 
@@ -289,6 +346,7 @@ function exportWord() {
     { name: 'KPI', columns: kpiColumns.value, rows: kpiRows.value },
     { name: uiText('Top produits'), columns: topProductColumns.value, rows: report.value.topProducts },
     { name: uiText('Catégories'), columns: categoryColumns.value, rows: report.value.salesByCategory },
+    { name: uiText('Factures'), columns: purchaseColumns.value, rows: purchaseLineRows.value },
   ])
 }
 
@@ -393,6 +451,66 @@ onMounted(() => {
         <DashboardPendingBars v-else :items="categoryBars" />
       </UiCard>
     </div>
+
+    <UiCard
+      title="Factures fournisseur"
+      description="Factures saisies et produits ajoutés en stock"
+      :icon="FileText"
+      icon-variant="blue"
+    >
+      <div v-if="purchaseReport" class="report-kpis">
+        <div class="kpi">
+          <span>{{ uiText('Nombre de factures') }}</span>
+          <strong>{{ purchaseReport.invoicesCount }}</strong>
+        </div>
+        <div class="kpi kpi--accent">
+          <span>{{ uiText('Montant total') }}</span>
+          <strong>{{ formatFcfa(purchaseReport.totalFcfa) }}</strong>
+        </div>
+        <div class="kpi">
+          <span>{{ uiText('Produits ajoutés') }}</span>
+          <strong>{{ purchaseReport.productsCount }}</strong>
+        </div>
+      </div>
+
+      <div v-if="!purchaseReport?.invoices.length" class="chart-empty">
+        {{ uiText('Aucune facture sur la période') }}
+      </div>
+      <ul v-else class="purchase-list">
+        <li v-for="invoice in purchaseReport.invoices" :key="invoice.id">
+          <details>
+            <summary>
+              <span class="purchase-list__main">
+                <strong>{{ uiText('Facture n°') }} {{ invoice.invoiceNumber }}</strong>
+                <small>{{ invoice.supplierName }} · {{ formatPeriodDate(invoice.businessDate) }}</small>
+              </span>
+              <span class="purchase-list__count">
+                {{ translateTemplate('{n} produit(s)', { n: invoice.productsCount }) }}
+              </span>
+              <strong class="purchase-list__amount">{{ formatFcfa(invoice.amountFcfa) }}</strong>
+            </summary>
+            <table class="purchase-lines">
+              <thead>
+                <tr>
+                  <th>{{ uiText('Produit') }}</th>
+                  <th>{{ uiText('Quantité') }}</th>
+                  <th>{{ uiText("Prix d'achat") }}</th>
+                  <th>{{ uiText('Total') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(line, index) in invoice.lines" :key="index">
+                  <td>{{ line.productName }}</td>
+                  <td>{{ line.quantity }}</td>
+                  <td>{{ formatFcfa(line.unitCostFcfa) }}</td>
+                  <td>{{ formatFcfa(line.totalFcfa) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </details>
+        </li>
+      </ul>
+    </UiCard>
 
     <div class="report-exports">
       <span class="report-exports__label">{{ uiText('Exporter le rapport') }}</span>
@@ -506,6 +624,65 @@ onMounted(() => {
   font-size: 0.8125rem;
   font-weight: 650;
   color: var(--text-muted);
+}
+
+.purchase-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.purchase-list details {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+}
+
+.purchase-list summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  cursor: pointer;
+}
+
+.purchase-list__main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.purchase-list__main small,
+.purchase-list__count {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.purchase-list__amount {
+  color: var(--primary-800);
+  white-space: nowrap;
+}
+
+.purchase-lines {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.purchase-lines th,
+.purchase-lines td {
+  padding: 0.4rem 0.85rem;
+  border-top: 1px solid var(--border);
+  text-align: left;
+}
+
+.purchase-lines th {
+  color: var(--text-muted);
+  font-weight: 650;
 }
 
 .chart-empty {
