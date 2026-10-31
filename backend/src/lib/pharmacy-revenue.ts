@@ -1,4 +1,5 @@
 import { prisma } from "./db.js";
+import { formatLocalDay, parseLocalDay } from "./local-day.js";
 
 function startOfDay(date: Date) {
   const d = new Date(date);
@@ -33,11 +34,15 @@ export function parseRevenuePeriod(
   toParam?: string,
   now = new Date(),
 ) {
-  const to = toParam ? startOfDay(new Date(toParam)) : startOfDay(now);
+  const to = toParam ? parseLocalDay(toParam) ?? startOfDay(now) : startOfDay(now);
   to.setDate(to.getDate() + 1);
 
   if (fromParam) {
-    return { from: startOfDay(new Date(fromParam)), to, period: "custom" as const };
+    return {
+      from: parseLocalDay(fromParam) ?? startOfDay(now),
+      to,
+      period: "custom" as const,
+    };
   }
 
   const from = startOfDay(now);
@@ -121,6 +126,7 @@ export async function buildPharmacyRevenueReport(options?: {
   for (const prescription of prescriptions) {
     const gross =
       prescription.grossTotalFcfa ??
+      prescription.netTotalFcfa ??
       prescription.saleLines.reduce((sum, line) => sum + line.lineTotalFcfa, 0);
     const net = prescription.netTotalFcfa ?? gross;
     grossSalesFcfa += gross;
@@ -134,9 +140,10 @@ export async function buildPharmacyRevenueReport(options?: {
   const byDay = new Map<string, { grossSalesFcfa: number; returnsNetFcfa: number }>();
 
   for (const prescription of prescriptions) {
-    const dayKey = prescription.createdAt.toISOString().slice(0, 10);
+    const dayKey = formatLocalDay(prescription.createdAt);
     const gross =
       prescription.grossTotalFcfa ??
+      prescription.netTotalFcfa ??
       prescription.saleLines.reduce((sum, line) => sum + line.lineTotalFcfa, 0);
     const net = prescription.netTotalFcfa ?? gross;
     const row = byDay.get(dayKey) ?? { grossSalesFcfa: 0, returnsNetFcfa: 0 };
@@ -145,7 +152,7 @@ export async function buildPharmacyRevenueReport(options?: {
   }
 
   for (const row of returns) {
-    const dayKey = row.createdAt.toISOString().slice(0, 10);
+    const dayKey = formatLocalDay(row.createdAt);
     const bucket = byDay.get(dayKey) ?? { grossSalesFcfa: 0, returnsNetFcfa: 0 };
     bucket.returnsNetFcfa += row.netRefundFcfa;
     byDay.set(dayKey, bucket);

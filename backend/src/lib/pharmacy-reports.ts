@@ -1,5 +1,6 @@
 import { prisma } from "./db.js";
 import { computePharmacyProfit } from "./pharmacy-profit.js";
+import { formatLocalDay, parseLocalDay } from "./local-day.js";
 
 function startOfDay(date: Date) {
   const d = new Date(date);
@@ -30,11 +31,11 @@ function startOfQuarter(date: Date) {
 
 function parsePeriod(period: string | undefined, fromParam?: string, toParam?: string) {
   const now = new Date();
-  const to = toParam ? startOfDay(new Date(toParam)) : startOfDay(now);
+  const to = toParam ? parseLocalDay(toParam) ?? startOfDay(now) : startOfDay(now);
   to.setDate(to.getDate() + 1);
 
   if (fromParam) {
-    return { from: startOfDay(new Date(fromParam)), to };
+    return { from: parseLocalDay(fromParam) ?? startOfDay(now), to };
   }
 
   const from = startOfDay(now);
@@ -154,7 +155,7 @@ export async function buildPharmacyReport(options?: {
     categoryRow.revenueFcfa += line.lineTotalFcfa;
     byCategory.set(categoryId, categoryRow);
 
-    const dayKey = line.prescription.createdAt.toISOString().slice(0, 10);
+    const dayKey = formatLocalDay(line.prescription.createdAt);
     byDay.set(dayKey, (byDay.get(dayKey) ?? 0) + line.lineTotalFcfa);
   }
 
@@ -184,7 +185,7 @@ export async function buildPharmacyReport(options?: {
     categoryRow.revenueFcfa -= refundFcfa;
     byCategory.set(categoryId, categoryRow);
 
-    const dayKey = row.createdAt.toISOString().slice(0, 10);
+    const dayKey = formatLocalDay(row.createdAt);
     byDay.set(dayKey, (byDay.get(dayKey) ?? 0) - refundFcfa);
   }
 

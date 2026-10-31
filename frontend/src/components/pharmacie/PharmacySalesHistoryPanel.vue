@@ -48,6 +48,7 @@ type SaleRecord = {
   externalClient: { code: string; firstName: string; lastName: string } | null
   pharmacist: { firstName: string; lastName: string }
   totalFcfa: number
+  netTotalFcfa?: number
   returnedGrossFcfa?: number
   returnedNetFcfa?: number
   invoiceNumber: string | null
@@ -64,8 +65,8 @@ function escapeReceiptText(value: string) {
 }
 
 function saleRemainingFcfa(item: SaleRecord) {
-  const refunded = item.returnedGrossFcfa ?? item.returnedNetFcfa ?? 0
-  return Math.max(0, item.totalFcfa - refunded)
+  const refunded = item.returnedNetFcfa ?? item.returnedGrossFcfa ?? 0
+  return Math.max(0, (item.netTotalFcfa ?? item.totalFcfa) - refunded)
 }
 
 function lineRemainingFcfa(line: SaleLine) {
@@ -94,6 +95,9 @@ const messageType = ref<'success' | 'error'>('error')
 const filterFrom = ref('')
 const filterTo = ref('')
 const filterPharmacistId = ref('')
+const appliedFrom = ref('')
+const appliedTo = ref('')
+const appliedPharmacistId = ref('')
 
 type PharmacistOption = { id: string; firstName: string; lastName: string; role?: AppUserRole }
 const pharmacists = ref<PharmacistOption[]>([])
@@ -143,7 +147,7 @@ const tableRows = computed(() => {
   }))
 })
 
-/** Somme des ventes affichées (retours déduits), comme la colonne Total. */
+/** Somme des ventes nettes affichées, retours déduits. */
 const salesTotals = computed(() => {
   let amountFcfa = 0
   let units = 0
@@ -154,6 +158,23 @@ const salesTotals = computed(() => {
     }
   }
   return { amountFcfa, units, salesCount: items.value.length }
+})
+
+function formatSalesPeriodDate(value: string) {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(year, month - 1, day).toLocaleDateString(localeCode.value, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+}
+
+const salesAppliedPeriod = computed(() => {
+  void localeCode.value
+  if (!appliedFrom.value && !appliedTo.value) return uiText('Toutes les dates')
+  const from = appliedFrom.value ? formatSalesPeriodDate(appliedFrom.value) : '…'
+  const to = appliedTo.value ? formatSalesPeriodDate(appliedTo.value) : '…'
+  return translateTemplate('Période : {period}', { period: `${from} – ${to}` })
 })
 
 const expandedSale = computed(() => items.value.find((item) => item.id === expandedId.value) ?? null)
@@ -206,16 +227,22 @@ async function loadItems() {
     return
   }
   const request = ++loadRequest
+  const requestedFrom = filterFrom.value
+  const requestedTo = filterTo.value
+  const requestedPharmacistId = filterPharmacistId.value
   loading.value = true
   message.value = ''
   try {
     const params: Record<string, string> = {}
-    if (filterFrom.value) params.from = filterFrom.value
-    if (filterTo.value) params.to = filterTo.value
-    if (canFilterPharmacist.value && filterPharmacistId.value) params.pharmacistId = filterPharmacistId.value
+    if (requestedFrom) params.from = requestedFrom
+    if (requestedTo) params.to = requestedTo
+    if (canFilterPharmacist.value && requestedPharmacistId) params.pharmacistId = requestedPharmacistId
     const { data } = await api.get<SaleRecord[]>('/pharmacie/sales', { params })
     if (request !== loadRequest) return
     items.value = data
+    appliedFrom.value = requestedFrom
+    appliedTo.value = requestedTo
+    appliedPharmacistId.value = requestedPharmacistId
   } catch (error: unknown) {
     if (request !== loadRequest) return
     const responseMessage = axios.isAxiosError(error)
@@ -227,6 +254,9 @@ async function loadItems() {
         : uiText("Impossible de charger l'historique des ventes.")
     messageType.value = 'error'
     items.value = []
+    appliedFrom.value = requestedFrom
+    appliedTo.value = requestedTo
+    appliedPharmacistId.value = requestedPharmacistId
   } finally {
     if (request === loadRequest) loading.value = false
   }
@@ -447,24 +477,21 @@ const exportColumns = computed<ExportColumn<ExportSaleRow>[]>(() => {
     { header: uiText('Acheteur'), value: (r) => r.patient },
     { header: uiText('Pharmacien'), value: (r) => r.pharmacist },
     { header: uiText('Lignes'), value: (r) => r.linesCount },
-    { header: uiText('Total'), value: (r) => r.total },
+    { header: uiText('Total net'), value: (r) => r.total },
     { header: uiText('Facture'), value: (r) => r.invoice },
   ]
 })
 
 function exportCaption() {
-  const fromLabel = filterFrom.value || uiText('début')
-  const toLabel = filterTo.value || uiText("aujourd’hui")
-  const totalGlobal = formatFcfa(items.value.reduce((sum, item) => sum + saleRemainingFcfa(item), 0))
-  const pharmacist = pharmacists.value.find((row) => row.id === filterPharmacistId.value)
+  const pharmacist = pharmacists.value.find((row) => row.id === appliedPharmacistId.value)
   return [
-    { label: uiText('Période'), value: `${fromLabel} → ${toLabel}` },
+    { label: uiText('Période'), value: salesAppliedPeriod.value },
     {
       label: uiText('Pharmacien'),
       value: pharmacist ? pharmacistOptionLabel(pharmacist) : uiText('Tous les pharmaciens'),
     },
-    { label: uiText('Nombre de ventes'), value: String(items.value.length) },
-    { label: uiText('Total cumulé'), value: totalGlobal },
+    { label: uiText('Nombre de ventes'), value: String(salesTotals.value.salesCount) },
+    { label: uiText('Total cumulé'), value: formatFcfa(salesTotals.value.amountFcfa) },
   ]
 }
 
@@ -517,8 +544,11 @@ defineExpose({ reload: loadItems })
           >
             <Wallet :size="16" class="sales-total-card__icon" aria-hidden="true" />
             <div class="sales-total-card__body">
-              <span class="sales-total-card__label">{{ uiText('Total des produits vendus') }}</span>
+              <span class="sales-total-card__label">{{ uiText('Total net') }}</span>
               <strong class="sales-total-card__value">{{ formatFcfa(salesTotals.amountFcfa) }}</strong>
+              <small class="sales-total-card__period" :title="salesAppliedPeriod">
+                {{ salesAppliedPeriod }}
+              </small>
             </div>
             <small class="sales-total-card__hint">
               {{
@@ -832,6 +862,16 @@ defineExpose({ reload: loadItems })
   font-size: 0.95rem;
   color: #15803d;
   font-variant-numeric: tabular-nums;
+}
+
+.sales-total-card__period {
+  max-width: 13rem;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.625rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sales-total-card__hint {

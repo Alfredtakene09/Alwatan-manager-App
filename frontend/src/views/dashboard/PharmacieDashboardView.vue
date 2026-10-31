@@ -162,8 +162,8 @@ function formatSelectedDate(iso: string) {
 
 const selectedPeriodLabel = computed(() => {
   void localeCode.value
-  const from = formatSelectedDate(dateFrom.value)
-  const to = formatSelectedDate(dateTo.value)
+  const from = formatSelectedDate(stats.value?.salesSummary?.from ?? dateFrom.value)
+  const to = formatSelectedDate(stats.value?.salesSummary?.to ?? dateTo.value)
   return from === to ? from : `${from} – ${to}`
 })
 
@@ -519,6 +519,7 @@ onUnmounted(() => {
 
     <section class="pharma-dashboard">
       <UiCard class="pharma-dashboard__sales" icon-variant="green">
+        <p class="sales-summary-period">{{ selectedPeriodTrend }}</p>
         <div class="sales-summary-cards">
           <UiStatCard
             v-for="card in salesSummaryCards"
@@ -794,6 +795,12 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.85rem;
+}
+
+.sales-summary-period {
+  margin: 0 0 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
 }
 
 .pharma-dashboard__row {
