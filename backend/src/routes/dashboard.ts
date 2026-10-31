@@ -12,6 +12,7 @@ import {
   last7DayStarts,
   startOfDay,
 } from "../lib/dashboard-charts.js";
+import { parseLocalDay } from "../lib/local-day.js";
 import {
   labsPendingApprovalWhere,
   labsWaitingWhere,
@@ -268,13 +269,7 @@ router.get("/medecin", requireModule("consultation"), async (req, res) => {
 });
 
 function parseDashboardDay(value: unknown, fallback: Date): Date {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
-    return fallback;
-  }
-  const [year, month, day] = value.trim().split("-").map(Number);
-  const parsed = new Date(year, month - 1, day);
-  if (Number.isNaN(parsed.getTime())) return fallback;
-  return startOfDay(parsed);
+  return parseLocalDay(value) ?? startOfDay(fallback);
 }
 
 function toIsoDay(date: Date): string {
@@ -366,7 +361,11 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
     ),
     prisma.prescription.findMany({
       where: salesPeriodWhere,
-      select: { grossTotalFcfa: true, netTotalFcfa: true },
+      select: {
+        grossTotalFcfa: true,
+        netTotalFcfa: true,
+        saleLines: { select: { lineTotalFcfa: true } },
+      },
     }),
     prisma.pharmacySaleLine.aggregate({
       where: { prescription: salesPeriodWhere },
@@ -505,7 +504,8 @@ router.get("/pharmacie", requireModule("pharmacie"), async (req, res) => {
   let netTotalFcfa = 0;
   let freeSalesCount = 0;
   for (const row of periodPrescriptions) {
-    const gross = row.grossTotalFcfa ?? row.netTotalFcfa ?? 0;
+    const lineTotalFcfa = row.saleLines.reduce((sum, line) => sum + line.lineTotalFcfa, 0);
+    const gross = row.grossTotalFcfa ?? row.netTotalFcfa ?? lineTotalFcfa;
     const net = row.netTotalFcfa ?? gross;
     grossTotalFcfa += gross;
     netTotalFcfa += net;

@@ -10,6 +10,8 @@ import { applyStockMovement, recordDispensationMovement } from "../lib/pharmacy-
 import { listPharmacyStockAlerts, listPharmacyExpiryAlerts } from "../lib/pharmacy-alerts.js";
 import { buildPharmacyReport } from "../lib/pharmacy-reports.js";
 import { productUnitCostFcfa } from "../lib/pharmacy-profit.js";
+import { parseLocalDay } from "../lib/local-day.js";
+import { pharmacySaleAmounts } from "../lib/pharmacy-sale-totals.js";
 import { buildPharmacyRevenueReport } from "../lib/pharmacy-revenue.js";
 import {
   buildPharmacyDayClosureSnapshot,
@@ -117,6 +119,8 @@ const pharmacyReturnSchema = z.object({
 function serializePharmacySale(item: {
   id: string;
   createdAt: Date;
+  grossTotalFcfa: number | null;
+  netTotalFcfa: number | null;
   notes: string | null;
   patient: { id: string; code: string; firstName: string; lastName: string } | null;
   externalClient: {
@@ -143,15 +147,7 @@ function serializePharmacySale(item: {
     returns: Array<{ quantity: number; grossRefundFcfa: number; netRefundFcfa: number }>;
   }>;
 }) {
-  const totalFcfa = item.saleLines.reduce((sum, line) => sum + line.lineTotalFcfa, 0);
-  const returnedGrossFcfa = item.saleLines.reduce(
-    (sum, line) => sum + line.returns.reduce((inner, row) => inner + row.grossRefundFcfa, 0),
-    0,
-  );
-  const returnedNetFcfa = item.saleLines.reduce(
-    (sum, line) => sum + line.returns.reduce((inner, row) => inner + row.netRefundFcfa, 0),
-    0,
-  );
+  const amounts = pharmacySaleAmounts(item);
   const invoiceNumber =
     item.saleLines.find((line) => line.invoice?.invoiceNumber)?.invoice?.invoiceNumber ?? null;
   return {
@@ -162,9 +158,11 @@ function serializePharmacySale(item: {
     externalClient: item.externalClient,
     buyerType: item.externalClient ? "external" : "patient",
     pharmacist: item.pharmacist,
-    totalFcfa,
-    returnedGrossFcfa,
-    returnedNetFcfa,
+    totalFcfa: amounts.grossTotalFcfa,
+    grossTotalFcfa: amounts.grossTotalFcfa,
+    netTotalFcfa: amounts.netTotalFcfa,
+    returnedGrossFcfa: amounts.returnedGrossFcfa,
+    returnedNetFcfa: amounts.returnedNetFcfa,
     invoiceNumber,
     lines: item.saleLines.map((line) => {
       const quantityReturned = line.returns.reduce((sum, row) => sum + row.quantity, 0);
@@ -635,9 +633,14 @@ router.get("/sales", async (req, res) => {
   const productId = typeof req.query.productId === "string" ? req.query.productId : undefined;
 
   const createdAt: { gte?: Date; lt?: Date } = {};
-  if (fromParam) createdAt.gte = new Date(fromParam);
+  if (fromParam) {
+    const from = parseLocalDay(fromParam);
+    if (!from) return res.status(400).json({ error: "Date de début invalide" });
+    createdAt.gte = from;
+  }
   if (toParam) {
-    const to = new Date(toParam);
+    const to = parseLocalDay(toParam);
+    if (!to) return res.status(400).json({ error: "Date de fin invalide" });
     to.setDate(to.getDate() + 1);
     createdAt.lt = to;
   }
@@ -655,8 +658,7 @@ router.get("/sales", async (req, res) => {
       ...(productId ? { saleLines: { some: { productId } } } : {}),
       ...(pharmacistId ? { pharmacistId } : {}),
     },
-    orderBy: { createdAt: "desc" },
-    take: 200,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     include: {
       patient: { select: { id: true, code: true, firstName: true, lastName: true } },
       externalClient: { select: { id: true, code: true, firstName: true, lastName: true, phone: true } },
