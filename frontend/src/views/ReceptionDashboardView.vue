@@ -674,7 +674,8 @@ const activityPatientIds = computed(() => {
     case 'echo':
       return stats.value.echoPatientIds ?? []
     default:
-      return stats.value.registeredPatientIds ?? null
+      // Liste du jour : chargée directement par période, sans dépendre des statistiques.
+      return null
   }
 })
 
@@ -695,9 +696,13 @@ function patientMatchesSearch(patient: Patient, query: string) {
 
 const visiblePatients = computed(() => {
   const ids = historyMode.value ? null : activityPatientIds.value
-  const source = ids ? activityPatients.value : patients.value
+  const source = ids
+    ? activityPatients.value
+    : historyMode.value
+      ? patients.value
+      : patients.value.filter((patient) => patient.active !== false)
   const query = search.value.trim()
-  if (!ids || !query) return source
+  if (historyMode.value || !query) return source
   return source.filter((patient) => patientMatchesSearch(patient, query))
 })
 

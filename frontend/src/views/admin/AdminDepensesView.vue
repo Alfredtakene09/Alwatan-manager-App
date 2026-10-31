@@ -13,7 +13,7 @@ import AdminExpenseFormModal, {
 import CaisseToolbar from '@/components/caisse/CaisseToolbar.vue'
 import CaisseCompactDateField from '@/components/caisse/CaisseCompactDateField.vue'
 import CaisseDepensesPanel from '@/components/caisse/CaisseDepensesPanel.vue'
-import ExpensePurchaseDetails, { purchaseDetailsText } from '@/components/caisse/ExpensePurchaseDetails.vue'
+import ExpensePurchaseDetails from '@/components/caisse/ExpensePurchaseDetails.vue'
 import ExpenseIndicesPanel from '@/components/caisse/ExpenseIndicesPanel.vue'
 import { useExpenseIndices } from '@/composables/useExpenseIndices'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
@@ -264,17 +264,16 @@ const flowTotals = computed(() => {
 })
 
 const expenseExportColumns: ExportColumn<AdminExpenseRow>[] = [
-  { header: 'Date', value: (row) => formatShortDate(row.date) },
-  { header: 'Catégorie', value: (row) => row.category },
+  { header: 'Date', value: (row) => formatShortDate(row.date), widthWeight: 1.4 },
   { header: 'Type', value: (row) => (row.flow === 'ENTREE' ? 'Entrée' : 'Sortie') },
   { header: 'Description', value: (row) => row.description },
-  { header: 'Montant', value: (row) => formatFcfa(row.amountFcfa) },
+  { header: 'Montant', value: (row) => formatFcfa(row.amountFcfa), widthWeight: 1.4 },
   { header: 'Commentaire', value: (row) => row.comment?.trim() || '—' },
-  { header: 'Produits achetés', value: (row) => purchaseDetailsText(row.purchase) || '—' },
 ]
 
 function expenseExportShared() {
   return {
+    orientation: 'landscape' as const,
     captionRows: [
       { label: 'Période', value: expensePeriodLabel.value },
       { label: 'Total des entrées', value: formatFcfa(flowTotals.value.entreeFcfa) },
@@ -284,7 +283,10 @@ function expenseExportShared() {
 }
 
 function exportExpensesPdf() {
-  exportTablePdf(uiText('Dépenses'), expenseExportColumns, filteredRows.value, expenseExportShared())
+  exportTablePdf(uiText('Dépenses'), expenseExportColumns, filteredRows.value, {
+    ...expenseExportShared(),
+    orientation: 'portrait',
+  })
 }
 
 function exportExpensesExcel() {

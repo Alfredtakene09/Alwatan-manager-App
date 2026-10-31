@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import axios from 'axios'
 import { confirmAppModal } from '@/lib/api-modal-helper'
 import { Users, Plus, Save, Eye, Search, Unlock, Shield, History } from '@lucide/vue'
@@ -408,6 +408,8 @@ async function loadUsers() {
   }
 }
 
+let hydratingForm = false
+
 async function openCreateModal() {
   editingId.value = null
   resetForm()
@@ -437,6 +439,11 @@ async function openEditModal(id: string) {
     active: user.active ? 'true' : 'false',
     hiddenUiActions: [...(user.hiddenUiActions ?? [])],
   }
+  // Le changement de rôle dû au chargement ne doit pas effacer les boutons enregistrés.
+  hydratingForm = true
+  void nextTick(() => {
+    hydratingForm = false
+  })
   employeeFilter.value = form.value.role === 'MEDECIN' ? 'MEDECINS' : 'ALL'
   modalOpen.value = true
   message.value = ''
@@ -763,7 +770,7 @@ watch(
     } else if (employeeFilter.value === 'MEDECINS') {
       employeeFilter.value = 'ALL'
     }
-    if (previous !== undefined && role !== previous) {
+    if (!hydratingForm && previous !== undefined && role !== previous) {
       form.value.hiddenUiActions = []
     }
     // Ne pas effacer l'employé lié pendant une modification (évite faux « déjà lié »).

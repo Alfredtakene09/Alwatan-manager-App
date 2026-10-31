@@ -101,7 +101,9 @@ const reclamationExportColumns: ExportColumn<ExamReclamationRow>[] = [
 ]
 
 function exportPdf() {
-  exportTablePdf('Historique des réclamations examens', reclamationExportColumns, rows.value)
+  exportTablePdf('Historique des réclamations examens', reclamationExportColumns, rows.value, {
+    orientation: 'landscape',
+  })
 }
 
 function exportExcel() {
@@ -109,7 +111,9 @@ function exportExcel() {
 }
 
 function exportWord() {
-  void exportTableWord('Historique des réclamations examens', reclamationExportColumns, rows.value)
+  void exportTableWord('Historique des réclamations examens', reclamationExportColumns, rows.value, {
+    orientation: 'landscape',
+  })
 }
 
 onMounted(load)

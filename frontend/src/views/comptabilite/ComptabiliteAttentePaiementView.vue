@@ -49,6 +49,7 @@ const pendingExportColumns = computed(() => labExamListExportColumns('pending'))
 
 function pendingExportShared() {
   return {
+    orientation: 'landscape' as const,
     totalsRows: [
       { label: uiText('Nombre de dossiers'), value: String(pendingExportRows.value.length) },
     ],

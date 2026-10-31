@@ -97,19 +97,21 @@ const indicatedCodeLabel = computed(() => {
   return EXPENSE_CATEGORY_CODE_LABELS[code]
 })
 
-function applySelectedIndice() {
+function applySelectedIndice(previousIndiceId?: string) {
   if (!form.value.indiceId || props.editing?.id) return
   const selected = selectedIndice.value
   if (!selected) return
-  form.value.label = selected.name
+  const previousLabel = props.indices.find((item) => item.id === previousIndiceId)?.name
+  if (!form.value.label.trim() || form.value.label.trim() === previousLabel) {
+    form.value.label = selected.name
+  }
   if (!form.value.comment.trim()) {
     form.value.comment = selected.description ?? ''
   }
 }
 
 function resolveLabel() {
-  if (isEditing.value) return form.value.label.trim()
-  return selectedIndice.value?.name ?? form.value.label.trim()
+  return form.value.label.trim() || selectedIndice.value?.name || ''
 }
 
 watch(
@@ -139,7 +141,10 @@ watch(() => form.value.flow, () => {
   }
 })
 
-watch(() => form.value.indiceId, applySelectedIndice)
+watch(
+  () => form.value.indiceId,
+  (_indiceId, previousIndiceId) => applySelectedIndice(previousIndiceId),
+)
 
 const expenseModalSubtitle = computed(() => {
   const label = resolveLabel()
@@ -155,7 +160,7 @@ const isEditing = computed(() => Boolean(props.editing?.id))
 const canSubmit = computed(() => {
   const amount = Number(form.value.amountFcfa)
   const hasIndice = isEditing.value || Boolean(form.value.indiceId)
-  const hasLabel = isEditing.value ? Boolean(form.value.label.trim()) : Boolean(selectedIndice.value)
+  const hasLabel = form.value.label.trim().length >= 2
   return (
     hasIndice
     && hasLabel
@@ -243,7 +248,6 @@ function submit() {
         </UiSelect>
 
         <UiInput
-          v-else
           v-model="form.label"
           label="Description"
           placeholder="Ex. Achat produits d'entretien"

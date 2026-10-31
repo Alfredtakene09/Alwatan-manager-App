@@ -237,6 +237,7 @@ function catalogExportFilterCaption(): string {
 
 function catalogExportShared() {
   return {
+    orientation: 'landscape' as const,
     captionRows: [{ label: uiText('Filtres'), value: catalogExportFilterCaption() }],
     totalsRows: [
       {
