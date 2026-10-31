@@ -181,6 +181,7 @@ const paidExportColumns = computed(() => labExamListExportColumns('paid'))
 
 function paidExportShared() {
   return {
+    orientation: 'landscape' as const,
     totalsRows: [
       { label: uiText('Nombre de dossiers'), value: String(paidExportRows.value.length) },
       ...(selectedReceptionistName.value

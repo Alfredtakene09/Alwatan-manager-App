@@ -41,6 +41,7 @@ const props = withDefaults(
     deactivateMode?: boolean
     /** La synthèse est affichée par la page parente (barre d'outils). */
     externalSummary?: boolean
+    exportOrientation?: 'portrait' | 'landscape'
     businessDateFrom?: string
     businessDateTo?: string
   }>(),
@@ -50,6 +51,7 @@ const props = withDefaults(
     listFilter: 'all',
     deactivateMode: false,
     externalSummary: false,
+    exportOrientation: 'portrait',
   },
 )
 
@@ -280,6 +282,7 @@ const expenseExportColumns = computed<ExportColumn<ExpenseExportRow>[]>(() => {
 
 function expenseExportShared() {
   return {
+    orientation: props.exportOrientation,
     captionRows: [
       { label: uiText('Période'), value: formattedPeriodLabel.value },
       { label: totalLabel.value, value: formatFcfa(totalFcfa.value) },

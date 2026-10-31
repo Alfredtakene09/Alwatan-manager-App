@@ -286,6 +286,7 @@ function operationExportSections(): ExportSection<OperationExportRow>[] {
 
 function operationExportShared() {
   return {
+    orientation: 'landscape' as const,
     captionRows: [{ label: uiText('Filtres'), value: operationExportFilterCaption() }],
     totalsRows: [
       {
@@ -301,7 +302,6 @@ function exportOperationsPdf() {
   exportTablePdf(uiText('Types d’opérations'), operationExportColumns.value, operationExportRows.value, {
     ...operationExportShared(),
     sections,
-    orientation: 'portrait',
   })
 }
 

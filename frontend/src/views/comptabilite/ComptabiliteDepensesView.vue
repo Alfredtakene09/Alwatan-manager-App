@@ -3,5 +3,5 @@ import CaisseDepensesPanel from '@/components/caisse/CaisseDepensesPanel.vue'
 </script>
 
 <template>
-  <CaisseDepensesPanel />
+  <CaisseDepensesPanel export-orientation="landscape" />
 </template>
