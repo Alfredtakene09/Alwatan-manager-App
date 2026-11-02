@@ -116,7 +116,7 @@ onMounted(async () => {
   <div>
     <UiPageHeader
       title="Bloc opératoire & Salles"
-      subtitle="Salles occupées — VIP 20 000 FCFA / nuit, simple 5 000 FCFA / nuit. La salle se libère à la date de sortie."
+      :subtitle="`Salles occupées — VIP ${formatFcfa(20_000)} / nuit, simple ${formatFcfa(5_000)} / nuit. La salle se libère à la date de sortie.`"
       :icon="BedDouble"
     >
       <template #actions>

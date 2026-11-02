@@ -379,7 +379,7 @@ onMounted(load)
             <option value="VIP">VIP</option>
             <option value="SIMPLE">Simple</option>
           </UiSelect>
-          <UiInput v-model="newRoom.dailyRateFcfa" label="Tarif nuitée (FCFA)" type="number" min="1" />
+          <UiInput money v-model="newRoom.dailyRateFcfa" label="Tarif nuitée (FCFA)" type="number" min="1" />
         </div>
       </section>
       <template #footer>
@@ -405,7 +405,7 @@ onMounted(load)
             <option value="VIP">VIP</option>
             <option value="SIMPLE">Simple</option>
           </UiSelect>
-          <UiInput v-model="editForm.dailyRateFcfa" label="Tarif nuitée (FCFA)" type="number" min="1" />
+          <UiInput money v-model="editForm.dailyRateFcfa" label="Tarif nuitée (FCFA)" type="number" min="1" />
           <UiInput v-model="editForm.description" label="Description" placeholder="Optionnel" />
           <UiSelect v-model="editForm.active" label="Statut de la salle">
             <option value="true">Active</option>

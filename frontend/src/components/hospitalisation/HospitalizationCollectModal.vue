@@ -77,7 +77,7 @@ function onSubmit() {
       · {{ uiText('Encaissé') }} : <strong>{{ formatFcfa(paidFcfa) }}</strong>
       · {{ uiText('Reste à payer') }} : <strong>{{ formatFcfa(remainingFcfa) }}</strong>
     </p>
-    <UiInput
+    <UiInput money
       v-model="amount"
       :label="uiText('Montant encaissé')"
       type="number"

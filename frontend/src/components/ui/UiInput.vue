@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import type { Component } from 'vue'
 import { Eye, EyeOff } from '@lucide/vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import { useMoneyField } from '@/composables/useMoneyField'
 
 const props = defineProps<{
   label: string
@@ -15,6 +16,8 @@ const props = defineProps<{
   readonly?: boolean
   icon?: Component
   revealable?: boolean
+  /** Montant FCFA : affiché et saisi en rial quand la session est en arabe. */
+  money?: boolean
 }>()
 
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
@@ -28,9 +31,15 @@ const placeholderText = computed(() => {
   return props.placeholder ? uiText(props.placeholder) : undefined
 })
 
+const { shownValue, onMoneyInput, onMoneyBlur } = useMoneyField(
+  () => Boolean(props.money),
+  () => props.modelValue,
+  (value) => emit('update:modelValue', value),
+)
+
 function onInput(event: Event) {
   if (props.disabled || props.readonly) return
-  emit('update:modelValue', (event.target as HTMLInputElement).value)
+  onMoneyInput((event.target as HTMLInputElement).value)
 }
 
 const inputRef = ref<HTMLInputElement | null>(null)
@@ -67,7 +76,7 @@ defineExpose({
       <input
         ref="inputRef"
         :type="inputType"
-        :value="modelValue"
+        :value="shownValue"
         :placeholder="placeholderText"
         :required="required"
         :autofocus="autofocus"
@@ -80,6 +89,7 @@ defineExpose({
           'ui-field__input--disabled': disabled || readonly,
         }"
         @input="onInput"
+        @blur="onMoneyBlur"
       />
       <button
         v-if="revealable && isPasswordField"

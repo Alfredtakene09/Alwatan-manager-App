@@ -560,7 +560,7 @@ function kindReductionPercent(kind: ExamKindSlug, grossFcfa: number) {
                 />
                 {{ uiText('Paiement en tranche') }}
               </label>
-              <UiInput
+              <UiInput money
                 v-if="installmentEnabledByKind[card.kind]"
                 class="exam-card__installment-input"
                 :model-value="installmentAmountByKind[card.kind] ?? ''"
@@ -606,7 +606,7 @@ function kindReductionPercent(kind: ExamKindSlug, grossFcfa: number) {
                     {{ pct }} %
                   </button>
                 </div>
-                <UiInput
+                <UiInput money
                   v-else
                   :model-value="reductionsByKind[card.kind]"
                   :label="card.reductionLabel"
