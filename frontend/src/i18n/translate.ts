@@ -1,5 +1,6 @@
 import { i18n, type AppLocale } from './index'
 import { CATALOGS, onCatalogLoaded, type MessageBundle } from './catalogs'
+import { isRialCurrency, RIAL_UNIT } from '../lib/format-fcfa'
 
 /** Clés common (code) → libellé FR source. */
 const COMMON_FR: Record<string, string> = {
@@ -91,6 +92,15 @@ export function translateExamName(text: string | null | undefined): string {
 
 /** Traduction figée vers une locale (ex. tickets thermiques toujours en arabe). */
 export function translateUiLocale(
+  text: string | null | undefined,
+  locale: AppLocale,
+): string {
+  const translated = translateUiLocaleRaw(text, locale)
+  // Session en rial (arabe) : les libellés « (FCFA) » / « (فرنك) » suivent la devise affichée.
+  return isRialCurrency() ? translated.replace(/FCFA|فرنك/g, RIAL_UNIT) : translated
+}
+
+function translateUiLocaleRaw(
   text: string | null | undefined,
   locale: AppLocale,
 ): string {

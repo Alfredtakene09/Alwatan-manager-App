@@ -1506,7 +1506,7 @@ onMounted(async () => {
         </div>
 
         <template v-if="form.doctorCompensationType === 'FIXED_SALARY'">
-          <UiInput
+          <UiInput money
             v-model="form.consultationTotalFcfa"
             label="Prix consultation (FCFA)"
             type="number"
@@ -1520,7 +1520,7 @@ onMounted(async () => {
 
         <template v-else-if="isQuotaDoctor">
           <div class="form-grid-compact">
-            <UiInput
+            <UiInput money
               v-model="form.consultationTotalFcfa"
               label="Prix (FCFA)"
               type="number"
@@ -1546,7 +1546,7 @@ onMounted(async () => {
               max="100"
               placeholder="60"
             />
-            <UiInput
+            <UiInput money
               v-else
               v-model="form.consultationQuotaFcfa"
               label="Part (FCFA)"
@@ -1605,7 +1605,7 @@ onMounted(async () => {
                 : ''
           }}.
         </p>
-        <UiInput
+        <UiInput money
           v-model="form.fixedSalaryFcfa"
           label="Salaire fixe (FCFA)"
           type="number"
@@ -1654,14 +1654,14 @@ onMounted(async () => {
         </datalist>
 
         <div v-if="showSalaryField" class="form-grid-2">
-          <UiInput
+          <UiInput money
             v-model="form.fixedSalaryFcfa"
             label="Salaire fixe (FCFA)"
             type="number"
             min="0"
             placeholder="Ex. 150 000"
           />
-          <UiInput
+          <UiInput money
             v-model="form.bonusFcfa"
             label="Prime (FCFA)"
             type="number"

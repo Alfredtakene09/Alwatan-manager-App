@@ -2020,7 +2020,7 @@ onMounted(load)
             {{ editDoctorLabel(person) }}
           </option>
         </UiSelect>
-        <UiInput v-model="editAmount" label="Montant (FCFA)" type="number" required />
+        <UiInput money v-model="editAmount" label="Montant (FCFA)" type="number" required />
         <UiInput v-model="editDate" label="Date d'enregistrement" type="date" required />
       </div>
       <p class="edit-hint">
@@ -2092,7 +2092,7 @@ onMounted(load)
             </div>
           </dl>
 
-          <UiInput
+          <UiInput money
             v-model="payAmount"
             :label="uiText('Montant à encaisser (FCFA)')"
             type="number"

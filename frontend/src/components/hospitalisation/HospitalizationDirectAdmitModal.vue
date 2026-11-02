@@ -365,7 +365,7 @@ async function submit() {
             required
             @update:model-value="onStayDaysInput"
           />
-          <UiInput
+          <UiInput money
             :model-value="reductionFcfa"
             :label="uiText('Réduction (FCFA)')"
             type="number"

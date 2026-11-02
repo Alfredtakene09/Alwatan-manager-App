@@ -384,7 +384,7 @@ defineExpose({ reload: loadItems })
           type="number"
           min="0"
         />
-        <UiInput v-model="formUnitCost" label="Coût unitaire (FCFA)" type="number" min="0" />
+        <UiInput money v-model="formUnitCost" label="Coût unitaire (FCFA)" type="number" min="0" />
         <UiInput v-model="formMinStock" label="Seuil d'alerte" type="number" min="0" />
       </div>
 

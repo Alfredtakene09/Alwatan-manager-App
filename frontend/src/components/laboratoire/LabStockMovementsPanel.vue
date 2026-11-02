@@ -330,7 +330,7 @@ defineExpose({ reload: loadMovements })
         required
       />
 
-      <UiInput
+      <UiInput money
         v-if="formType === 'ENTRY'"
         v-model="formUnitCost"
         label="Coût unitaire (FCFA)"

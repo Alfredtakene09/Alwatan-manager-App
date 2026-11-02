@@ -535,7 +535,7 @@ onMounted(loadDoctors)
 
       <section class="hosp-adm-form__section">
         <h3>{{ uiText('Réduction') }}</h3>
-        <UiInput
+        <UiInput money
           v-model="form.reductionFcfa"
           label="Réduction (FCFA)"
           type="number"

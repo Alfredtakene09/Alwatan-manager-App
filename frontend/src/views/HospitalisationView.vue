@@ -814,7 +814,7 @@ watch([dateFrom, dateTo], () => {
     <template v-if="tab === 'plan'">
       <UiCard
         title="Salles occupées"
-        description="Libération automatique à la date de sortie — VIP 20 000 FCFA / nuit, simple 5 000 FCFA / nuit"
+        :description="`Libération automatique à la date de sortie — VIP ${formatFcfa(20_000)} / nuit, simple ${formatFcfa(5_000)} / nuit`"
         :icon="BedDouble"
         icon-variant="blue"
         class="compta-section"

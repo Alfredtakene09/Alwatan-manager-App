@@ -23,6 +23,7 @@ import {
 import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal, showValidationErrorModal } from '@/lib/api-modal-helper'
 import { fullName, formatFcfa, formatFcfaCompact, isDirectionOrGestionnaire } from '@/lib/roles'
+import { currencyUnit } from '@/lib/format-fcfa'
 import {
   joinPatientFullName,
   parsePatientAge,
@@ -1062,7 +1063,7 @@ let resettingListFilters = false
 
 /** Somme encaissée d'une carte, affichée sous le nombre de patients. */
 function activityAmountHint(key: keyof NonNullable<ReceptionStats['activityAmountsFcfa']>) {
-  return `${formatFcfaCompact(stats.value.activityAmountsFcfa?.[key] ?? 0)} FCFA`
+  return `${formatFcfaCompact(stats.value.activityAmountsFcfa?.[key] ?? 0)} ${currencyUnit()}`
 }
 
 const dashboardStats = computed(() => {
@@ -2109,7 +2110,7 @@ onUnmounted(clearAlert)
             <span class="dash-stat__label">{{ uiText(item.label) }}</span>
             <strong class="dash-stat__value">
               {{ item.value }}
-              <small v-if="item.money" class="dash-stat__unit">FCFA</small>
+              <small v-if="item.money" class="dash-stat__unit">{{ currencyUnit() }}</small>
             </strong>
             <span class="dash-stat__hint">{{ uiText(item.hint) }}</span>
           </div>
@@ -2340,7 +2341,7 @@ onUnmounted(clearAlert)
             step="1"
             required
           />
-          <UiInput
+          <UiInput money
             v-model="form.sessionPrice"
             label="Prix par séance (FCFA)"
             type="number"
@@ -2362,7 +2363,7 @@ onUnmounted(clearAlert)
         </p>
 
         <div v-if="!formIsKine" class="form-grid-2">
-          <UiInput
+          <UiInput money
             v-if="!formBillingExempt && doctorNeedsConsultationAmountInput(formDoctor)"
             v-model="form.consultationAmount"
             label="Montant consultation (FCFA)"
@@ -2495,7 +2496,7 @@ onUnmounted(clearAlert)
         </p>
 
         <div v-if="showEditConsultationFields" class="form-grid-2">
-          <UiInput
+          <UiInput money
             v-model="editForm.consultationAmount"
             :label="selectedPatient.waitingVisit?.billingKind === 'exam' ? 'Montant (FCFA)' : 'Montant consultation (FCFA)'"
             type="number"
@@ -2595,7 +2596,7 @@ onUnmounted(clearAlert)
                 Dr {{ fullName(doctor.firstName, doctor.lastName) }}
               </option>
             </UiSelect>
-            <UiInput
+            <UiInput money
               v-if="
                 (!selectedPatient?.category || !isExemptCategory(selectedPatient.category)) &&
                 doctorNeedsConsultationAmountInput(reconsultDoctor)

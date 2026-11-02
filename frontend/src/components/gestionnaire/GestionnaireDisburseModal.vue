@@ -157,7 +157,7 @@ function submit() {
           Montant récupéré
         </h3>
         <div class="form-grid-2">
-          <UiInput
+          <UiInput money
             v-model="amount"
             label="Montant (FCFA)"
             type="number"

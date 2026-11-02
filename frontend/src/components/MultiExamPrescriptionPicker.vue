@@ -1743,7 +1743,7 @@ watch(
             :label="uiText('Nom de l’opération')"
             :placeholder="uiText('Ex. Appendicectomie')"
           />
-          <UiInput
+          <UiInput money
             :model-value="operationAmountDraft"
             :label="uiText('Prix (FCFA)')"
             type="number"
@@ -1792,7 +1792,7 @@ watch(
           class="multi-exam-picker__price-row"
           :class="{ 'multi-exam-picker__price-row--pair': !showConsultation }"
         >
-          <UiInput
+          <UiInput money
             :model-value="operationAmountDraft"
             :label="uiText(showConsultation ? 'Montant (FCFA)' : 'Prix (FCFA)')"
             type="number"

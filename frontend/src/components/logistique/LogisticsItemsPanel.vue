@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import MoneyInput from '@/components/ui/MoneyInput.vue'
+import { currencyUnit } from '@/lib/format-fcfa'
 import axios from 'axios'
 import { Eye, Package, Pencil, Plus, Save, Search } from '@lucide/vue'
 import api from '@/api/client'
@@ -767,8 +769,8 @@ defineExpose({ reload: loadItems })
         <div class="amount-field">
           <span class="amount-field__label">Prix par unité</span>
           <div class="amount-field__wrap">
-            <input v-model="formUnitCost" class="amount-field__input" type="number" min="0" placeholder="0" />
-            <span class="amount-field__suffix">FCFA</span>
+            <MoneyInput v-model="formUnitCost" class="amount-field__input" min="0" placeholder="0" />
+            <span class="amount-field__suffix">{{ currencyUnit() }}</span>
           </div>
         </div>
         <UiInput v-model="formMinStock" label="Seuil d'alerte (unités)" type="number" min="0" />

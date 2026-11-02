@@ -70,7 +70,7 @@ watch(
       </button>
     </div>
     <div class="form-grid-2">
-      <UiInput
+      <UiInput money
         :model-value="reductionFcfa"
         :label="uiText('Réduction (FCFA)')"
         type="number"

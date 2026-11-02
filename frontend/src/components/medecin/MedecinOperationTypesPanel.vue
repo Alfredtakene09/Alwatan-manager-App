@@ -602,7 +602,7 @@ onMounted(() => {
               {{ uiText(opt.label) }}
             </option>
           </UiSelect>
-          <UiInput v-model="newItem.totalCostFcfa" label="Coût total (FCFA)" type="number" min="1" />
+          <UiInput money v-model="newItem.totalCostFcfa" label="Coût total (FCFA)" type="number" min="1" />
           <UiInput v-model="newItem.surgeonPercent" label="% Chirurgien" type="number" min="1" max="99" />
         </div>
         <fieldset class="surgeons-fieldset">
@@ -708,7 +708,7 @@ onMounted(() => {
               {{ uiText(opt.label) }}
             </option>
           </UiSelect>
-          <UiInput v-model="editForm.totalCostFcfa" label="Coût total (FCFA)" type="number" min="1" />
+          <UiInput money v-model="editForm.totalCostFcfa" label="Coût total (FCFA)" type="number" min="1" />
           <UiInput v-model="editForm.surgeonPercent" label="% Chirurgien" type="number" min="1" max="99" />
         </div>
         <fieldset class="surgeons-fieldset">

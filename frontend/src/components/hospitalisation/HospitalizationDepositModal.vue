@@ -112,7 +112,7 @@ function onSave(print: boolean) {
         <dd>{{ formatFcfa(balanceFcfa) }}</dd>
       </div>
     </dl>
-    <UiInput
+    <UiInput money
       ref="amountInput"
       v-model="amount"
       label="Prix net à payer"

@@ -653,7 +653,7 @@ onMounted(loadPanels)
         <UiAlert v-if="modalError" type="error" :message="modalError" />
         <div class="form-grid-2">
           <UiInput v-model="form.label" label="Nom du formulaire" placeholder="Ex. Bilan rénal" />
-          <UiInput
+          <UiInput money
             v-model="form.priceFcfa"
             label="Tarif (FCFA)"
             type="number"
@@ -689,7 +689,7 @@ onMounted(loadPanels)
               <UiInput v-model="field.section" label="Section (optionnel)" placeholder="Ex. Électrolytes" />
               <UiInput v-model="field.unit" label="Unité (optionnel)" placeholder="Ex. mg/dl" />
               <UiInput v-model="field.reference" label="Valeur de référence (optionnel)" placeholder="Ex. 0.6 - 1.1 mg/dl" />
-              <UiInput
+              <UiInput money
                 v-if="showSectionPriceInput(index)"
                 v-model="field.priceFcfa"
                 :label="sectionPriceLabel(index)"
@@ -703,7 +703,7 @@ onMounted(loadPanels)
               >
                 {{ linkedSectionPriceHint(index) }}
               </p>
-              <UiInput
+              <UiInput money
                 v-else-if="!isNamedSectionField(field)"
                 v-model="field.priceFcfa"
                 :label="uiText('Prix (optionnel)')"
