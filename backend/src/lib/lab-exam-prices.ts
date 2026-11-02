@@ -82,9 +82,10 @@ function resolveFieldPrice(panelLabel: string, fieldLabel: string): number | nul
 export async function refreshExamPriceCache() {
   try {
     const [items, interventions, rooms, fields] = await Promise.all([
+      // Examens désactivés compris : un examen déjà prescrit garde son tarif (sinon repli à 3 000).
       prisma.examCatalogItem.findMany({
-        where: { active: true },
-        select: { label: true, priceFcfa: true },
+        select: { label: true, priceFcfa: true, active: true },
+        orderBy: { active: "asc" },
       }),
       prisma.interventionType.findMany({
         where: { active: true },
@@ -118,6 +119,7 @@ export async function refreshExamPriceCache() {
     const simpleRoom =
       rooms.find((room) => room.type === RoomType.SIMPLE) ?? rooms[0];
     const hospitalisationRateFcfa = simpleRoom?.dailyRateFcfa ?? 5_000;
+    // Tri inactifs puis actifs : à libellé égal, le tarif de l'examen actif l'emporte.
     catalogPriceCache = new Map([
       ...items.map((item) => [item.label, item.priceFcfa] as const),
       ...interventions.map((item) => [item.label, item.totalCostFcfa] as const),
