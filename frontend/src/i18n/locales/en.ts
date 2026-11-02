@@ -2749,6 +2749,7 @@ export default {
     'Classement par chiffre d\'affaires': 'Ranking by revenue',
     'Répartition du CA': 'Revenue breakdown',
     'Aucune vente sur la période': 'No sales in this period',
+    'Ventes (net encaissé)': 'Sales (net collected)',
     'Retour au journal': 'Back to the log',
     'Corbeille': 'Recycle bin',
     'Tout ce qui a été supprimé avec un bouton « Supprimer », avec les éléments supprimés en même temps. Les éléments sont gardés {n} mois, puis effacés définitivement.': 'Everything deleted with a “Delete” button, with the items deleted along with it. Items are kept {n} months, then erased permanently.',
