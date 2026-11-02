@@ -1,5 +1,5 @@
 import { CLINIC, clinicTaxLine } from './clinic'
-import { formatFcfa, formatFcfaCompact, formatFcfaShort } from './format-fcfa'
+import { formatFcfa, formatFcfaCompact, formatFcfaDual, formatFcfaShort } from './format-fcfa'
 import {
   EXTERNAL_TICKET_THANKS_KEY,
   PENDING_PAYMENT_STATUS_FR,
@@ -1441,6 +1441,16 @@ export const CLINIC_PRINT_STYLES = `
   body.print-thermal .thermal-receipt--day-closure .day-closure__totals {
     margin-top: 4px;
   }
+  /* Session arabe : rappel du montant en FCFA sous le montant en rial. */
+  body.print-thermal .thermal-receipt--day-closure .day-closure__fcfa {
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__totals-line strong {
+    text-align: right;
+  }
   body.print-thermal .thermal-receipt--day-closure .day-closure__totals-line {
     display: flex;
     justify-content: space-between;
@@ -2266,6 +2276,14 @@ function formatDayClosureAmount(amount: number): string {
   return formatFcfaShort(amount)
 }
 
+/** Montant d'un cumul : en session arabe, rial puis rappel en FCFA sur une 2e ligne. */
+function dayClosureAmountHtml(amount: number, display = formatDayClosureAmount(amount)): string {
+  const { fcfa } = formatFcfaDual(amount)
+  return fcfa
+    ? `${escapeHtml(display)}<small class="day-closure__fcfa">${escapeHtml(fcfa)}</small>`
+    : escapeHtml(display)
+}
+
 /** « Opération — Gynécologie » ou « Gynécologie (Césarienne) » → service + acte. */
 function splitOperationReceiptLabel(label: string): { service: string; act: string | null } {
   const cleaned = label.replace(/^Opération\s*[—–-]\s*/u, '').trim()
@@ -2336,7 +2354,7 @@ function buildDayClosureLineHtml(line: DayClosureServiceLine, rowClass = ''): st
   return `<tr class="${rowClass}">
   <td class="col-service">${labelHtml}</td>
   <td class="col-qty" dir="ltr">${escapeHtml(String(line.qty))}</td>
-  <td class="col-total" dir="ltr">${escapeHtml(formatFcfaCompact(line.totalFcfa))}</td>
+  <td class="col-total" dir="ltr">${dayClosureAmountHtml(line.totalFcfa, formatFcfaCompact(line.totalFcfa))}</td>
 </tr>`
 }
 
@@ -2350,7 +2368,7 @@ function buildDayClosureSumRowHtml(
   return `<tr class="${rowClass}">
   <td class="col-service" dir="ltr">${escapeHtml(label)}</td>
   <td class="col-qty" dir="ltr">${qty}</td>
-  <td class="col-total" dir="ltr">${escapeHtml(formatFcfaCompact(totalFcfa))}</td>
+  <td class="col-total" dir="ltr">${dayClosureAmountHtml(totalFcfa, formatFcfaCompact(totalFcfa))}</td>
 </tr>`
 }
 
@@ -2408,19 +2426,19 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
       : null
   const shareAmount = (share: number, percent: number | null) =>
     percent == null || share <= 0
-      ? formatDayClosureAmount(share)
-      : `${formatDayClosureAmount(share)} (${percent} %)`
+      ? dayClosureAmountHtml(share)
+      : dayClosureAmountHtml(share, `${formatDayClosureAmount(share)} (${percent} %)`)
   const shareBlock =
     doctorShareFcfa == null
       ? ''
       : `
     <p class="day-closure__totals-line day-closure__totals-line--share">
       <span>${escapeHtml(fr('Part des médecins'))} :</span>
-      <strong>${escapeHtml(shareAmount(doctorShareFcfa, doctorPercent))}</strong>
+      <strong>${shareAmount(doctorShareFcfa, doctorPercent)}</strong>
     </p>
     <p class="day-closure__totals-line">
       <span>${escapeHtml(fr('Part clinique'))} :</span>
-      <strong>${escapeHtml(shareAmount(clinicShareFcfa ?? 0, doctorPercent == null ? null : Math.max(0, 100 - doctorPercent)))}</strong>
+      <strong>${shareAmount(clinicShareFcfa ?? 0, doctorPercent == null ? null : Math.max(0, 100 - doctorPercent))}</strong>
     </p>`
   const title = fr('Cumul vente du {from} au {to}')
     .replace('{from}', dateShort)
@@ -2430,23 +2448,23 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
   <div class="day-closure__totals" dir="ltr">
     <p class="day-closure__totals-line day-closure__totals-line--sub">
       <span>${escapeHtml(username.toUpperCase())} - ${escapeHtml(fr('Sous-total Perçu'))}&nbsp;:</span>
-      <strong>${escapeHtml(formatDayClosureAmount(collectedFcfa))}</strong>
+      <strong>${dayClosureAmountHtml(collectedFcfa)}</strong>
     </p>
     <p class="day-closure__totals-line">
       <span>${escapeHtml(fr('Remise'))} :</span>
-      <strong>${escapeHtml(formatDayClosureAmount(reductionFcfa))}</strong>
+      <strong>${dayClosureAmountHtml(reductionFcfa)}</strong>
     </p>
     <p class="day-closure__totals-line">
       <span>${escapeHtml(fr('Vente'))} :</span>
-      <strong>${escapeHtml(formatDayClosureAmount(saleFcfa))}</strong>
+      <strong>${dayClosureAmountHtml(saleFcfa)}</strong>
     </p>
     <p class="day-closure__totals-line">
       <span>${escapeHtml(fr('Total vente'))} :</span>
-      <strong>${escapeHtml(formatDayClosureAmount(saleFcfa))}</strong>
+      <strong>${dayClosureAmountHtml(saleFcfa)}</strong>
     </p>
     <p class="day-closure__totals-line day-closure__totals-line--total">
       <span>${escapeHtml(fr('Total Perçu'))} :</span>
-      <strong>${escapeHtml(formatDayClosureAmount(collectedFcfa))}</strong>
+      <strong>${dayClosureAmountHtml(collectedFcfa)}</strong>
     </p>
     ${shareBlock}
   </div>`
@@ -3352,16 +3370,8 @@ function printHtmlInNewWindow(
   return true
 }
 
-export function openPrintDocument(
-  _title: string,
-  bodyHtml: string,
-  autoPrintOrOptions: boolean | OpenPrintOptions = true,
-): boolean {
-  const options: OpenPrintOptions =
-    typeof autoPrintOrOptions === 'boolean'
-      ? { autoPrint: autoPrintOrOptions }
-      : { autoPrint: true, ...autoPrintOrOptions }
-
+/** Page HTML complète (styles d'impression compris) d'un document ou ticket. */
+export function buildPrintDocumentHtml(bodyHtml: string, options: OpenPrintOptions = {}): string {
   const isA5 = options.pageSize === 'A5'
   const isTableReport = Boolean(options.tableReport)
   const isA4 = options.pageSize === 'A4' && !isTableReport
@@ -3469,6 +3479,21 @@ export function openPrintDocument(
 </style></head><body${bodyClass}>
 ${contentHtml}
 </body></html>`
+  return html
+}
+
+export function openPrintDocument(
+  _title: string,
+  bodyHtml: string,
+  autoPrintOrOptions: boolean | OpenPrintOptions = true,
+): boolean {
+  const options: OpenPrintOptions =
+    typeof autoPrintOrOptions === 'boolean'
+      ? { autoPrint: autoPrintOrOptions }
+      : { autoPrint: true, ...autoPrintOrOptions }
+
+  const isThermal = options.pageSize === '80mm'
+  const html = buildPrintDocumentHtml(bodyHtml, options)
 
   const runThermalFit = (doc: Document) => {
     const tight = Boolean(options.thermalTight)

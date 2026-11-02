@@ -159,3 +159,13 @@ describe('Rapports exportés (PDF / Excel / Word) en arabe', () => {
     assert.deepEqual(amounts, ['450 000 FCFA', '212 500 FCFA', '37 505 FCFA'])
   })
 })
+
+describe('Cumuls : rial et FCFA ensemble en session arabe', () => {
+  it('formatFcfaDual donne le rial et le rappel FCFA en arabe, seulement le FCFA en français', async () => {
+    const { formatFcfaDual } = await import('./format-fcfa.ts')
+    setCurrencyLocale('ar')
+    assert.deepEqual(formatFcfaDual(212_500), { main: '42 500 ريال', fcfa: '212 500 FCFA' })
+    setCurrencyLocale('fr')
+    assert.deepEqual(formatFcfaDual(212_500), { main: '212 500 FCFA', fcfa: null })
+  })
+})

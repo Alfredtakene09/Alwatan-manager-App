@@ -2734,6 +2734,7 @@ export default {
     'Classement par chiffre d\'affaires': 'Classement par chiffre d\'affaires',
     'Répartition du CA': 'Répartition du CA',
     'Aucune vente sur la période': 'Aucune vente sur la période',
+    'Ventes (net encaissé)': 'Ventes (net encaissé)',
     'Retour au journal': 'Retour au journal',
     'Corbeille': 'Corbeille',
     'Tout ce qui a été supprimé avec un bouton « Supprimer », avec les éléments supprimés en même temps. Les éléments sont gardés {n} mois, puis effacés définitivement.': 'Tout ce qui a été supprimé avec un bouton « Supprimer », avec les éléments supprimés en même temps. Les éléments sont gardés {n} mois, puis effacés définitivement.',

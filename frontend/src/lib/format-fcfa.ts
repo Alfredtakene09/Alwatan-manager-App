@@ -70,10 +70,11 @@ export function inputTextToFcfa(text: string): string {
   return String(fromDisplayAmount(n))
 }
 
-function formatDigitsRaw(amountFcfa: number): string {
-  const value = toDisplayAmount(amountFcfa)
+function formatDigitsRaw(amountFcfa: number, inRial = isRialCurrency()): string {
+  const n = Number(amountFcfa) || 0
+  const value = inRial ? n / FCFA_PER_RIAL : n
   // FCFA entiers ; en rial, jusqu'à 2 décimales (ex. 2 501 FCFA → 500.2).
-  const rounded = isRialCurrency() ? Math.round(value * 100) / 100 : Math.round(value)
+  const rounded = inRial ? Math.round(value * 100) / 100 : Math.round(value)
   const sign = rounded < 0 ? '− ' : ''
   const [intPart, decimals] = Math.abs(rounded).toString().split('.')
   /** Espaces ASCII — évite U+202F (affiché « / » en PDF et à l'impression). */
@@ -88,6 +89,20 @@ export function formatFcfaDigits(amount: number): string {
 
 export function formatFcfa(amount: number): string {
   return ltrIsolate(`${formatDigitsRaw(amount)} ${currencyUnit()}`)
+}
+
+/** Montant en FCFA quelle que soit la langue de la session (ex. rappel sur les cumuls). */
+export function formatFcfaOriginal(amount: number): string {
+  return `${formatDigitsRaw(amount, false)} FCFA`
+}
+
+/**
+ * Cumuls : en session arabe, le montant en rial ET en FCFA (« 90 000 ريال / 450 000 FCFA ») ;
+ * en français, le montant FCFA habituel.
+ */
+export function formatFcfaDual(amount: number): { main: string; fcfa: string | null } {
+  if (!isRialCurrency()) return { main: formatFcfaPlain(amount), fcfa: null }
+  return { main: formatFcfaPlain(amount), fcfa: formatFcfaOriginal(amount) }
 }
 
 /** Montant fichier (PDF / Excel / Word) — sans isolats Unicode. */
