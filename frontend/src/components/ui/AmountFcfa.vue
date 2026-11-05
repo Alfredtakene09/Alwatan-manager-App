@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { formatFcfaDigits } from '@/lib/format-fcfa'
+import { currencyUnit, formatFcfaDigits } from '@/lib/format-fcfa'
 
 const props = withDefaults(
   defineProps<{
@@ -31,7 +31,7 @@ const digits = computed(() => formatFcfaDigits(props.amount))
     ]"
   >
     <span class="amount-fcfa__value">{{ digits }}</span>
-    <span v-if="showUnit" class="amount-fcfa__unit">FCFA</span>
+    <span v-if="showUnit" class="amount-fcfa__unit">{{ currencyUnit() }}</span>
   </span>
 </template>
 

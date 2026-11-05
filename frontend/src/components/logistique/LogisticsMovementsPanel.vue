@@ -519,7 +519,7 @@ defineExpose({ reload })
           {{ showPackageFields ? `unité${movementTotalUnits > 1 ? 's' : ''}` : selectedItem.unit }}
           <template v-if="showPackageFields"> (calculé automatiquement)</template>
         </p>
-        <UiInput v-model="formUnitCost" label="Prix par unité (FCFA)" type="number" min="0" />
+        <UiInput money v-model="formUnitCost" label="Prix par unité (FCFA)" type="number" min="0" />
         <UiInput v-model="formReference" label="N° bon / facture fournisseur" placeholder="Référence document…" />
       </template>
 

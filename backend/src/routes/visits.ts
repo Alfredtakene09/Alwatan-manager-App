@@ -21,6 +21,7 @@ import {
   parsePaidExamKindsByKind,
   parsePrescribedExamsByKind,
   summarizePrescribedExamFieldNames,
+  getUnpaidPrescribedExamKinds,
   EXAM_KIND_ORDER,
   type ExamKindSlug,
 } from "../lib/lab-notes.js";
@@ -1229,6 +1230,16 @@ router.get("/external-queue", requireModule("reception"), async (req, res) => {
       const invoicedNetFcfa = invoices.reduce((sum, invoice) => sum + invoice.amountFcfa, 0);
       const catalogGrossFcfa = hasExams ? computeLabExamsGrossFcfa(row.clinicalNotes) : 0;
       const reductionFcfa = row.labExamReductionFcfa ?? 0;
+      // Examens ajoutés après la facture (ex. par le médecin) : encore à encaisser, comptés dans le total.
+      const unpaidKinds = invoices.length ? getUnpaidPrescribedExamKinds(row.clinicalNotes) : [];
+      const remainingFcfa = buildExamSheetsByKind(row.clinicalNotes)
+        .filter((sheet) => unpaidKinds.includes(sheet.kind))
+        .reduce((sum, sheet) => {
+          const invoicedForKind = invoices
+            .filter((invoice) => invoice.billingExamKind === sheet.kind)
+            .reduce((total, invoice) => total + invoice.amountFcfa, 0);
+          return sum + Math.max(0, sheet.grossFcfa - invoicedForKind);
+        }, 0);
       return {
         id: row.id,
         visitId: row.visitId,
@@ -1244,12 +1255,13 @@ router.get("/external-queue", requireModule("reception"), async (req, res) => {
           ? summarizePrescribedExamFieldNames(buildLabExamLines(row.clinicalNotes).map((l) => l.label))
           : "Examens en attente",
         // Déjà facturé : montants réels des factures (labo + écho…), pas le catalogue du jour.
-        grossFcfa: invoices.length ? invoicedNetFcfa + reductionFcfa : catalogGrossFcfa,
+        grossFcfa: invoices.length ? invoicedNetFcfa + remainingFcfa + reductionFcfa : catalogGrossFcfa,
         netFcfa: invoices.length
-          ? invoicedNetFcfa
+          ? invoicedNetFcfa + remainingFcfa
           : hasExams
             ? Math.max(0, catalogGrossFcfa - reductionFcfa)
             : 0,
+        remainingFcfa,
         invoiced: invoices.length > 0,
         invoiceNumber: invoices.map((invoice) => invoice.invoiceNumber).join(" + ") || null,
         doctorId: row.doctor?.id ?? row.visit.assignedDoctor?.id ?? null,
@@ -1823,6 +1835,11 @@ router.patch(
         const nextPrescribed = parsePrescribedExamsByKind(clinicalNotes);
         const alreadyBilled =
           hasExamsPrescribed(originalNotes) || existing.visit.invoices.length > 0;
+        const anythingPaid =
+          existing.visit.invoices.some((invoice) => invoice.paidAmountFcfa > 0) ||
+          EXAM_KIND_ORDER.some((kind) => Boolean(originalPaid[kind]));
+        /** Dossier enregistré sans encaisser (paiement différé) : la modification reste à encaisser en caisse. */
+        const deferredUnpaid = hasExamsPrescribed(originalNotes) && !anythingPaid;
 
         if (alreadyBilled) {
           const priceByKey = new Map<string, number>();
@@ -1922,7 +1939,7 @@ router.patch(
           ? buildPrescribedExamsNotesByKind(addedByKind)
           : clinicalNotes;
         const payment =
-          !alreadyBilled || addedLabels.length > 0
+          !deferredUnpaid && (!alreadyBilled || addedLabels.length > 0)
             ? await collectExternalLabOrderPayment(tx, {
                 visitId: existing.visitId,
                 patientId: existing.visit.patientId,
@@ -1935,6 +1952,7 @@ router.patch(
             : null;
         const paidAt = new Date();
         let finalNotes = clinicalNotes;
+        const keptPaidKinds = new Set<ExamKindSlug>();
         for (const kind of EXAM_KIND_ORDER) {
           if ((nextPrescribed[kind] ?? []).filter((label) => label.trim()).length === 0) continue;
           const keptOriginal = (originalPrescribed[kind] ?? []).some((label) =>
@@ -1942,12 +1960,12 @@ router.patch(
           );
           if (alreadyBilled && keptOriginal && originalPaid[kind]) {
             finalNotes = appendPaidExamKindMarker(finalNotes, kind, originalPaid[kind]);
+            keptPaidKinds.add(kind);
           }
         }
+        // Examens remplacés puis encaissés : le type redevient payé (sinon la caisse le réclame une 2e fois).
         for (const kind of payment?.paidKinds ?? []) {
-          if (originalPaid[kind] && (nextPrescribed[kind] ?? []).some((label) => label.trim())) {
-            continue;
-          }
+          if (keptPaidKinds.has(kind)) continue;
           finalNotes = appendPaidExamKindMarker(finalNotes, kind, paidAt);
         }
         if (finalNotes !== clinicalNotes || payment?.sendToLab) {

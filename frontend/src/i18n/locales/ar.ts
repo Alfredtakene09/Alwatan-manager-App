@@ -2759,6 +2759,7 @@ export default {
     'Classement par chiffre d\'affaires': 'الترتيب حسب رقم الأعمال',
     'Répartition du CA': 'توزيع رقم الأعمال',
     'Aucune vente sur la période': 'لا مبيعات في هذه الفترة',
+    'Ventes (net encaissé)': 'المبيعات (صافي المحصّل)',
     'Retour au journal': 'العودة إلى السجل',
     'Corbeille': 'سلة المحذوفات',
     'Tout ce qui a été supprimé avec un bouton « Supprimer », avec les éléments supprimés en même temps. Les éléments sont gardés {n} mois, puis effacés définitivement.': 'كل ما حُذف بزر «حذف» مع العناصر المحذوفة معه. تُحفظ العناصر {n} أشهر ثم تُمحى نهائيًا.',

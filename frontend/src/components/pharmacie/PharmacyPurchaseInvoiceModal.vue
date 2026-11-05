@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import MoneyInput from '@/components/ui/MoneyInput.vue'
+import { currencyUnit } from '@/lib/format-fcfa'
 import { FileText, Plus, Save, Trash2 } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/roles'
@@ -287,12 +289,11 @@ businessDate.value = todayIso()
           </label>
           <label class="purchase-field purchase-field--purchase">
             <span class="purchase-field__label">{{ uiText("Prix d'achat (boîte)") }} *</span>
-            <input
+            <MoneyInput
               v-model="line.purchasePrice"
               class="purchase-line__input"
-              type="number"
               min="1"
-              placeholder="FCFA"
+              :placeholder="currencyUnit()"
               required
             />
             <span
@@ -314,12 +315,11 @@ businessDate.value = todayIso()
           </button>
           <label class="purchase-field purchase-field--sale">
             <span class="purchase-field__label">{{ uiText('Prix de vente') }} *</span>
-            <input
+            <MoneyInput
               v-model="line.salePrice"
               class="purchase-line__input"
-              type="number"
               min="1"
-              placeholder="FCFA"
+              :placeholder="currencyUnit()"
               required
             />
             <span

@@ -512,7 +512,7 @@ defineExpose({ reload })
         </UiSelect>
         <div class="form-grid">
           <UiInput v-model="formQuantity" label="Quantité reçue" type="number" min="1" required />
-          <UiInput v-model="formUnitCost" label="Coût unitaire (FCFA)" type="number" min="1" />
+          <UiInput money v-model="formUnitCost" label="Coût unitaire (FCFA)" type="number" min="1" />
         </div>
         <UiInput v-model="formReference" label="N° bon / facture fournisseur" placeholder="Référence document…" />
       </template>

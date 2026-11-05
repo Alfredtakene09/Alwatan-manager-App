@@ -947,7 +947,7 @@ onMounted(async () => {
               {{ service.name }}
             </option>
           </UiSelect>
-          <UiInput v-model="newItem.totalCostFcfa" label="Coût (FCFA)" type="number" min="1" />
+          <UiInput money v-model="newItem.totalCostFcfa" label="Coût (FCFA)" type="number" min="1" />
         </div>
         <p v-if="clinicServices.length === 0" class="form-panel__hint form-panel__hint--warn">
           Aucun service disponible. Créez d’abord un service dans Paramètres → Services.

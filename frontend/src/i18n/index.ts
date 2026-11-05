@@ -1,5 +1,6 @@
 import { createI18n } from 'vue-i18n'
 import { CATALOGS, loadCatalog, onCatalogLoaded } from './catalogs'
+import { setCurrencyLocale } from '../lib/format-fcfa'
 
 export const LOCALES = [
   { code: 'fr', codeLabel: 'FR', name: 'Français' },
@@ -26,6 +27,8 @@ export function getStoredLocale(): AppLocale {
  * Arabe → dir=rtl (layout logique) ; le sélecteur de langue reste LTR.
  */
 export function applyDocumentLocale(locale: AppLocale) {
+  // Arabe : montants affichés et saisis en rial (FCFA ÷ 5).
+  setCurrencyLocale(locale)
   if (typeof document === 'undefined') return
   document.documentElement.lang = locale === 'ar' ? 'ar' : locale
   document.documentElement.dir = locale === 'ar' ? 'rtl' : 'ltr'

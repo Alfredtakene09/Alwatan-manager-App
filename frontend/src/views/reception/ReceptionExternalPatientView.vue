@@ -1388,7 +1388,7 @@ onMounted(() => {
                   {{ pct }} %
                 </option>
               </UiSelect>
-              <UiInput
+              <UiInput money
                 :model-value="reductionFcfaInput"
                 :label="uiText('Réduction (FCFA)')"
                 type="number"
@@ -1526,7 +1526,7 @@ onMounted(() => {
                   {{ pct }} %
                 </option>
               </UiSelect>
-              <UiInput
+              <UiInput money
                 :model-value="reductionFcfaInput"
                 :label="uiText('Réduction (FCFA)')"
                 type="number"
@@ -1625,7 +1625,7 @@ onMounted(() => {
                 {{ pct }} %
               </option>
             </UiSelect>
-            <UiInput
+            <UiInput money
               :model-value="reductionFcfaInput"
               :label="uiText('Réduction (FCFA)')"
               type="number"

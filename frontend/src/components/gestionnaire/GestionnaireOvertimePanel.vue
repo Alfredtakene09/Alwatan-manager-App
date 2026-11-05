@@ -242,7 +242,7 @@ onMounted(reload)
             </td>
             <td>{{ row.hoursWorked }} h</td>
             <td>
-              <UiInput
+              <UiInput money
                 v-if="row.status === 'PENDING'"
                 v-model="rateDraft[row.id]"
                 label="Taux horaire"

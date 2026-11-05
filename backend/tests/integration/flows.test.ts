@@ -28,6 +28,7 @@ const api = {
   recep: new ApiClient("réception"),
   compta: new ApiClient("comptable"),
   pharma: new ApiClient("pharmacien"),
+  doctor: new ApiClient("médecin"),
 };
 
 const today = todayIso();
@@ -44,6 +45,7 @@ before(async () => {
   await api.recep.login("recep_test", TEST_PASSWORD);
   await api.compta.login("compta_test", TEST_PASSWORD);
   await api.pharma.login("pharma_test", TEST_PASSWORD);
+  await api.doctor.login("dr_gyn", TEST_PASSWORD);
 });
 
 after(async () => {
@@ -217,6 +219,81 @@ describe("Examens — réduction personnel à l'encaissement", () => {
     });
     assert.equal(invoice?.amountFcfa, FEES.examPrice * 0.7);
   });
+});
+
+describe("Patient externe — modification des examens et prix", () => {
+  const A = "Examen modif A";
+  const B = "Examen modif B";
+  let count = 0;
+
+  before(async () => {
+    await db.examCatalogItem.create({ data: { kind: "EXAMEN", code: "MOD-A", label: A, priceFcfa: 8_000 } });
+    // B désactivé (ex. formulaire de résultats incomplet) : il garde son tarif, pas le repli à 3 000.
+    await db.examCatalogItem.create({ data: { kind: "EXAMEN", code: "MOD-B", label: B, priceFcfa: 2_000, active: false } });
+  });
+
+  async function externalOrder(defer: boolean) {
+    count += 1;
+    const firstName = `Modif${count}`;
+    const phone = `6700000${count}`;
+    const res = await api.gest.post("/visits/external-lab-order", {
+      ...patient(firstName, { phone }),
+      doctorId: fx.users.drGyn.id,
+      examsByKind: { examen: [A] },
+      ...(defer ? { deferCollection: true } : {}),
+    });
+    assert.ok(res.status < 300, JSON.stringify(res.data));
+    const consultation = await db.consultation.findFirstOrThrow({ where: { visit: { patient: { firstName } } } });
+    return { firstName, phone, consultationId: consultation.id, visitId: consultation.visitId };
+  }
+
+  const paidTotal = async (visitId: string) =>
+    (await db.invoice.findMany({ where: { visitId, status: { not: "CANCELLED" } } }))
+      .reduce((sum, invoice) => sum + invoice.paidAmountFcfa, 0);
+
+  const cases = [
+    { name: "gestionnaire ajoute un examen (payé)", defer: false, by: "gest", exams: [A, B], paidAfterEdit: 10_000, total: 10_000 },
+    { name: "gestionnaire remplace l'examen (payé)", defer: false, by: "gest", exams: [B], paidAfterEdit: 2_000, total: 2_000 },
+    { name: "médecin ajoute un examen (payé)", defer: false, by: "doctor", exams: [A, B], paidAfterEdit: 8_000, total: 10_000 },
+    { name: "médecin remplace l'examen (payé)", defer: false, by: "doctor", exams: [B], paidAfterEdit: 0, total: 2_000 },
+    { name: "gestionnaire ajoute un examen (non encaissé)", defer: true, by: "gest", exams: [A, B], paidAfterEdit: 0, total: 10_000 },
+    { name: "gestionnaire remplace l'examen (non encaissé)", defer: true, by: "gest", exams: [B], paidAfterEdit: 0, total: 2_000 },
+    { name: "médecin ajoute un examen (non encaissé)", defer: true, by: "doctor", exams: [A, B], paidAfterEdit: 0, total: 10_000 },
+    { name: "médecin remplace l'examen (non encaissé)", defer: true, by: "doctor", exams: [B], paidAfterEdit: 0, total: 2_000 },
+  ] as const;
+
+  for (const c of cases) {
+    it(`${c.name} : montant à jour, ni oublié ni encaissé deux fois`, async () => {
+      const order = await externalOrder(c.defer);
+      assert.equal(await paidTotal(order.visitId), c.defer ? 0 : 8_000);
+
+      const edit =
+        c.by === "gest"
+          ? await api.gest.patch(`/visits/external-queue/${order.consultationId}`, {
+              ...patient(order.firstName, { phone: order.phone }),
+              doctorId: fx.users.drGyn.id,
+              examsByKind: { examen: [...c.exams] },
+            })
+          : await api.doctor.post("/consultations/prescribe-exams", {
+              visitId: order.visitId,
+              examsByKind: { examen: [...c.exams] },
+            });
+      assert.ok(edit.status < 300, JSON.stringify(edit.data));
+      assert.equal(await paidTotal(order.visitId), c.paidAfterEdit, "encaissé juste après la modification");
+
+      const list = await api.gest.get("/visits/external-queue");
+      const row = (list.data as any[]).find((item) => item.id === order.consultationId);
+      assert.equal(row?.netFcfa, c.total, "total affiché dans la liste des patients externes");
+
+      const pay = await api.compta.post("/comptabilite", {
+        action: "pay_lab_exams",
+        consultationId: order.consultationId,
+        kinds: ["examen"],
+      });
+      assert.equal(pay.status, c.paidAfterEdit < c.total ? 200 : 409, JSON.stringify(pay.data));
+      assert.equal(await paidTotal(order.visitId), c.total, "total encaissé au final");
+    });
+  }
 });
 
 describe("Dépenses et cartes du tableau de bord", () => {

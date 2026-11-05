@@ -170,7 +170,7 @@ function submit() {
       </UiSelect>
 
       <div class="gestionnaire-form-grid">
-        <UiInput
+        <UiInput money
           v-model="form.amountFcfa"
           label="Montant total (FCFA)"
           type="number"
@@ -208,7 +208,7 @@ function submit() {
       </div>
 
       <div v-if="form.installmentMode === 'installment'" class="installment-fields">
-        <UiInput
+        <UiInput money
           v-model="form.installmentFcfa"
           label="Tranche à chaque paie (FCFA)"
           type="number"

@@ -245,7 +245,7 @@ function submit() {
           class="expense-form__full"
         />
 
-        <UiInput
+        <UiInput money
           v-model="form.amountFcfa"
           label="Montant (FCFA)"
           type="number"

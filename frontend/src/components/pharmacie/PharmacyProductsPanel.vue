@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import MoneyInput from '@/components/ui/MoneyInput.vue'
+import { currencyUnit } from '@/lib/format-fcfa'
 import axios from 'axios'
 import { ChevronDown, ChevronRight, FileText, Package, Save } from '@lucide/vue'
 import api from '@/api/client'
@@ -1057,15 +1059,14 @@ defineExpose({
             {{ uiText("Prix d'achat (par boîte)") }} <span v-if="!isEditing" class="req">*</span>
           </span>
           <div class="amount-field__wrap">
-            <input
+            <MoneyInput
               v-model="formPurchasePrice"
               class="amount-field__input"
-              type="number"
               min="1"
               :required="!isEditing"
               placeholder="0"
             />
-            <span class="amount-field__suffix">FCFA</span>
+            <span class="amount-field__suffix">{{ currencyUnit() }}</span>
           </div>
         </div>
         <div class="expiry-field">
@@ -1094,15 +1095,14 @@ defineExpose({
         <div class="amount-field">
           <span class="amount-field__label">{{ uiText('Prix de vente') }} <span class="req">*</span></span>
           <div class="amount-field__wrap">
-            <input
+            <MoneyInput
               v-model="formUnitPrice"
               class="amount-field__input"
-              type="number"
               min="1"
               step="1"
               placeholder="0"
             />
-            <span class="amount-field__suffix">FCFA</span>
+            <span class="amount-field__suffix">{{ currencyUnit() }}</span>
           </div>
         </div>
         <UiInput v-model="formMinStock" label="Seuil d'alerte" type="number" min="0" />
@@ -1118,14 +1118,13 @@ defineExpose({
         <div class="amount-field">
           <span class="amount-field__label">{{ uiText('Prix au détail') }}</span>
           <div class="amount-field__wrap">
-            <input
+            <MoneyInput
               v-model="formSachetPrice"
               class="amount-field__input"
-              type="number"
               min="1"
               placeholder="0"
             />
-            <span class="amount-field__suffix">FCFA</span>
+            <span class="amount-field__suffix">{{ currencyUnit() }}</span>
           </div>
         </div>
         <label class="checkbox-field checkbox-field--detail">

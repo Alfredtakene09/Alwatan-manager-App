@@ -21,7 +21,7 @@ import {
 import api from '@/api/client'
 import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
 import { useAuthStore } from '@/stores/auth'
-import { fullName, canWriteDossierDocuments, isDirectionOrGestionnaire } from '@/lib/roles'
+import { fullName, canWriteDossierDocuments, formatFcfa, isDirectionOrGestionnaire } from '@/lib/roles'
 import { matchesPatientSearch } from '@/lib/patient-search'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
 import {
@@ -415,8 +415,8 @@ async function startReconsult() {
     }>(`/patient-dossiers/${selectedPatientId.value}/reconsult`)
     if (data.requiresPayment && data.amountFcfa) {
       dossierError.value = translateTemplate(
-        'Reconsultation ouverte — paiement de {amount} FCFA à régulariser à la réception.',
-        { amount: data.amountFcfa.toLocaleString('fr-FR') },
+        'Reconsultation ouverte — paiement de {amount} à régulariser à la réception.',
+        { amount: formatFcfa(data.amountFcfa) },
       )
     }
     await router.push({ name: 'consultation', query: { visit: data.visitId } })

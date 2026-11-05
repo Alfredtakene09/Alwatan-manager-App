@@ -817,7 +817,7 @@ onMounted(async () => {
             :label="uiText('Catégorie (optionnel)')"
             :placeholder="uiText(formPlaceholders.category)"
           />
-          <UiInput
+          <UiInput money
             v-model="newItem.priceFcfa"
             :label="uiText('Tarif (FCFA)')"
             type="number"
@@ -874,7 +874,7 @@ onMounted(async () => {
           <UiInput v-model="editForm.code" :label="uiText('Code (optionnel)')" />
           <UiInput v-model="editForm.label" :label="uiText('Libellé')" />
           <UiInput v-model="editForm.category" :label="uiText('Catégorie (optionnel)')" />
-          <UiInput
+          <UiInput money
             v-model="editForm.priceFcfa"
             :label="uiText('Tarif (FCFA)')"
             type="number"

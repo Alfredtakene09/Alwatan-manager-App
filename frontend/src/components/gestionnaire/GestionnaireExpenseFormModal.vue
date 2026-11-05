@@ -204,7 +204,7 @@ function submit() {
           type="date"
           required
         />
-        <UiInput
+        <UiInput money
           v-model="form.amountFcfa"
           label="Montant (FCFA)"
           type="number"

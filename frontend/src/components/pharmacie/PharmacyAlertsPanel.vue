@@ -623,7 +623,7 @@ defineExpose({ reload: () => loadAlerts() })
         </UiSelect>
         <div class="stock-form-grid">
           <UiInput v-model="stockQuantity" label="Quantité reçue" type="number" min="1" required />
-          <UiInput v-model="stockUnitCost" label="Coût unitaire (FCFA)" type="number" min="1" />
+          <UiInput money v-model="stockUnitCost" label="Coût unitaire (FCFA)" type="number" min="1" />
         </div>
         <UiInput v-model="stockReference" label="N° bon / facture fournisseur" placeholder="Référence document…" />
       </template>

@@ -738,7 +738,7 @@ onMounted(async () => {
           required
           class="expense-form__full"
         />
-        <UiInput
+        <UiInput money
           v-model="form.amountFcfa"
           :label="uiText('Montant (FCFA)')"
           type="number"
