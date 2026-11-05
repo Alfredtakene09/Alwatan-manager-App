@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
-import { Package, Save } from '@lucide/vue'
+import { ChevronDown, ChevronRight, FileText, Package, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { canAccessModule, formatFcfa } from '@/lib/roles'
 import { defaultExpiryDateInput, frDisplayToIsoDate, isoDateToFrDisplay, maskFrDateInput, PHARMACEUTICAL_FORMS } from '@/lib/pharmacy-product-forms'
@@ -47,6 +47,25 @@ export type PharmacyProductRecord = {
   active: boolean
 }
 
+/** Facture fournisseur enregistrée et les produits qu'elle a fait entrer en stock. */
+export type PharmacyPurchaseInvoice = {
+  id: string
+  businessDate: string
+  invoiceNumber: string
+  supplierName: string
+  recordedByName: string
+  amountFcfa: number
+  productsCount: number
+  unitsCount: number
+  lines: Array<{
+    productId: string
+    productName: string
+    quantity: number
+    unitCostFcfa: number
+    totalFcfa: number
+  }>
+}
+
 const emit = defineEmits<{ changed: [] }>()
 
 const { uiText, localeCode } = useAppI18n()
@@ -88,6 +107,10 @@ const formSellBySachet = ref(false)
 const filterQuery = ref('')
 const filterForm = ref('')
 const filterCategoryId = ref('')
+
+const viewMode = ref<'products' | 'invoices'>('products')
+const purchaseInvoices = ref<PharmacyPurchaseInvoice[]>([])
+const openInvoiceIds = ref<Set<string>>(new Set())
 
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 const isEditing = computed(() => editingId.value !== null)
@@ -228,6 +251,55 @@ const priceTotals = computed(() => {
   purchase = Math.round(purchase)
   return { purchase, sale, profit: sale - purchase, missingPurchaseCount }
 })
+
+/** Factures dont le n°, le fournisseur ou un produit correspond à la recherche. */
+const filteredInvoices = computed(() => {
+  const q = foldCatalogText(filterQuery.value)
+  if (!q) return purchaseInvoices.value
+  return purchaseInvoices.value.filter((invoice) =>
+    foldCatalogText(
+      [invoice.invoiceNumber, invoice.supplierName, ...invoice.lines.map((line) => line.productName)].join(' '),
+    ).includes(q),
+  )
+})
+
+function invoiceProductRows(invoice: PharmacyPurchaseInvoice) {
+  void localeCode.value
+  return invoice.lines.map((line, index) => {
+    const item = itemsById.value.get(line.productId)
+    return {
+      key: `${invoice.id}-${index}`,
+      line,
+      row: item ? toProductExportRow(item) : null,
+    }
+  })
+}
+
+function toggleInvoice(id: string) {
+  const next = new Set(openInvoiceIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  openInvoiceIds.value = next
+}
+
+function toggleInvoicesView() {
+  viewMode.value = viewMode.value === 'invoices' ? 'products' : 'invoices'
+  if (viewMode.value === 'invoices') void loadPurchaseInvoices()
+}
+
+function formatInvoiceDate(iso: string) {
+  const [year, month, day] = iso.split('-')
+  return year && month && day ? `${day}/${month}/${year}` : iso
+}
+
+async function loadPurchaseInvoices() {
+  try {
+    const { data } = await api.get<{ invoices: PharmacyPurchaseInvoice[] }>('/pharmacie/purchases')
+    purchaseInvoices.value = data.invoices
+  } catch {
+    purchaseInvoices.value = []
+  }
+}
 
 const exportDisabled = computed(() => loading.value || !catalogExportRows.value.length)
 
@@ -602,7 +674,7 @@ function onTableAction({ action, id }: { action: string; id: string }) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadItems(), loadSuppliers()])
+  await Promise.all([loadItems(), loadSuppliers(), loadPurchaseInvoices()])
 })
 
 type ProductExportRow = ReturnType<typeof toProductExportRow>
@@ -681,7 +753,7 @@ async function openPurchaseModal() {
 }
 
 async function onPurchaseSaved() {
-  await loadItems()
+  await Promise.all([loadItems(), loadPurchaseInvoices()])
   emit('changed')
 }
 
@@ -738,21 +810,129 @@ defineExpose({
             <span class="products-total__label">{{ uiText('Bénéfice potentiel') }}</span>
             <strong class="products-total__value">{{ formatFcfa(priceTotals.profit) }}</strong>
           </div>
-          <div
-            v-if="priceTotals.missingPurchaseCount"
-            class="products-total products-total--missing"
-            :title="uiText('Ces produits ne sont pas comptés dans les totaux achat, vente et bénéfice.')"
+          <button
+            type="button"
+            class="products-total products-total--invoices"
+            :class="{ 'products-total--active': viewMode === 'invoices' }"
+            :aria-pressed="viewMode === 'invoices'"
+            :title="viewMode === 'invoices' ? uiText('Revenir à la liste des produits') : uiText('Voir les factures enregistrées et leurs produits')"
+            @click="toggleInvoicesView"
           >
-            <span class="products-total__label">{{ uiText('Sans prix d’achat') }}</span>
-            <strong class="products-total__value">{{ priceTotals.missingPurchaseCount }}</strong>
-          </div>
+            <span class="products-total__label">
+              <FileText :size="11" aria-hidden="true" />
+              {{ uiText('Factures') }}
+            </span>
+            <strong class="products-total__value">{{ purchaseInvoices.length }}</strong>
+          </button>
         </div>
       </div>
     </template>
 
     <UiAlert v-if="message && !modalOpen" :type="messageType" :message="message" class="panel-alert" />
 
-    <p v-if="!loading && !items.length" class="empty">{{ uiText('Aucun produit enregistré') }}</p>
+    <template v-if="viewMode === 'invoices'">
+      <p v-if="!purchaseInvoices.length" class="empty">{{ uiText('Aucune facture enregistrée') }}</p>
+      <p v-else-if="!filteredInvoices.length" class="empty">{{ uiText('Aucune facture ne correspond à la recherche.') }}</p>
+      <div v-else class="simple-table-shell simple-table-shell--fill">
+        <div class="simple-table-scroll">
+          <div class="simple-table-wrap">
+            <table class="simple-table invoices-table">
+              <thead>
+                <tr>
+                  <th class="simple-table__num">#</th>
+                  <th>{{ uiText("Date d'enregistrement") }}</th>
+                  <th>{{ uiText('Enregistrée par') }}</th>
+                  <th>{{ uiText('N° facture') }}</th>
+                  <th>{{ uiText('Fournisseur') }}</th>
+                  <th>{{ uiText('Produits') }}</th>
+                  <th>{{ uiText('Montant') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template v-for="(invoice, index) in filteredInvoices" :key="invoice.id">
+                  <tr
+                    class="invoice-row"
+                    :class="{ 'invoice-row--open': openInvoiceIds.has(invoice.id) }"
+                    tabindex="0"
+                    :aria-expanded="openInvoiceIds.has(invoice.id)"
+                    @click="toggleInvoice(invoice.id)"
+                    @keydown.enter.prevent="toggleInvoice(invoice.id)"
+                    @keydown.space.prevent="toggleInvoice(invoice.id)"
+                  >
+                    <td class="simple-table__num">{{ index + 1 }}</td>
+                    <td>
+                      <span class="invoice-row__toggle">
+                        <ChevronDown v-if="openInvoiceIds.has(invoice.id)" :size="14" aria-hidden="true" />
+                        <ChevronRight v-else :size="14" aria-hidden="true" />
+                        {{ formatInvoiceDate(invoice.businessDate) }}
+                      </span>
+                    </td>
+                    <td>{{ invoice.recordedByName }}</td>
+                    <td><span class="st-name">{{ invoice.invoiceNumber }}</span></td>
+                    <td>{{ invoice.supplierName }}</td>
+                    <td>{{ invoice.productsCount }}</td>
+                    <td><span class="st-amount">{{ formatFcfa(invoice.amountFcfa) }}</span></td>
+                  </tr>
+                  <tr v-if="openInvoiceIds.has(invoice.id)" class="invoice-products">
+                    <td :colspan="7">
+                      <table class="simple-table invoice-products__table">
+                        <thead>
+                          <tr>
+                            <th>{{ uiText('Médicament') }}</th>
+                            <th>{{ uiText('Qté facturée') }}</th>
+                            <th>{{ uiText('Prix facture') }}</th>
+                            <th>{{ uiText('Prix vente boîte') }}</th>
+                            <th>{{ uiText('Bénéfice (boîte / sachet)') }}</th>
+                            <th>{{ uiText('Disponible') }}</th>
+                            <th>{{ uiText('Statut') }}</th>
+                            <th v-if="canManageCatalog" class="simple-table__actions-head">{{ uiText('Actions') }}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="product in invoiceProductRows(invoice)" :key="product.key">
+                            <td><span class="st-name">{{ product.row?.name ?? product.line.productName }}</span></td>
+                            <td>{{ product.line.quantity }}</td>
+                            <td><span class="st-amount">{{ formatFcfa(product.line.unitCostFcfa) }}</span></td>
+                            <template v-if="product.row">
+                              <td><span class="st-amount">{{ product.row.price }}</span></td>
+                              <td>
+                                <span class="st-amount">{{ product.row.profit }}</span>
+                                <small class="st-profit-detail">{{ product.row.detailProfitLabel || '—' }}</small>
+                              </td>
+                              <td>
+                                <span class="st-badge" :class="`st-badge--${product.row.stockVariant}`">{{ product.row.stockLabel }}</span>
+                              </td>
+                              <td>
+                                <span class="st-badge" :class="`st-badge--${product.row.statusVariant}`">{{ product.row.statusLabel }}</span>
+                              </td>
+                              <td v-if="canManageCatalog" class="simple-table__actions">
+                                <StCatalogActions
+                                  :id="product.row.id"
+                                  :toggle-label="product.row.toggleLabel"
+                                  :is-active="product.row.isActive"
+                                  :can-delete="product.row.canDelete"
+                                  :show-edit="product.row.showEdit"
+                                  :show-toggle="product.row.showToggle"
+                                  @action="onTableAction"
+                                />
+                              </td>
+                            </template>
+                            <td v-else :colspan="canManageCatalog ? 5 : 4" class="invoice-products__gone">
+                              {{ uiText('Produit retiré du catalogue') }}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </template>
+    <p v-else-if="!loading && !items.length" class="empty">{{ uiText('Aucun produit enregistré') }}</p>
     <p v-else-if="!loading && !tableRows.length" class="empty">{{ uiText('Aucun produit ne correspond à la recherche.') }}</p>
     <div v-else class="simple-table-shell" :class="{ 'simple-table-shell--fill': true }">
       <div v-if="loading" class="simple-table-overlay" role="status" aria-live="polite">
@@ -1073,10 +1253,78 @@ defineExpose({
   color: #be123c;
 }
 
-.products-total--missing {
-  border-color: #fcd34d;
-  background: #fffbeb;
-  color: #92400e;
+.products-total--invoices {
+  min-width: 5.5rem;
+  border-color: #c4b5fd;
+  background: #f5f3ff;
+  color: #5b21b6;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.products-total--invoices .products-total__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: inherit;
+}
+
+.products-total--invoices:hover,
+.products-total--invoices:focus-visible {
+  background: #ede9fe;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.18);
+}
+
+.products-total--active {
+  background: #7c3aed;
+  border-color: #7c3aed;
+  color: #fff;
+}
+
+.products-total--active:hover,
+.products-total--active:focus-visible {
+  background: #6d28d9;
+}
+
+.invoice-row {
+  cursor: pointer;
+}
+
+.invoice-row:hover,
+.invoice-row--open {
+  background: #f5f3ff;
+}
+
+.invoice-row:focus-visible {
+  outline: 2px solid #7c3aed;
+  outline-offset: -2px;
+}
+
+.invoice-row__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
+.invoice-products > td {
+  padding: 0.25rem 0.5rem 0.75rem 2rem;
+  background: #faf9ff;
+}
+
+.invoice-products__table {
+  width: 100%;
+  border: 1px solid #e9e5fb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.invoice-products__gone {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 .filter-input,

@@ -736,6 +736,7 @@ const stats = computed(() => {
     billedFcfa: rows.reduce((sum, row) => sum + row.billedFcfa, 0),
     paidCount: rows.filter((row) => row.paymentState === 'paid').length,
     paidFcfa: rows.reduce((sum, row) => sum + row.paidFcfa, 0),
+    clinicShareFcfa: rows.reduce((sum, row) => sum + row.clinicShareFcfa, 0),
     unpaidCount: rows.filter((row) => row.paymentState !== 'paid').length,
     remainingFcfa: rows.reduce((sum, row) => sum + row.remainingFcfa, 0),
   }
@@ -1388,6 +1389,8 @@ type DoctorRecapRow = {
   paidFcfa: number
   remainingFcfa: number
   shareFcfa: number
+  /** Part clinique des opérations, portée par le chirurgien de la ligne. */
+  clinicShareFcfa: number
 }
 
 function doctorRecapRows(rows: OperationRow[]): DoctorRecapRow[] {
@@ -1400,6 +1403,7 @@ function doctorRecapRows(rows: OperationRow[]): DoctorRecapRow[] {
       paidFcfa: 0,
       remainingFcfa: 0,
       shareFcfa: 0,
+      clinicShareFcfa: 0,
     }
     map.set(key, current)
     return current
@@ -1411,6 +1415,7 @@ function doctorRecapRows(rows: OperationRow[]): DoctorRecapRow[] {
     surgeon.paidFcfa += row.paidFcfa
     surgeon.remainingFcfa += row.remainingFcfa
     surgeon.shareFcfa += row.surgeonShareFcfa
+    surgeon.clinicShareFcfa += row.clinicShareFcfa
     if (row.assistantShareFcfa <= 0) continue
     const assistant = ensure(
       `assistant:${row.assistantId || row.assistantName}`,
@@ -1521,13 +1526,14 @@ function doctorRecapSection(rows: OperationRow[]): ExportSection<DoctorRecapRow>
     { header: uiText('Encaissé'), value: (row) => formatFcfa(row.paidFcfa) },
     { header: uiText('Reste'), value: (row) => formatFcfa(row.remainingFcfa) },
     { header: uiText('Part médecin'), value: (row) => formatFcfa(row.shareFcfa) },
+    { header: uiText('Part clinique'), value: (row) => formatFcfa(row.clinicShareFcfa) },
   ]
   return {
     title: uiText('Récapitulatif par médecin'),
     columns,
     rows: recap,
     ownPage: true,
-    columnWidths: [12, 74, 26, 38, 38, 36, 38],
+    columnWidths: [10, 62, 22, 34, 34, 30, 34, 34],
     footRow: [
       uiText('Total'),
       String(recap.reduce((sum, row) => sum + row.count, 0)),
@@ -1535,6 +1541,7 @@ function doctorRecapSection(rows: OperationRow[]): ExportSection<DoctorRecapRow>
       formatFcfa(recap.reduce((sum, row) => sum + row.paidFcfa, 0)),
       formatFcfa(recap.reduce((sum, row) => sum + row.remainingFcfa, 0)),
       formatFcfa(recap.reduce((sum, row) => sum + row.shareFcfa, 0)),
+      formatFcfa(recap.reduce((sum, row) => sum + row.clinicShareFcfa, 0)),
     ],
   }
 }
@@ -1613,8 +1620,8 @@ onMounted(load)
         />
         <UiStatCard
           mini
-          :label="translateTemplate('Payées ({n})', { n: stats.paidCount })"
-          :value="formatFcfa(stats.paidFcfa)"
+          label="Part clinique"
+          :value="formatFcfa(stats.clinicShareFcfa)"
           :icon="CheckCircle2"
           variant="green"
         />

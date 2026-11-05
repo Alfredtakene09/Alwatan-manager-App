@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { Wallet, Save } from '@lucide/vue'
 import { formatFcfa } from '@/lib/roles'
 import type { ExpenseIndiceOption } from '@/lib/expense-indices'
-import { categoryCodeFromIndiceName, EXPENSE_CATEGORY_CODE_LABELS } from '@/lib/expense-indices'
+import { categoryCodeFromIndiceName } from '@/lib/expense-indices'
 import type { AdminExpenseCategory } from '@/lib/admin-dashboard'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -33,6 +33,7 @@ export type AdminExpenseEdit = {
   amountFcfa: number
   categoryCode?: AdminExpenseCategory
   flow?: 'SORTIE' | 'ENTREE'
+  indiceId?: string | null
   comment?: string | null
   status: ClinicExpenseStatus
   rejectionReason?: string | null
@@ -70,7 +71,6 @@ function createEmptyForm() {
     indiceId: '',
     label: '',
     amountFcfa: '',
-    comment: '',
   }
 }
 
@@ -91,22 +91,14 @@ const selectedIndice = computed(() =>
   indicesForFlow.value.find((item) => item.id === form.value.indiceId) ?? null,
 )
 
-const indicatedCodeLabel = computed(() => {
-  if (!selectedIndice.value) return null
-  const code = categoryCodeFromIndiceName(selectedIndice.value.name)
-  return EXPENSE_CATEGORY_CODE_LABELS[code]
-})
 
 function applySelectedIndice(previousIndiceId?: string) {
-  if (!form.value.indiceId || props.editing?.id) return
+  if (!form.value.indiceId) return
   const selected = selectedIndice.value
   if (!selected) return
   const previousLabel = props.indices.find((item) => item.id === previousIndiceId)?.name
   if (!form.value.label.trim() || form.value.label.trim() === previousLabel) {
     form.value.label = selected.name
-  }
-  if (!form.value.comment.trim()) {
-    form.value.comment = selected.description ?? ''
   }
 }
 
@@ -125,19 +117,18 @@ watch(
     form.value = {
       businessDate: (editing.businessDate ?? '').slice(0, 10) || todayIso(),
       flow: editing.flow === 'ENTREE' ? 'ENTREE' : 'SORTIE',
-      indiceId: '',
+      indiceId: editing.indiceId ?? '',
       label: editing.label,
       amountFcfa: String(editing.amountFcfa),
-      comment: editing.comment ?? '',
     }
   },
 )
 
 watch(() => form.value.flow, () => {
-  if (props.editing?.id) return
   if (!indicesForFlow.value.some((item) => item.id === form.value.indiceId)) {
     form.value.indiceId = ''
-    form.value.label = ''
+    // En modification, la description déjà saisie est conservée.
+    if (!props.editing?.id) form.value.label = ''
   }
 })
 
@@ -159,7 +150,7 @@ const isEditing = computed(() => Boolean(props.editing?.id))
 
 const canSubmit = computed(() => {
   const amount = Number(form.value.amountFcfa)
-  const hasIndice = isEditing.value || Boolean(form.value.indiceId)
+  const hasIndice = Boolean(form.value.indiceId)
   const hasLabel = form.value.label.trim().length >= 2
   return (
     hasIndice
@@ -190,7 +181,8 @@ function submit() {
     flow: entryFlow.value ? 'ENTREE' : 'SORTIE',
     indiceId: form.value.indiceId || undefined,
     status,
-    comment: form.value.comment.trim() || undefined,
+    // Le champ Commentaire n'est plus saisi : une modification garde le commentaire existant.
+    comment: props.editing?.comment?.trim() || undefined,
     rejectionReason:
       status === 'REJECTED' ? props.editing?.rejectionReason?.trim() || undefined : undefined,
   })
@@ -209,7 +201,7 @@ function submit() {
   >
     <section class="form-panel">
       <UiAlert
-        v-if="!isEditing && !indicesForFlow.length"
+        v-if="!indicesForFlow.length"
         type="warning"
         :message="entryFlow
           ? 'Aucun indice d\'entrée. Créez-en un dans l\'onglet Indices, avec le type Entrée.'
@@ -226,7 +218,6 @@ function submit() {
         />
 
         <UiSelect
-          v-if="!isEditing"
           v-model="form.flow"
           label="Type"
           required
@@ -236,7 +227,6 @@ function submit() {
         </UiSelect>
 
         <UiSelect
-          v-if="!isEditing"
           v-model="form.indiceId"
           label="Indice / motif"
           required
@@ -247,11 +237,12 @@ function submit() {
           </option>
         </UiSelect>
 
-        <UiInput
+        <UiTextarea
           v-model="form.label"
           label="Description"
           placeholder="Ex. Achat produits d'entretien"
           required
+          class="expense-form__full"
         />
 
         <UiInput
@@ -263,21 +254,11 @@ function submit() {
           required
         />
 
-        <UiTextarea
-          v-model="form.comment"
-          label="Commentaire (optionnel)"
-          placeholder="Justificatif, référence facture, détail complémentaire…"
-          class="expense-form__full"
-        />
 
         <div v-if="amountPreview" class="expense-preview expense-form__full">
-          <div v-if="selectedIndice && !isEditing" class="expense-preview__row">
+          <div v-if="selectedIndice" class="expense-preview__row">
             <span>Indice sélectionné</span>
             <strong>{{ selectedIndice.name }}</strong>
-          </div>
-          <div v-if="indicatedCodeLabel && !isEditing" class="expense-preview__row">
-            <span>Code</span>
-            <strong>{{ indicatedCodeLabel }}</strong>
           </div>
           <div class="expense-preview__row expense-preview__row--amount">
             <span>{{ entryFlow ? 'Montant ajouté au solde' : 'Montant saisi' }}</span>
@@ -289,7 +270,7 @@ function submit() {
 
     <template #footer>
       <UiButton
-        v-if="!isEditing && !indicesForFlow.length"
+        v-if="!indicesForFlow.length"
         variant="ghost"
         @click="emit('go-to-indices')"
       >

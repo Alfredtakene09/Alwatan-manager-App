@@ -36,6 +36,10 @@ function todayIso() {
   return `${now.getFullYear()}-${month}-${day}`
 }
 
+function monthStartIso() {
+  return `${todayIso().slice(0, 8)}01`
+}
+
 const router = useRouter()
 const auth = useAuthStore()
 const { uiText } = useAppI18n()
@@ -46,7 +50,7 @@ const canManageExpenses = computed(() =>
 
 const activeSection = ref<SectionId>('liste')
 const listFilter = ref<ListFilter>('all')
-const dateFrom = ref(todayIso())
+const dateFrom = ref(monthStartIso())
 const dateTo = ref(todayIso())
 const { activeIndices, loadIndices } = useExpenseIndices()
 
@@ -61,7 +65,6 @@ function normalizeText(value: string) {
 }
 
 const flowFilter = ref<'all' | 'ENTREE' | 'SORTIE'>('all')
-const dateFromInitialized = ref(false)
 
 const filteredRows = computed(() => {
   const query = normalizeText(search.value.trim())
@@ -74,8 +77,7 @@ const filteredRows = computed(() => {
     normalizeText(
       [
         row.description,
-        row.category,
-        row.comment ?? '',
+        row.indiceName ?? '',
         row.flow === 'ENTREE' ? 'entrée' : 'sortie',
         formatShortDate(row.date),
         String(row.amountFcfa),
@@ -142,11 +144,6 @@ async function loadRows() {
           : { from: dateFrom.value, to: dateTo.value }
     const { data } = await api.get<AdminExpenseRow[]>('/admin/expenses', { params })
     rows.value = data
-    if (!dateFromInitialized.value && listFilter.value === 'all') {
-      dateFromInitialized.value = true
-      const first = data.map((row) => row.date.slice(0, 10)).sort()[0]
-      if (first) dateFrom.value = first
-    }
   } finally {
     loading.value = false
   }
@@ -161,7 +158,7 @@ function setListFilter(next: ListFilter) {
 }
 
 function onDateRangeChange() {
-  if (!dateFrom.value) dateFrom.value = todayIso()
+  if (!dateFrom.value) dateFrom.value = monthStartIso()
   if (!dateTo.value) dateTo.value = todayIso()
   if (dateFrom.value > dateTo.value) {
     dateTo.value = dateFrom.value
@@ -189,6 +186,7 @@ function openEditExpense(row: AdminExpenseRow) {
     amountFcfa: row.amountFcfa,
     categoryCode: row.categoryCode,
     flow: row.flow,
+    indiceId: row.indiceId ?? '',
     status: row.status,
     comment: row.comment ?? '',
     rejectionReason: row.rejectionReason ?? '',
@@ -268,33 +266,43 @@ const expenseExportColumns: ExportColumn<AdminExpenseRow>[] = [
   { header: 'Type', value: (row) => (row.flow === 'ENTREE' ? 'Entrée' : 'Sortie') },
   { header: 'Description', value: (row) => row.description },
   { header: 'Montant', value: (row) => formatFcfa(row.amountFcfa), widthWeight: 1.4 },
-  { header: 'Commentaire', value: (row) => row.comment?.trim() || '—' },
 ]
+
+/** Le titre de l'export suit le filtre Type (entrées seules, sorties seules ou les deux). */
+const expenseExportTitle = computed(() => {
+  if (flowFilter.value === 'ENTREE') return uiText('Entrées')
+  if (flowFilter.value === 'SORTIE') return uiText('Dépenses')
+  return uiText('Entrées et dépenses')
+})
 
 function expenseExportShared() {
   return {
     orientation: 'landscape' as const,
     captionRows: [
       { label: 'Période', value: expensePeriodLabel.value },
-      { label: 'Total des entrées', value: formatFcfa(flowTotals.value.entreeFcfa) },
-      { label: 'Total des sorties', value: formatFcfa(flowTotals.value.sortieFcfa) },
+      ...(flowFilter.value !== 'SORTIE'
+        ? [{ label: 'Total des entrées', value: formatFcfa(flowTotals.value.entreeFcfa) }]
+        : []),
+      ...(flowFilter.value !== 'ENTREE'
+        ? [{ label: 'Total des sorties', value: formatFcfa(flowTotals.value.sortieFcfa) }]
+        : []),
     ],
   }
 }
 
 function exportExpensesPdf() {
-  exportTablePdf(uiText('Dépenses'), expenseExportColumns, filteredRows.value, {
+  exportTablePdf(expenseExportTitle.value, expenseExportColumns, filteredRows.value, {
     ...expenseExportShared(),
     orientation: 'portrait',
   })
 }
 
 function exportExpensesExcel() {
-  exportTableExcel(uiText('Dépenses'), expenseExportColumns, filteredRows.value, expenseExportShared())
+  exportTableExcel(expenseExportTitle.value, expenseExportColumns, filteredRows.value, expenseExportShared())
 }
 
 function exportExpensesWord() {
-  void exportTableWord(uiText('Dépenses'), expenseExportColumns, filteredRows.value, expenseExportShared())
+  void exportTableWord(expenseExportTitle.value, expenseExportColumns, filteredRows.value, expenseExportShared())
 }
 
 function goBack() {
@@ -461,7 +469,7 @@ onMounted(() => {
           <thead>
             <tr>
               <th>{{ uiText('Date') }}</th>
-              <th>{{ uiText('Catégorie') }}</th>
+              <th>{{ uiText('Indice') }}</th>
               <th>{{ uiText('Type') }}</th>
               <th>{{ uiText('Description') }}</th>
               <th>{{ uiText('Montant') }}</th>
@@ -471,7 +479,7 @@ onMounted(() => {
           <tbody>
             <tr v-for="row in filteredRows" :key="row.id">
               <td>{{ formatShortDate(row.date) }}</td>
-              <td>{{ row.category }}</td>
+              <td>{{ row.indiceName || '—' }}</td>
               <td :class="row.flow === 'ENTREE' ? 'flow-in' : 'flow-out'">
                 {{ row.flow === 'ENTREE' ? uiText('Entrée') : uiText('Sortie') }}
               </td>

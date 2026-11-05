@@ -21,7 +21,6 @@ import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import DashboardBarChart, { type BarChartDay } from '@/components/dashboard/DashboardBarChart.vue'
-import DashboardPendingBars from '@/components/dashboard/DashboardPendingBars.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 
@@ -134,25 +133,49 @@ const salesChart = computed((): BarChartDay[] => {
   })
 })
 
-const topProductBars = computed(() => {
-  if (!report.value) return []
-  return report.value.topProducts.map((row) => ({
-    label: row.name,
-    count: row.revenueFcfa,
-    amount: row.revenueFcfa,
-    color: '#0d9488',
-  }))
-})
+type RankRow = { key: string; label: string; quantity: number | null; amountFcfa: number; widthPercent: number }
 
-const categoryBars = computed(() => {
-  if (!report.value) return []
-  return report.value.salesByCategory.map((row) => ({
-    label: row.name,
-    count: row.revenueFcfa,
-    amount: row.revenueFcfa,
-    color: '#7c3aed',
-  }))
-})
+/** Barres horizontales : libellé lisible, quantité vendue et montant, largeur relative au plus grand. */
+function rankRows(rows: Array<{ key: string; label: string; quantity: number | null; amountFcfa: number }>): RankRow[] {
+  const max = Math.max(1, ...rows.map((row) => row.amountFcfa))
+  return rows.map((row) => ({ ...row, widthPercent: Math.max(1, (row.amountFcfa / max) * 100) }))
+}
+
+const topProductBars = computed(() =>
+  rankRows(
+    (report.value?.topProducts ?? []).map((row, index) => ({
+      key: `${index}-${row.name}`,
+      label: row.name,
+      quantity: row.quantity,
+      amountFcfa: row.revenueFcfa,
+    })),
+  ),
+)
+
+const categoryBars = computed(() =>
+  rankRows(
+    (report.value?.salesByCategory ?? []).map((row, index) => ({
+      key: `${index}-${row.name}`,
+      label: row.name,
+      quantity: row.quantity,
+      amountFcfa: row.revenueFcfa,
+    })),
+  ),
+)
+
+/** Au-delà de 10 jours, le CA par jour s'affiche en lignes : date en gras devant le montant. */
+const dailyAsList = computed(() => salesChart.value.length > 10)
+
+const dailyRows = computed(() =>
+  rankRows(
+    salesChart.value.map((day) => ({
+      key: day.date,
+      label: formatPeriodDate(day.date),
+      quantity: null,
+      amountFcfa: day.total,
+    })),
+  ),
+)
 
 async function loadReport() {
   if (!customRangeValid.value) {
@@ -244,7 +267,7 @@ const kpiRows = computed(() => {
           value: formatFcfa(report.value.profitPeriod.profitFcfa),
         }]
       : []),
-    { label: uiText('Ventes (net encaissé)'), value: formatFcfa(rev.netRevenueFcfa) },
+    { label: uiText('Ventes net'), value: formatFcfa(rev.netSalesFcfa) },
     { label: uiText('Retours'), value: formatFcfa(rev.returnsNetFcfa) },
     { label: uiText('CA net'), value: formatFcfa(rev.netRevenueFcfa) },
     { label: uiText('Nombre de ventes'), value: rev.prescriptionsCount },
@@ -398,7 +421,7 @@ onMounted(() => {
       <div v-if="revenueReport" class="report-kpis">
         <div class="kpi">
           <span>{{ uiText('Ventes net') }}</span>
-          <strong>{{ formatFcfa(revenueReport.netRevenueFcfa) }}</strong>
+          <strong>{{ formatFcfa(revenueReport.netSalesFcfa) }}</strong>
         </div>
         <div class="kpi">
           <span>{{ uiText('Retours') }}</span>
@@ -429,11 +452,25 @@ onMounted(() => {
           </small>
         </div>
       </div>
+
+      <div class="report-exports">
+        <ExportButtons :disabled="loading || !report" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
+      </div>
     </UiCard>
 
     <div class="charts-grid">
       <UiCard title="CA net par jour" description="Encaissements nets après retours" :icon="BarChart3" icon-variant="teal">
+        <ol v-if="dailyAsList" class="rank-list rank-list--daily">
+          <li v-for="row in dailyRows" :key="row.key" class="rank-list__row">
+            <strong class="rank-list__label rank-list__label--date">{{ row.label }}</strong>
+            <div class="rank-list__track">
+              <div class="rank-list__fill rank-list__fill--teal" :style="{ width: `${row.widthPercent}%` }" />
+            </div>
+            <strong class="rank-list__amount">{{ formatFcfa(row.amountFcfa) }}</strong>
+          </li>
+        </ol>
         <DashboardBarChart
+          v-else
           :days="salesChart"
           :loading="loading"
           :format-total="formatFcfa"
@@ -443,12 +480,30 @@ onMounted(() => {
 
       <UiCard title="Top produits" description="Classement par chiffre d'affaires" :icon="BarChart3" icon-variant="amber">
         <div v-if="!topProductBars.length" class="chart-empty">{{ uiText('Aucune vente sur la période') }}</div>
-        <DashboardPendingBars v-else :items="topProductBars" />
+        <ol v-else class="rank-list">
+          <li v-for="row in topProductBars" :key="row.key" class="rank-list__row">
+            <span class="rank-list__label" :title="row.label">{{ row.label }}</span>
+            <div class="rank-list__track">
+              <div class="rank-list__fill rank-list__fill--amber" :style="{ width: `${row.widthPercent}%` }" />
+            </div>
+            <span class="rank-list__qty">{{ translateTemplate('{n} unité(s)', { n: row.quantity ?? 0 }) }}</span>
+            <strong class="rank-list__amount">{{ formatFcfa(row.amountFcfa) }}</strong>
+          </li>
+        </ol>
       </UiCard>
 
       <UiCard title="Ventes par catégorie" description="Répartition du CA" :icon="BarChart3" icon-variant="violet">
         <div v-if="!categoryBars.length" class="chart-empty">{{ uiText('Aucune vente sur la période') }}</div>
-        <DashboardPendingBars v-else :items="categoryBars" />
+        <ol v-else class="rank-list">
+          <li v-for="row in categoryBars" :key="row.key" class="rank-list__row">
+            <span class="rank-list__label" :title="row.label">{{ row.label }}</span>
+            <div class="rank-list__track">
+              <div class="rank-list__fill rank-list__fill--violet" :style="{ width: `${row.widthPercent}%` }" />
+            </div>
+            <span class="rank-list__qty">{{ translateTemplate('{n} unité(s)', { n: row.quantity ?? 0 }) }}</span>
+            <strong class="rank-list__amount">{{ formatFcfa(row.amountFcfa) }}</strong>
+          </li>
+        </ol>
       </UiCard>
     </div>
 
@@ -512,10 +567,6 @@ onMounted(() => {
       </ul>
     </UiCard>
 
-    <div class="report-exports">
-      <span class="report-exports__label">{{ uiText('Exporter le rapport') }}</span>
-      <ExportButtons :disabled="loading || !report" @pdf="exportPdf" @excel="exportExcel" @word="exportWord" />
-    </div>
   </div>
 </template>
 
@@ -610,20 +661,8 @@ onMounted(() => {
 
 .report-exports {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
   justify-content: flex-end;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-card);
-}
-
-.report-exports__label {
-  font-size: 0.8125rem;
-  font-weight: 650;
-  color: var(--text-muted);
+  margin-top: 0.75rem;
 }
 
 .purchase-list {
@@ -685,11 +724,84 @@ onMounted(() => {
   font-weight: 650;
 }
 
+.rank-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rank-list--daily {
+  max-height: 26rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.rank-list__row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 2fr) minmax(4rem, 3fr) auto auto;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.rank-list--daily .rank-list__row {
+  grid-template-columns: 7.5rem minmax(4rem, 1fr) auto;
+}
+
+.rank-list__label {
+  overflow: hidden;
+  font-size: 0.8125rem;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rank-list__label--date {
+  font-weight: 700;
+}
+
+.rank-list__track {
+  height: 0.6rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #f1f5f9;
+}
+
+.rank-list__fill {
+  height: 100%;
+  border-radius: 999px;
+}
+
+.rank-list__fill--teal { background: #0d9488; }
+.rank-list__fill--amber { background: #d97706; }
+.rank-list__fill--violet { background: #7c3aed; }
+
+.rank-list__qty {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.rank-list__amount {
+  font-size: 0.8125rem;
+  color: var(--primary-800);
+  text-align: right;
+  white-space: nowrap;
+}
+
 .chart-empty {
   padding: 2rem 1rem;
   text-align: center;
   color: var(--text-muted);
   font-size: 0.875rem;
+}
+
+@media (max-width: 1280px) {
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 900px) {

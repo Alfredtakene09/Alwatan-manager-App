@@ -8,14 +8,13 @@ import {
   UserRole,
 } from "@prisma/client";
 import { prisma } from "./db.js";
-import { toBusinessDateBound } from "./cash-shift.js";
 import {
   currentPayrollPeriod,
   ensurePayrollForMonth,
   payrollCountedWhere,
   payrollPeriodBounds,
 } from "./admin-payroll.js";
-import { sumPayrollOutflowBetween } from "./payroll-outflow.js";
+import { sumPeriodFinance, sumValidatedExpensesBetween } from "./period-finance.js";
 import { netAfterExpenses } from "./cashier-personal-stats.js";
 import {
   assessComptableDisbursementSchedule,
@@ -24,7 +23,6 @@ import {
 import { buildFinancialKpis, type DashboardDateRange } from "./admin-dashboard-stats.js";
 import { comptabiliteInvoicePatientWhere } from "./patient-billing.js";
 import {
-  aggregateCollectedBetween,
   COLLECTED_INVOICE_TYPES,
   invoiceCollectedAt,
   startOfDay,
@@ -43,6 +41,7 @@ const EXPENSE_DONUT_COLORS: Record<string, string> = {
   equipements: "#d97706",
   maintenance: "#0d9488",
   autres: "#64748b",
+  parts_medecins: "#db2777",
 };
 
 const CARD_SHARE_COLORS: Record<string, string> = {
@@ -50,6 +49,7 @@ const CARD_SHARE_COLORS: Record<string, string> = {
   expenses: "#e11d48",
   net: "#2563eb",
   payroll: "#7c3aed",
+  doctorShares: "#db2777",
 };
 
 export type CardPeriodKey = "week" | "month" | "year";
@@ -81,20 +81,17 @@ function previousYearBounds(now: Date) {
   };
 }
 
+/** Recettes (avec les entrées du module Dépenses), sorties et bénéfice net — règles communes. */
 async function sumPeriodCardTotals(from: Date, to: Date) {
-  const [revenue, expenses, payrollPaid] = await Promise.all([
-    aggregateCollectedBetween(from, to),
-    sumValidatedExpensesBetween(from, to),
-    sumPayrollPaidBetween(from, to),
-  ]);
-  const expensesTotal = expenses.totalFcfa + payrollPaid;
+  const finance = await sumPeriodFinance(from, to);
   return {
-    revenueFcfa: revenue.totalFcfa + expenses.entriesFcfa,
-    expensesFcfa: expensesTotal,
-    chargesFcfa: expenses.totalFcfa,
-    payrollFcfa: payrollPaid,
-    netFcfa: revenue.totalFcfa + expenses.entriesFcfa - expensesTotal,
-    expenseRows: expenses.rows,
+    revenueFcfa: finance.revenueFcfa + finance.entriesFcfa,
+    expensesFcfa: finance.outflowsFcfa,
+    chargesFcfa: finance.chargesFcfa,
+    payrollFcfa: finance.payrollFcfa,
+    doctorSharesFcfa: finance.doctorSharesCashFcfa,
+    netFcfa: finance.netFcfa,
+    expenseRows: finance.expenseRows,
   };
 }
 
@@ -102,6 +99,7 @@ function mapCardShares(totals: {
   revenueFcfa: number;
   chargesFcfa: number;
   payrollFcfa: number;
+  doctorSharesFcfa: number;
   netFcfa: number;
 }) {
   const items = [
@@ -122,6 +120,12 @@ function mapCardShares(totals: {
       label: "Masse salariale",
       amountFcfa: totals.payrollFcfa,
       color: CARD_SHARE_COLORS.payroll,
+    },
+    {
+      key: "doctorShares",
+      label: "Parts médecins",
+      amountFcfa: totals.doctorSharesFcfa,
+      color: CARD_SHARE_COLORS.doctorShares,
     },
   ];
   const total = items.reduce((sum, row) => sum + row.amountFcfa, 0);
@@ -318,6 +322,7 @@ async function buildCardPeriodStats(now = new Date(), dailyFlow: Awaited<ReturnT
 function mapExpenseBreakdown(
   rows: Array<{ amountFcfa: number; category: ClinicExpenseCategory }>,
   payrollSalariesFcfa: number,
+  doctorSharesCashFcfa = 0,
 ) {
   const buckets = {
     salaires: payrollSalariesFcfa,
@@ -350,6 +355,7 @@ function mapExpenseBreakdown(
     { key: "equipements", label: "Équipements", amountFcfa: buckets.equipements },
     { key: "maintenance", label: "Maintenance", amountFcfa: buckets.maintenance },
     { key: "autres", label: "Autres", amountFcfa: buckets.autres },
+    { key: "parts_medecins", label: "Parts médecins", amountFcfa: doctorSharesCashFcfa },
   ];
   const total = items.reduce((sum, row) => sum + row.amountFcfa, 0);
   return items.map((row) => ({
@@ -357,31 +363,6 @@ function mapExpenseBreakdown(
     color: EXPENSE_DONUT_COLORS[row.key] ?? "#64748b",
     percent: total > 0 ? Math.round((row.amountFcfa / total) * 100) : 0,
   }));
-}
-
-async function sumValidatedExpensesBetween(from: Date, to: Date) {
-  const rows = await prisma.clinicExpense.findMany({
-    where: {
-      status: ClinicExpenseStatus.VALIDATED,
-      businessDate: { gte: toBusinessDateBound(from), lt: toBusinessDateBound(to) },
-    },
-    select: { amountFcfa: true, category: true, flow: true },
-  });
-  const outflows = rows.filter((row) => row.flow !== ClinicExpenseFlow.ENTREE);
-  const entriesFcfa = rows.reduce(
-    (sum, row) => sum + (row.flow === ClinicExpenseFlow.ENTREE ? row.amountFcfa : 0),
-    0,
-  );
-  return {
-    totalFcfa: outflows.reduce((sum, row) => sum + row.amountFcfa, 0),
-    entriesFcfa,
-    rows: outflows,
-  };
-}
-
-/** Salaires (net, par mois de paie) et avances (au versement) sortis sur la période. */
-async function sumPayrollPaidBetween(from: Date, to: Date) {
-  return (await sumPayrollOutflowBetween(from, to)).totalFcfa;
 }
 
 function lastNDayStarts(count: number, from = new Date()) {
@@ -401,19 +382,15 @@ async function buildDailyFlow(days: number) {
     dayStarts.map(async (dayStart) => {
       const dayEnd = new Date(dayStart);
       dayEnd.setDate(dayEnd.getDate() + 1);
-      const [revenue, expenses, payrollPaid] = await Promise.all([
-        aggregateCollectedBetween(dayStart, dayEnd),
-        sumValidatedExpensesBetween(dayStart, dayEnd),
-        sumPayrollPaidBetween(dayStart, dayEnd),
-      ]);
-      const outflowsFcfa = expenses.totalFcfa + payrollPaid;
-      const inflowsFcfa = revenue.totalFcfa + expenses.entriesFcfa;
+      const finance = await sumPeriodFinance(dayStart, dayEnd);
+      const outflowsFcfa = finance.outflowsFcfa;
+      const inflowsFcfa = finance.revenueFcfa + finance.entriesFcfa;
       return {
         date: dayStart.toISOString().slice(0, 10),
         label: dayStart.toLocaleDateString("fr-FR", { day: "numeric", month: "short" }),
         inflowsFcfa,
         outflowsFcfa,
-        payrollFcfa: payrollPaid,
+        payrollFcfa: finance.payrollFcfa,
         balanceFcfa: inflowsFcfa - outflowsFcfa,
       };
     }),
@@ -613,24 +590,19 @@ export async function buildGestionnaireDashboardOverview(range?: DashboardDateRa
   const [
     cashBalance,
     todayExpenses,
-    monthRevenue,
-    monthExpenses,
-    monthPayrollPaid,
+    monthFinance,
     payrollRows,
     unpaidPayrollCount,
     cashAlerts,
     pendingDayClosures,
     recentDisbursements,
     dailyFlow90,
-    monthExpenseRows,
     financialKpis,
     pendingDoctorOvertimeCount,
   ] = await Promise.all([
     computeGlobalCashBalance(),
     sumValidatedExpensesBetween(todayStart, tomorrowStart),
-    aggregateCollectedBetween(monthBounds.start, monthBounds.end),
-    sumValidatedExpensesBetween(monthBounds.start, monthBounds.end),
-    sumPayrollPaidBetween(monthBounds.start, monthBounds.end),
+    sumPeriodFinance(monthBounds.start, monthBounds.end),
     prisma.employeePayroll.findMany({
       where: { year, month, ...payrollCountedWhere },
       select: { grossFcfa: true, status: true },
@@ -660,16 +632,19 @@ export async function buildGestionnaireDashboardOverview(range?: DashboardDateRa
       },
     }),
     buildDailyFlow(90),
-    sumValidatedExpensesBetween(monthBounds.start, monthBounds.end),
     buildFinancialKpis(now, range),
     countPendingDoctorOvertime(),
   ]);
 
   const payrollMonthGrossFcfa = payrollRows.reduce((sum, row) => sum + row.grossFcfa, 0);
-  const monthOutflowsFcfa = monthExpenses.totalFcfa + monthPayrollPaid;
-  const journalInflowsFcfa = monthRevenue.totalFcfa + monthExpenses.entriesFcfa;
+  const monthOutflowsFcfa = monthFinance.outflowsFcfa;
+  const journalInflowsFcfa = monthFinance.revenueFcfa + monthFinance.entriesFcfa;
   const journalBalanceFcfa = journalInflowsFcfa - monthOutflowsFcfa;
-  const expenseBreakdown = mapExpenseBreakdown(monthExpenseRows.rows, monthPayrollPaid);
+  const expenseBreakdown = mapExpenseBreakdown(
+    monthFinance.expenseRows,
+    monthFinance.payrollFcfa,
+    monthFinance.doctorSharesCashFcfa,
+  );
   const cardPeriodStats = await buildCardPeriodStats(now, dailyFlow90);
 
   const ROLE_GROUP_LABELS: Record<string, string> = {

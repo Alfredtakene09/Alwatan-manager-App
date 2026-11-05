@@ -12,12 +12,18 @@ import {
   shouldCreateImmediateInvoice,
   withPatientDiscount,
 } from "../lib/patient-billing.js";
+import { loadRegisteredOperations } from "../lib/registered-operations.js";
 import {
   aggregateCollectedBetween,
+  COLLECTED_INVOICE_TYPES,
   sumRegisteredPatientsConsultationsFcfa,
   sumRegisteredPatientsEntriesFcfa,
 } from "../lib/revenue-stats.js";
-import { buildRegistrationReport, buildRegistrationSummary } from "../lib/registration-summary.js";
+import {
+  buildRegistrationReport,
+  buildRegistrationSummary,
+  operationDoctorShareFcfa,
+} from "../lib/registration-summary.js";
 import { applyDoctorSharesToVisit } from "../lib/recalculate-employee-compensation.js";
 import { sumExpensesForCashierBetween } from "../lib/cashier-personal-stats.js";
 import { CASH_COLLECTOR_ROLES } from "../lib/cash-shift.js";
@@ -786,9 +792,82 @@ router.get("/", async (req, res) => {
   });
 
   const lockedIds = await findPatientIdsDeletionLocked(patients.map((p) => p.id));
+
+  // Réceptionniste ciblé : la ligne montre ce qu'il a encaissé lui-même sur la période,
+  // pas la consultation encaissée par un collègue qui a ouvert le dossier.
+  const collectorId = canFullList ? receptionistScopeUserId(user, createdById) : null;
+  const collector = collectorId
+    ? await prisma.user.findUnique({
+        where: { id: collectorId },
+        select: { id: true, firstName: true, lastName: true },
+      })
+    : null;
+  const collectorInvoicesByPatient = new Map<
+    string,
+    Array<{
+      id: string;
+      invoiceNumber: string;
+      status: InvoiceStatus;
+      amountFcfa: number;
+      paidAmountFcfa: number;
+      createdAt: Date;
+    }>
+  >();
+  if (collector && patients.length > 0) {
+    const collectorInvoices = await prisma.invoice.findMany({
+      where: {
+        patientId: { in: patients.map((p) => p.id) },
+        type: { in: COLLECTED_INVOICE_TYPES },
+        status: { not: InvoiceStatus.CANCELLED },
+        OR: [
+          {
+            payments: {
+              some: {
+                recordedById: collector.id,
+                ...(createdAtFilter ? { paidAt: createdAtFilter } : {}),
+              },
+            },
+          },
+          {
+            issuedById: collector.id,
+            payments: { none: {} },
+            ...(createdAtFilter ? { createdAt: createdAtFilter } : {}),
+          },
+        ],
+      },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        patientId: true,
+        invoiceNumber: true,
+        status: true,
+        amountFcfa: true,
+        paidAmountFcfa: true,
+        createdAt: true,
+      },
+    });
+    for (const { patientId, ...invoice } of collectorInvoices) {
+      if (!patientId) continue;
+      const list = collectorInvoicesByPatient.get(patientId) ?? [];
+      list.push(invoice);
+      collectorInvoicesByPatient.set(patientId, list);
+    }
+  }
+
   return res.json(
     patients.map((patient) => {
       const { invoices, visits, ...rest } = patient;
+      const collected = collectorInvoicesByPatient.get(patient.id);
+      if (collector && collected?.length) {
+        return {
+          ...rest,
+          registeredBy: collector,
+          lastRegisteredAt:
+            visits[0] && visits[0].createdAt > rest.createdAt ? visits[0].createdAt : rest.createdAt,
+          canDelete: canFullList && !lockedIds.has(patient.id),
+          consultationPayment: mapCombinedExamPayment(collected),
+        };
+      }
       // Même colonne « paiement » : consultation si présente, sinon montant labo (patients externes).
       const consultationInvoice = invoices.find((invoice) => invoice.type === InvoiceType.CONSULTATION);
       const latestLabInvoice = invoices.find((invoice) => invoice.type === InvoiceType.LAB_EXAM);
@@ -914,6 +993,7 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     registeredEntriesFcfa,
     myExpensesToday,
     registration,
+    registeredOperations,
   ] = await Promise.all([
     prisma.patient.findMany({
       where: patientPeriodScope,
@@ -984,26 +1064,43 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
       receptionistId: receptionistScopeUserId(user, createdById),
       period: { from: rangeStart, to: rangeEndExclusive },
     }),
+    loadRegisteredOperations(rangeStart, rangeEndExclusive, patientCashScope),
   ]);
+
+  // Carte Opérations : mêmes règles que la page « Opérations » (date d'enregistrement de l'opération).
+  const operationPatientIds = [
+    ...new Set(
+      registeredOperations.flatMap((operation) => (operation.patientId ? [operation.patientId] : [])),
+    ),
+  ];
+  registration.activityAmountsFcfa.operation = registeredOperations.reduce(
+    (sum, operation) => sum + operation.paidFcfa,
+    0,
+  );
 
   const netTodayFcfa = Math.max(
     0,
     collectedToday.totalFcfa + myExpensesToday.inflowFcfa - myExpensesToday.totalFcfa,
   );
-  // Part des médecins cumulée : consultations et opérations.
-  const doctorShareFcfa = registration.lines
-    .filter((line) => line.group === "consultation" || line.group === "operation")
-    .reduce((sum, line) => sum + line.doctorShareFcfa, 0);
+  // Part des médecins cumulée : consultations, puis opérations de la carte Opérations.
+  const doctorShareFcfa =
+    registration.lines
+      .filter((line) => line.group === "consultation")
+      .reduce((sum, line) => sum + line.doctorShareFcfa, 0) +
+    (await operationDoctorShareFcfa(
+      registeredOperations.flatMap((operation) => (operation.invoiceId ? [operation.invoiceId] : [])),
+    ));
   // Recettes : somme encaissée de toutes les prestations des patients.
   const totalCollectedFcfa = Object.values(registration.activityAmountsFcfa).reduce(
     (sum, amount) => sum + amount,
     0,
   );
+  // Carte Recettes : part de la clinique, la part des médecins ayant sa propre carte.
+  const clinicShareFcfa = Math.max(0, totalCollectedFcfa - doctorShareFcfa);
   const {
     examPatients: examPatientsCount,
     hospitalizationPatients: hospitalizationPatientsCount,
     consultationPatients: consultationPatientsCount,
-    operationPatients: surgeryPatientsCount,
     radioPatients: radioPatientsCount,
     echoPatients: echoPatientsCount,
   } = registration.activity;
@@ -1016,17 +1113,18 @@ router.get("/reception-stats", requireModule("reception"), async (req, res) => {
     examPatientsCount,
     hospitalizationPatientsCount,
     consultationPatientsCount,
-    surgeryPatientsCount,
+    surgeryPatientsCount: registeredOperations.length,
     examPatientIds: registration.activityPatientIds.exam,
     hospitalizationPatientIds: registration.activityPatientIds.hospitalization,
     consultationPatientIds: registration.activityPatientIds.consultation,
-    operationPatientIds: registration.activityPatientIds.operation,
+    operationPatientIds,
     radioPatientsCount,
     echoPatientsCount,
     radioPatientIds: registration.activityPatientIds.radio,
     echoPatientIds: registration.activityPatientIds.echo,
     activityAmountsFcfa: registration.activityAmountsFcfa,
     totalCollectedFcfa,
+    clinicShareFcfa,
     visitsToday,
     externalPatientsToday,
     revenueTodayFcfa: collectedToday.totalFcfa,

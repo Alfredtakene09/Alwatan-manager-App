@@ -94,6 +94,7 @@ const revenueDonut = computed(() =>
 
 const EXPENSE_COLORS: Record<string, string> = {
   salaires: '#7c3aed',
+  parts_medecins: '#db2777',
   fournitures: '#2563eb',
   equipements: '#d97706',
   maintenance: '#0d9488',
@@ -116,7 +117,7 @@ const kpiRows = computed(() => {
     { label: 'Recettes', value: formatFcfa(k.value.revenueMonthFcfa) },
     { label: 'Dépenses', value: formatFcfa(k.value.expensesMonthFcfa) },
     { label: 'Bénéfice net', value: formatFcfa(k.value.netMonthFcfa) },
-    { label: 'Masse salariale', value: formatFcfa(k.value.payrollMonthFcfa) },
+    { label: 'Salaires versés', value: formatFcfa(k.value.payrollMonthFcfa) },
   ]
 })
 
@@ -191,7 +192,7 @@ onMounted(loadFinances)
         <UiStatCard mini label="Recettes" :value="formatFcfa(k.revenueMonthFcfa)" :icon="Banknote" variant="green" />
         <UiStatCard mini label="Dépenses" :value="formatFcfa(k.expensesMonthFcfa)" :icon="TrendingDown" variant="rose" />
         <UiStatCard mini label="Bénéfice net" :value="formatFcfa(k.netMonthFcfa)" :icon="TrendingUp" variant="blue" />
-        <UiStatCard mini label="Masse salariale" :value="formatFcfa(k.payrollMonthFcfa)" :icon="Users" variant="amber" />
+        <UiStatCard mini label="Salaires versés" :value="formatFcfa(k.payrollMonthFcfa)" :icon="Users" variant="amber" />
       </div>
 
       <section class="charts-grid">

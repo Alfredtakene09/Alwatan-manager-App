@@ -23,9 +23,12 @@ export function surgeryCompletedAtIso(surgery: SurgeryCaseRow): string {
   )
 }
 
-/** Les % ne s'appliquent qu'au montant encaissé. */
+/**
+ * Les % ne s'appliquent qu'au montant encaissé : celui de la facture (remise comprise),
+ * jamais le tarif catalogue de l'opération.
+ */
 function collectedBaseFcfa(surgery: SurgeryCaseRow) {
-  const billed = Math.max(0, surgery.totalCostFcfa || surgery.invoice?.amountFcfa || 0)
+  const billed = Math.max(0, surgery.invoice ? surgery.invoice.amountFcfa : surgery.totalCostFcfa || 0)
   let paid = Math.max(0, surgery.invoice?.paidAmountFcfa ?? 0)
   if (surgery.invoice?.status === 'PAID' && billed > paid) paid = billed
   if (paid <= 0) return 0

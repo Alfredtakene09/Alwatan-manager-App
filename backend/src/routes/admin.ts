@@ -1380,6 +1380,8 @@ function serializeAdminExpense(row: {
   comment: string | null;
   rejectionReason: string | null;
   createdAt: Date;
+  indiceId?: string | null;
+  indice?: { name: string } | null;
 }) {
   return {
     id: row.id,
@@ -1391,6 +1393,8 @@ function serializeAdminExpense(row: {
     label: row.label,
     description: row.label,
     category: EXPENSE_CATEGORY_LABELS[row.category],
+    indiceId: row.indiceId ?? null,
+    indiceName: row.indice?.name ?? null,
     status: row.status,
     statusLabel: EXPENSE_STATUS_LABELS[row.status],
     comment: row.comment,
@@ -1440,7 +1444,8 @@ router.get("/expenses", async (req, res) => {
 
   const rows = await prisma.clinicExpense.findMany({
     where,
-    orderBy: { createdAt: "desc" },
+    include: { indice: { select: { name: true } } },
+    orderBy: [{ businessDate: "desc" }, { updatedAt: "desc" }, { createdAt: "desc" }],
     take: 500,
   });
   // Les salaires versés restent dans l'historique de paie : pas de copie dans les dépenses.

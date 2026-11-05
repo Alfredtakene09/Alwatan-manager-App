@@ -384,7 +384,7 @@ router.get("/expenses", async (req, res) => {
   const rows = await prisma.clinicExpense.findMany({
     where,
     include: gestionnaireExpenseInclude,
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ businessDate: "desc" }, { updatedAt: "desc" }, { createdAt: "desc" }],
     take: 200,
   });
   // Les salaires versés restent dans l'historique de paie : pas de copie dans les dépenses.

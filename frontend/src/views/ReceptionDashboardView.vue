@@ -116,6 +116,8 @@ type ReceptionStats = {
   radioPatientIds?: string[]
   echoPatientIds?: string[]
   totalCollectedFcfa?: number
+  /** Recettes moins la part des médecins. */
+  clinicShareFcfa?: number
   activityAmountsFcfa?: Partial<
     Record<'exam' | 'hospitalization' | 'consultation' | 'operation' | 'radio' | 'echo', number>
   >
@@ -1147,8 +1149,8 @@ const dashboardStats = computed(() => {
   {
     id: 'revenue',
     label: revenueLabel,
-    value: formatFcfaCompact(stats.value.totalCollectedFcfa ?? 0),
-    hint: 'Tous les services',
+    value: formatFcfaCompact(stats.value.clinicShareFcfa ?? stats.value.totalCollectedFcfa ?? 0),
+    hint: 'Part de la clinique',
     icon: Banknote,
     variant: 'violet' as const,
     money: true,

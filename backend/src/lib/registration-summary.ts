@@ -785,6 +785,21 @@ export async function buildRegistrationReport(options: RegistrationSummaryOption
   };
 }
 
+/** Part des médecins (chirurgien + anesthésiste) de ces factures d'opération, règles des lignes du PDF. */
+export async function operationDoctorShareFcfa(invoiceIds: string[]): Promise<number> {
+  if (!invoiceIds.length) return 0;
+  const invoices = await prisma.invoice.findMany({
+    where: { id: { in: invoiceIds } },
+    select: {
+      ...summaryInvoiceSelect,
+      payments: { select: { amountFcfa: true, paidAt: true } },
+    },
+  });
+  return summarizeRegistrationInvoices(await withCatalogOperations(invoices))
+    .filter((line) => line.group === "operation")
+    .reduce((sum, line) => sum + line.doctorShareFcfa, 0);
+}
+
 export async function buildRegistrationSummary(
   options: RegistrationSummaryOptions,
 ): Promise<RegistrationSummaryLine[]> {

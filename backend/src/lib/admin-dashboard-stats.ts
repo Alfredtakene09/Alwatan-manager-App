@@ -1,203 +1,82 @@
 import {
   ClinicExpenseCategory,
-  ClinicExpenseFlow,
   ClinicExpenseStatus,
   HospitalizationStatus,
-  InvoiceStatus,
-  InvoiceType,
   PayrollStatus,
   VisitStatus,
 } from "@prisma/client";
 import { prisma } from "./db.js";
-import { toBusinessDateBound } from "./cash-shift.js";
 import { labsPendingApprovalWhere } from "./lab-notes.js";
-import {
-  aggregateCollectedBetween,
-  aggregatePharmacyBetween,
-  collectedInvoicesWhere,
-  netPaymentAmountsAfterPaidCap,
-  startOfDay,
-  sumCollectedBreakdown,
-} from "./revenue-stats.js";
-import { comptabiliteInvoicePatientWhere } from "./patient-billing.js";
+import { startOfDay, sumCollectedBreakdown } from "./revenue-stats.js";
+import { sumPeriodFinance, type PeriodFinance } from "./period-finance.js";
+import { type OperationCategory } from "./operation-register.js";
+import { loadRegisteredOperations } from "./registered-operations.js";
 import {
   currentPayrollPeriod,
   ensurePayrollForMonth,
   mapEmployeeService,
   payrollCountedWhere,
   payrollPeriodBounds,
-  sumCurrentFichePayrollMass,
 } from "./admin-payroll.js";
-import { sumPayrollOutflowBetween } from "./payroll-outflow.js";
 import { sumSettledDoctorSharesBetween } from "./doctor-share-cash.js";
 
 export type MonthPeriod = { year: number; month: number };
 
 export type OperationsByServiceRow = {
+  category: OperationCategory;
   serviceId: string | null;
   serviceName: string;
   count: number;
   amountFcfa: number;
 };
 
-async function buildOperationsByService(
+/**
+ * Opérations par service — même périmètre que la page « Opérations » :
+ * opérations (bloc + hors bloc) enregistrées dans la période, montant = cumul payé.
+ */
+export async function buildOperationsByService(
   from: Date,
   to: Date,
 ): Promise<OperationsByServiceRow[]> {
-  const [services, payments, legacyInvoices] = await Promise.all([
+  const [services, operations] = await Promise.all([
     prisma.clinicService.findMany({
       where: { active: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       select: { id: true, name: true },
     }),
-    prisma.invoicePayment.findMany({
-      where: {
-        paidAt: { gte: from, lt: to },
-        invoice: {
-          status: { not: InvoiceStatus.CANCELLED },
-          ...comptabiliteInvoicePatientWhere(),
-          OR: [{ type: InvoiceType.SURGERY }, { billingExamKind: "operation" }],
-        },
-      },
-      select: {
-        id: true,
-        invoiceId: true,
-        amountFcfa: true,
-        paidAt: true,
-        invoice: {
-          select: {
-            id: true,
-            paidAmountFcfa: true,
-            surgeryCaseId: true,
-            surgeryCase: {
-              select: {
-                interventionType: {
-                  select: {
-                    clinicServiceId: true,
-                    clinicService: { select: { id: true, name: true } },
-                  },
-                },
-              },
-            },
-            visit: {
-              select: { assignedClinicService: { select: { id: true, name: true } } },
-            },
-          },
-        },
-      },
-    }),
-    prisma.invoice.findMany({
-      where: {
-        ...collectedInvoicesWhere(from, to),
-        payments: { none: {} },
-        OR: [{ type: InvoiceType.SURGERY }, { billingExamKind: "operation" }],
-      },
-      select: {
-        id: true,
-        amountFcfa: true,
-        paidAmountFcfa: true,
-        surgeryCaseId: true,
-        surgeryCase: {
-          select: {
-            interventionType: {
-              select: {
-                clinicServiceId: true,
-                clinicService: { select: { id: true, name: true } },
-              },
-            },
-          },
-        },
-        visit: {
-          select: { assignedClinicService: { select: { id: true, name: true } } },
-        },
-      },
-    }),
+    loadRegisteredOperations(from, to),
   ]);
 
-  const byService = new Map<string | null, OperationsByServiceRow>();
+  const byService = new Map<string, OperationsByServiceRow>();
   for (const service of services) {
-    byService.set(service.id, {
+    byService.set(`operation:${service.id}`, {
+      category: "operation",
       serviceId: service.id,
       serviceName: service.name,
       count: 0,
       amountFcfa: 0,
     });
   }
-  byService.set(null, {
+  byService.set("operation:", {
+    category: "operation",
     serviceId: null,
     serviceName: "Sans service",
     count: 0,
     amountFcfa: 0,
   });
 
-  const invoiceIds = [...new Set(payments.map((payment) => payment.invoiceId))];
-  const allPaymentsForCap =
-    invoiceIds.length === 0
-      ? []
-      : await prisma.invoicePayment.findMany({
-          where: { invoiceId: { in: invoiceIds } },
-          select: {
-            id: true,
-            invoiceId: true,
-            amountFcfa: true,
-            paidAt: true,
-            invoice: { select: { paidAmountFcfa: true } },
-          },
-        });
-  const netByPaymentId = netPaymentAmountsAfterPaidCap(
-    allPaymentsForCap.map((payment) => ({
-      id: payment.id,
-      invoiceId: payment.invoiceId,
-      amountFcfa: payment.amountFcfa,
-      paidAt: payment.paidAt,
-      invoicePaidAmountFcfa: payment.invoice.paidAmountFcfa,
-    })),
-  );
-
-  const countedIds = new Set<string>();
-
-  function addAmount(
-    invoice: {
-      id: string;
-      surgeryCaseId: string | null;
-      surgeryCase: {
-        interventionType: {
-          clinicServiceId: string | null;
-          clinicService: { id: string; name: string } | null;
-        };
-      } | null;
-      visit: { assignedClinicService: { id: string; name: string } | null } | null;
-    },
-    amountFcfa: number,
-  ) {
-    if (amountFcfa <= 0) return;
-    const service =
-      invoice.surgeryCase?.interventionType.clinicService ??
-      invoice.visit?.assignedClinicService ??
-      null;
-    const serviceId =
-      invoice.surgeryCase?.interventionType.clinicServiceId ?? service?.id ?? null;
-    const key = serviceId;
+  for (const operation of operations) {
+    const key = `${operation.category}:${operation.service?.id ?? ""}`;
     const current = byService.get(key) ?? {
-      serviceId: key,
-      serviceName: service?.name ?? "Sans service",
+      category: operation.category,
+      serviceId: operation.service?.id ?? null,
+      serviceName: operation.service?.name ?? "Sans service",
       count: 0,
       amountFcfa: 0,
     };
-    const distinctId = invoice.surgeryCaseId ?? invoice.id;
-    if (!countedIds.has(distinctId)) {
-      countedIds.add(distinctId);
-      current.count += 1;
-    }
-    current.amountFcfa += amountFcfa;
+    current.count += 1;
+    current.amountFcfa += operation.paidFcfa;
     byService.set(key, current);
-  }
-
-  for (const payment of payments) {
-    addAmount(payment.invoice, netByPaymentId.get(payment.id) ?? 0);
-  }
-  for (const invoice of legacyInvoices) {
-    addAmount(invoice, invoice.paidAmountFcfa > 0 ? invoice.paidAmountFcfa : invoice.amountFcfa);
   }
 
   const rows = [...byService.values()].filter(
@@ -366,34 +245,10 @@ function previousEqualRange(from: Date, toExclusive: Date) {
   };
 }
 
-async function sumValidatedExpensesBetween(from: Date, to: Date) {
-  const rows = await prisma.clinicExpense.findMany({
-    where: {
-      status: ClinicExpenseStatus.VALIDATED,
-      businessDate: { gte: toBusinessDateBound(from), lt: toBusinessDateBound(to) },
-    },
-    select: { amountFcfa: true, category: true, flow: true },
-  });
-  const outflows = rows.filter((row) => row.flow !== ClinicExpenseFlow.ENTREE);
-  const entriesFcfa = rows.reduce(
-    (sum, row) => sum + (row.flow === ClinicExpenseFlow.ENTREE ? row.amountFcfa : 0),
-    0,
-  );
-  return {
-    totalFcfa: outflows.reduce((sum, row) => sum + row.amountFcfa, 0),
-    entriesFcfa,
-    rows: outflows,
-  };
-}
-
-/** Salaires (net, par mois de paie) et avances (au versement) sortis sur la période. */
-async function sumPayrollPaidBetween(from: Date, to: Date) {
-  return (await sumPayrollOutflowBetween(from, to)).totalFcfa;
-}
-
 function mapExpenseBreakdown(
   rows: Array<{ amountFcfa: number; category: ClinicExpenseCategory }>,
   payrollSalariesFcfa: number,
+  doctorSharesCashFcfa = 0,
 ) {
   const buckets = {
     salaires: payrollSalariesFcfa,
@@ -426,6 +281,7 @@ function mapExpenseBreakdown(
     { key: "equipements", label: "Équipements", amountFcfa: buckets.equipements },
     { key: "maintenance", label: "Maintenance", amountFcfa: buckets.maintenance },
     { key: "autres", label: "Autres", amountFcfa: buckets.autres },
+    { key: "parts_medecins", label: "Parts médecins", amountFcfa: doctorSharesCashFcfa },
   ];
 }
 
@@ -492,15 +348,49 @@ export type FinancialKpis = {
   expensesMonthFcfa: number;
   expensesChangePercent: number;
   entriesMonthFcfa: number;
+  /** Sorties validées du module Dépenses seules (hors paie et parts médecins). */
+  expensesModuleFcfa: number;
   netMonthFcfa: number;
   netChangePercent: number;
+  /** Salaires et avances réellement versés sur la période. */
   payrollMonthFcfa: number;
   payrollChangePercent: number;
+  payrollSalariesFcfa: number;
+  payrollAdvancesFcfa: number;
   doctorSharesReceivedFcfa: number;
   doctorSharesChangePercent: number;
   doctorSharesConsultationFcfa: number;
   doctorSharesSurgeryFcfa: number;
 };
+
+function financialKpisFrom(
+  current: PeriodFinance,
+  prev: PeriodFinance,
+  currentDoctorShares: Awaited<ReturnType<typeof sumSettledDoctorSharesBetween>>,
+  prevDoctorShares: Awaited<ReturnType<typeof sumSettledDoctorSharesBetween>>,
+): FinancialKpis {
+  return {
+    revenueMonthFcfa: current.revenueFcfa,
+    revenueChangePercent: percentChange(current.revenueFcfa, prev.revenueFcfa),
+    expensesMonthFcfa: current.outflowsFcfa,
+    expensesChangePercent: percentChange(current.outflowsFcfa, prev.outflowsFcfa),
+    entriesMonthFcfa: current.entriesFcfa,
+    expensesModuleFcfa: current.chargesFcfa,
+    netMonthFcfa: current.netFcfa,
+    netChangePercent: percentChange(current.netFcfa, prev.netFcfa),
+    payrollMonthFcfa: current.payrollFcfa,
+    payrollChangePercent: percentChange(current.payrollFcfa, prev.payrollFcfa),
+    payrollSalariesFcfa: current.payrollSalariesFcfa,
+    payrollAdvancesFcfa: current.payrollAdvancesFcfa,
+    doctorSharesReceivedFcfa: currentDoctorShares.totalFcfa,
+    doctorSharesChangePercent: percentChange(
+      currentDoctorShares.totalFcfa,
+      prevDoctorShares.totalFcfa,
+    ),
+    doctorSharesConsultationFcfa: currentDoctorShares.consultationFcfa,
+    doctorSharesSurgeryFcfa: currentDoctorShares.surgeryFcfa,
+  };
+}
 
 export async function buildFinancialKpis(
   now = new Date(),
@@ -520,59 +410,15 @@ export async function buildFinancialKpis(
         const bounds = payrollPeriodBounds(prev.year, prev.month);
         return { from: bounds.start, toExclusive: bounds.end };
       })();
-  const prevBounds = { start: prevRange.from, end: prevRange.toExclusive };
 
-  const [
-    currentRevenue,
-    prevRevenue,
-    currentPharmacy,
-    prevPharmacy,
-    currentExpenses,
-    prevExpenses,
-    currentPayrollPaid,
-    prevPayrollPaid,
-    fichePayrollMass,
-    currentDoctorShares,
-    prevDoctorShares,
-  ] = await Promise.all([
-    aggregateCollectedBetween(currentBounds.start, currentBounds.end),
-    aggregateCollectedBetween(prevBounds.start, prevBounds.end),
-    aggregatePharmacyBetween(currentBounds.start, currentBounds.end),
-    aggregatePharmacyBetween(prevBounds.start, prevBounds.end),
-    sumValidatedExpensesBetween(currentBounds.start, currentBounds.end),
-    sumValidatedExpensesBetween(prevBounds.start, prevBounds.end),
-    sumPayrollPaidBetween(currentBounds.start, currentBounds.end),
-    sumPayrollPaidBetween(prevBounds.start, prevBounds.end),
-    sumCurrentFichePayrollMass(),
-    sumSettledDoctorSharesBetween(currentBounds.start, currentBounds.end),
-    sumSettledDoctorSharesBetween(prevBounds.start, prevBounds.end),
-  ]);
-
-  const currentExpensesTotal = currentExpenses.totalFcfa + currentPayrollPaid;
-  const prevExpensesTotal = prevExpenses.totalFcfa + prevPayrollPaid;
-  const currentRevenueTotal = currentRevenue.totalFcfa + currentPharmacy.totalFcfa;
-  const prevRevenueTotal = prevRevenue.totalFcfa + prevPharmacy.totalFcfa;
-  const currentNet = currentRevenueTotal + currentExpenses.entriesFcfa - currentExpensesTotal;
-  const prevNet = prevRevenueTotal + prevExpenses.entriesFcfa - prevExpensesTotal;
-
-  return {
-    revenueMonthFcfa: currentRevenueTotal,
-    revenueChangePercent: percentChange(currentRevenueTotal, prevRevenueTotal),
-    expensesMonthFcfa: currentExpensesTotal,
-    expensesChangePercent: percentChange(currentExpensesTotal, prevExpensesTotal),
-    entriesMonthFcfa: currentExpenses.entriesFcfa,
-    netMonthFcfa: currentNet,
-    netChangePercent: percentChange(currentNet, prevNet),
-    payrollMonthFcfa: fichePayrollMass,
-    payrollChangePercent: 0,
-    doctorSharesReceivedFcfa: currentDoctorShares.totalFcfa,
-    doctorSharesChangePercent: percentChange(
-      currentDoctorShares.totalFcfa,
-      prevDoctorShares.totalFcfa,
-    ),
-    doctorSharesConsultationFcfa: currentDoctorShares.consultationFcfa,
-    doctorSharesSurgeryFcfa: currentDoctorShares.surgeryFcfa,
-  };
+  const [current, prev, currentDoctorShares, prevDoctorShares] =
+    await Promise.all([
+      sumPeriodFinance(currentBounds.start, currentBounds.end),
+      sumPeriodFinance(prevRange.from, prevRange.toExclusive),
+      sumSettledDoctorSharesBetween(currentBounds.start, currentBounds.end),
+      sumSettledDoctorSharesBetween(prevRange.from, prevRange.toExclusive),
+    ]);
+  return financialKpisFrom(current, prev, currentDoctorShares, prevDoctorShares);
 }
 
 export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
@@ -586,15 +432,8 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
   await ensurePayrollForMonth(year, month);
 
   const [
-    currentRevenue,
-    prevRevenue,
-    currentPharmacy,
-    prevPharmacy,
-    currentExpenses,
-    prevExpenses,
-    currentPayrollPaid,
-    prevPayrollPaid,
-    fichePayrollMass,
+    current,
+    prev,
     currentDoctorShares,
     prevDoctorShares,
     recentExpenses,
@@ -608,15 +447,8 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
     recentValidations,
     activityLogs,
   ] = await Promise.all([
-    aggregateCollectedBetween(currentBounds.start, currentBounds.end),
-    aggregateCollectedBetween(prevBounds.start, prevBounds.end),
-    aggregatePharmacyBetween(currentBounds.start, currentBounds.end),
-    aggregatePharmacyBetween(prevBounds.start, prevBounds.end),
-    sumValidatedExpensesBetween(currentBounds.start, currentBounds.end),
-    sumValidatedExpensesBetween(prevBounds.start, prevBounds.end),
-    sumPayrollPaidBetween(currentBounds.start, currentBounds.end),
-    sumPayrollPaidBetween(prevBounds.start, prevBounds.end),
-    sumCurrentFichePayrollMass(),
+    sumPeriodFinance(currentBounds.start, currentBounds.end),
+    sumPeriodFinance(prevBounds.start, prevBounds.end),
     sumSettledDoctorSharesBetween(currentBounds.start, currentBounds.end),
     sumSettledDoctorSharesBetween(prevBounds.start, prevBounds.end),
     prisma.clinicExpense.findMany({
@@ -687,15 +519,11 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
     }),
   ]);
 
-  const currentExpensesTotal =
-    currentExpenses.totalFcfa + currentPayrollPaid;
-  const prevExpensesTotal = prevExpenses.totalFcfa + prevPayrollPaid;
-  const currentRevenueTotal = currentRevenue.totalFcfa + currentPharmacy.totalFcfa;
-  const prevRevenueTotal = prevRevenue.totalFcfa + prevPharmacy.totalFcfa;
-  const currentNet = currentRevenueTotal + currentExpenses.entriesFcfa - currentExpensesTotal;
-  const prevNet = prevRevenueTotal + prevExpenses.entriesFcfa - prevExpensesTotal;
-
-  const expenseBreakdown = mapExpenseBreakdown(currentExpenses.rows, currentPayrollPaid);
+  const expenseBreakdown = mapExpenseBreakdown(
+    current.expenseRows,
+    current.payrollFcfa,
+    current.doctorSharesCashFcfa,
+  );
   const operationsByService = await buildOperationsByService(
     currentBounds.start,
     currentBounds.end,
@@ -719,23 +547,17 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
       trendPeriods.map(async (period) => {
         const bounds = clipToRange(period, trendFrom, trendTo);
         if (!bounds) return null;
-        const [revenue, pharmacy, expenses, payrollPaid] = await Promise.all([
-          aggregateCollectedBetween(bounds.start, bounds.end),
-          aggregatePharmacyBetween(bounds.start, bounds.end),
-          sumValidatedExpensesBetween(bounds.start, bounds.end),
-          sumPayrollPaidBetween(bounds.start, bounds.end),
-        ]);
-        const expensesTotal = expenses.totalFcfa + payrollPaid;
+        const finance = await sumPeriodFinance(bounds.start, bounds.end);
         return {
           year: period.year,
           month: period.month,
           label: registrationRangeLabel(bounds.fromIso, bounds.toIso),
           fromIso: bounds.fromIso,
           toIso: bounds.toIso,
-          revenueFcfa: revenue.totalFcfa + pharmacy.totalFcfa,
-          entriesFcfa: expenses.entriesFcfa,
-          expensesFcfa: expensesTotal,
-          netFcfa: revenue.totalFcfa + pharmacy.totalFcfa + expenses.entriesFcfa - expensesTotal,
+          revenueFcfa: finance.revenueFcfa,
+          entriesFcfa: finance.entriesFcfa,
+          expensesFcfa: finance.outflowsFcfa,
+          netFcfa: finance.netFcfa,
         };
       }),
     )
@@ -771,30 +593,18 @@ export async function buildAdminDashboardOverview(range?: DashboardDateRange) {
   };
 
   return {
-    financialKpis: {
-      revenueMonthFcfa: currentRevenueTotal,
-      revenueChangePercent: percentChange(currentRevenueTotal, prevRevenueTotal),
-      expensesMonthFcfa: currentExpensesTotal,
-      expensesChangePercent: percentChange(currentExpensesTotal, prevExpensesTotal),
-      entriesMonthFcfa: currentExpenses.entriesFcfa,
-      netMonthFcfa: currentNet,
-      netChangePercent: percentChange(currentNet, prevNet),
-      payrollMonthFcfa: fichePayrollMass,
-      payrollChangePercent: 0,
-      doctorSharesReceivedFcfa: currentDoctorShares.totalFcfa,
-      doctorSharesChangePercent: percentChange(
-        currentDoctorShares.totalFcfa,
-        prevDoctorShares.totalFcfa,
-      ),
-      doctorSharesConsultationFcfa: currentDoctorShares.consultationFcfa,
-      doctorSharesSurgeryFcfa: currentDoctorShares.surgeryFcfa,
-    },
+    financialKpis: financialKpisFrom(
+      current,
+      prev,
+      currentDoctorShares,
+      prevDoctorShares,
+    ),
     period: {
       from: resolved.fromIso,
       to: resolved.toIso,
     },
     monthlyTrend,
-    revenueBreakdown: mapRevenueBreakdown(currentRevenue, currentPharmacy.totalFcfa),
+    revenueBreakdown: mapRevenueBreakdown(current.collected, current.pharmacyFcfa),
     expenseBreakdown,
     operationsByService,
     recentExpenses: recentExpenses.map((row) => ({
