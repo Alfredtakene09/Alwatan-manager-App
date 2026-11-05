@@ -423,6 +423,8 @@ if (serveFrontend) {
   app.use((req, res, next) => {
     if (req.method !== "GET" && req.method !== "HEAD") return next();
     if (req.path.startsWith("/api")) return next();
+    // Fichier d'un ancien build : un vrai 404, pas index.html servi à la place d'un script.
+    if (req.path.startsWith("/assets/")) return res.status(404).end();
     res.setHeader("Cache-Control", "no-cache");
     res.sendFile(frontendIndex, (error) => {
       if (error) next(error);

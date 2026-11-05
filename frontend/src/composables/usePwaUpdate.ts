@@ -79,6 +79,30 @@ function hardReload(buildId?: string | null) {
   window.location.replace(url.toString())
 }
 
+const STALE_RELOAD_KEY = 'alwatan-stale-bundle-reload'
+
+/** Page restée ouverte sur un ancien build : ses fichiers de page n'existent plus sur le serveur. */
+export function isStaleBundleError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  return /dynamically imported module|importing a module script failed|unable to preload css/i.test(message)
+}
+
+/** Recharge l'application à jour sur la page demandée (une fois par 30 s pour éviter une boucle). */
+export async function recoverFromStaleBundle(targetPath: string) {
+  try {
+    const lastReload = Number(sessionStorage.getItem(STALE_RELOAD_KEY) ?? 0)
+    if (Date.now() - lastReload < 30_000) return
+    sessionStorage.setItem(STALE_RELOAD_KEY, String(Date.now()))
+  } catch {
+    return
+  }
+  await unregisterAllWorkers()
+  await clearAppCaches()
+  const url = new URL(targetPath, window.location.href)
+  url.searchParams.set('v', String(Date.now()))
+  window.location.replace(url.toString())
+}
+
 async function applyUpdateInternal(knownBuildId?: string | null) {
   if (applying) return
   applying = true
