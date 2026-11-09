@@ -6,6 +6,7 @@ import axios from 'axios'
 import { ChevronDown, ChevronRight, FileText, Package, Save } from '@lucide/vue'
 import api from '@/api/client'
 import { canAccessModule, formatFcfa } from '@/lib/roles'
+import { isUiActionAllowed } from '@/lib/ui-actions'
 import { defaultExpiryDateInput, frDisplayToIsoDate, isoDateToFrDisplay, maskFrDateInput, PHARMACEUTICAL_FORMS } from '@/lib/pharmacy-product-forms'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
@@ -113,6 +114,8 @@ const filterCategoryId = ref('')
 const viewMode = ref<'products' | 'invoices'>('products')
 const purchaseInvoices = ref<PharmacyPurchaseInvoice[]>([])
 const openInvoiceIds = ref<Set<string>>(new Set())
+/** Ligne de facture corrigée depuis la modale de modification du produit. */
+const invoiceEditTarget = ref<{ invoiceId: string; invoiceNumber: string; lineIndex: number } | null>(null)
 
 const itemsById = computed(() => new Map(items.value.map((item) => [item.id, item])))
 const isEditing = computed(() => editingId.value !== null)
@@ -271,6 +274,7 @@ function invoiceProductRows(invoice: PharmacyPurchaseInvoice) {
     const item = itemsById.value.get(line.productId)
     return {
       key: `${invoice.id}-${index}`,
+      lineIndex: index,
       line,
       row: item ? toProductExportRow(item) : null,
     }
@@ -513,9 +517,33 @@ async function openEditModal(id: string) {
   message.value = ''
 }
 
+/** Depuis une facture, la quantité et le prix d'achat modifiés sont ceux de la ligne facturée. */
+async function openInvoiceLineEdit(invoice: PharmacyPurchaseInvoice, lineIndex: number) {
+  const line = invoice.lines[lineIndex]
+  if (!line) return
+  await openEditModal(line.productId)
+  if (!modalOpen.value) return
+  invoiceEditTarget.value = { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, lineIndex }
+  formQuantity.value = String(line.quantity)
+  formPurchasePrice.value = String(line.unitCostFcfa)
+}
+
+function onInvoiceProductAction(
+  invoice: PharmacyPurchaseInvoice,
+  lineIndex: number,
+  payload: { action: string; id: string },
+) {
+  if (payload.action === 'edit' && isUiActionAllowed(auth.user, 'pharmacie.purchase_invoice')) {
+    void openInvoiceLineEdit(invoice, lineIndex)
+    return
+  }
+  onTableAction(payload)
+}
+
 function closeModal() {
   modalOpen.value = false
   editingId.value = null
+  invoiceEditTarget.value = null
   resetForm()
 }
 
@@ -554,7 +582,7 @@ async function saveItem() {
     issues.push('Indiquez un prix de vente en FCFA (nombre entier > 0).')
   }
   const purchaseFilled = Boolean(asTrimmedText(formPurchasePrice.value))
-  if (!isEditing.value && !purchaseFilled) {
+  if ((!isEditing.value || invoiceEditTarget.value) && !purchaseFilled) {
     issues.push("Indiquez le prix d'achat par boîte en FCFA (obligatoire pour un nouveau produit).")
   } else if (purchaseFilled && (!Number.isFinite(purchasePriceFcfa) || purchasePriceFcfa <= 0)) {
     issues.push("Le prix d'achat doit être un nombre entier positif.")
@@ -588,6 +616,24 @@ async function saveItem() {
       : 'Produit ajouté.'
 
   try {
+    const invoiceTarget = invoiceEditTarget.value
+    if (invoiceTarget && editingId.value) {
+      // La facture d'abord : si la caisse est clôturée, rien n'est modifié.
+      await api.put(`/pharmacie/purchases/${invoiceTarget.invoiceId}/lines/${invoiceTarget.lineIndex}`, {
+        productId: editingId.value,
+        quantity: payload.quantity,
+        purchasePriceFcfa: payload.purchasePriceFcfa,
+      })
+      const { quantity: _quantity, purchasePriceFcfa: _purchasePrice, ...productPayload } = payload
+      await api.put(`/pharmacie/products/${editingId.value}`, productPayload)
+      emit('changed')
+      closeModal()
+      await Promise.all([loadItems({ clearMessage: false }), loadPurchaseInvoices()])
+      message.value = uiText('Facture et produit modifiés.')
+      messageType.value = 'success'
+      void showSuccessModal('Catalogue pharmacie', message.value)
+      return
+    }
     if (isEditing.value && editingId.value) {
       await api.put(`/pharmacie/products/${editingId.value}`, payload)
     } else {
@@ -915,7 +961,7 @@ defineExpose({
                                   :can-delete="product.row.canDelete"
                                   :show-edit="product.row.showEdit"
                                   :show-toggle="product.row.showToggle"
-                                  @action="onTableAction"
+                                  @action="onInvoiceProductAction(invoice, product.lineIndex, $event)"
                                 />
                               </td>
                             </template>
@@ -1018,6 +1064,14 @@ defineExpose({
       })"
     />
 
+    <UiAlert
+      v-if="invoiceEditTarget"
+      type="info"
+      :message="translateTemplate('Facture n° {number} : la quantité et le prix d’achat corrigent aussi le stock et la sortie de caisse. Une quantité à 0 retire le produit de la facture.', {
+        number: invoiceEditTarget.invoiceNumber,
+      })"
+    />
+
     <form id="pharmacy-product-form" class="product-form" novalidate @submit.prevent="saveItem">
       <div class="product-form__row product-form__row--name">
         <PharmacyProductSuggest
@@ -1088,7 +1142,7 @@ defineExpose({
       <div class="product-form__row product-form__row--3">
         <UiInput
           v-model="formQuantity"
-          :label="restockTarget ? 'Quantité à ajouter' : 'Disponible'"
+          :label="invoiceEditTarget ? 'Qté facturée' : restockTarget ? 'Quantité à ajouter' : 'Disponible'"
           type="number"
           min="0"
         />

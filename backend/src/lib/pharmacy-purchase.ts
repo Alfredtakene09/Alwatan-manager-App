@@ -16,6 +16,9 @@ export const PHARMACY_PURCHASE_INDICE = {
   flow: ClinicExpenseFlow.SORTIE,
 } as const;
 
+/** Préfixe de la référence des mouvements de stock issus d'une facture fournisseur. */
+export const PURCHASE_REFERENCE_PREFIX = "FACT-";
+
 export type PharmacyPurchaseLineInput = {
   productId?: string | null;
   newProduct?: {
@@ -83,7 +86,7 @@ export async function recordPharmacyPurchase(input: PharmacyPurchaseInput) {
 
   const businessDate = parseBusinessDate(input.businessDate);
   const invoiceNumber = input.invoiceNumber.trim();
-  const reference = `FACT-${invoiceNumber}`;
+  const reference = `${PURCHASE_REFERENCE_PREFIX}${invoiceNumber}`;
 
   const result = await prisma.$transaction(async (tx) => {
     const movements = [];
@@ -101,7 +104,7 @@ export async function recordPharmacyPurchase(input: PharmacyPurchaseInput) {
 
       if (productId) {
         const existing = await tx.product.findUnique({ where: { id: productId } });
-        if (!existing) throw new Error("PRODUCT_NOT_FOUND");
+        if (!existing || existing.deletedAt) throw new Error("PRODUCT_NOT_FOUND");
         if (existing.sellBySachet && existing.sachetsPerBox > 1) unitsPerBox = existing.sachetsPerBox;
         await tx.product.update({
           where: { id: productId },
@@ -206,10 +209,169 @@ export async function recordPharmacyPurchase(input: PharmacyPurchaseInput) {
   };
 }
 
+type PurchaseAuditLine = {
+  productId: string;
+  quantity: number;
+  unitCostFcfa: number | null;
+  stockQuantity?: number;
+};
+
 type PurchaseAuditMetadata = {
   invoiceNumber?: string;
-  lines?: Array<{ productId: string; quantity: number; unitCostFcfa: number | null }>;
+  totalFcfa?: number;
+  lines?: PurchaseAuditLine[];
 };
+
+/** Unités de stock par boîte facturée, telles qu'enregistrées sur la ligne si possible. */
+function lineUnitsPerBox(
+  line: PurchaseAuditLine,
+  product: { sellBySachet: boolean; sachetsPerBox: number },
+) {
+  const recorded = line.stockQuantity && line.quantity > 0 ? line.stockQuantity / line.quantity : 0;
+  if (Number.isInteger(recorded) && recorded > 0) return recorded;
+  return product.sellBySachet && product.sachetsPerBox > 1 ? product.sachetsPerBox : 1;
+}
+
+/**
+ * Effet d'une correction de ligne : lignes de facture à jour, écart de montant et écart de stock.
+ * Une quantité à 0 retire la ligne ; une facture garde toujours au moins un produit.
+ */
+export function computePurchaseLineCorrection(params: {
+  lines: PurchaseAuditLine[];
+  lineIndex: number;
+  quantity: number;
+  unitCostFcfa: number;
+  unitsPerBox: number;
+}) {
+  const { lines, lineIndex, quantity, unitCostFcfa, unitsPerBox } = params;
+  const line = lines[lineIndex];
+  if (!line) throw new Error("PURCHASE_LINE_NOT_FOUND");
+  if (quantity === 0 && lines.length === 1) throw new Error("PURCHASE_LAST_LINE");
+
+  const amountDeltaFcfa = quantity * unitCostFcfa - line.quantity * (line.unitCostFcfa ?? 0);
+  const stockDelta = (quantity - line.quantity) * unitsPerBox;
+  const corrected = { ...line, quantity, unitCostFcfa, stockQuantity: quantity * unitsPerBox };
+  const nextLines = lines.flatMap((row, index) => {
+    if (index !== lineIndex) return [row];
+    return quantity > 0 ? [corrected] : [];
+  });
+  return { amountDeltaFcfa, stockDelta, nextLines };
+}
+
+/**
+ * Correction d'une ligne de facture fournisseur : met à jour la facture, le stock
+ * et la sortie de caisse. Refusée si la caisse de ce jour est déjà clôturée et validée.
+ */
+export async function correctPharmacyPurchaseLine(input: {
+  expenseId: string;
+  lineIndex: number;
+  productId: string;
+  quantity: number;
+  purchasePriceFcfa: number;
+  userId: string;
+}) {
+  const expense = await prisma.clinicExpense.findFirst({
+    where: {
+      id: input.expenseId,
+      indice: { name: PHARMACY_PURCHASE_INDICE.name },
+      status: ClinicExpenseStatus.VALIDATED,
+    },
+  });
+  const audit = expense
+    ? await prisma.auditLog.findFirst({
+        where: { entity: "PharmacyPurchase", entityId: expense.id },
+      })
+    : null;
+  if (!expense || !audit) throw new Error("PURCHASE_NOT_FOUND");
+
+  const metadata = (audit.metadata ?? {}) as PurchaseAuditMetadata;
+  const lines = metadata.lines ?? [];
+  const line = lines[input.lineIndex];
+  if (!line || line.productId !== input.productId) throw new Error("PURCHASE_LINE_NOT_FOUND");
+
+  const product = await prisma.product.findUnique({ where: { id: input.productId } });
+  if (!product || product.deletedAt) throw new Error("PRODUCT_NOT_FOUND");
+
+  const unitsPerBox = lineUnitsPerBox(line, product);
+  const { amountDeltaFcfa, stockDelta, nextLines } = computePurchaseLineCorrection({
+    lines,
+    lineIndex: input.lineIndex,
+    quantity: input.quantity,
+    unitCostFcfa: input.purchasePriceFcfa,
+    unitsPerBox,
+  });
+
+  if (amountDeltaFcfa !== 0) {
+    const closure = await prisma.receptionDayClosure.findUnique({
+      where: {
+        receptionistId_businessDate: {
+          receptionistId: expense.paidById,
+          businessDate: expense.businessDate,
+        },
+      },
+    });
+    if (closure && (closure.validatedAt || closure.settlementId)) throw new Error("PURCHASE_DAY_CLOSED");
+  }
+
+  const nextAmountFcfa = expense.amountFcfa + amountDeltaFcfa;
+  if (nextAmountFcfa <= 0) throw new Error("EMPTY_PURCHASE");
+
+  const invoiceNumber = metadata.invoiceNumber ?? "—";
+  await prisma.$transaction(async (tx) => {
+    if (stockDelta !== 0) {
+      await applyStockMovement(tx, {
+        productId: product.id,
+        type: stockDelta > 0 ? "ENTRY" : "EXIT",
+        quantity: Math.abs(stockDelta),
+        unitCostFcfa: Math.round(input.purchasePriceFcfa / unitsPerBox),
+        reference: `${PURCHASE_REFERENCE_PREFIX}${invoiceNumber}`,
+        notes: `Correction de la facture fournisseur n° ${invoiceNumber}`,
+        userId: input.userId,
+      });
+    }
+    // Le prix de la fiche ne suit que si cette facture l'avait fixé (pas pour une facture plus ancienne).
+    if (product.purchasePriceFcfa === line.unitCostFcfa) {
+      await tx.product.update({
+        where: { id: product.id },
+        data: { purchasePriceFcfa: input.purchasePriceFcfa },
+      });
+    }
+    await tx.clinicExpense.update({
+      where: { id: expense.id },
+      data: { amountFcfa: nextAmountFcfa },
+    });
+    await tx.auditLog.update({
+      where: { id: audit.id },
+      data: {
+        metadata: {
+          ...metadata,
+          totalFcfa: (metadata.totalFcfa ?? expense.amountFcfa) + amountDeltaFcfa,
+          lines: nextLines,
+        } as Prisma.InputJsonValue,
+      },
+    });
+    // Trace séparée : l'entité « PharmacyPurchase » reste la description courante de la facture.
+    await tx.auditLog.create({
+      data: {
+        userId: input.userId,
+        action: "UPDATE",
+        entity: "PharmacyPurchaseCorrection",
+        entityId: expense.id,
+        metadata: {
+          invoiceNumber,
+          productId: product.id,
+          before: { quantity: line.quantity, unitCostFcfa: line.unitCostFcfa },
+          after: { quantity: input.quantity, unitCostFcfa: input.purchasePriceFcfa },
+          amountBeforeFcfa: expense.amountFcfa,
+          amountAfterFcfa: nextAmountFcfa,
+        },
+      },
+    });
+  });
+
+  await refreshUnvalidatedDayClosureForExpense(expense.paidById, expense.businessDate);
+  return { amountFcfa: nextAmountFcfa, productsCount: nextLines.length };
+}
 
 export type PurchaseExpenseDetails = {
   invoiceNumber: string | null;

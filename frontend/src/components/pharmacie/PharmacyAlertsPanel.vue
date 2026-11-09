@@ -8,13 +8,13 @@ import {
   CalendarX,
   Trash2,
   Plus,
-  Minus,
   Save,
   ArrowDownUp,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { canWritePharmacyCatalog } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth'
+import { useUiActionVisibility } from '@/composables/useUiActionVisibility'
 import type { PharmacySupplierRecord } from '@/components/pharmacie/PharmacySuppliersPanel.vue'
 import UiFormModal from '@/components/ui/UiFormModal.vue'
 import UiInput from '@/components/ui/UiInput.vue'
@@ -257,51 +257,18 @@ async function removeAllExpired() {
   }
 }
 
-async function removeOneExpired(card: AlertCard) {
-  if (removing.value) return
-  const confirmed = await confirmAppModal({
-    type: 'DELETE',
-    title: 'Retirer ce produit',
-    message: translateTemplate(
-      'Retirer « {name} » du catalogue (expiré) et remettre le stock à 0 ?',
-      { name: card.name },
-    ),
-    confirmLabel: 'Retirer',
-    cancelLabel: 'Annuler',
-  })
-  if (!confirmed) return
-
-  removing.value = true
-  message.value = ''
-  try {
-    const { data: result } = await api.post<{ message?: string }>(
-      `/pharmacie/products/${card.productId}/retire-expired`,
-    )
-    message.value = result.message ?? 'Produit retiré.'
-    messageType.value = 'success'
-    await loadAlerts({ keepFilter: true, keepMessage: true })
-  } catch (error: unknown) {
-    const apiMessage =
-      error && typeof error === 'object' && 'response' in error
-        ? (error as { response?: { data?: { error?: string } } }).response?.data?.error
-        : undefined
-    message.value = apiMessage ?? 'Impossible de retirer ce produit.'
-    messageType.value = 'error'
-  } finally {
-    removing.value = false
-  }
-}
-
 const auth = useAuthStore()
+const { canSeeUiAction } = useUiActionVisibility()
 const canManageStock = computed(() => canWritePharmacyCatalog(auth.user))
+const canDeleteProduct = computed(() => canManageStock.value && canSeeUiAction('table.delete'))
 
-async function deleteOutOfStockProduct(card: AlertCard) {
+async function deleteProduct(card: AlertCard) {
   if (removing.value) return
   const confirmed = await confirmAppModal({
     type: 'DELETE',
     title: 'Supprimer ce produit',
     message: translateTemplate(
-      'Supprimer définitivement « {name} » du catalogue ? Si le produit a un historique de ventes, il sera seulement désactivé.',
+      'Supprimer définitivement « {name} » du catalogue ? Son historique de ventes et de factures reste conservé.',
       { name: card.name },
     ),
     confirmLabel: 'Supprimer',
@@ -331,7 +298,6 @@ async function deleteOutOfStockProduct(card: AlertCard) {
 }
 
 const stockModalCard = ref<AlertCard | null>(null)
-const stockModalType = ref<'ENTRY' | 'EXIT'>('ENTRY')
 const stockQuantity = ref('1')
 const stockSupplierId = ref('')
 const stockUnitCost = ref('')
@@ -354,15 +320,14 @@ async function ensureSuppliers() {
   }
 }
 
-function openStockModal(card: AlertCard, type: 'ENTRY' | 'EXIT') {
+function openStockModal(card: AlertCard) {
   stockModalCard.value = card
-  stockModalType.value = type
   stockQuantity.value = '1'
   stockSupplierId.value = ''
   stockUnitCost.value = ''
   stockReference.value = ''
   stockError.value = ''
-  if (type === 'ENTRY') void ensureSuppliers()
+  void ensureSuppliers()
 }
 
 function closeStockModal() {
@@ -378,26 +343,20 @@ async function saveStockMovement() {
     stockError.value = 'Quantité invalide.'
     return
   }
-  if (stockModalType.value === 'EXIT' && card.quantity !== null && qty > card.quantity) {
-    stockError.value = translateTemplate('Stock insuffisant (disponible : {qty}).', { qty: card.quantity })
-    return
-  }
-  if (stockModalType.value === 'ENTRY' && !stockSupplierId.value) {
+  if (!stockSupplierId.value) {
     stockError.value = 'Sélectionnez un fournisseur pour une entrée.'
     return
   }
 
   const payload: Record<string, unknown> = {
     productId: card.productId,
-    type: stockModalType.value,
+    type: 'ENTRY',
     quantity: qty,
     reference: stockReference.value.trim() || undefined,
+    supplierId: stockSupplierId.value,
   }
-  if (stockModalType.value === 'ENTRY') {
-    payload.supplierId = stockSupplierId.value
-    const unitCost = Number(stockUnitCost.value)
-    if (Number.isFinite(unitCost) && unitCost > 0) payload.unitCostFcfa = Math.round(unitCost)
-  }
+  const unitCost = Number(stockUnitCost.value)
+  if (Number.isFinite(unitCost) && unitCost > 0) payload.unitCostFcfa = Math.round(unitCost)
 
   stockSaving.value = true
   stockError.value = ''
@@ -405,10 +364,7 @@ async function saveStockMovement() {
     await api.post('/pharmacie/stock-movements', payload)
     stockSaving.value = false
     stockModalCard.value = null
-    message.value = translateTemplate(
-      stockModalType.value === 'ENTRY' ? '{qty} unité(s) ajoutée(s) à « {name} ».' : '{qty} unité(s) retirée(s) de « {name} ».',
-      { qty, name: card.name },
-    )
+    message.value = translateTemplate('{qty} unité(s) ajoutée(s) à « {name} ».', { qty, name: card.name })
     messageType.value = 'success'
     await loadAlerts({ keepFilter: true, keepMessage: true })
   } catch (error: unknown) {
@@ -551,25 +507,14 @@ defineExpose({ reload: () => loadAlerts() })
         >
           <div class="alert-card__top">
             <div class="alert-card__badge">{{ card.levelLabel }}</div>
-            <UiButton
-              v-if="activeFilter === 'expired'"
-              type="button"
-              variant="ghost"
-              size="sm"
-              :icon="Trash2"
-              :disabled="removing"
-              @click="removeOneExpired(card)"
-            >
-              {{ uiText('Retirer') }}
-            </UiButton>
             <button
-              v-else-if="canManageStock && activeFilter === 'out'"
+              v-if="canDeleteProduct"
               type="button"
               class="trash-btn"
               :title="uiText('Supprimer')"
               :aria-label="uiText('Supprimer')"
               :disabled="removing || loading"
-              @click="deleteOutOfStockProduct(card)"
+              @click="deleteProduct(card)"
             >
               <Trash2 :size="16" aria-hidden="true" />
             </button>
@@ -582,19 +527,10 @@ defineExpose({ reload: () => loadAlerts() })
               type="button"
               class="stock-btn stock-btn--add"
               :disabled="loading || stockSaving"
-              @click="openStockModal(card, 'ENTRY')"
+              @click="openStockModal(card)"
             >
               <Plus :size="15" aria-hidden="true" />
               {{ uiText('Ajouter') }}
-            </button>
-            <button
-              type="button"
-              class="stock-btn stock-btn--remove"
-              :disabled="loading || stockSaving || card.quantity === 0"
-              @click="openStockModal(card, 'EXIT')"
-            >
-              <Minus :size="15" aria-hidden="true" />
-              {{ uiText('Retirer') }}
             </button>
           </div>
         </article>
@@ -605,7 +541,7 @@ defineExpose({ reload: () => loadAlerts() })
   <UiFormModal
     v-if="stockModalCard"
     title-id="pharmacy-alert-stock-modal-title"
-    :title="stockModalType === 'ENTRY' ? uiText('Ajouter du stock') : uiText('Retirer du stock')"
+    :title="uiText('Ajouter du stock')"
     :subtitle="stockModalCard.name"
     :icon="ArrowDownUp"
     :body-scroll="false"
@@ -616,33 +552,20 @@ defineExpose({ reload: () => loadAlerts() })
       <p v-if="stockModalCard.quantity !== null" class="stock-hint">
         {{ translateTemplate('Stock actuel : {qty}', { qty: stockModalCard.quantity }) }}
       </p>
-      <template v-if="stockModalType === 'ENTRY'">
-        <UiSelect v-model="stockSupplierId" label="Fournisseur" required>
-          <option value="">{{ uiText('Sélectionner un fournisseur') }}</option>
-          <option v-for="s in activeSuppliers" :key="s.id" :value="s.id">{{ s.name }}</option>
-        </UiSelect>
-        <div class="stock-form-grid">
-          <UiInput v-model="stockQuantity" label="Quantité reçue" type="number" min="1" required />
-          <UiInput money v-model="stockUnitCost" label="Coût unitaire (FCFA)" type="number" min="1" />
-        </div>
-        <UiInput v-model="stockReference" label="N° bon / facture fournisseur" placeholder="Référence document…" />
-      </template>
-      <template v-else>
-        <UiInput
-          v-model="stockQuantity"
-          label="Quantité sortie"
-          type="number"
-          min="1"
-          :max="stockModalCard.quantity ?? undefined"
-          required
-        />
-        <UiInput v-model="stockReference" label="Motif / référence" placeholder="Ex. périmé, casse…" />
-      </template>
+      <UiSelect v-model="stockSupplierId" label="Fournisseur" required>
+        <option value="">{{ uiText('Sélectionner un fournisseur') }}</option>
+        <option v-for="s in activeSuppliers" :key="s.id" :value="s.id">{{ s.name }}</option>
+      </UiSelect>
+      <div class="stock-form-grid">
+        <UiInput v-model="stockQuantity" label="Quantité reçue" type="number" min="1" required />
+        <UiInput money v-model="stockUnitCost" label="Coût unitaire (FCFA)" type="number" min="1" />
+      </div>
+      <UiInput v-model="stockReference" label="N° bon / facture fournisseur" placeholder="Référence document…" />
     </section>
     <template #footer>
       <UiButton variant="ghost" :disabled="stockSaving" @click="closeStockModal">{{ uiText('Annuler') }}</UiButton>
       <UiButton
-        :variant="stockModalType === 'ENTRY' ? 'primary' : 'danger'"
+        variant="primary"
         :icon="Save"
         :disabled="stockSaving"
         @click="saveStockMovement"
@@ -928,16 +851,6 @@ defineExpose({ reload: () => loadAlerts() })
 
 .stock-btn--add:hover:not(:disabled) {
   background: #d1fae5;
-}
-
-.stock-btn--remove {
-  background: #fff;
-  border-color: #fecaca;
-  color: #b91c1c;
-}
-
-.stock-btn--remove:hover:not(:disabled) {
-  background: #fef2f2;
 }
 
 .stock-hint {

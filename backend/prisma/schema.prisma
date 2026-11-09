@@ -833,6 +833,8 @@ model Product {
   sachetPriceFcfa    Int?
   sellBySachet       Boolean   @default(false)
   active             Boolean   @default(true)
+  /// Supprimé du catalogue : la ligne reste pour l'historique des ventes et des factures.
+  deletedAt          DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 

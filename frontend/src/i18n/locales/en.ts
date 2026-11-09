@@ -2850,8 +2850,16 @@ export default {
     'Impossible de retirer les produits expirés.': 'Unable to remove expired products.',
     'Retirer ce produit': 'Remove this product',
     'Supprimer ce produit': 'Delete this product',
-    'Supprimer définitivement « {name} » du catalogue ? Si le produit a un historique de ventes, il sera seulement désactivé.':
-      'Permanently delete "{name}" from the catalog? If the product has sales history, it will only be deactivated.',
+    'Supprimer définitivement « {name} » du catalogue ? Son historique de ventes et de factures reste conservé.':
+      'Permanently delete "{name}" from the catalog? Its sales and invoice history is kept.',
+    'Facture et produit modifiés.': 'Invoice and product updated.',
+    'Facture n° {number} : la quantité et le prix d’achat corrigent aussi le stock et la sortie de caisse. Une quantité à 0 retire le produit de la facture.':
+      'Invoice no. {number}: the quantity and purchase price also correct the stock and the cash outflow. A quantity of 0 removes the product from the invoice.',
+    'Une facture doit garder au moins un produit.': 'An invoice must keep at least one product.',
+    'La caisse de ce jour est déjà clôturée et validée : cette facture ne peut plus être corrigée.':
+      'The cash register for this day is already closed and validated: this invoice can no longer be corrected.',
+    'Stock insuffisant : une partie de ces produits a déjà été vendue, la quantité ne peut pas baisser autant.':
+      'Insufficient stock: some of these products have already been sold, so the quantity cannot drop that far.',
     'Retirer « {name} » du catalogue (expiré) et remettre le stock à 0 ?': 'Remove “{name}” from the catalog (expired) and reset stock to 0?',
     'Produit retiré.': 'Product removed.',
     'Impossible de retirer ce produit.': 'Unable to remove this product.',

@@ -1261,7 +1261,7 @@ router.put("/interventions/:id", async (req, res) => {
 });
 
 router.get("/products", async (_req, res) => {
-  const items = await prisma.product.findMany({ orderBy: { name: "asc" } });
+  const items = await prisma.product.findMany({ where: { deletedAt: null }, orderBy: { name: "asc" } });
   return res.json(items);
 });
 

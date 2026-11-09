@@ -32,7 +32,12 @@ import {
 } from "../lib/lab-notes.js";
 import { requireAuth, requireModule, requirePharmacyCatalogAccess, requireUiAction } from "../middleware/auth.js";
 import { isValidBusinessDate } from "../lib/cash-shift.js";
-import { buildPharmacyPurchaseReport, recordPharmacyPurchase } from "../lib/pharmacy-purchase.js";
+import {
+  buildPharmacyPurchaseReport,
+  correctPharmacyPurchaseLine,
+  PURCHASE_REFERENCE_PREFIX,
+  recordPharmacyPurchase,
+} from "../lib/pharmacy-purchase.js";
 import { canSupervisePharmacy } from "../lib/roles.js";
 
 const router = Router();
@@ -295,6 +300,7 @@ function foldCatalogText(value: string | null | undefined) {
 /** Même médicament : code-barres, sinon nom + dosage (sans tenir compte des accents). */
 async function findCatalogDuplicateId(body: { name: string; dosage?: string | null; barcode?: string | null }) {
   const products = await prisma.product.findMany({
+    where: { deletedAt: null },
     select: { id: true, name: true, dosage: true, barcode: true },
   });
   const barcode = foldCatalogText(body.barcode);
@@ -1037,6 +1043,7 @@ router.get("/alerts", async (_req, res) => {
 
 router.get("/products", async (_req, res) => {
   const items = await prisma.product.findMany({
+    where: { deletedAt: null },
     orderBy: { name: "asc" },
     include: productInclude,
   });
@@ -1183,7 +1190,7 @@ router.put("/products/:id", ...catalogAccess, async (req, res) => {
 
     const productId = routeParam(req.params.id);
     const existing = await prisma.product.findUnique({ where: { id: productId } });
-    if (!existing) return res.status(404).json({ error: "Produit introuvable" });
+    if (!existing || existing.deletedAt) return res.status(404).json({ error: "Produit introuvable" });
     if (body.name !== undefined || body.dosage !== undefined || body.barcode !== undefined) {
       const duplicateId = await findCatalogDuplicateId({
         name: body.name ?? existing.name,
@@ -1227,16 +1234,48 @@ router.put("/products/:id", ...catalogAccess, async (req, res) => {
 });
 
 router.delete("/products/:id", ...catalogAccess, async (req, res) => {
+  const productId = routeParam(req.params.id);
   try {
-    const salesCount = await prisma.pharmacySaleLine.count({ where: { productId: routeParam(req.params.id) } });
-    if (salesCount > 0) {
-      await prisma.product.update({ where: { id: routeParam(req.params.id) }, data: { active: false } });
-      return res.json({ message: "Produit désactivé (historique de ventes conservé)" });
-    }
-    await prisma.stockMovement.deleteMany({ where: { productId: routeParam(req.params.id) } });
-    await prisma.product.delete({ where: { id: routeParam(req.params.id) } });
+    const product = await prisma.product.findUnique({ where: { id: productId } });
+    if (!product || product.deletedAt) return res.status(404).json({ error: "Produit introuvable" });
+
+    const [salesCount, returnsCount, invoiceEntriesCount] = await Promise.all([
+      prisma.pharmacySaleLine.count({ where: { productId } }),
+      prisma.pharmacySaleReturn.count({ where: { productId } }),
+      prisma.stockMovement.count({ where: { productId, reference: { startsWith: PURCHASE_REFERENCE_PREFIX } } }),
+    ]);
+
+    await prisma.$transaction(async (tx) => {
+      if (salesCount + returnsCount + invoiceEntriesCount === 0) {
+        await tx.stockMovement.deleteMany({ where: { productId } });
+        await tx.product.delete({ where: { id: productId } });
+        return;
+      }
+      // Ventes ou factures : la ligne reste pour l'historique, mais le produit quitte le catalogue.
+      if (product.quantity > 0) {
+        await applyStockMovement(tx, {
+          productId,
+          type: "ADJUSTMENT",
+          targetQuantity: 0,
+          notes: "Suppression du produit",
+          reference: "PRODUCT-DELETE",
+          userId: req.user!.id,
+        });
+      }
+      await tx.product.update({
+        where: { id: productId },
+        // Le code-barres et le SKU sont libérés pour pouvoir recréer ce médicament.
+        data: {
+          active: false,
+          deletedAt: new Date(),
+          barcode: null,
+          sku: `SUPPR-${productId}`,
+        },
+      });
+    });
     return res.json({ message: "Produit supprimé" });
-  } catch {
+  } catch (error) {
+    console.error("[pharmacie] suppression produit", productId, error);
     return res.status(400).json({ error: "Suppression impossible" });
   }
 });
@@ -1473,6 +1512,54 @@ router.post("/purchases", ...purchaseAccess, async (req, res) => {
       if (error.message === "EMPTY_PURCHASE") return res.status(400).json({ error: "Montant de la facture nul." });
     }
     if (error instanceof Prisma.PrismaClientKnownRequestError) return mapProductCatalogError(error, res);
+    return mapStockError(error, res);
+  }
+});
+
+const purchaseLineCorrectionSchema = z.object({
+  productId: z.string().min(1),
+  quantity: z.number().int().min(0),
+  purchasePriceFcfa: z.number().int().positive(),
+});
+
+/** Correction d'une ligne de facture fournisseur : facture, stock et sortie de caisse. */
+router.put("/purchases/:id/lines/:index", ...purchaseAccess, async (req, res) => {
+  const lineIndex = Number(routeParam(req.params.index));
+  if (!Number.isInteger(lineIndex) || lineIndex < 0) {
+    return res.status(404).json({ error: "Ligne de facture introuvable." });
+  }
+  try {
+    const body = purchaseLineCorrectionSchema.parse(req.body);
+    const result = await correctPharmacyPurchaseLine({
+      expenseId: routeParam(req.params.id),
+      lineIndex,
+      productId: body.productId,
+      quantity: body.quantity,
+      purchasePriceFcfa: body.purchasePriceFcfa,
+      userId: req.user!.id,
+    });
+    return res.json(result);
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "PURCHASE_NOT_FOUND") return res.status(404).json({ error: "Facture introuvable." });
+      if (error.message === "PURCHASE_LINE_NOT_FOUND") {
+        return res.status(404).json({ error: "Ligne de facture introuvable." });
+      }
+      if (error.message === "PURCHASE_LAST_LINE") {
+        return res.status(400).json({ error: "Une facture doit garder au moins un produit." });
+      }
+      if (error.message === "PURCHASE_DAY_CLOSED") {
+        return res.status(409).json({
+          error: "La caisse de ce jour est déjà clôturée et validée : cette facture ne peut plus être corrigée.",
+        });
+      }
+      if (error.message === "EMPTY_PURCHASE") return res.status(400).json({ error: "Montant de la facture nul." });
+      if (error.message === "INSUFFICIENT_STOCK") {
+        return res.status(409).json({
+          error: "Stock insuffisant : une partie de ces produits a déjà été vendue, la quantité ne peut pas baisser autant.",
+        });
+      }
+    }
     return mapStockError(error, res);
   }
 });

@@ -661,7 +661,7 @@ router.get("/stats", async (_req, res) => {
     prisma.hospitalization.count({
       where: { status: HospitalizationStatus.ACTIVE, roomId: { not: null } },
     }),
-    prisma.product.count({ where: { quantity: { lte: 5 } } }),
+    prisma.product.count({ where: { quantity: { lte: 5 }, deletedAt: null } }),
   ]);
   return res.json({ waitingVisits, surgeryQueue, activeBeds, lowStock });
 });

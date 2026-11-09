@@ -59,6 +59,7 @@ const ROUTE_LABELS: Array<[string, string]> = [
   ["POST /pharmacie/products/:id/retire-expired", "Retrait d'un produit expiré"],
   ["POST /pharmacie/products/remove-expired", "Retrait de tous les produits expirés"],
   ["POST /pharmacie/stock-movements", "Mouvement de stock de la pharmacie"],
+  ["PUT /pharmacie/purchases/:id/lines/:index", "Correction d'une facture fournisseur de la pharmacie"],
   ["PATCH /pharmacie/sales/:id", "Modification d'une vente de la pharmacie"],
   ["POST /pharmacie/sales/:id/returns", "Retour de médicaments vendus"],
   ["POST /pharmacie/day-closure", "Clôture de la journée de la pharmacie"],

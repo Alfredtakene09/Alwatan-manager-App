@@ -280,7 +280,7 @@ export async function findDuplicateProduct(input: {
   if (bySku) return bySku;
 
   const products = await prisma.product.findMany({
-    where: input.excludeId ? { id: { not: input.excludeId } } : undefined,
+    where: { deletedAt: null, ...(input.excludeId ? { id: { not: input.excludeId } } : {}) },
   });
   return products.find((item) => normalizeName(item.name) === name) ?? null;
 }

@@ -2850,8 +2850,16 @@ export default {
     'Impossible de retirer les produits expirés.': 'تعذر إزالة المنتجات المنتهية.',
     'Retirer ce produit': 'إزالة هذا المنتج',
     'Supprimer ce produit': 'حذف هذا المنتج',
-    'Supprimer définitivement « {name} » du catalogue ? Si le produit a un historique de ventes, il sera seulement désactivé.':
-      'حذف «{name}» نهائيًا من الكتالوج؟ إذا كان للمنتج سجل مبيعات فسيتم تعطيله فقط.',
+    'Supprimer définitivement « {name} » du catalogue ? Son historique de ventes et de factures reste conservé.':
+      'حذف «{name}» نهائيًا من الكتالوج؟ يبقى سجل المبيعات والفواتير محفوظًا.',
+    'Facture et produit modifiés.': 'تم تعديل الفاتورة والمنتج.',
+    'Facture n° {number} : la quantité et le prix d’achat corrigent aussi le stock et la sortie de caisse. Une quantité à 0 retire le produit de la facture.':
+      'الفاتورة رقم {number}: تصحح الكمية وسعر الشراء أيضًا المخزون والمبلغ الخارج من الصندوق. الكمية 0 تزيل المنتج من الفاتورة.',
+    'Une facture doit garder au moins un produit.': 'يجب أن تحتفظ الفاتورة بمنتج واحد على الأقل.',
+    'La caisse de ce jour est déjà clôturée et validée : cette facture ne peut plus être corrigée.':
+      'صندوق هذا اليوم مغلق ومعتمد بالفعل: لم يعد من الممكن تصحيح هذه الفاتورة.',
+    'Stock insuffisant : une partie de ces produits a déjà été vendue, la quantité ne peut pas baisser autant.':
+      'المخزون غير كافٍ: بيع جزء من هذه المنتجات بالفعل، لذا لا يمكن خفض الكمية إلى هذا الحد.',
     'Retirer « {name} » du catalogue (expiré) et remettre le stock à 0 ?': 'إزالة « {name} » من الكتالوج (منتهٍ) وإعادة المخزون إلى 0؟',
     'Produit retiré.': 'تمت إزالة المنتج.',
     'Impossible de retirer ce produit.': 'تعذر إزالة هذا المنتج.',

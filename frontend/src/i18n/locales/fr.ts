@@ -2836,8 +2836,16 @@ export default {
     'Impossible de retirer les produits expirés.': 'Impossible de retirer les produits expirés.',
     'Retirer ce produit': 'Retirer ce produit',
     'Supprimer ce produit': 'Supprimer ce produit',
-    'Supprimer définitivement « {name} » du catalogue ? Si le produit a un historique de ventes, il sera seulement désactivé.':
-      'Supprimer définitivement « {name} » du catalogue ? Si le produit a un historique de ventes, il sera seulement désactivé.',
+    'Supprimer définitivement « {name} » du catalogue ? Son historique de ventes et de factures reste conservé.':
+      'Supprimer définitivement « {name} » du catalogue ? Son historique de ventes et de factures reste conservé.',
+    'Facture et produit modifiés.': 'Facture et produit modifiés.',
+    'Facture n° {number} : la quantité et le prix d’achat corrigent aussi le stock et la sortie de caisse. Une quantité à 0 retire le produit de la facture.':
+      'Facture n° {number} : la quantité et le prix d’achat corrigent aussi le stock et la sortie de caisse. Une quantité à 0 retire le produit de la facture.',
+    'Une facture doit garder au moins un produit.': 'Une facture doit garder au moins un produit.',
+    'La caisse de ce jour est déjà clôturée et validée : cette facture ne peut plus être corrigée.':
+      'La caisse de ce jour est déjà clôturée et validée : cette facture ne peut plus être corrigée.',
+    'Stock insuffisant : une partie de ces produits a déjà été vendue, la quantité ne peut pas baisser autant.':
+      'Stock insuffisant : une partie de ces produits a déjà été vendue, la quantité ne peut pas baisser autant.',
     'Retirer « {name} » du catalogue (expiré) et remettre le stock à 0 ?': 'Retirer « {name} » du catalogue (expiré) et remettre le stock à 0 ?',
     'Produit retiré.': 'Produit retiré.',
     'Impossible de retirer ce produit.': 'Impossible de retirer ce produit.',
