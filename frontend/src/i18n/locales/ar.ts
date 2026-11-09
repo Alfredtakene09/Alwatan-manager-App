@@ -3048,6 +3048,28 @@ export default {
     "Suppression d'hospitalisation non autorisée pour la réception.": 'حذف الاستشفاء غير مسموح لموظفي الاستقبال.',
     // === RECEPTION_I18N_END ===
     // === PHARMACY_I18N_END ===
+    // === FACTURES_PARCOURS_I18N ===
+    'Facture unique par parcours patient': 'فاتورة واحدة لكل مسار مريض',
+    'Une facture unique par parcours patient : consultation, examens, opération, hospitalisation et pharmacie': 'فاتورة واحدة لكل مسار مريض: استشارة، فحوصات، عملية، استشفاء وصيدلية',
+    'Patient, matricule ou téléphone': 'المريض، الرقم أو الهاتف',
+    'Prestations': 'الخدمات',
+    'Aucune facture sur cette période': 'لا توجد فواتير في هذه الفترة',
+    'Imprimer la facture': 'طباعة الفاتورة',
+    'Payée partiellement': 'مدفوعة جزئياً',
+    'Impossible de charger les factures': 'تعذر تحميل الفواتير',
+    'Impossible de charger la facture': 'تعذر تحميل الفاتورة',
+    'FACTURE': 'فاتورة',
+    'Désignation': 'البيان',
+    'Prix unitaire': 'سعر الوحدة',
+    'Total facture': 'إجمالي الفاتورة',
+    'Montant payé': 'المبلغ المدفوع',
+    'Signature du patient': 'توقيع المريض',
+    'Cachet et signature de la caisse': 'ختم وتوقيع الصندوق',
+    'Séances de kinésithérapie': 'جلسات العلاج الطبيعي',
+    'Complément facturé': 'مبلغ إضافي مفوتر',
+    'Caution d\'hospitalisation': 'عربون الاستشفاء',
+    'Solde d\'hospitalisation': 'رصيد الاستشفاء',
+    'Séjour d\'hospitalisation': 'إقامة الاستشفاء',
   },
   login: {
     title: 'تسجيل الدخول',

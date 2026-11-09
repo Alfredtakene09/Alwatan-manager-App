@@ -3545,3 +3545,162 @@ export function openPrintDocument(
   }
   return true
 }
+
+/* ------------------------------------------------------------------ */
+/* Facture unique d'un parcours patient (A4)                           */
+/* ------------------------------------------------------------------ */
+
+export type JourneyInvoiceLine = {
+  label: string
+  detail?: string | null
+  quantity: number
+  unitPriceFcfa: number
+  amountFcfa: number
+}
+
+export type JourneyInvoiceSection = {
+  key: string
+  title: string
+  invoiceNumbers: string[]
+  lines: JourneyInvoiceLine[]
+  grossFcfa: number
+  reductionFcfa: number
+  netFcfa: number
+  paidFcfa: number
+}
+
+export type JourneyInvoiceData = {
+  reference: string
+  date: string
+  patient: {
+    code: string
+    firstName: string
+    lastName: string
+    phone?: string | null
+    gender?: string | null
+    age?: number | null
+    ageUnit?: PatientAgeUnit | null
+    address?: string | null
+  }
+  doctor?: string | null
+  service?: string | null
+  cashiers: string[]
+  sections: JourneyInvoiceSection[]
+  grossFcfa: number
+  reductionFcfa: number
+  totalFcfa: number
+  paidFcfa: number
+  remainingFcfa: number
+}
+
+const JOURNEY_INVOICE_STYLES = `
+<style>
+  .journey-invoice { font-family: 'Segoe UI', Arial, sans-serif; color: #0f172a; padding: 10mm 12mm; font-size: 12px; }
+  .journey-invoice h2.journey-invoice__title { text-align: center; font-size: 18px; letter-spacing: .08em; margin: 8px 0 2px; }
+  .journey-invoice__ref { text-align: center; color: #475569; margin: 0 0 10px; }
+  .journey-invoice__meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; }
+  .journey-invoice__meta div { display: flex; gap: 6px; }
+  .journey-invoice__meta span { color: #64748b; min-width: 92px; }
+  .journey-invoice table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+  .journey-invoice th, .journey-invoice td { border-bottom: 1px solid #e2e8f0; padding: 4px 6px; text-align: start; vertical-align: top; }
+  .journey-invoice th { background: #f1f5f9; font-size: 11px; text-transform: uppercase; color: #334155; }
+  .journey-invoice td.num, .journey-invoice th.num { text-align: end; white-space: nowrap; }
+  .journey-invoice tr.journey-invoice__section td { background: #e0f2f1; font-weight: 700; color: #0f766e; border-top: 1px solid #99c9c4; }
+  .journey-invoice tr.journey-invoice__section small { font-weight: 400; color: #475569; margin-inline-start: 6px; }
+  .journey-invoice tr.journey-invoice__sub td { font-style: italic; color: #475569; }
+  .journey-invoice tr.journey-invoice__subtotal td { font-weight: 600; }
+  .journey-invoice .journey-invoice__detail { display: block; color: #64748b; font-size: 10.5px; }
+  .journey-invoice__totals { margin-inline-start: auto; width: 55%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 12px; }
+  .journey-invoice__totals div { display: flex; justify-content: space-between; padding: 3px 0; }
+  .journey-invoice__totals .is-grand { border-top: 2px solid #0f172a; margin-top: 4px; padding-top: 6px; font-size: 14px; font-weight: 800; }
+  .journey-invoice__totals .is-due { color: #b91c1c; font-weight: 700; }
+  .journey-invoice__foot { display: flex; justify-content: space-between; margin-top: 28px; color: #475569; }
+  .journey-invoice__sign { width: 40%; border-top: 1px dashed #94a3b8; padding-top: 4px; text-align: center; }
+  .journey-invoice__thanks { text-align: center; margin-top: 18px; font-style: italic; color: #475569; }
+  @media print { .journey-invoice tr { page-break-inside: avoid; } }
+</style>`
+
+export function buildJourneyInvoiceHtml(data: JourneyInvoiceData): string {
+  const { shortDate, timeShort } = parseReceiptDateTime(data.date)
+  const p = data.patient
+  const ageLabel = p.age != null ? patientAgeLabel(p.age, p.ageUnit ?? null) : null
+  const gender = formatGender(p.gender)
+  const field = (label: string, value?: string | null) =>
+    value ? `<div><span>${escapeHtml(t(label))}</span><strong>${escapeHtml(value)}</strong></div>` : ''
+
+  const leftMeta = [
+    field('Patient', `${p.firstName} ${p.lastName}`.trim()),
+    field('Matricule', p.code),
+    field('Âge', ageLabel),
+    field('Sexe', gender),
+    field('Tél.', p.phone),
+    field('Adresse', p.address),
+  ].join('')
+  const rightMeta = [
+    field('N° facture', data.reference),
+    field('Date', `${shortDate} ${timeShort}`.trim()),
+    field('Médecin', data.doctor),
+    field('Service', data.service),
+    field('Encaissé par', data.cashiers.join(', ')),
+  ].join('')
+
+  const rows = data.sections
+    .map((section) => {
+      const refs = section.invoiceNumbers.length
+        ? `<small>${escapeHtml(section.invoiceNumbers.join(', '))}</small>`
+        : ''
+      const lines = section.lines
+        .map(
+          (line) => `<tr>
+        <td>${escapeHtml(t(line.label))}${line.detail ? `<span class="journey-invoice__detail">${escapeHtml(line.detail)}</span>` : ''}</td>
+        <td class="num">${line.quantity}</td>
+        <td class="num">${formatFcfaPrint(line.unitPriceFcfa)}</td>
+        <td class="num">${formatFcfaPrint(line.amountFcfa)}</td>
+      </tr>`,
+        )
+        .join('')
+      const reduction =
+        section.reductionFcfa > 0
+          ? `<tr class="journey-invoice__sub"><td colspan="3">${escapeHtml(t('Réduction'))}</td><td class="num">- ${formatFcfaPrint(section.reductionFcfa)}</td></tr>`
+          : ''
+      return `<tr class="journey-invoice__section"><td colspan="4">${escapeHtml(t(section.title))}${refs}</td></tr>
+      ${lines}${reduction}
+      <tr class="journey-invoice__subtotal"><td colspan="3">${escapeHtml(t('Sous-total'))} — ${escapeHtml(t(section.title))}</td><td class="num">${formatFcfaPrint(section.netFcfa)}</td></tr>`
+    })
+    .join('')
+
+  const totals = [
+    `<div><span>${escapeHtml(t('Montant brut'))}</span><strong>${formatFcfaPrint(data.grossFcfa)}</strong></div>`,
+    data.reductionFcfa > 0
+      ? `<div><span>${escapeHtml(t('Réductions'))}</span><strong>- ${formatFcfaPrint(data.reductionFcfa)}</strong></div>`
+      : '',
+    `<div class="is-grand"><span>${escapeHtml(t('Total facture'))}</span><strong>${formatFcfaPrint(data.totalFcfa)}</strong></div>`,
+    `<div><span>${escapeHtml(t('Montant payé'))}</span><strong>${formatFcfaPrint(data.paidFcfa)}</strong></div>`,
+    data.remainingFcfa > 0
+      ? `<div class="is-due"><span>${escapeHtml(t('Reste à payer'))}</span><strong>${formatFcfaPrint(data.remainingFcfa)}</strong></div>`
+      : '',
+  ].join('')
+
+  return `${JOURNEY_INVOICE_STYLES}
+<div class="journey-invoice">
+  ${buildClinicPrintHeader()}
+  <h2 class="journey-invoice__title">${escapeHtml(t('FACTURE'))}</h2>
+  <p class="journey-invoice__ref">${escapeHtml(t('Parcours patient'))} · ${escapeHtml(data.reference)}</p>
+  <div class="journey-invoice__meta"><div style="display:block">${leftMeta}</div><div style="display:block">${rightMeta}</div></div>
+  <table>
+    <thead><tr>
+      <th>${escapeHtml(t('Désignation'))}</th>
+      <th class="num">${escapeHtml(t('Qté'))}</th>
+      <th class="num">${escapeHtml(t('Prix unitaire'))}</th>
+      <th class="num">${escapeHtml(t('Montant'))}</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="journey-invoice__totals">${totals}</div>
+  <div class="journey-invoice__foot">
+    <div class="journey-invoice__sign">${escapeHtml(t('Signature du patient'))}</div>
+    <div class="journey-invoice__sign">${escapeHtml(t('Cachet et signature de la caisse'))}</div>
+  </div>
+  <p class="journey-invoice__thanks">${escapeHtml(t('Merci de votre confiance'))}</p>
+</div>`
+}

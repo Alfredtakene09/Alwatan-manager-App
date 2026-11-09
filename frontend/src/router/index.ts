@@ -186,6 +186,12 @@ const router = createRouter({
           redirect: { name: 'dashboard' },
         },
         {
+          path: 'comptabilite/factures',
+          name: 'comptabilite-factures',
+          component: () => import('@/views/comptabilite/ComptabiliteFacturesView.vue'),
+          meta: { module: 'comptabilite' },
+        },
+        {
           path: 'comptabilite/depenses',
           name: 'comptabilite-depenses',
           component: () => import('@/views/comptabilite/ComptabiliteDepensesView.vue'),

@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   Clock,
   Receipt,
+  FileText,
   Scissors,
   FolderOpen,
   Banknote,
@@ -509,6 +510,13 @@ const directionOperationalNav: NavSection[] = [
         icon: Receipt,
         module: 'comptabilite',
         children: [
+          {
+            to: '/comptabilite/factures',
+            label: 'Factures',
+            icon: FileText,
+            module: 'comptabilite',
+            description: 'Facture unique par parcours patient',
+          },
           {
             to: '/admin/depenses',
             label: 'Gestion des dépenses',

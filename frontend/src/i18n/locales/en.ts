@@ -3048,6 +3048,28 @@ export default {
     "Suppression d'hospitalisation non autorisée pour la réception.": 'Reception staff cannot delete hospitalizations.',
     // === RECEPTION_I18N_END ===
     // === PHARMACY_I18N_END ===
+    // === FACTURES_PARCOURS_I18N ===
+    'Facture unique par parcours patient': 'One invoice per patient journey',
+    'Une facture unique par parcours patient : consultation, examens, opération, hospitalisation et pharmacie': 'One invoice per patient journey: consultation, exams, surgery, hospitalization and pharmacy',
+    'Patient, matricule ou téléphone': 'Patient, ID or phone',
+    'Prestations': 'Services',
+    'Aucune facture sur cette période': 'No invoice for this period',
+    'Imprimer la facture': 'Print invoice',
+    'Payée partiellement': 'Partially paid',
+    'Impossible de charger les factures': 'Unable to load invoices',
+    'Impossible de charger la facture': 'Unable to load invoice',
+    'FACTURE': 'INVOICE',
+    'Désignation': 'Description',
+    'Prix unitaire': 'Unit price',
+    'Total facture': 'Invoice total',
+    'Montant payé': 'Amount paid',
+    'Signature du patient': 'Patient signature',
+    'Cachet et signature de la caisse': 'Cashier stamp and signature',
+    'Séances de kinésithérapie': 'Physiotherapy sessions',
+    'Complément facturé': 'Additional billed amount',
+    'Caution d\'hospitalisation': 'Hospitalization deposit',
+    'Solde d\'hospitalisation': 'Hospitalization balance',
+    'Séjour d\'hospitalisation': 'Hospital stay',
   },
   login: {
     title: 'Sign in',
