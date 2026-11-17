@@ -7,16 +7,21 @@ import {
   TrendingDown,
   TrendingUp,
   Users,
-  Stethoscope,
   FlaskConical,
   BedDouble,
   Wallet,
-  Activity,
+  Scissors,
+  Smile,
+  Baby,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
 import { canAccessModule, formatFcfa, formatFcfaShort } from '@/lib/roles'
-import type { AdminDashboardOverview } from '@/lib/admin-dashboard'
+import type {
+  AdminDashboardOverview,
+  OperationCategory,
+  OperationsByServiceRow,
+} from '@/lib/admin-dashboard'
 import {
   formatMonthLabel,
   evolutionTextForExport,
@@ -55,8 +60,9 @@ function localIsoDate(date = new Date()) {
   return `${year}-${month}-${day}`
 }
 
-const dateFrom = ref('')
-const dateTo = ref('')
+const today = new Date()
+const dateFrom = ref(localIsoDate(new Date(today.getFullYear(), today.getMonth(), 1)))
+const dateTo = ref(localIsoDate(today))
 
 const overview = ref<AdminDashboardOverview | null>(null)
 const gestionnaireOverview = ref<GestionnaireDashboardOverview | null>(null)
@@ -115,6 +121,7 @@ const REVENUE_COLORS: Record<string, string> = {
 
 const EXPENSE_COLORS: Record<string, string> = {
   salaires: '#7c3aed',
+  parts_medecins: '#db2777',
   fournitures: '#2563eb',
   equipements: '#d97706',
   maintenance: '#0d9488',
@@ -138,7 +145,7 @@ const summaryStats = computed((): SummaryStat[] => {
       id: 'expenses',
       label: '',
       value: translateTemplate('Sortie : {amount}', {
-        amount: formatFcfaShort(k.expensesMonthFcfa),
+        amount: formatFcfaShort(k.expensesModuleFcfa ?? k.expensesMonthFcfa),
       }),
       icon: TrendingDown,
       variant: 'rose',
@@ -156,28 +163,39 @@ const summaryStats = computed((): SummaryStat[] => {
     },
     {
       id: 'payroll',
-      label: translateDashboardLabel('Masse salariale'),
+      label: translateDashboardLabel('Salaires versés'),
       value: formatFcfa(k.payrollMonthFcfa),
       icon: Users,
       variant: 'violet',
-      trend: translateDashboardLabel('Salaires à jour des fiches employés'),
-    },
-    {
-      id: 'doctor-shares',
-      label: translateDashboardLabel('Parts médecins reçues'),
-      value: formatFcfa(k.doctorSharesReceivedFcfa ?? 0),
-      icon: Stethoscope,
-      variant: 'amber',
       trend: [
-        translateTemplate('Consultations : {amount}', {
-          amount: formatFcfa(k.doctorSharesConsultationFcfa ?? 0),
+        translateTemplate('dont avances {amount}', {
+          amount: formatFcfa(k.payrollAdvancesFcfa ?? 0),
         }),
-        translateTemplate('Opérations : {amount}', {
-          amount: formatFcfa(k.doctorSharesSurgeryFcfa ?? 0),
-        }),
-        formatTrendPercentLocalized(k.doctorSharesChangePercent ?? 0, !isFullMonthRange.value),
+        formatTrendPercentLocalized(k.payrollChangePercent, !isFullMonthRange.value),
       ].join(' · '),
     },
+    ...(overview.value?.operationsByService
+      ? [
+          {
+            id: 'odontologie',
+            label: translateDashboardLabel('Odontologie'),
+            value: formatFcfa(operationGroups.value.odontologie.amountFcfa),
+            icon: Smile,
+            variant: 'amber' as const,
+            detail: operationCountLabel(operationGroups.value.odontologie.count),
+            trend: periodCaption.value,
+          },
+          {
+            id: 'accouchements',
+            label: translateDashboardLabel('Accouchements (Autres)'),
+            value: formatFcfa(operationGroups.value.accouchement.amountFcfa),
+            icon: Baby,
+            variant: 'rose' as const,
+            detail: operationCountLabel(operationGroups.value.accouchement.count),
+            trend: periodCaption.value,
+          },
+        ]
+      : []),
   ]
 })
 
@@ -312,34 +330,77 @@ const revenueBreakdownForCards = computed(() =>
 
 const revenueModuleStats = computed(() => {
   void localeCode.value
-  return revenueBreakdownForCards.value.map((row) => {
-    const normalizedKey = row.key.toLowerCase()
-    const icon = moduleIconByKey[normalizedKey] ?? Banknote
-    const variant = moduleVariantByKey[normalizedKey] ?? 'green'
-    return {
-      id: `revenue-module-${row.key}`,
-      label: `${translateDashboardLabel('Entrées')} ${translateDashboardLabel(row.label)}`,
-      value: formatFcfa(row.amountFcfa),
-      icon,
-      variant,
-    }
-  })
+  const entriesFcfa = overview.value?.financialKpis.entriesMonthFcfa ?? 0
+  // Entrées saisies dans le module Dépenses (ex. ambulance) : comptées dans le bénéfice net.
+  const expenseEntriesCard = {
+    id: 'revenue-module-depenses-entrees',
+    label: translateDashboardLabel('Entrées du module Dépenses'),
+    value: formatFcfa(entriesFcfa),
+    icon: Wallet,
+    variant: 'cyan' as const,
+  }
+  return [
+    ...revenueBreakdownForCards.value.map((row) => {
+      const normalizedKey = row.key.toLowerCase()
+      const icon = moduleIconByKey[normalizedKey] ?? Banknote
+      const variant = moduleVariantByKey[normalizedKey] ?? 'green'
+      return {
+        id: `revenue-module-${row.key}`,
+        label: `${translateDashboardLabel('Entrées')} ${translateDashboardLabel(row.label)}`,
+        value: formatFcfa(row.amountFcfa),
+        icon,
+        variant,
+      }
+    }),
+    expenseEntriesCard,
+  ]
 })
 
-const operationsTotalFcfa = computed(() =>
-  (overview.value?.operationsByService ?? []).reduce((sum, row) => sum + row.amountFcfa, 0),
-)
+type OperationGroup = { count: number; amountFcfa: number; services: OperationsByServiceRow[] }
 
-const operationsTotalCount = computed(() =>
-  (overview.value?.operationsByService ?? []).reduce((sum, row) => sum + row.count, 0),
-)
+/** Vraies opérations, odontologie et accouchements (« Autres ») de la période filtrée. */
+const operationGroups = computed(() => {
+  const groups: Record<OperationCategory, OperationGroup> = {
+    operation: { count: 0, amountFcfa: 0, services: [] },
+    odontologie: { count: 0, amountFcfa: 0, services: [] },
+    accouchement: { count: 0, amountFcfa: 0, services: [] },
+  }
+  for (const row of overview.value?.operationsByService ?? []) {
+    if (row.count <= 0) continue
+    const group = groups[row.category ?? 'operation']
+    group.count += row.count
+    group.amountFcfa += row.amountFcfa
+    group.services.push(row)
+  }
+  return groups
+})
 
-const operationsCountLabel = computed(() => {
+function operationCountLabel(n: number) {
   void localeCode.value
-  const n = operationsTotalCount.value
   return n <= 1
     ? translateTemplate('{n} opération', { n })
     : translateTemplate('{n} opérations', { n })
+}
+
+/** Services des vraies opérations, affichés en bas de la carte. */
+const operationServicesTrend = computed(() => {
+  const services = operationGroups.value.operation.services
+  if (!services.length) return periodCaption.value
+  return services
+    .map((row) => `${row.serviceName} : ${formatFcfa(row.amountFcfa)} (${row.count})`)
+    .join(' · ')
+})
+
+const operationEntryCards = computed(() => {
+  const groups = operationGroups.value
+  return [
+    { id: 'operation', label: 'Opérations', icon: Scissors, variant: 'amber' as const, group: groups.operation },
+  ].map((card) => ({
+    ...card,
+    value: formatFcfa(card.group.amountFcfa),
+    detail: operationCountLabel(card.group.count),
+    trend: operationServicesTrend.value,
+  }))
 })
 
 type DashboardExportRow = { label: string; value: string; extra?: string; extra2?: string }
@@ -397,6 +458,11 @@ function dashboardExportPayload() {
     value: formatFcfa(row.amountFcfa),
     extra: percentLabel(row.percent),
   }))
+  revenueRows.push({
+    label: translateDashboardLabel('Entrées du module Dépenses'),
+    value: formatFcfa(overview.value?.financialKpis.entriesMonthFcfa ?? 0),
+    extra: '',
+  })
   if (revenueRows.length) {
     sections.push({
       title: uiText('Entrées financières par module'),
@@ -414,18 +480,23 @@ function dashboardExportPayload() {
     sections.push({ title: uiText('Dépenses par catégorie'), columns: amountColumns, rows: expenseRows })
   }
 
-  const operationRows: DashboardExportRow[] = (overview.value?.operationsByService ?? []).map((row) => ({
-    label: row.serviceName,
-    extra: String(row.count),
-    value: formatFcfa(row.amountFcfa),
-  }))
-  if (operationRows.length) {
+  const operationSections: Array<{ title: string; group: OperationGroup }> = [
+    { title: uiText('Opérations par service'), group: operationGroups.value.operation },
+    { title: uiText('Odontologie'), group: operationGroups.value.odontologie },
+    { title: uiText('Accouchements (Autres)'), group: operationGroups.value.accouchement },
+  ]
+  for (const { title, group } of operationSections) {
+    if (!group.services.length) continue
     sections.push({
-      title: uiText('Opérations par service'),
+      title,
       columns: serviceColumns,
-      rows: operationRows,
+      rows: group.services.map((row) => ({
+        label: row.serviceName,
+        extra: String(row.count),
+        value: formatFcfa(row.amountFcfa),
+      })),
       totalsRows: [
-        { label: uiText('Total'), value: `${operationsCountLabel.value} — ${formatFcfa(operationsTotalFcfa.value)}` },
+        { label: uiText('Total'), value: `${operationCountLabel(group.count)} — ${formatFcfa(group.amountFcfa)}` },
       ],
     })
   }
@@ -436,7 +507,14 @@ function dashboardExportPayload() {
       title: uiText('Activité clinique'),
       columns: simpleColumns,
       rows: [
-        { label: uiText('Opération'), value: `${formatFcfa(operationsTotalFcfa.value)} (${operationsCountLabel.value})` },
+        ...[
+          { label: 'Opérations', group: operationGroups.value.operation },
+          { label: 'Odontologie', group: operationGroups.value.odontologie },
+          { label: 'Accouchements (Autres)', group: operationGroups.value.accouchement },
+        ].map((row) => ({
+          label: uiText(row.label),
+          value: `${formatFcfa(row.group.amountFcfa)} (${operationCountLabel(row.group.count)})`,
+        })),
         {
           label: uiText('Patients de la période'),
           value: String(clinical.patientsInPeriod ?? clinical.patientsToday ?? 0),
@@ -620,11 +698,14 @@ watch([dateFrom, dateTo], ([from, to], [prevFrom, prevTo]) => {
             compact
           />
           <UiStatCard
-            label="Opération"
-            :value="formatFcfa(operationsTotalFcfa)"
-            :trend="operationsCountLabel"
-            :icon="Activity"
-            variant="amber"
+            v-for="card in operationEntryCards"
+            :key="card.id"
+            :label="card.label"
+            :value="card.value"
+            :detail="card.detail"
+            :trend="card.trend"
+            :icon="card.icon"
+            :variant="card.variant"
             compact
           />
         </div>

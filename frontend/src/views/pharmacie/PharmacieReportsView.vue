@@ -16,8 +16,16 @@ const { uiText } = useAppI18n()
         :icon="BarChart3"
       />
     </section>
-    <section class="page-with-table__body">
+    <section class="page-with-table__body reports-body">
       <PharmacyReportsPanel />
     </section>
   </div>
 </template>
+
+<style scoped>
+/* Page de rapports (cartes empilées) : le corps défile, contrairement aux pages tableau. */
+.reports-body {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+</style>

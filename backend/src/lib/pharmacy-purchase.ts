@@ -213,7 +213,13 @@ type PurchaseAuditMetadata = {
 
 export type PurchaseExpenseDetails = {
   invoiceNumber: string | null;
-  lines: Array<{ productName: string; quantity: number; unitCostFcfa: number; totalFcfa: number }>;
+  lines: Array<{
+    productId: string;
+    productName: string;
+    quantity: number;
+    unitCostFcfa: number;
+    totalFcfa: number;
+  }>;
 };
 
 /**
@@ -251,6 +257,7 @@ export async function loadPurchaseDetails(expenseIds: string[]) {
       {
         invoiceNumber: metadata.invoiceNumber ?? null,
         lines: (metadata.lines ?? []).map((line) => ({
+          productId: line.productId,
           productName: productName.get(line.productId) ?? "Produit supprimé",
           quantity: line.quantity,
           unitCostFcfa: line.unitCostFcfa ?? 0,
@@ -271,15 +278,24 @@ export async function withPurchaseDetails<T extends { id: string }>(rows: T[]) {
  * Factures fournisseur saisies sur la période (date comptable) : nombre, montant total
  * et produits entrés en stock pour chaque facture (lus dans le journal d'audit).
  */
-export async function buildPharmacyPurchaseReport(fromIso: string, toIso: string) {
+export async function buildPharmacyPurchaseReport(fromIso: string | null, toIso: string | null) {
   const expenses = await prisma.clinicExpense.findMany({
     where: {
       indice: { name: PHARMACY_PURCHASE_INDICE.name },
       status: ClinicExpenseStatus.VALIDATED,
-      businessDate: { gte: parseBusinessDate(fromIso), lte: parseBusinessDate(toIso) },
+      ...(fromIso && toIso
+        ? { businessDate: { gte: parseBusinessDate(fromIso), lte: parseBusinessDate(toIso) } }
+        : {}),
     },
     orderBy: [{ businessDate: "desc" }, { createdAt: "desc" }],
-    select: { id: true, businessDate: true, amountFcfa: true, label: true, beneficiary: true },
+    select: {
+      id: true,
+      businessDate: true,
+      amountFcfa: true,
+      label: true,
+      beneficiary: true,
+      recordedBy: { select: { firstName: true, lastName: true, username: true } },
+    },
   });
 
   const detailsByExpense = await loadPurchaseDetails(expenses.map((row) => row.id));
@@ -292,6 +308,9 @@ export async function buildPharmacyPurchaseReport(fromIso: string, toIso: string
       invoiceNumber:
         detailsByExpense.get(expense.id)?.invoiceNumber ?? expense.label.match(/facture n° (.+)$/)?.[1] ?? "—",
       supplierName: expense.beneficiary ?? "—",
+      recordedByName:
+        `${expense.recordedBy.firstName} ${expense.recordedBy.lastName}`.trim() ||
+        expense.recordedBy.username,
       amountFcfa: expense.amountFcfa,
       productsCount: lines.length,
       unitsCount: lines.reduce((sum, line) => sum + line.quantity, 0),

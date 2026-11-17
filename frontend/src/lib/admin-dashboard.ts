@@ -4,10 +4,15 @@ export type FinancialKpis = {
   expensesMonthFcfa: number
   expensesChangePercent: number
   entriesMonthFcfa?: number
+  /** Sorties validées du module Dépenses seules (hors paie et parts médecins). */
+  expensesModuleFcfa?: number
   netMonthFcfa: number
   netChangePercent: number
+  /** Salaires et avances réellement versés sur la période. */
   payrollMonthFcfa: number
   payrollChangePercent: number
+  payrollSalariesFcfa?: number
+  payrollAdvancesFcfa?: number
   doctorSharesReceivedFcfa?: number
   doctorSharesChangePercent?: number
   doctorSharesConsultationFcfa?: number
@@ -33,7 +38,11 @@ export type BreakdownItem = {
   percent?: number
 }
 
+/** operation = vraies opérations ; odontologie et accouchement (« Autres ») sont suivis à part. */
+export type OperationCategory = 'operation' | 'odontologie' | 'accouchement'
+
 export type OperationsByServiceRow = {
+  category?: OperationCategory
   serviceId: string | null
   serviceName: string
   count: number
@@ -47,6 +56,9 @@ export type AdminExpenseRow = {
   categoryCode?: 'FOURNITURES' | 'MAINTENANCE' | 'ACHAT_URGENT' | 'TRANSPORT' | 'AUTRE'
   flow?: 'SORTIE' | 'ENTREE'
   category: string
+  /** Indice comptable choisi à la saisie. */
+  indiceId?: string | null
+  indiceName?: string | null
   label?: string
   description: string
   amountFcfa: number

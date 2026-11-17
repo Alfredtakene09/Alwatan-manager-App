@@ -1173,6 +1173,8 @@ model ClinicExpense {
   validatedById     String?
   validatedAt       DateTime?
   createdAt         DateTime              @default(now())
+  /// Dernière modification : la liste des écritures est triée sur cette date.
+  updatedAt         DateTime              @default(now()) @updatedAt
 
   expenseCategory ExpenseCategory?     @relation(fields: [expenseCategoryId], references: [id])
   indice          ClinicExpenseIndice? @relation(fields: [indiceId], references: [id], onDelete: SetNull)

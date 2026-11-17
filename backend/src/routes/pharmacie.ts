@@ -1002,6 +1002,11 @@ router.get("/reports", async (req, res) => {
   return res.json(report);
 });
 
+/** Toutes les factures fournisseur enregistrées, avec les produits entrés en stock par facture. */
+router.get("/purchases", async (_req, res) => {
+  return res.json(await buildPharmacyPurchaseReport(null, null));
+});
+
 /** Factures fournisseur de la période : nombre, montant et produits ajoutés par facture. */
 router.get("/purchases/report", async (req, res) => {
   const from = typeof req.query.from === "string" ? req.query.from : "";

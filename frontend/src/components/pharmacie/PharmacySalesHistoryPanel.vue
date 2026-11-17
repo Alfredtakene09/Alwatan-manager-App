@@ -322,6 +322,93 @@ async function printSale(sale: SaleRecord) {
   )
 }
 
+/** Lignes encore vendues (retours déduits) d'une vente, au prix catalogue. */
+function saleTicketLines(sale: SaleRecord) {
+  return sale.lines
+    .map((line) => {
+      const quantity = line.quantityReturnable ?? Math.max(0, line.quantity - (line.quantityReturned ?? 0))
+      return {
+        name: line.productName,
+        quantity,
+        unitPriceFcfa: line.unitPriceFcfa,
+        lineTotalFcfa: line.unitPriceFcfa * quantity,
+      }
+    })
+    .filter((line) => line.quantity > 0)
+}
+
+/**
+ * Ticket thermique de toutes les ventes affichées, par vendeur :
+ * lignes Produit / Qté / PU / PT, remises, total de chaque vendeur et total remis en caisse
+ * (= entrée pharmacie du tableau de bord général pour la même période).
+ */
+function printSalesSummary() {
+  if (!items.value.length) return
+  reservePrintWindow('80mm')
+
+  const bySeller = new Map<
+    string,
+    { name: string; lines: ReturnType<typeof saleTicketLines>; grossFcfa: number; netFcfa: number; salesCount: number }
+  >()
+  for (const sale of [...items.value].reverse()) {
+    const name = fullName(sale.pharmacist.firstName, sale.pharmacist.lastName) || '—'
+    const seller = bySeller.get(name) ?? { name, lines: [], grossFcfa: 0, netFcfa: 0, salesCount: 0 }
+    const lines = saleTicketLines(sale)
+    seller.lines.push(...lines)
+    seller.grossFcfa += lines.reduce((sum, line) => sum + line.lineTotalFcfa, 0)
+    seller.netFcfa += saleRemainingFcfa(sale)
+    seller.salesCount += 1
+    bySeller.set(name, seller)
+  }
+  const sellers = [...bySeller.values()].sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+  const grossFcfa = sellers.reduce((sum, row) => sum + row.grossFcfa, 0)
+  const netFcfa = sellers.reduce((sum, row) => sum + row.netFcfa, 0)
+  const reductionFcfa = Math.max(0, grossFcfa - netFcfa)
+
+  // Toutes les lignes dans un seul tableau ; les totaux sont dans le récapitulatif du bas.
+  const itemsTable = buildPharmacyTicketItemsTableHtml({
+    lines: sellers.flatMap((seller) => seller.lines),
+    totalFcfa: netFcfa,
+  }).replace(/<tfoot>[\s\S]*<\/tfoot>/, '')
+
+  const now = new Date().toISOString()
+  openPrintDocument(
+    uiText('Récapitulatif des ventes'),
+    `
+<div class="${thermalTicketRootClass('thermal-receipt--pharmacy')}"${thermalTicketDirAttrs()}>
+  ${buildThermalTicketHeadHtml({
+    title: uiText('Récapitulatif des ventes'),
+    number: salesAppliedPeriod.value,
+    contact: `${CLINIC.city} · ${CLINIC.phones}`,
+    logo: CLINIC.logo,
+    rtl: thermalIsRtl(),
+  })}
+  <hr class="thermal-receipt__rule" />
+  <div class="thermal-receipt__fields">
+    ${thermalLocaleMetaRow('Imprimé le', formatReceiptDateTimeFr(now))}
+    ${thermalLocaleMetaRow('Ventes', String(items.value.length))}
+  </div>
+  <hr class="thermal-receipt__rule" />
+  ${itemsTable}
+  <hr class="thermal-receipt__rule" />
+  <div class="thermal-receipt__fields">
+    ${sellers
+      .map((seller) => thermalLocaleMetaRow(`${seller.name} (${seller.salesCount})`, formatFcfa(seller.netFcfa)))
+      .join('')}
+  </div>
+  <hr class="thermal-receipt__rule" />
+  <div class="thermal-receipt__fields">
+    ${thermalLocaleMetaRow('Total brut', formatFcfa(grossFcfa))}
+    ${thermalLocaleMetaRow('Remises', formatFcfa(reductionFcfa))}
+    ${thermalLocaleMetaRow('Total remis en caisse', formatFcfa(netFcfa))}
+  </div>
+  <hr class="thermal-receipt__rule" />
+</div>
+`,
+    { pageSize: '80mm', autoPrint: true, thermalTight: true },
+  )
+}
+
 function onTableAction({ action, id }: { action: string; id: string }) {
   if (action === 'view') {
     expandedId.value = id
@@ -559,6 +646,14 @@ defineExpose({ reload: loadItems })
               }}
             </small>
           </div>
+          <UiButton
+            variant="secondary"
+            :icon="Printer"
+            :disabled="loading || !items.length"
+            @click="printSalesSummary"
+          >
+            {{ uiText('Imprimer le ticket') }}
+          </UiButton>
           <ExportButtons
             :show-excel="false"
             :show-word="false"
@@ -883,6 +978,44 @@ defineExpose({ reload: loadItems })
 }
 
 @media (max-width: 700px) {
+  .sales-total-card__hint {
+    display: none;
+  }
+}
+
+/* Écran large : filtres, total et boutons sur une seule ligne. */
+@media (min-width: 1024px) {
+  .sales-toolbar,
+  .sales-toolbar__filters,
+  .sales-toolbar__end {
+    flex-wrap: nowrap;
+  }
+
+  .sales-toolbar__filters {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .sales-toolbar__end {
+    flex: 0 0 auto;
+  }
+
+  .filter-field {
+    min-width: 8.5rem;
+  }
+
+  .filter-field--pharmacist {
+    flex: 1 1 11rem;
+    min-width: 10rem;
+  }
+
+  .sales-toolbar__end :deep(button) {
+    white-space: nowrap;
+  }
+}
+
+/* Le détail ventes · produits reste dans l'infobulle de la carte quand la place manque. */
+@media (max-width: 1400px) {
   .sales-total-card__hint {
     display: none;
   }

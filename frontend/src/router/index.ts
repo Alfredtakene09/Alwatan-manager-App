@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { isStaleBundleError, recoverFromStaleBundle } from '@/composables/usePwaUpdate'
 import { useAuthStore } from '@/stores/auth'
 import { canAccessAnyModule, canManageLabStock, canManagePharmacyCatalog, getDefaultRoute } from '@/lib/roles'
 import { isUiActionAllowed } from '@/lib/ui-actions'
@@ -523,6 +524,10 @@ router.beforeEach(async (to) => {
   }
 
   return true
+})
+
+router.onError((error, to) => {
+  if (isStaleBundleError(error)) void recoverFromStaleBundle(to.fullPath)
 })
 
 export default router

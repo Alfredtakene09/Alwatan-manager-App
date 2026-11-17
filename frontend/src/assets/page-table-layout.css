@@ -460,6 +460,14 @@
     min-height: auto;
   }
 
+  /* Sans hauteur imposée au parent, flex: 1 1 0 + overflow: hidden réduit la liste à 0 px. */
+  .page-table-section,
+  .page-table-section--embedded,
+  .page-table-section-stack {
+    flex: none !important;
+    overflow: visible !important;
+  }
+
   .page-with-table__head .page-header,
   .page-with-table__head .page-header__actions,
   .page-header,
