@@ -174,6 +174,26 @@ const receptionUpdateSchema = patientSchema.safeExtend({
   reductionFcfa: z.number().int().min(0).optional(),
 });
 
+const receptionistPatientEditSchema = z
+  .object({
+    firstName: z.string().min(2),
+    lastName: z.string().min(2),
+    age: z.number().int().min(0).optional(),
+    ageUnit: ageUnitSchema,
+    phone: z
+      .string()
+      .optional()
+      .refine((value) => !value?.trim() || value.replace(/\D/g, "").length >= 6, {
+        message: "Le téléphone doit contenir au moins 6 chiffres.",
+      }),
+    service: z.string().max(120).optional(),
+    doctorId: z.string().optional(),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    refinePatientAge(data, ctx);
+  });
+
 const ACTIVE_CONSULTATION_STATUSES: VisitStatus[] = [
   VisitStatus.WAITING_CONSULTATION,
   VisitStatus.IN_CONSULTATION,
@@ -1618,14 +1638,115 @@ router.post("/", requireModule("reception"), requireUiAction("reception.create_p
 
 router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit_patient"), async (req, res) => {
   try {
-    const body = receptionUpdateSchema.parse(req.body);
     const patientId = String(req.params.id);
-
     const existing = await prisma.patient.findFirst({
       where: { id: patientId, ...receptionistOwnPatientsWhere(req.user!) },
     });
     if (!existing) return res.status(404).json({ error: "Patient introuvable" });
 
+    if (req.user!.role === UserRole.RECEPTIONNISTE) {
+      const body = receptionistPatientEditSchema.parse(req.body);
+      const sameText = (left?: string | null, right?: string | null) =>
+        (left ?? "").trim().toLowerCase().replace(/\s+/g, " ") ===
+        (right ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+      const samePhone = (left?: string | null, right?: string | null) =>
+        (left ?? "").replace(/\D/g, "") === (right ?? "").replace(/\D/g, "");
+      const identityUnchanged =
+        sameText(existing.firstName, body.firstName) &&
+        sameText(existing.lastName, body.lastName) &&
+        samePhone(existing.phone, body.phone ?? existing.phone);
+      const duplicatePatient = identityUnchanged
+        ? null
+        : await findPatientForDossierFusion({
+            firstName: body.firstName,
+            lastName: body.lastName,
+            phone: body.phone ?? existing.phone,
+            gender: existing.gender,
+            excludeId: patientId,
+          });
+      if (duplicatePatient) {
+        return res.status(409).json(
+          duplicateErrorResponse(
+            "patient",
+            "Un autre patient avec ces informations est déjà enregistré.",
+            serializePatientForDuplicate(duplicatePatient),
+          ),
+        );
+      }
+
+      if (body.doctorId) {
+        const doctor = await prisma.user.findFirst({
+          where: selectableDoctorByIdWhere(body.doctorId),
+        });
+        if (!doctor) return res.status(400).json({ error: "Médecin invalide" });
+      }
+
+      const latestVisit = await prisma.visit.findFirst({
+        where: { patientId, status: { not: VisitStatus.CANCELLED } },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          status: true,
+          notes: true,
+          assignedDoctorId: true,
+          consultation: {
+            select: { clinicalNotes: true, completedAt: true, labSentToLabAt: true },
+          },
+        },
+      });
+      const mustReopenVisit = reregistrationRequired({
+        visit: latestVisit,
+        previousService: existing.service,
+        nextService: body.service,
+        nextDoctorId: body.doctorId,
+      });
+
+      const patient = await prisma.$transaction(async (tx) => {
+        const updated = await tx.patient.update({
+          where: { id: patientId },
+          data: {
+            firstName: body.firstName,
+            lastName: body.lastName,
+            age: body.age,
+            ageUnit: body.ageUnit,
+            phone: body.phone === undefined ? undefined : body.phone.trim() || null,
+            service: body.service === undefined ? undefined : body.service.trim() || null,
+            updatedById: req.user!.id,
+          },
+          include: { treatingDoctor: { select: treatingDoctorSelect } },
+        });
+
+        await syncExamRegistrationLine(
+          tx,
+          updated.id,
+          body.doctorId,
+          undefined,
+          undefined,
+          body.service,
+          req.user!.id,
+          req.user!.role as AppUserRole,
+        ).then(async (handled) => {
+          if (!handled) {
+            await syncWaitingVisit(tx, updated.id, body.doctorId, undefined, undefined, req.user!.id);
+          }
+        });
+        if (body.service !== undefined) {
+          await syncVisitClinicService(tx, updated.id, body.service, existing.service);
+          const canonical = await resolveActiveClinicServiceByName(tx, body.service);
+          if (canonical) updated.service = canonical.name;
+        }
+        if (mustReopenVisit && latestVisit) {
+          await reopenVisitForNewConsultation(tx, {
+            visitId: latestVisit.id,
+            userId: req.user!.id,
+          });
+        }
+        return updated;
+      });
+      return res.json(patient);
+    }
+
+    const body = receptionUpdateSchema.parse(req.body);
     let treatingDoctorId: string | null | undefined;
     try {
       treatingDoctorId = await assertSelectableTreatingDoctor(body.treatingDoctorId);

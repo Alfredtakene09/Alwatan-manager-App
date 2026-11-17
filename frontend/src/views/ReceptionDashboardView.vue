@@ -29,7 +29,7 @@ import {
   parsePatientAge,
   splitPatientFullName,
 } from '@/lib/patient-name'
-import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
+import { normalizePatientAgeUnit, PATIENT_AGE_UNITS, type PatientAgeUnit } from '@/lib/patient-age'
 import {
   exportTableExcel,
   exportTablePdf,
@@ -196,6 +196,7 @@ type ReceiptData = {
 
 const { uiText, clinicServiceText, dateText, localeCode } = useAppI18n()
 const auth = useAuthStore()
+const isReceptionist = computed(() => auth.user?.role === 'RECEPTIONNISTE')
 const route = useRoute()
 const router = useRouter()
 const printingPatientId = ref<string | null>(null)
@@ -431,6 +432,12 @@ const formParsedName = computed(() => splitPatientFullName(form.value.fullName))
 const editParsedName = computed(() => splitPatientFullName(editForm.value.fullName))
 const formAge = computed(() => parsePatientAge(form.value.age, form.value.ageUnit))
 const editAge = computed(() => parsePatientAge(editForm.value.age, editForm.value.ageUnit))
+const editAgeMax = computed(
+  () => PATIENT_AGE_UNITS.find((unit) => unit.value === editForm.value.ageUnit)?.max ?? 150,
+)
+const editAgeUnitOptions = computed(() =>
+  PATIENT_AGE_UNITS.map((unit) => ({ value: unit.value, label: uiText(unit.label) })),
+)
 
 const formAmount = computed(() => Number(form.value.consultationAmount) || 0)
 const formReduction = computed(() => Math.max(0, Number(form.value.reduction) || 0))
@@ -629,6 +636,28 @@ function collectEditPatientValidationErrors(): string[] {
     }
   }
 
+  return issues
+}
+
+function collectReceptionistEditValidationErrors(): string[] {
+  const issues: string[] = []
+  const { firstName, lastName } = editParsedName.value
+  const phoneDigits = editForm.value.phone.replace(/\D/g, '')
+  if (firstName.length < 2 || lastName.length < 2) {
+    issues.push('Indiquez le nom et le prénom du patient (au moins 2 lettres chacun).')
+  }
+  if (editAge.value === null) {
+    issues.push('Indiquez un âge valide.')
+  }
+  if (editForm.value.phone.trim() && phoneDigits.length < 6) {
+    issues.push('Le téléphone doit contenir au moins 6 chiffres.')
+  }
+  if (!editForm.value.service) {
+    issues.push('Sélectionnez un service.')
+  }
+  if (editHasConsultation.value && !editForm.value.doctorId) {
+    issues.push('Sélectionnez un médecin.')
+  }
   return issues
 }
 
@@ -1899,7 +1928,9 @@ async function submitReconsultation() {
 
 async function saveEdit() {
   if (!selectedPatient.value) return
-  const validationIssues = collectEditPatientValidationErrors()
+  const validationIssues = isReceptionist.value
+    ? collectReceptionistEditValidationErrors()
+    : collectEditPatientValidationErrors()
   if (validationIssues.length) {
     await showValidationErrorModal(validationIssues)
     return
@@ -1908,6 +1939,21 @@ async function saveEdit() {
   savingEdit.value = true
   try {
     const { firstName, lastName } = editParsedName.value
+    if (isReceptionist.value) {
+      await api.patch(`/patients/${selectedPatient.value.id}`, {
+        firstName,
+        lastName,
+        age: editAge.value ?? undefined,
+        ageUnit: editForm.value.ageUnit,
+        phone: editForm.value.phone.trim(),
+        service: editForm.value.service,
+        doctorId: editForm.value.doctorId || undefined,
+      })
+      showAlert(translateTemplate('Dossier {code} mis à jour.', { code: selectedPatient.value.code }))
+      closeEditModal()
+      await refreshAll()
+      return
+    }
     const amount = editEffectiveAmount.value
     const reduction = editBillingExempt.value ? 0 : editReduction.value
     const { data } = await api.patch(`/patients/${selectedPatient.value.id}`, {
@@ -2419,7 +2465,7 @@ onUnmounted(clearAlert)
 
     <UiFormModal
       v-if="showEditModal && selectedPatient"
-      title="Modifier le patient"
+      :title="isReceptionist ? 'Modifier les informations du patient' : 'Modifier le patient'"
       :subtitle="selectedPatient.code"
       :icon="Pencil"
       @close="closeEditModal"
@@ -2433,97 +2479,147 @@ onUnmounted(clearAlert)
         novalidate
         @submit.prevent="saveEdit"
       >
-        <ReceptionPatientIdentityFields
-          v-model:full-name="editForm.fullName"
-          v-model:age="editForm.age"
-          v-model:age-unit="editForm.ageUnit"
-          v-model:phone="editForm.phone"
-          v-model:gender="editForm.gender"
-        />
+        <template v-if="isReceptionist">
+          <div class="form-grid-2">
+            <UiInput
+              v-model="editForm.fullName"
+              label="Nom et prénom"
+              placeholder="Ex. Fatimé Abakar"
+              required
+            />
+            <UiInput
+              v-model="editForm.phone"
+              label="Téléphone"
+              placeholder="06 XX XX XX XX"
+            />
+            <UiInput
+              v-model="editForm.age"
+              label="Âge"
+              type="number"
+              min="0"
+              :max="editAgeMax"
+              required
+            />
+            <UiSelect v-model="editForm.ageUnit" label="Unité d'âge" required>
+              <option v-for="unit in editAgeUnitOptions" :key="unit.value" :value="unit.value">
+                {{ unit.label }}
+              </option>
+            </UiSelect>
+            <UiSelect v-model="editForm.service" label="Service" required>
+              <option value="" disabled>
+                {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
+              </option>
+              <option
+                v-if="editForm.service && !services.some((s) => s.name === editForm.service)"
+                :value="editForm.service"
+              >
+                {{ clinicServiceText(editForm.service) }}
+              </option>
+              <option v-for="service in services" :key="service.id" :value="service.name">
+                {{ clinicServiceText(service.name) }}
+              </option>
+            </UiSelect>
+            <UiSelect v-model="editForm.doctorId" label="Médecin">
+              <option value="">{{ uiText('Sélectionner') }}</option>
+              <option
+                v-if="editForm.doctorId && !editServiceDoctors.some((doctor) => doctor.id === editForm.doctorId)"
+                :value="editForm.doctorId"
+              >
+                Dr {{ editDoctor ? fullName(editDoctor.firstName, editDoctor.lastName) : uiText('Médecin du dossier') }}
+              </option>
+              <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
+                Dr {{ fullName(doctor.firstName, doctor.lastName) }}
+              </option>
+            </UiSelect>
+          </div>
+        </template>
+        <template v-else>
+          <ReceptionPatientIdentityFields
+            v-model:full-name="editForm.fullName"
+            v-model:age="editForm.age"
+            v-model:age-unit="editForm.ageUnit"
+            v-model:phone="editForm.phone"
+            v-model:gender="editForm.gender"
+          />
 
-        <div class="form-grid-2">
-          <UiSelect
-            v-model="editForm.service"
-            label="Service"
-          >
-            <option value="" disabled>
-              {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
-            </option>
-            <option
-              v-if="editForm.service && !services.some((s) => s.name === editForm.service)"
-              :value="editForm.service"
-            >
-              {{ clinicServiceText(editForm.service) }}
-            </option>
-            <option v-for="service in services" :key="service.id" :value="service.name">
-              {{ clinicServiceText(service.name) }}
-            </option>
-          </UiSelect>
-          <UiSelect v-model="editForm.doctorId" label="Médecin">
-            <option value="">{{
-              editServiceDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin sur ce service')
-            }}</option>
-            <option
-              v-if="editForm.doctorId && !editServiceDoctors.some((doctor) => doctor.id === editForm.doctorId)"
-              :value="editForm.doctorId"
-            >
-              Dr {{ editDoctor ? fullName(editDoctor.firstName, editDoctor.lastName) : uiText('Médecin du dossier') }}
-            </option>
+          <div class="form-grid-2">
+            <UiSelect v-model="editForm.service" label="Service">
+              <option value="" disabled>
+                {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
+              </option>
+              <option
+                v-if="editForm.service && !services.some((s) => s.name === editForm.service)"
+                :value="editForm.service"
+              >
+                {{ clinicServiceText(editForm.service) }}
+              </option>
+              <option v-for="service in services" :key="service.id" :value="service.name">
+                {{ clinicServiceText(service.name) }}
+              </option>
+            </UiSelect>
+            <UiSelect v-model="editForm.doctorId" label="Médecin">
+              <option value="">{{
+                editServiceDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin sur ce service')
+              }}</option>
+              <option
+                v-if="editForm.doctorId && !editServiceDoctors.some((doctor) => doctor.id === editForm.doctorId)"
+                :value="editForm.doctorId"
+              >
+                Dr {{ editDoctor ? fullName(editDoctor.firstName, editDoctor.lastName) : uiText('Médecin du dossier') }}
+              </option>
+              <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
+                Dr {{ fullName(doctor.firstName, doctor.lastName) }}
+              </option>
+            </UiSelect>
+          </div>
+
+          <UiSelect v-model="editForm.treatingDoctorId" label="Médecin traitant (dossier)">
+            <option value="">{{ uiText('Aucun (optionnel)') }}</option>
             <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
               Dr {{ fullName(doctor.firstName, doctor.lastName) }}
             </option>
           </UiSelect>
-        </div>
 
-        <UiSelect v-model="editForm.treatingDoctorId" label="Médecin traitant (dossier)">
-          <option value="">{{ uiText('Aucun (optionnel)') }}</option>
-          <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
-            Dr {{ fullName(doctor.firstName, doctor.lastName) }}
-          </option>
-        </UiSelect>
+          <p v-if="selectedPatient.treatingDoctor" class="doctor-hint doctor-hint--compact">
+            {{ uiText('Médecin traitant actuel :') }}
+            Dr {{ fullName(selectedPatient.treatingDoctor.firstName, selectedPatient.treatingDoctor.lastName) }}
+          </p>
 
-        <p
-          v-if="selectedPatient.treatingDoctor"
-          class="doctor-hint doctor-hint--compact"
-        >
-          {{ uiText('Médecin traitant actuel :') }}
-          Dr {{ fullName(selectedPatient.treatingDoctor.firstName, selectedPatient.treatingDoctor.lastName) }}
-        </p>
+          <UiAlert v-if="!editServiceDoctors.length" type="warning" message="Aucun médecin lié à ce service. Affectez les médecins au service depuis la page Services." />
+          <p v-if="!editServiceDoctors.length" class="doctors-empty-alert__links">
+            <RouterLink to="/admin/services">{{ uiText('Services') }}</RouterLink>
+            <span aria-hidden="true"> · </span>
+            <RouterLink to="/admin/employes">{{ uiText('Employés') }}</RouterLink>
+          </p>
 
-        <UiAlert v-if="!editServiceDoctors.length" type="warning" message="Aucun médecin lié à ce service. Affectez les médecins au service depuis la page Services." />
-        <p v-if="!editServiceDoctors.length" class="doctors-empty-alert__links">
-          <RouterLink to="/admin/services">{{ uiText('Services') }}</RouterLink>
-          <span aria-hidden="true"> · </span>
-          <RouterLink to="/admin/employes">{{ uiText('Employés') }}</RouterLink>
-        </p>
-
-        <div v-if="showEditConsultationFields" class="form-grid-2">
-          <UiInput money
-            v-model="editForm.consultationAmount"
-            :label="selectedPatient.waitingVisit?.billingKind === 'exam' ? 'Montant (FCFA)' : 'Montant consultation (FCFA)'"
-            type="number"
-            min="0"
-            placeholder="5000"
-            :icon="Banknote"
-          />
-        </div>
-
-        <p v-if="editDoctorQuotaHint" class="doctor-hint doctor-hint--compact">{{ editDoctorQuotaHint }}</p>
-        <p v-else-if="doctorIsFixedSalary(editDoctor)" class="doctor-hint doctor-hint--compact">
-          {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
-        </p>
-
-        <ReceptionReductionFields
-          v-if="showEditConsultationFields"
-          v-model:reduction-fcfa="editForm.reduction"
-          v-model:reduction-percent="editReductionPercent"
-          :amount-fcfa="editEffectiveAmount"
-        >
-          <div class="total-preview total-preview--compact">
-            <span>{{ uiText('Total à payer') }}</span>
-            <strong>{{ formatFcfa(editTotal) }}</strong>
+          <div v-if="showEditConsultationFields" class="form-grid-2">
+            <UiInput money
+              v-model="editForm.consultationAmount"
+              :label="selectedPatient.waitingVisit?.billingKind === 'exam' ? 'Montant (FCFA)' : 'Montant consultation (FCFA)'"
+              type="number"
+              min="0"
+              placeholder="5000"
+              :icon="Banknote"
+            />
           </div>
-        </ReceptionReductionFields>
+
+          <p v-if="editDoctorQuotaHint" class="doctor-hint doctor-hint--compact">{{ editDoctorQuotaHint }}</p>
+          <p v-else-if="doctorIsFixedSalary(editDoctor)" class="doctor-hint doctor-hint--compact">
+            {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
+          </p>
+
+          <ReceptionReductionFields
+            v-if="showEditConsultationFields"
+            v-model:reduction-fcfa="editForm.reduction"
+            v-model:reduction-percent="editReductionPercent"
+            :amount-fcfa="editEffectiveAmount"
+          >
+            <div class="total-preview total-preview--compact">
+              <span>{{ uiText('Total à payer') }}</span>
+              <strong>{{ formatFcfa(editTotal) }}</strong>
+            </div>
+          </ReceptionReductionFields>
+        </template>
       </form>
 
       <template #footer>

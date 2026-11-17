@@ -17,6 +17,7 @@ import {
   FolderOpen,
   Banknote,
   Coins,
+  FileText,
   ShoppingCart,
   Tags,
   Package,
@@ -516,6 +517,12 @@ const directionOperationalNav: NavSection[] = [
             module: 'admin',
             badgeKey: 'depenses',
             uiAction: 'comptabilite.depenses',
+          },
+          {
+            to: '/factures',
+            label: 'Factures',
+            icon: FileText,
+            module: 'factures',
           },
           {
             to: '/admin/salaires',

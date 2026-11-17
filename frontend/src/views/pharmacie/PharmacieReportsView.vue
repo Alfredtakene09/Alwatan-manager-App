@@ -27,5 +27,6 @@ const { uiText } = useAppI18n()
 .reports-body {
   overflow-x: hidden;
   overflow-y: auto;
+  padding-right: 0.25rem;
 }
 </style>

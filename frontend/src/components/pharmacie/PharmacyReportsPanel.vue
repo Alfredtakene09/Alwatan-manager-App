@@ -20,7 +20,7 @@ import UiCard from '@/components/ui/UiCard.vue'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import UiAlert from '@/components/ui/UiAlert.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
-import DashboardBarChart, { type BarChartDay } from '@/components/dashboard/DashboardBarChart.vue'
+import DashboardPendingBars from '@/components/dashboard/DashboardPendingBars.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 
@@ -109,7 +109,8 @@ const canFilterPharmacist = computed(() =>
 
 const { uiText, localeCode } = useAppI18n()
 
-const salesChart = computed((): BarChartDay[] => {
+/** CA net par jour : une ligne horizontale par jour de la période filtrée (date · barre · montant). */
+const dailyBars = computed(() => {
   void localeCode.value
   const days = revenueReport.value?.salesByDay ?? report.value?.salesByDay ?? []
   return days.map((day) => {
@@ -118,17 +119,16 @@ const salesChart = computed((): BarChartDay[] => {
         ? day.netRevenueFcfa
         : (day as { totalFcfa: number }).totalFcfa
     return {
-      date: day.date,
-      dayLabel: day.dayLabel,
-      total,
-      segments: [
-        {
-          key: 'sales',
-          value: total,
-          colorClass: 'bar-chart__bar--a',
-          title: translateTemplate('CA net : {amount}', { amount: formatFcfa(total) }),
-        },
-      ],
+      label: new Date(`${day.date}T12:00:00`).toLocaleDateString(localeCode.value, {
+        weekday: 'short',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      }),
+      count: Math.max(0, total),
+      amount: total,
+      valueLabel: '',
+      color: '#0d9488',
     }
   })
 })
@@ -163,19 +163,6 @@ const categoryBars = computed(() =>
   ),
 )
 
-/** Au-delà de 10 jours, le CA par jour s'affiche en lignes : date en gras devant le montant. */
-const dailyAsList = computed(() => salesChart.value.length > 10)
-
-const dailyRows = computed(() =>
-  rankRows(
-    salesChart.value.map((day) => ({
-      key: day.date,
-      label: formatPeriodDate(day.date),
-      quantity: null,
-      amountFcfa: day.total,
-    })),
-  ),
-)
 
 async function loadReport() {
   if (!customRangeValid.value) {
@@ -250,11 +237,6 @@ function formatPeriodDate(iso: string) {
 const customRangeValid = computed(
   () => Boolean(dateFrom.value && dateTo.value && dateFrom.value <= dateTo.value),
 )
-
-const salesLegend = computed(() => {
-  void localeCode.value
-  return [{ key: 'sales', label: uiText('Ventes'), colorClass: 'legend-dot--a' }]
-})
 
 const kpiRows = computed(() => {
   void localeCode.value
@@ -456,22 +438,9 @@ onMounted(() => {
 
     <div class="charts-grid">
       <UiCard title="CA net par jour" description="Encaissements nets après retours" :icon="BarChart3" icon-variant="teal">
-        <ol v-if="dailyAsList" class="rank-list rank-list--daily">
-          <li v-for="row in dailyRows" :key="row.key" class="rank-list__row">
-            <strong class="rank-list__label rank-list__label--date">{{ row.label }}</strong>
-            <div class="rank-list__track">
-              <div class="rank-list__fill rank-list__fill--teal" :style="{ width: `${row.widthPercent}%` }" />
-            </div>
-            <strong class="rank-list__amount">{{ formatFcfa(row.amountFcfa) }}</strong>
-          </li>
-        </ol>
-        <DashboardBarChart
-          v-else
-          :days="salesChart"
-          :loading="loading"
-          :format-total="formatFcfa"
-          :legend="salesLegend"
-        />
+        <div v-if="loading && !dailyBars.length" class="chart-empty">{{ uiText('Chargement…') }}</div>
+        <div v-else-if="!dailyBars.length" class="chart-empty">{{ uiText('Aucune vente sur la période') }}</div>
+        <DashboardPendingBars v-else :items="dailyBars" class="daily-bars" />
       </UiCard>
 
       <UiCard title="Top produits" description="Classement par chiffre d'affaires" :icon="BarChart3" icon-variant="amber">
@@ -657,6 +626,13 @@ onMounted(() => {
 
 .charts-grid > :first-child {
   grid-column: 1 / -1;
+}
+
+/* Longue période : la liste des jours défile dans sa carte. */
+.daily-bars {
+  max-height: 22rem;
+  overflow-y: auto;
+  padding-right: 0.35rem;
 }
 
 .report-exports {
