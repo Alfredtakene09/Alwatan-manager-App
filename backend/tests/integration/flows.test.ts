@@ -460,7 +460,6 @@ describe("Pharmacie — achat par facture et vente", () => {
 
     // Une boîte vendue retire bien 10 sachets du stock entré par la facture.
     const sale = await api.pharma.post("/pharmacie", {
-      patientId: ids.staff,
       items: [{ productId: sachetProduct.id, quantity: 1 }],
     });
     assert.ok(sale.status < 300, JSON.stringify(sale.data));
@@ -468,17 +467,20 @@ describe("Pharmacie — achat par facture et vente", () => {
     assert.equal(afterSale?.quantity, 35);
   });
 
-  it("applique la réduction personnel sur une vente", async () => {
+  it("refuse une vente à un patient clinique sans ordonnance", async () => {
     const res = await api.pharma.post("/pharmacie", {
       patientId: ids.staff,
       items: [{ productId: fx.product.id, quantity: 2 }],
     });
-    assert.ok(res.status < 300, JSON.stringify(res.data));
-    const sale = await db.prescription.findFirst({
-      where: { patientId: ids.staff },
-      orderBy: { createdAt: "desc" },
+    assert.equal(res.status, 400, JSON.stringify(res.data));
+  });
+
+  it("réserve la réduction à l'administrateur", async () => {
+    const res = await api.pharma.post("/pharmacie", {
+      reductionFcfa: 100,
+      items: [{ productId: fx.product.id, quantity: 2 }],
     });
-    assert.equal(sale?.netTotalFcfa, 2 * FEES.productSalePrice * 0.7);
+    assert.equal(res.status, 403, JSON.stringify(res.data));
   });
 });
 

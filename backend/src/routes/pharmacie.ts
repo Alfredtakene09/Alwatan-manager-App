@@ -1708,6 +1708,14 @@ router.post("/", async (req, res) => {
   const user = req.user!;
   try {
     const body = prescriptionSchema.parse(req.body);
+    // Un patient clinique n'est servi que depuis son ordonnance.
+    if (body.patientId && !body.visitId) {
+      return res.status(400).json({ error: "Un patient clinique est servi uniquement depuis son ordonnance." });
+    }
+    // Mode de règlement (réduction, gratuité) : administrateur seulement.
+    if ((body.isFree === true || (body.reductionFcfa ?? 0) > 0) && user.role !== "ADMIN") {
+      return res.status(403).json({ error: "Réduction ou gratuité réservée à l'administrateur." });
+    }
     const result = await prisma.$transaction(async (tx) => {
       let patient = null;
       let externalClient = null;

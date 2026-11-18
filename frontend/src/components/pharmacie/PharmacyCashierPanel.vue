@@ -10,8 +10,6 @@ import {
   RefreshCw,
   Maximize2,
   Minimize2,
-  UserRound,
-  FileText,
   PillBottle,
   ClipboardList,
   RotateCcw,
@@ -119,6 +117,8 @@ const emit = defineEmits<{
 
 const { uiText } = useAppI18n()
 const auth = useAuthStore()
+// Mode de règlement (réduction, gratuité) : administrateur seulement.
+const isAdmin = computed(() => auth.user?.role === 'ADMIN')
 
 const myTodayNetFcfa = ref<number | null>(null)
 const myTodaySalesCount = ref(0)
@@ -178,14 +178,6 @@ const confirmNameInput = ref('')
 const detailChoiceProduct = ref<CashierProduct | null>(null)
 const { closingSales, closePharmacySales } = usePharmacyDayClosure()
 const pendingOrdonnancesCount = ref(0)
-
-const patientsForSelect = computed(() => {
-  const list = [...props.patients]
-  if (linkedPatient.value && !list.some((p) => p.id === linkedPatient.value!.id)) {
-    list.unshift(linkedPatient.value)
-  }
-  return list
-})
 
 const productsById = computed(() => new Map(props.products.map((p) => [p.id, p])))
 
@@ -549,6 +541,7 @@ async function printReceipt(
 }
 
 function resetBuyerFields() {
+  buyerType.value = 'external'
   notes.value = ''
   patientId.value = ''
   linkedVisitId.value = null
@@ -1149,19 +1142,6 @@ watch(
 
         <footer class="cart-panel__footer">
           <div class="cart-checkout">
-            <div class="buyer-type buyer-type--inline">
-              <label class="buyer-type__option" :class="{ 'buyer-type__option--locked': Boolean(linkedVisitId) }">
-                <input v-model="buyerType" type="radio" value="external" :disabled="Boolean(linkedVisitId)" />
-                <UserRound :size="13" />
-                <span>{{ uiText('Client externe') }}</span>
-              </label>
-              <label class="buyer-type__option" :class="{ 'buyer-type__option--locked': Boolean(linkedVisitId) }">
-                <input v-model="buyerType" type="radio" value="patient" :disabled="Boolean(linkedVisitId)" />
-                <FileText :size="13" />
-                <span>{{ uiText('Patient clinique') }}</span>
-              </label>
-            </div>
-
             <template v-if="buyerType === 'external'">
               <input
                 v-model="externalClientName"
@@ -1184,24 +1164,13 @@ watch(
               {{ fullName(linkedPatient.firstName, linkedPatient.lastName) }}
               <span>{{ linkedPatient.code }}</span>
             </p>
-            <template v-else>
-              <select v-model="patientId" class="cart-inline-field" :aria-label="uiText('Patient')">
-                <option value="">{{ uiText('Sélectionner un patient') }}</option>
-                <option v-for="p in patientsForSelect" :key="p.id" :value="p.id">
-                  {{ p.code }} — {{ fullName(p.firstName, p.lastName) }}
-                </option>
-              </select>
-              <input
-                v-model="notes"
-                class="cart-inline-field"
-                type="text"
-                autocomplete="off"
-                :placeholder="uiText('Notes ordonnance')"
-                :aria-label="uiText('Notes ordonnance')"
-              />
-            </template>
 
-            <select v-model="adjustmentMode" class="cart-inline-field" :aria-label="uiText('Mode de règlement')">
+            <select
+              v-if="isAdmin"
+              v-model="adjustmentMode"
+              class="cart-inline-field"
+              :aria-label="uiText('Mode de règlement')"
+            >
               <option value="none">{{ uiText('Paiement normal') }}</option>
               <option value="reduction">{{ uiText('Réduction') }}</option>
               <option value="free">{{ uiText('Prise en charge gratuite') }}</option>
