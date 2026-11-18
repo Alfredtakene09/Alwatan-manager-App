@@ -29,7 +29,7 @@ import {
   parsePatientAge,
   splitPatientFullName,
 } from '@/lib/patient-name'
-import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
+import { normalizePatientAgeUnit, PATIENT_AGE_UNITS, type PatientAgeUnit } from '@/lib/patient-age'
 import {
   exportTableExcel,
   exportTablePdf,
@@ -196,6 +196,7 @@ type ReceiptData = {
 
 const { uiText, clinicServiceText, dateText, localeCode } = useAppI18n()
 const auth = useAuthStore()
+const isReceptionist = computed(() => auth.user?.role === 'RECEPTIONNISTE')
 const route = useRoute()
 const router = useRouter()
 const printingPatientId = ref<string | null>(null)
@@ -387,9 +388,19 @@ const submittingReconsult = ref(false)
 const togglingPatientId = ref<string | null>(null)
 
 const reconsultForm = ref({
+  fullName: '',
+  age: '',
+  ageUnit: 'YEARS' as PatientAgeUnit,
+  phone: '',
+  service: '',
+  gender: 'F',
+  category: 'STANDARD' as PatientCategory,
   doctorId: '',
+  treatingDoctorId: '',
   consultationAmount: '',
   reduction: '0',
+  sessionsCount: '1',
+  sessionPrice: '',
 })
 const formReductionPercent = ref('')
 const editReductionPercent = ref('')
@@ -431,6 +442,12 @@ const formParsedName = computed(() => splitPatientFullName(form.value.fullName))
 const editParsedName = computed(() => splitPatientFullName(editForm.value.fullName))
 const formAge = computed(() => parsePatientAge(form.value.age, form.value.ageUnit))
 const editAge = computed(() => parsePatientAge(editForm.value.age, editForm.value.ageUnit))
+const editAgeMax = computed(
+  () => PATIENT_AGE_UNITS.find((unit) => unit.value === editForm.value.ageUnit)?.max ?? 150,
+)
+const editAgeUnitOptions = computed(() =>
+  PATIENT_AGE_UNITS.map((unit) => ({ value: unit.value, label: uiText(unit.label) })),
+)
 
 const formAmount = computed(() => Number(form.value.consultationAmount) || 0)
 const formReduction = computed(() => Math.max(0, Number(form.value.reduction) || 0))
@@ -476,6 +493,15 @@ const editHasConsultation = computed(() => {
 })
 const reconsultDoctor = computed(() => findDoctor(reconsultForm.value.doctorId))
 
+const reconsultIsKine = computed(() => isKinesitherapieServiceName(reconsultForm.value.service))
+const reconsultBillingExempt = computed(() => isExemptCategory(reconsultForm.value.category))
+const reconsultServiceDoctors = computed(
+  () => doctors.value.filter((d) => doctorMatchesService(d, reconsultForm.value.service)),
+)
+const reconsultSessionsCount = computed(() => Math.max(0, Math.floor(Number(reconsultForm.value.sessionsCount) || 0)))
+const reconsultSessionPrice = computed(() => Math.max(0, Number(reconsultForm.value.sessionPrice) || 0))
+const reconsultAmount = computed(() => Number(reconsultForm.value.consultationAmount) || 0)
+
 const formDoctorQuotaHint = computed(() => doctorQuotaHint(formDoctor.value, formEffectiveAmount.value))
 const editDoctorQuotaHint = computed(() => doctorQuotaHint(editDoctor.value, editEffectiveAmount.value))
 const reconsultDoctorQuotaHint = computed(() =>
@@ -511,14 +537,14 @@ const showEditConsultationFields = computed(
     !editBillingExempt.value,
 )
 const reconsultEffectiveAmount = computed(() => {
-  const patient = selectedPatient.value
-  if (patient?.category && isExemptCategory(patient.category)) return 0
+  if (reconsultBillingExempt.value) return 0
+  if (reconsultIsKine.value) return reconsultSessionsCount.value * reconsultSessionPrice.value
   if (renewalPreview.value?.withinValidity) return 0
   return (
     renewalPreview.value?.amountFcfa ??
     resolveConsultationAmountForDoctor(
       reconsultDoctor.value,
-      Number(reconsultForm.value.consultationAmount) || 0,
+      reconsultAmount.value,
     )
   )
 })
@@ -529,7 +555,7 @@ const showReconsultConsultationBilling = computed(
     Boolean(selectedPatient.value) &&
     !(selectedPatient.value?.category && isExemptCategory(selectedPatient.value.category)) &&
     !renewalPreview.value?.withinValidity &&
-    showDoctorConsultationBilling(reconsultDoctor.value) &&
+    (reconsultIsKine.value || showDoctorConsultationBilling(reconsultDoctor.value)) &&
     reconsultEffectiveAmount.value > 0,
 )
 
@@ -632,30 +658,78 @@ function collectEditPatientValidationErrors(): string[] {
   return issues
 }
 
+function collectReceptionistEditValidationErrors(): string[] {
+  const issues: string[] = []
+  const { firstName, lastName } = editParsedName.value
+  const phoneDigits = editForm.value.phone.replace(/\D/g, '')
+  if (firstName.length < 2 || lastName.length < 2) {
+    issues.push('Indiquez le nom et le prénom du patient (au moins 2 lettres chacun).')
+  }
+  if (editAge.value === null) {
+    issues.push('Indiquez un âge valide.')
+  }
+  if (editForm.value.phone.trim() && phoneDigits.length < 6) {
+    issues.push('Le téléphone doit contenir au moins 6 chiffres.')
+  }
+  if (!editForm.value.service) {
+    issues.push('Sélectionnez un service.')
+  }
+  if (editHasConsultation.value && !editForm.value.doctorId) {
+    issues.push('Sélectionnez un médecin.')
+  }
+  return issues
+}
+
 function collectReconsultValidationErrors(): string[] {
   const issues: string[] = []
+  
+  if (!reconsultForm.value.fullName.trim()) {
+    issues.push('Indiquez le nom et le prénom du patient.')
+  }
+  if (!reconsultForm.value.age.trim()) {
+    issues.push('Indiquez l\'âge du patient.')
+  }
+  if (!reconsultForm.value.service) {
+    issues.push('Sélectionnez un service.')
+  }
   if (!reconsultForm.value.doctorId) {
     issues.push('Sélectionnez un médecin.')
   }
+  
+  if (reconsultIsKine.value && !reconsultBillingExempt.value) {
+    if (!reconsultForm.value.sessionsCount?.trim()) {
+      issues.push('Indiquez le nombre de séances.')
+    } else if (reconsultSessionsCount.value < 1) {
+      issues.push('Le nombre de séances doit être au moins 1.')
+    }
+    if (!reconsultForm.value.sessionPrice?.trim()) {
+      issues.push('Indiquez le prix par séance.')
+    } else if (reconsultSessionPrice.value <= 0) {
+      issues.push('Le prix par séance doit être positif.')
+    }
+  }
+  
   const patient = selectedPatient.value
   if (patient?.category && isExemptCategory(patient.category)) return issues
   if (renewalPreview.value?.withinValidity) return issues
 
-  const amount =
-    renewalPreview.value?.amountFcfa ?? (Number(reconsultForm.value.consultationAmount) || 0)
+  if (!reconsultIsKine.value) {
+    const amount =
+      renewalPreview.value?.amountFcfa ?? (Number(reconsultForm.value.consultationAmount) || 0)
 
-  if (
-    !doctorShowsFixedConsultationPrice(reconsultDoctor.value) &&
-    !(doctorConsultationBillingValid(reconsultDoctor.value, amount) || amount === 0)
-  ) {
-    issues.push('Indiquez un montant de consultation valide.')
-  }
+    if (
+      !doctorShowsFixedConsultationPrice(reconsultDoctor.value) &&
+      !(doctorConsultationBillingValid(reconsultDoctor.value, amount) || amount === 0)
+    ) {
+      issues.push('Indiquez un montant de consultation valide.')
+    }
 
-  if (showReconsultConsultationBilling.value && amount > 0) {
-    if (reconsultReduction.value > amount) {
-      issues.push('La réduction ne peut pas dépasser le montant de la consultation.')
-    } else if (reconsultTotal.value <= 0) {
-      issues.push('Le total à payer doit être supérieur à 0.')
+    if (showReconsultConsultationBilling.value && amount > 0) {
+      if (reconsultReduction.value > amount) {
+        issues.push('La réduction ne peut pas dépasser le montant de la consultation.')
+      } else if (reconsultTotal.value <= 0) {
+        issues.push('Le total à payer doit être supérieur à 0.')
+      }
     }
   }
 
@@ -1428,8 +1502,26 @@ function syncDoctorForService(target: 'form' | 'edit') {
   }
 }
 
+function syncDoctorForReconsultation() {
+  const allowed = reconsultServiceDoctors.value
+  if (!allowed.length) {
+    reconsultForm.value.doctorId = ''
+    if (reconsultForm.value.treatingDoctorId && !findDoctor(reconsultForm.value.treatingDoctorId)) {
+      reconsultForm.value.treatingDoctorId = ''
+    }
+    return
+  }
+  if (!allowed.some((doctor) => doctor.id === reconsultForm.value.doctorId)) {
+    reconsultForm.value.doctorId = allowed[0]?.id ?? ''
+  }
+  if (reconsultForm.value.treatingDoctorId && !allowed.some((doctor) => doctor.id === reconsultForm.value.treatingDoctorId)) {
+    reconsultForm.value.treatingDoctorId = ''
+  }
+}
+
 function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
   if (target === 'form' || target === 'edit') syncDoctorForService(target)
+  if (target === 'reconsult') syncDoctorForReconsultation()
   if (target === 'form') {
     const doctor = findDoctor(form.value.doctorId)
     if (isExemptCategory(form.value.category)) {
@@ -1501,6 +1593,17 @@ function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
     return
   }
   const doctor = findDoctor(reconsultForm.value.doctorId)
+  if (isExemptCategory(reconsultForm.value.category)) {
+    reconsultForm.value.consultationAmount = '0'
+    reconsultForm.value.reduction = '0'
+    reconsultReductionPercent.value = ''
+    return
+  }
+  if (reconsultIsKine.value) {
+    reconsultForm.value.sessionPrice = String(defaultKineSessionPriceForDoctor(doctor))
+    if (!reconsultForm.value.sessionsCount.trim()) reconsultForm.value.sessionsCount = '1'
+    return
+  }
   if (doctorShowsFixedConsultationPrice(doctor)) {
     reconsultForm.value.consultationAmount = String(defaultConsultationAmountForDoctor(doctor))
     return
@@ -1512,15 +1615,18 @@ function applyDoctorBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
   reconsultForm.value.consultationAmount = '0'
 }
 
-function applyCategoryBillingDefaults(target: 'form' | 'edit') {
-  const state = target === 'form' ? form.value : editForm.value
+function applyCategoryBillingDefaults(target: 'form' | 'edit' | 'reconsult') {
+  const state = target === 'form' ? form.value : (target === 'edit' ? editForm.value : reconsultForm.value)
   if (isExemptCategory(state.category)) {
     state.consultationAmount = '0'
     state.reduction = '0'
     if (target === 'form') formReductionPercent.value = ''
-    else editReductionPercent.value = ''
+    else if (target === 'edit') editReductionPercent.value = ''
+    else reconsultReductionPercent.value = ''
   }
-  applyDoctorBillingDefaults(target)
+  if (target !== 'reconsult') {
+    applyDoctorBillingDefaults(target)
+  }
 }
 
 async function openModal() {
@@ -1801,9 +1907,19 @@ function closeEditModal() {
 function openReconsultModal(patient: Patient) {
   selectedPatient.value = patient
   reconsultForm.value = {
+    fullName: joinPatientFullName(patient.firstName, patient.lastName),
+    age: String(patient.age ?? ''),
+    ageUnit: normalizePatientAgeUnit(patient.ageUnit) as PatientAgeUnit,
+    phone: patient.phone ?? '',
+    service: patient.service ?? '',
+    gender: patient.gender ?? 'F',
+    category: patient.category ?? 'STANDARD',
     doctorId: doctors.value[0]?.id ?? '',
+    treatingDoctorId: patient.treatingDoctorId ?? '',
     consultationAmount: '',
     reduction: '0',
+    sessionsCount: '1',
+    sessionPrice: '',
   }
   reconsultReductionPercent.value = ''
   renewalPreview.value = null
@@ -1815,7 +1931,21 @@ function openReconsultModal(patient: Patient) {
 function closeReconsultModal() {
   showReconsultModal.value = false
   selectedPatient.value = null
-  reconsultForm.value = { doctorId: '', consultationAmount: '', reduction: '0' }
+  reconsultForm.value = {
+    fullName: '',
+    age: '',
+    ageUnit: 'YEARS',
+    phone: '',
+    service: '',
+    gender: 'F',
+    category: 'STANDARD',
+    doctorId: '',
+    treatingDoctorId: '',
+    consultationAmount: '',
+    reduction: '0',
+    sessionsCount: '1',
+    sessionPrice: '',
+  }
   reconsultReductionPercent.value = ''
   renewalPreview.value = null
 }
@@ -1899,7 +2029,9 @@ async function submitReconsultation() {
 
 async function saveEdit() {
   if (!selectedPatient.value) return
-  const validationIssues = collectEditPatientValidationErrors()
+  const validationIssues = isReceptionist.value
+    ? collectReceptionistEditValidationErrors()
+    : collectEditPatientValidationErrors()
   if (validationIssues.length) {
     await showValidationErrorModal(validationIssues)
     return
@@ -1908,6 +2040,21 @@ async function saveEdit() {
   savingEdit.value = true
   try {
     const { firstName, lastName } = editParsedName.value
+    if (isReceptionist.value) {
+      await api.patch(`/patients/${selectedPatient.value.id}`, {
+        firstName,
+        lastName,
+        age: editAge.value ?? undefined,
+        ageUnit: editForm.value.ageUnit,
+        phone: editForm.value.phone.trim(),
+        service: editForm.value.service,
+        doctorId: editForm.value.doctorId || undefined,
+      })
+      showAlert(translateTemplate('Dossier {code} mis à jour.', { code: selectedPatient.value.code }))
+      closeEditModal()
+      await refreshAll()
+      return
+    }
     const amount = editEffectiveAmount.value
     const reduction = editBillingExempt.value ? 0 : editReduction.value
     const { data } = await api.patch(`/patients/${selectedPatient.value.id}`, {
@@ -2006,11 +2153,16 @@ watch(() => editForm.value.service, () => {
   syncDoctorForService('edit')
   applyDoctorBillingDefaults('edit')
 })
+watch(() => reconsultForm.value.service, () => {
+  syncDoctorForReconsultation()
+  applyDoctorBillingDefaults('reconsult')
+})
 watch(() => form.value.category, () => applyCategoryBillingDefaults('form'))
 watch(() => editForm.value.category, () => {
   if (hydratingEditForm) return
   applyCategoryBillingDefaults('edit')
 })
+watch(() => reconsultForm.value.category, () => applyCategoryBillingDefaults('reconsult'))
 watch(() => form.value.doctorId, () => applyDoctorBillingDefaults('form'))
 watch(() => editForm.value.doctorId, () => {
   if (hydratingEditForm) return
@@ -2419,7 +2571,7 @@ onUnmounted(clearAlert)
 
     <UiFormModal
       v-if="showEditModal && selectedPatient"
-      title="Modifier le patient"
+      :title="isReceptionist ? 'Modifier les informations du patient' : 'Modifier le patient'"
       :subtitle="selectedPatient.code"
       :icon="Pencil"
       @close="closeEditModal"
@@ -2433,97 +2585,147 @@ onUnmounted(clearAlert)
         novalidate
         @submit.prevent="saveEdit"
       >
-        <ReceptionPatientIdentityFields
-          v-model:full-name="editForm.fullName"
-          v-model:age="editForm.age"
-          v-model:age-unit="editForm.ageUnit"
-          v-model:phone="editForm.phone"
-          v-model:gender="editForm.gender"
-        />
+        <template v-if="isReceptionist">
+          <div class="form-grid-2">
+            <UiInput
+              v-model="editForm.fullName"
+              label="Nom et prénom"
+              placeholder="Ex. Fatimé Abakar"
+              required
+            />
+            <UiInput
+              v-model="editForm.phone"
+              label="Téléphone"
+              placeholder="06 XX XX XX XX"
+            />
+            <UiInput
+              v-model="editForm.age"
+              label="Âge"
+              type="number"
+              min="0"
+              :max="editAgeMax"
+              required
+            />
+            <UiSelect v-model="editForm.ageUnit" label="Unité d'âge" required>
+              <option v-for="unit in editAgeUnitOptions" :key="unit.value" :value="unit.value">
+                {{ unit.label }}
+              </option>
+            </UiSelect>
+            <UiSelect v-model="editForm.service" label="Service" required>
+              <option value="" disabled>
+                {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
+              </option>
+              <option
+                v-if="editForm.service && !services.some((s) => s.name === editForm.service)"
+                :value="editForm.service"
+              >
+                {{ clinicServiceText(editForm.service) }}
+              </option>
+              <option v-for="service in services" :key="service.id" :value="service.name">
+                {{ clinicServiceText(service.name) }}
+              </option>
+            </UiSelect>
+            <UiSelect v-model="editForm.doctorId" label="Médecin">
+              <option value="">{{ uiText('Sélectionner') }}</option>
+              <option
+                v-if="editForm.doctorId && !editServiceDoctors.some((doctor) => doctor.id === editForm.doctorId)"
+                :value="editForm.doctorId"
+              >
+                Dr {{ editDoctor ? fullName(editDoctor.firstName, editDoctor.lastName) : uiText('Médecin du dossier') }}
+              </option>
+              <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
+                Dr {{ fullName(doctor.firstName, doctor.lastName) }}
+              </option>
+            </UiSelect>
+          </div>
+        </template>
+        <template v-else>
+          <ReceptionPatientIdentityFields
+            v-model:full-name="editForm.fullName"
+            v-model:age="editForm.age"
+            v-model:age-unit="editForm.ageUnit"
+            v-model:phone="editForm.phone"
+            v-model:gender="editForm.gender"
+          />
 
-        <div class="form-grid-2">
-          <UiSelect
-            v-model="editForm.service"
-            label="Service"
-          >
-            <option value="" disabled>
-              {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
-            </option>
-            <option
-              v-if="editForm.service && !services.some((s) => s.name === editForm.service)"
-              :value="editForm.service"
-            >
-              {{ clinicServiceText(editForm.service) }}
-            </option>
-            <option v-for="service in services" :key="service.id" :value="service.name">
-              {{ clinicServiceText(service.name) }}
-            </option>
-          </UiSelect>
-          <UiSelect v-model="editForm.doctorId" label="Médecin">
-            <option value="">{{
-              editServiceDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin sur ce service')
-            }}</option>
-            <option
-              v-if="editForm.doctorId && !editServiceDoctors.some((doctor) => doctor.id === editForm.doctorId)"
-              :value="editForm.doctorId"
-            >
-              Dr {{ editDoctor ? fullName(editDoctor.firstName, editDoctor.lastName) : uiText('Médecin du dossier') }}
-            </option>
+          <div class="form-grid-2">
+            <UiSelect v-model="editForm.service" label="Service">
+              <option value="" disabled>
+                {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
+              </option>
+              <option
+                v-if="editForm.service && !services.some((s) => s.name === editForm.service)"
+                :value="editForm.service"
+              >
+                {{ clinicServiceText(editForm.service) }}
+              </option>
+              <option v-for="service in services" :key="service.id" :value="service.name">
+                {{ clinicServiceText(service.name) }}
+              </option>
+            </UiSelect>
+            <UiSelect v-model="editForm.doctorId" label="Médecin">
+              <option value="">{{
+                editServiceDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin sur ce service')
+              }}</option>
+              <option
+                v-if="editForm.doctorId && !editServiceDoctors.some((doctor) => doctor.id === editForm.doctorId)"
+                :value="editForm.doctorId"
+              >
+                Dr {{ editDoctor ? fullName(editDoctor.firstName, editDoctor.lastName) : uiText('Médecin du dossier') }}
+              </option>
+              <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
+                Dr {{ fullName(doctor.firstName, doctor.lastName) }}
+              </option>
+            </UiSelect>
+          </div>
+
+          <UiSelect v-model="editForm.treatingDoctorId" label="Médecin traitant (dossier)">
+            <option value="">{{ uiText('Aucun (optionnel)') }}</option>
             <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
               Dr {{ fullName(doctor.firstName, doctor.lastName) }}
             </option>
           </UiSelect>
-        </div>
 
-        <UiSelect v-model="editForm.treatingDoctorId" label="Médecin traitant (dossier)">
-          <option value="">{{ uiText('Aucun (optionnel)') }}</option>
-          <option v-for="doctor in editServiceDoctors" :key="doctor.id" :value="doctor.id">
-            Dr {{ fullName(doctor.firstName, doctor.lastName) }}
-          </option>
-        </UiSelect>
+          <p v-if="selectedPatient.treatingDoctor" class="doctor-hint doctor-hint--compact">
+            {{ uiText('Médecin traitant actuel :') }}
+            Dr {{ fullName(selectedPatient.treatingDoctor.firstName, selectedPatient.treatingDoctor.lastName) }}
+          </p>
 
-        <p
-          v-if="selectedPatient.treatingDoctor"
-          class="doctor-hint doctor-hint--compact"
-        >
-          {{ uiText('Médecin traitant actuel :') }}
-          Dr {{ fullName(selectedPatient.treatingDoctor.firstName, selectedPatient.treatingDoctor.lastName) }}
-        </p>
+          <UiAlert v-if="!editServiceDoctors.length" type="warning" message="Aucun médecin lié à ce service. Affectez les médecins au service depuis la page Services." />
+          <p v-if="!editServiceDoctors.length" class="doctors-empty-alert__links">
+            <RouterLink to="/admin/services">{{ uiText('Services') }}</RouterLink>
+            <span aria-hidden="true"> · </span>
+            <RouterLink to="/admin/employes">{{ uiText('Employés') }}</RouterLink>
+          </p>
 
-        <UiAlert v-if="!editServiceDoctors.length" type="warning" message="Aucun médecin lié à ce service. Affectez les médecins au service depuis la page Services." />
-        <p v-if="!editServiceDoctors.length" class="doctors-empty-alert__links">
-          <RouterLink to="/admin/services">{{ uiText('Services') }}</RouterLink>
-          <span aria-hidden="true"> · </span>
-          <RouterLink to="/admin/employes">{{ uiText('Employés') }}</RouterLink>
-        </p>
-
-        <div v-if="showEditConsultationFields" class="form-grid-2">
-          <UiInput money
-            v-model="editForm.consultationAmount"
-            :label="selectedPatient.waitingVisit?.billingKind === 'exam' ? 'Montant (FCFA)' : 'Montant consultation (FCFA)'"
-            type="number"
-            min="0"
-            placeholder="5000"
-            :icon="Banknote"
-          />
-        </div>
-
-        <p v-if="editDoctorQuotaHint" class="doctor-hint doctor-hint--compact">{{ editDoctorQuotaHint }}</p>
-        <p v-else-if="doctorIsFixedSalary(editDoctor)" class="doctor-hint doctor-hint--compact">
-          {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
-        </p>
-
-        <ReceptionReductionFields
-          v-if="showEditConsultationFields"
-          v-model:reduction-fcfa="editForm.reduction"
-          v-model:reduction-percent="editReductionPercent"
-          :amount-fcfa="editEffectiveAmount"
-        >
-          <div class="total-preview total-preview--compact">
-            <span>{{ uiText('Total à payer') }}</span>
-            <strong>{{ formatFcfa(editTotal) }}</strong>
+          <div v-if="showEditConsultationFields" class="form-grid-2">
+            <UiInput money
+              v-model="editForm.consultationAmount"
+              :label="selectedPatient.waitingVisit?.billingKind === 'exam' ? 'Montant (FCFA)' : 'Montant consultation (FCFA)'"
+              type="number"
+              min="0"
+              placeholder="5000"
+              :icon="Banknote"
+            />
           </div>
-        </ReceptionReductionFields>
+
+          <p v-if="editDoctorQuotaHint" class="doctor-hint doctor-hint--compact">{{ editDoctorQuotaHint }}</p>
+          <p v-else-if="doctorIsFixedSalary(editDoctor)" class="doctor-hint doctor-hint--compact">
+            {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
+          </p>
+
+          <ReceptionReductionFields
+            v-if="showEditConsultationFields"
+            v-model:reduction-fcfa="editForm.reduction"
+            v-model:reduction-percent="editReductionPercent"
+            :amount-fcfa="editEffectiveAmount"
+          >
+            <div class="total-preview total-preview--compact">
+              <span>{{ uiText('Total à payer') }}</span>
+              <strong>{{ formatFcfa(editTotal) }}</strong>
+            </div>
+          </ReceptionReductionFields>
+        </template>
       </form>
 
       <template #footer>
@@ -2581,68 +2783,106 @@ onUnmounted(clearAlert)
           }}
         </p>
 
+        <ReceptionPatientIdentityFields
+          v-model:full-name="reconsultForm.fullName"
+          v-model:age="reconsultForm.age"
+          v-model:age-unit="reconsultForm.ageUnit"
+          v-model:phone="reconsultForm.phone"
+          v-model:gender="reconsultForm.gender"
+        />
+
+        <div class="form-grid-2">
+          <UiSelect
+            v-model="reconsultForm.service"
+            label="Service"
+            required
+          >
+            <option value="" disabled>
+              {{ services.length ? uiText('Sélectionner un service') : uiText('Aucun service disponible') }}
+            </option>
+            <option
+              v-if="reconsultForm.service && !services.some((s) => s.name === reconsultForm.service)"
+              :value="reconsultForm.service"
+            >
+              {{ clinicServiceText(reconsultForm.service) }}
+            </option>
+            <option v-for="service in services" :key="service.id" :value="service.name">
+              {{ clinicServiceText(service.name) }}
+            </option>
+          </UiSelect>
+          <UiSelect v-model="reconsultForm.doctorId" label="Médecin" required>
+            <option value="" disabled>{{
+              reconsultServiceDoctors.length ? uiText('Sélectionner') : uiText('Aucun médecin sur ce service')
+            }}</option>
+            <option v-for="doctor in reconsultServiceDoctors" :key="doctor.id" :value="doctor.id">
+              Dr {{ fullName(doctor.firstName, doctor.lastName) }}
+            </option>
+          </UiSelect>
+        </div>
+
+        <UiAlert v-if="!reconsultServiceDoctors.length" type="warning" message="Aucun médecin lié à ce service. Affectez les médecins au service depuis la page Services." />
+
+        <div v-if="reconsultIsKine && !reconsultBillingExempt" class="form-grid-2">
+          <UiInput
+            v-model="reconsultForm.sessionsCount"
+            label="Nombre de séances"
+            type="number"
+            min="1"
+            step="1"
+            required
+          />
+          <UiInput money
+            v-model="reconsultForm.sessionPrice"
+            label="Prix par séance (FCFA)"
+            type="number"
+            min="0"
+            placeholder="5000"
+            :icon="Banknote"
+            required
+          />
+        </div>
+
+        <div v-if="!reconsultIsKine" class="form-grid-2">
+          <UiInput money
+            v-if="!reconsultBillingExempt && doctorNeedsConsultationAmountInput(reconsultDoctor)"
+            v-model="reconsultForm.consultationAmount"
+            label="Montant consultation (FCFA)"
+            type="number"
+            min="0"
+            placeholder="5000"
+            :icon="Banknote"
+            required
+          />
+          <div
+            v-else-if="!reconsultBillingExempt && doctorShowsFixedConsultationPrice(reconsultDoctor)"
+            class="total-preview total-preview--compact"
+          >
+            <span>{{ uiText('Prix consultation') }}</span>
+            <strong>{{ formatFcfa(reconsultEffectiveAmount) }}</strong>
+          </div>
+        </div>
+
+        <p v-if="!reconsultIsKine && reconsultDoctorQuotaHint" class="doctor-hint doctor-hint--compact">{{ reconsultDoctorQuotaHint }}</p>
+        <p v-else-if="!reconsultIsKine && doctorIsFixedSalary(reconsultDoctor)" class="doctor-hint doctor-hint--compact">
+          {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
+        </p>
+
+        <ReceptionReductionFields
+          v-if="showReconsultConsultationBilling"
+          v-model:reduction-fcfa="reconsultForm.reduction"
+          v-model:reduction-percent="reconsultReductionPercent"
+          :amount-fcfa="reconsultEffectiveAmount"
+        >
+          <div class="total-preview total-preview--compact">
+            <span>{{ uiText(reconsultIsKine ? 'Montant à encaisser' : 'Total à payer') }}</span>
+            <strong>{{ formatFcfa(reconsultTotal) }}</strong>
+          </div>
+        </ReceptionReductionFields>
+
         <p v-if="renewalPreview" class="renewal-banner" :class="{ 'renewal-banner--free': renewalPreview.withinValidity }">
           {{ renewalPreview.message }}
         </p>
         <p v-else-if="loadingRenewalPreview" class="doctor-hint">{{ uiText('Calcul du tarif…') }}</p>
-
-        <section class="form-panel">
-          <h3 class="form-panel__title">
-            <Stethoscope :size="14" />
-            {{ uiText('Consultation') }}
-          </h3>
-          <div class="form-grid-2">
-            <UiSelect v-model="reconsultForm.doctorId" label="Médecin" required>
-              <option value="" disabled>{{ sortedDoctors.length ? uiText('Sélectionner un médecin') : uiText('Aucun médecin disponible') }}</option>
-              <option v-for="doctor in sortedDoctors" :key="doctor.id" :value="doctor.id">
-                Dr {{ fullName(doctor.firstName, doctor.lastName) }}
-              </option>
-            </UiSelect>
-            <UiInput money
-              v-if="
-                (!selectedPatient?.category || !isExemptCategory(selectedPatient.category)) &&
-                doctorNeedsConsultationAmountInput(reconsultDoctor)
-              "
-              v-model="reconsultForm.consultationAmount"
-              label="Montant consultation (FCFA)"
-              type="number"
-              min="1"
-              placeholder="Ex. 5000"
-              :icon="Banknote"
-              required
-            />
-            <div
-              v-else-if="
-                (!selectedPatient?.category || !isExemptCategory(selectedPatient.category)) &&
-                doctorShowsFixedConsultationPrice(reconsultDoctor)
-              "
-              class="total-preview total-preview--compact"
-            >
-              <span>{{ uiText('Prix consultation') }}</span>
-              <strong>{{
-                formatFcfa(renewalPreview?.amountFcfa ?? resolveConsultationAmountForDoctor(
-                  reconsultDoctor,
-                  Number(reconsultForm.consultationAmount) || 0,
-                ))
-              }}</strong>
-            </div>
-          </div>
-          <p v-if="reconsultDoctorQuotaHint" class="doctor-hint">{{ reconsultDoctorQuotaHint }}</p>
-          <p v-else-if="doctorIsFixedSalary(reconsultDoctor)" class="doctor-hint">
-            {{ uiText('Médecin salarié — saisissez le montant de la consultation.') }}
-          </p>
-          <ReceptionReductionFields
-            v-if="showReconsultConsultationBilling"
-            v-model:reduction-fcfa="reconsultForm.reduction"
-            v-model:reduction-percent="reconsultReductionPercent"
-            :amount-fcfa="reconsultEffectiveAmount"
-          >
-            <div class="total-preview total-preview--compact">
-              <span>{{ uiText('Total à payer') }}</span>
-              <strong>{{ formatFcfa(reconsultTotal) }}</strong>
-            </div>
-          </ReceptionReductionFields>
-        </section>
       </form>
 
       <template #footer>

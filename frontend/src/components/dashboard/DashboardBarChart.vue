@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+// Styles du graphique chargés ici : un @import dans le style scoped du parent ne s'applique pas à l'intérieur du graphique.
+import '@/styles/dashboard-charts.css'
 
 export type BarChartDay = {
   date: string

@@ -93,7 +93,7 @@ const selectedIndice = computed(() =>
 
 
 function applySelectedIndice(previousIndiceId?: string) {
-  if (!form.value.indiceId) return
+  if (!form.value.indiceId || props.editing?.id) return
   const selected = selectedIndice.value
   if (!selected) return
   const previousLabel = props.indices.find((item) => item.id === previousIndiceId)?.name
@@ -150,7 +150,7 @@ const isEditing = computed(() => Boolean(props.editing?.id))
 
 const canSubmit = computed(() => {
   const amount = Number(form.value.amountFcfa)
-  const hasIndice = Boolean(form.value.indiceId)
+  const hasIndice = isEditing.value || Boolean(form.value.indiceId)
   const hasLabel = form.value.label.trim().length >= 2
   return (
     hasIndice

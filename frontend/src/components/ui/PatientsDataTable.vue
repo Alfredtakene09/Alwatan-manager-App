@@ -415,11 +415,17 @@ onUnmounted(() => {
                     v-if="showEditButton"
                     type="button"
                     class="st-btn st-btn--edit"
-                    title="Modifier le dossier"
-                    aria-label="Modifier le dossier"
+                    :class="{ 'st-btn--text': auth.user?.role === 'RECEPTIONNISTE' }"
+                    :title="auth.user?.role === 'RECEPTIONNISTE'
+                      ? uiText('Modifier le nom, le téléphone, le service, l’âge et le médecin')
+                      : uiText('Modifier le dossier')"
+                    :aria-label="auth.user?.role === 'RECEPTIONNISTE'
+                      ? uiText('Modifier le nom, le téléphone, le service, l’âge et le médecin')
+                      : uiText('Modifier le dossier')"
                     @click="emit('edit', row.patient)"
                   >
                     <Pencil :size="15" />
+                    <span v-if="auth.user?.role === 'RECEPTIONNISTE'">{{ uiText('Modifier') }}</span>
                   </button>
                   <button
                     v-if="showReconsultButton"

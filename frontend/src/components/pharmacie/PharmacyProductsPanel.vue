@@ -858,6 +858,14 @@ defineExpose({
             <span class="products-total__label">{{ uiText('Bénéfice potentiel') }}</span>
             <strong class="products-total__value">{{ formatFcfa(priceTotals.profit) }}</strong>
           </div>
+          <div
+            v-if="priceTotals.missingPurchaseCount"
+            class="products-total products-total--missing"
+            :title="uiText('Ces produits ne sont pas comptés dans les totaux achat, vente et bénéfice.')"
+          >
+            <span class="products-total__label">{{ uiText('Sans prix d’achat') }}</span>
+            <strong class="products-total__value">{{ priceTotals.missingPurchaseCount }}</strong>
+          </div>
           <button
             type="button"
             class="products-total products-total--invoices"
@@ -1304,6 +1312,12 @@ defineExpose({
   border-color: #fda4af;
   background: #fff1f2;
   color: #be123c;
+}
+
+.products-total--missing {
+  border-color: #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
 }
 
 .products-total--invoices {

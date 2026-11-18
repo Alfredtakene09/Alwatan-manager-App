@@ -266,6 +266,7 @@ const expenseExportColumns: ExportColumn<AdminExpenseRow>[] = [
   { header: 'Type', value: (row) => (row.flow === 'ENTREE' ? 'Entrée' : 'Sortie') },
   { header: 'Description', value: (row) => row.description },
   { header: 'Montant', value: (row) => formatFcfa(row.amountFcfa), widthWeight: 1.4 },
+  { header: 'Commentaire', value: (row) => row.comment?.trim() || '—' },
 ]
 
 /** Le titre de l'export suit le filtre Type (entrées seules, sorties seules ou les deux). */

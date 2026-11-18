@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+// Styles du graphique chargés ici : un @import dans le style scoped du parent ne s'applique pas à l'intérieur du graphique.
+import '@/styles/dashboard-charts.css'
 import { formatFcfa } from '@/lib/roles'
 
 export type PendingBar = {
@@ -7,6 +9,8 @@ export type PendingBar = {
   count: number
   amount?: number | null
   color: string
+  /** Texte affiché à la place du nombre (ex. « × 12 ») ; chaîne vide = rien. */
+  valueLabel?: string
 }
 
 const props = defineProps<{
@@ -29,7 +33,7 @@ const maxCount = computed(() => Math.max(...props.items.map((item) => item.count
           }"
         />
       </div>
-      <strong class="pending-chart__value">{{ item.count }}</strong>
+      <strong v-if="item.valueLabel !== ''" class="pending-chart__value">{{ item.valueLabel ?? item.count }}</strong>
       <span v-if="item.amount != null" class="pending-chart__amount">{{ formatFcfa(item.amount) }}</span>
     </div>
   </div>

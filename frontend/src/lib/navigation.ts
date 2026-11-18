@@ -18,6 +18,7 @@ import {
   FolderOpen,
   Banknote,
   Coins,
+  FileText,
   ShoppingCart,
   Tags,
   Package,
@@ -512,7 +513,7 @@ const directionOperationalNav: NavSection[] = [
         children: [
           {
             to: '/comptabilite/factures',
-            label: 'Factures',
+            label: 'Factures par parcours',
             icon: FileText,
             module: 'comptabilite',
             description: 'Facture unique par parcours patient',
@@ -524,6 +525,12 @@ const directionOperationalNav: NavSection[] = [
             module: 'admin',
             badgeKey: 'depenses',
             uiAction: 'comptabilite.depenses',
+          },
+          {
+            to: '/factures',
+            label: 'Factures individuelles',
+            icon: FileText,
+            module: 'factures',
           },
           {
             to: '/admin/salaires',

@@ -208,7 +208,7 @@ export async function buildPharmacyReport(options?: {
     .map((row) => ({ ...row, revenueFcfa: Math.max(0, row.revenueFcfa), quantity: Math.max(0, row.quantity) }))
     .filter((row) => row.quantity > 0 || row.revenueFcfa > 0)
     .sort((a, b) => b.revenueFcfa - a.revenueFcfa)
-    .slice(0, 10);
+    .slice(0, 5);
 
   const salesByCategory = [...byCategory.values()]
     .map((row) => ({ ...row, revenueFcfa: Math.max(0, row.revenueFcfa), quantity: Math.max(0, row.quantity) }))
