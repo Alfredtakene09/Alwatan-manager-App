@@ -18,7 +18,6 @@ import {
   FolderOpen,
   Banknote,
   Coins,
-  FileText,
   ShoppingCart,
   Tags,
   Package,
