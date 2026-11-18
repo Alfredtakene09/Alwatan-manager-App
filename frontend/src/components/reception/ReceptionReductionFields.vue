@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
 import { Percent } from '@lucide/vue'
 import UiInput from '@/components/ui/UiInput.vue'
 import { useAppI18n } from '@/i18n/useAppI18n'
+import { canReduceExamPrices } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth'
 import {
   RECEPTION_PATIENT_REDUCTION_PERCENTS,
   matchReceptionReductionPercent,
@@ -17,6 +19,9 @@ const props = defineProps<{
 }>()
 
 const { uiText } = useAppI18n()
+const auth = useAuthStore()
+// Réductions : administrateur seulement ; les autres voient juste le total.
+const canReduce = computed(() => canReduceExamPrices(auth.user?.role))
 
 function selectPercent(pct: string) {
   if (!pct || pct === reductionPercent.value) {
@@ -49,7 +54,7 @@ watch(
 
 <template>
   <div class="reception-reduction">
-    <div class="reception-reduction__chips" role="group" :aria-label="uiText('Réduction (%)')">
+    <div v-if="canReduce" class="reception-reduction__chips" role="group" :aria-label="uiText('Réduction (%)')">
       <button
         type="button"
         class="reception-reduction__chip"
@@ -71,6 +76,7 @@ watch(
     </div>
     <div class="form-grid-2">
       <UiInput money
+        v-if="canReduce"
         :model-value="reductionFcfa"
         :label="uiText('Réduction (FCFA)')"
         type="number"

@@ -910,6 +910,9 @@ router.post("/", requireModule("reception"), requireUiAction("reception.reconsul
       }
     }
 
+    if ((body.reductionFcfa ?? 0) > 0 && !canReduceExamPrices(req.user!.role as AppUserRole)) {
+      return res.status(403).json({ error: "Seul l'administrateur peut appliquer une réduction." });
+    }
     if (body.consultationAmountFcfa && (body.reductionFcfa ?? 0) > body.consultationAmountFcfa) {
       return res.status(400).json({ error: "La réduction ne peut pas dépasser le montant." });
     }

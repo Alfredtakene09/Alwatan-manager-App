@@ -20,7 +20,7 @@ import { prisma } from "../src/lib/db.js";
 import { buildFinancialKpis, resolveDashboardDateRange } from "../src/lib/admin-dashboard-stats.js";
 import { buildRegistrationSummary } from "../src/lib/registration-summary.js";
 import { toBusinessDateBound } from "../src/lib/cash-shift.js";
-import { payrollMonthsStartingIn } from "../src/lib/payroll-outflow.js";
+import { paidPayrollWhereBetween } from "../src/lib/payroll-outflow.js";
 
 const [fromArg, toArg] = process.argv.slice(2);
 const range = resolveDashboardDateRange({ from: fromArg, to: toArg ?? fromArg });
@@ -98,7 +98,7 @@ await check("Cumul des enregistrements — ticket et PDF", async (r) => {
   }
 });
 
-// 3. Tableau de bord : cartes Sortie / Entrée = dépenses validées + paie nette (mois de paie)
+// 3. Tableau de bord : cartes Sortie / Entrée = dépenses validées + paie nette (date de paiement)
 //    + avances versées sur la période.
 await check("Tableau de bord — cartes Sortie / Entrée", async (r) => {
   const kpis = await buildFinancialKpis(new Date(), range);
@@ -109,13 +109,10 @@ await check("Tableau de bord — cartes Sortie / Entrée", async (r) => {
     },
     select: { amountFcfa: true, flow: true },
   });
-  const months = payrollMonthsStartingIn(range.from, range.toExclusive);
-  const payroll = months.length
-    ? await prisma.employeePayroll.findMany({
-        where: { status: PayrollStatus.PAID, OR: months },
-        select: { grossFcfa: true, primeFcfa: true, advanceDeductionFcfa: true },
-      })
-    : [];
+  const payroll = await prisma.employeePayroll.findMany({
+    where: paidPayrollWhereBetween(range.from, range.toExclusive),
+    select: { grossFcfa: true, primeFcfa: true, advanceDeductionFcfa: true },
+  });
   const advances = await prisma.salaryAdvance.findMany({
     where: {
       status: { not: "CANCELLED" },

@@ -95,13 +95,9 @@ export function isDirectionOrGestionnaire(role: AppUserRole) {
   return role === "COMPTABLE" || role === "GESTIONNAIRE" || role === "ADMIN";
 }
 
-/**
- * Réduction du prix des examens :
- * - ADMIN / GESTIONNAIRE : libre (dans la limite du montant)
- * - RECEPTIONNISTE : uniquement 10 %, 15 % ou 20 %
- */
+/** Réductions sur les examens et les consultations : administrateur seulement. */
 export function canReduceExamPrices(role: AppUserRole) {
-  return role === "ADMIN" || role === "GESTIONNAIRE" || role === "RECEPTIONNISTE";
+  return role === "ADMIN";
 }
 
 /** Réduction examens plafonnée aux paliers 10 / 15 / 20 % (réception). */

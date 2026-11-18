@@ -100,6 +100,16 @@ describe("Patient personnel — enregistrement et réduction", () => {
 });
 
 describe("Patient standard et cumul des enregistrements (export)", () => {
+  it("refuse une réduction de consultation saisie par la réception", async () => {
+    const res = await api.recep.post("/patients/register-consultation", {
+      ...patient("Reduction"),
+      service: "Gynécologie",
+      doctorId: fx.users.drGyn.id,
+      reductionFcfa: Math.round(FEES.gynConsultation * 0.1),
+    });
+    assert.equal(res.status, 403, JSON.stringify(res.data));
+  });
+
   it("facture la consultation au tarif plein", async () => {
     const res = await api.recep.post("/patients/register-consultation", {
       ...patient("Standard"),
@@ -392,7 +402,8 @@ describe("Pharmacie — achat par facture et vente", () => {
 
     const after = await kpis();
     assert.equal(after.expensesMonthFcfa, before.expensesMonthFcfa + amount);
-    assert.equal(after.netMonthFcfa, before.netMonthFcfa - amount);
+    // Achat de stock : pas déduit du bénéfice net, seul le coût des produits vendus l'est.
+    assert.equal(after.netMonthFcfa, before.netMonthFcfa);
 
     const expectedLines = [
       ["Paracetamol Test", 4, FEES.productPurchasePrice, 4 * FEES.productPurchasePrice],

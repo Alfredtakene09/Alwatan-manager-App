@@ -168,6 +168,8 @@ async function assertSelectableTreatingDoctor(treatingDoctorId: string | null | 
   return normalized;
 }
 
+const REDUCTION_ADMIN_ONLY = "Seul l'administrateur peut appliquer une réduction.";
+
 const receptionUpdateSchema = patientSchema.safeExtend({
   doctorId: z.string().optional(),
   consultationAmountFcfa: z.number().int().positive().optional(),
@@ -1317,6 +1319,9 @@ router.post(
     }
 
     const registrationReduction = body.reductionFcfa ?? 0;
+    if (registrationReduction > 0 && !canReduceExamPrices(req.user!.role as AppUserRole)) {
+      return res.status(403).json({ error: REDUCTION_ADMIN_ONLY });
+    }
     if (registrationReduction > (consultationAmountFcfa ?? 0)) {
       return res.status(400).json({ error: "La réduction ne peut pas dépasser le montant." });
     }
@@ -1803,6 +1808,21 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
     }
 
     if (body.reductionFcfa != null && body.reductionFcfa > 0) {
+      // Hors administrateur : la réduction déjà enregistrée peut être conservée, pas augmentée.
+      const activeVisit = await prisma.visit.findFirst({
+        where: {
+          patientId,
+          status: { in: [VisitStatus.WAITING_CONSULTATION, VisitStatus.IN_CONSULTATION] },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { reductionFcfa: true },
+      });
+      if (
+        body.reductionFcfa > (activeVisit?.reductionFcfa ?? 0) &&
+        !canReduceExamPrices(req.user!.role as AppUserRole)
+      ) {
+        return res.status(403).json({ error: REDUCTION_ADMIN_ONLY });
+      }
       const fee =
         body.consultationAmountFcfa ??
         (
