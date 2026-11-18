@@ -2618,6 +2618,8 @@ export default {
     'Limité aux 10000 derniers mouvements': 'Limité aux 10000 derniers mouvements',
     'Nombre d’employés': 'Nombre d’employés',
     'Masse salariale (salaires fixes)': 'Masse salariale (salaires fixes)',
+    'Masse salariale actuelle (salaires fixes)': 'Masse salariale actuelle (salaires fixes)',
+    'Salaires fixes actuels des employés actifs, hors comptes désactivés': 'Salaires fixes actuels des employés actifs, hors comptes désactivés',
     '{jobTitle} — {count} employés': '{jobTitle} — {count} employés',
     '{jobTitle} — {count} employés — {payroll}': '{jobTitle} — {count} employés — {payroll}',
     'Récapitulatif par poste': 'Récapitulatif par poste',

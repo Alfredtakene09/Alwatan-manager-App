@@ -2632,6 +2632,8 @@ export default {
     'Limité aux 10000 derniers mouvements': 'محدود بآخر 10000 حركة',
     'Nombre d’employés': 'عدد الموظفين',
     'Masse salariale (salaires fixes)': 'كتلة الأجور (رواتب ثابتة)',
+    'Masse salariale actuelle (salaires fixes)': 'كتلة الأجور الحالية (الرواتب الثابتة)',
+    'Salaires fixes actuels des employés actifs, hors comptes désactivés': 'الرواتب الثابتة الحالية للموظفين النشطين، باستثناء الحسابات المعطلة',
     '{jobTitle} — {count} employés': '{jobTitle} — {count} موظف',
     '{jobTitle} — {count} employés — {payroll}': '{jobTitle} — {count} موظف — {payroll}',
     'Récapitulatif par poste': 'ملخص حسب المنصب',

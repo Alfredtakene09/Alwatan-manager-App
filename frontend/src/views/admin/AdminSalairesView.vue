@@ -24,6 +24,7 @@ import CaisseToolbar from '@/components/caisse/CaisseToolbar.vue'
 import AdminPayrollHistoriquePanel from '@/components/admin/AdminPayrollHistoriquePanel.vue'
 import GestionnaireSalaryAdvancesPanel from '@/components/gestionnaire/GestionnaireSalaryAdvancesPanel.vue'
 import GestionnaireOvertimePanel from '@/components/gestionnaire/GestionnaireOvertimePanel.vue'
+import CurrentPayrollMassCard from '@/components/gestionnaire/CurrentPayrollMassCard.vue'
 
 type TabId = 'mois' | 'historique' | 'avances' | 'heures-supp'
 
@@ -35,6 +36,7 @@ function formatF(amount: number) {
 type PayrollResponse = {
   year: number
   month: number
+  currentPayrollMassFcfa: number
   rows: Array<{
     id: string
     grossFcfa: number
@@ -250,6 +252,11 @@ async function loadPayroll() {
     })
     // Changement de mois rapide : seule la dernière réponse s'affiche.
     if (seq === loadSeq) payload.value = data
+  } catch (error) {
+    if (seq === loadSeq) {
+      payload.value = null
+      await showApiErrorModal(error, 'Impossible de charger la paie.')
+    }
   } finally {
     if (seq === loadSeq) loading.value = false
   }
@@ -461,6 +468,7 @@ onMounted(reloadPayrollData)
 
     <template v-if="activeTab === 'mois'">
       <UiCard title="Fiches de paie" :description="`Suivi des paiements — ${periodLabel}`">
+        <CurrentPayrollMassCard :amount="payload?.currentPayrollMassFcfa ?? null" />
         <div class="payroll-progress">
           <div class="payroll-progress__bar">
             <div class="payroll-progress__fill" :style="{ width: `${progress}%` }" />

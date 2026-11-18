@@ -28,6 +28,7 @@ import GestionnairePayrollPaymentModal, {
 } from '@/components/gestionnaire/GestionnairePayrollPaymentModal.vue'
 import GestionnaireRowAction from '@/components/gestionnaire/GestionnaireRowAction.vue'
 import GestionnaireRowActionGroup from '@/components/gestionnaire/GestionnaireRowActionGroup.vue'
+import CurrentPayrollMassCard from '@/components/gestionnaire/CurrentPayrollMassCard.vue'
 import { exportTableExcel, exportTablePdf, exportTableWord, type ExportColumn } from '@/lib/table-export'
 import ExportButtons from '@/components/ui/ExportButtons.vue'
 import '@/assets/gestionnaire-page.css'
@@ -40,6 +41,7 @@ type PayrollRow = PayrollPaymentTarget & {
 type PayrollResponse = {
   year: number
   month: number
+  currentPayrollMassFcfa: number
   prepared: boolean
   eligibleCount: number
   paidCount: number
@@ -158,6 +160,11 @@ async function loadPayroll() {
     })
     // Changement de mois rapide : seule la dernière réponse s'affiche.
     if (seq === loadSeq) payload.value = data
+  } catch (error) {
+    if (seq === loadSeq) {
+      payload.value = null
+      await showApiErrorModal(error, 'Impossible de charger la paie.')
+    }
   } finally {
     if (seq === loadSeq) loading.value = false
   }
@@ -371,6 +378,8 @@ defineExpose({ reload: loadPayroll })
         </UiButton>
       </div>
     </div>
+
+    <CurrentPayrollMassCard :amount="payload?.currentPayrollMassFcfa ?? null" />
 
     <div v-if="payload?.prepared" class="payroll-kpis">
       <article class="payroll-kpi payroll-kpi--warn">

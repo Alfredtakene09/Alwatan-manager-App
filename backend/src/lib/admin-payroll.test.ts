@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DoctorCompensationType } from "@prisma/client";
-import { listEligiblePayrollEmployees, parseYearMonth, payrollMonthRangeWhere } from "./admin-payroll.js";
+import {
+  listEligiblePayrollEmployees,
+  parseYearMonth,
+  payrollEligibleEmployeeWhere,
+  payrollMonthRangeWhere,
+} from "./admin-payroll.js";
 
 describe("listEligiblePayrollEmployees", () => {
   it("exclut un employé dont le compte application est désactivé", () => {
@@ -46,6 +51,27 @@ describe("listEligiblePayrollEmployees", () => {
       rows.reduce((sum, r) => sum + r.grossFcfa, 0),
       250_000,
     );
+  });
+
+  it("ne compte que les salaires fixes positifs des fiches éligibles", () => {
+    const employee = {
+      updatedAt: new Date(),
+      isMedecin: false,
+      doctorCompensationType: DoctorCompensationType.FIXED_SALARY,
+      user: null,
+    };
+    const rows = listEligiblePayrollEmployees([
+      { ...employee, id: "1", firstName: "Salaire", lastName: "Actif", fixedSalaryFcfa: 120_000 },
+      { ...employee, id: "2", firstName: "Sans", lastName: "Salaire", fixedSalaryFcfa: null },
+      { ...employee, id: "3", firstName: "Salaire", lastName: "Zero", fixedSalaryFcfa: 0 },
+      { ...employee, id: "4", firstName: "Compte", lastName: "Desactive", fixedSalaryFcfa: 90_000, user: { id: "u4", active: false } },
+    ]);
+
+    assert.deepEqual(rows, [{ employeeId: "1", grossFcfa: 120_000 }]);
+    assert.deepEqual(payrollEligibleEmployeeWhere, {
+      active: true,
+      OR: [{ user: { is: null } }, { user: { is: { active: true } } }],
+    });
   });
 });
 

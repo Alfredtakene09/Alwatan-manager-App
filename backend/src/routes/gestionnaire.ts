@@ -50,6 +50,7 @@ import {
   employeePayrollInclude,
   serializePayrollRow,
   countEligiblePayrollEmployees,
+  sumCurrentFichePayrollMass,
   fetchPayrollRowsForMonth,
   getPayrollPeriodSummaries,
 } from "../lib/admin-payroll.js";
@@ -941,9 +942,10 @@ router.get("/payroll/periods", async (_req, res) => {
 async function buildPayrollMonthResponse(targetYear: number, targetMonth: number) {
   const rows = await fetchPayrollRowsForMonth(targetYear, targetMonth);
   const employeeIds = rows.map((row) => row.employeeId);
-  const [pendingMap, overtimeMap] = await Promise.all([
+  const [pendingMap, overtimeMap, currentPayrollMassFcfa] = await Promise.all([
     sumPendingAdvancesByEmployee(employeeIds, { year: targetYear, month: targetMonth }),
     sumValidatedOvertimeByEmployee(employeeIds, targetYear, targetMonth),
+    sumCurrentFichePayrollMass(),
   ]);
   const serialized = rows.map((row) =>
     serializePayrollRow(row, {
@@ -964,6 +966,7 @@ async function buildPayrollMonthResponse(targetYear: number, targetMonth: number
   return {
     year: targetYear,
     month: targetMonth,
+    currentPayrollMassFcfa,
     prepared: serialized.length > 0,
     eligibleCount: await countEligiblePayrollEmployees(),
     paidCount,

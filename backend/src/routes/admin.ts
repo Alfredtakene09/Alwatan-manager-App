@@ -84,6 +84,7 @@ import {
   ensurePayrollForMonth,
   employeePayrollInclude,
   serializePayrollRow,
+  sumCurrentFichePayrollMass,
 } from "../lib/admin-payroll.js";
 import {
   isPayrollLinkedExpenseId,
@@ -1715,14 +1716,16 @@ router.get("/payroll", async (req, res) => {
     (row) => row.status === PayrollStatus.PAID || eligibleIds.has(row.employeeId),
   );
   const employeeIds = rows.map((row) => row.employeeId);
-  const [pendingMap, overtimeMap] = await Promise.all([
+  const [pendingMap, overtimeMap, currentPayrollMassFcfa] = await Promise.all([
     sumPendingAdvancesByEmployee(employeeIds, { year: targetYear, month: targetMonth }),
     sumValidatedOvertimeByEmployee(employeeIds, targetYear, targetMonth),
+    sumCurrentFichePayrollMass(),
   ]);
 
   return res.json({
     year: targetYear,
     month: targetMonth,
+    currentPayrollMassFcfa,
     rows: rows.map((row) =>
       serializePayrollRow(row, {
         // Même plafond qu'à la validation : pas plus que le salaire + primes.
