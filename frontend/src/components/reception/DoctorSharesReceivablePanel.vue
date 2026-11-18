@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { CircleDollarSign, Scissors, Stethoscope, Wallet } from '@lucide/vue'
+import { CircleDollarSign, History, Scissors, Stethoscope, Wallet } from '@lucide/vue'
 import api from '@/api/client'
 import { fullName, formatFcfa } from '@/lib/roles'
 import {
@@ -13,6 +13,7 @@ import { showAppModal } from '@/composables/useAppModal'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiStatCard from '@/components/ui/UiStatCard.vue'
+import DoctorShareSettlementsHistory from '@/components/reception/DoctorShareSettlementsHistory.vue'
 
 type DoctorShareItem = {
   key: string
@@ -58,6 +59,8 @@ const settlingDoctorShares = ref(false)
 const settleSharesMessage = ref('')
 const settleSharesType = ref<'success' | 'error'>('success')
 const loading = ref(false)
+const showHistory = ref(false)
+const historyRef = ref<InstanceType<typeof DoctorShareSettlementsHistory> | null>(null)
 const loadError = ref('')
 
 const doctorsWithShare = computed(() => {
@@ -196,6 +199,7 @@ async function settleSelectedDoctorCash() {
         : 'Parts réglées en espèces — la carte est à jour.',
     )
     await loadDoctorShares()
+    await historyRef.value?.reload()
   } catch (error: unknown) {
     const err = error as { response?: { data?: { error?: string } } }
     settleSharesType.value = 'error'
@@ -256,72 +260,6 @@ defineExpose({ reload: loadDoctorShares })
       {{ loadError }}
     </p>
 
-    <div class="doctor-shares-section__filters">
-      <UiSelect v-model="doctorSharePeriod" :label="translateDashboardLabel('Période')">
-        <option value="day">{{ translateDashboardLabel('Jour') }}</option>
-        <option value="month">{{ translateDashboardLabel('Mois') }}</option>
-      </UiSelect>
-      <div v-if="doctorSharePeriod === 'day'" class="doctor-shares-date-wrap">
-        <label class="doctor-shares-date">
-          <span>{{ translateDashboardLabel('Date') }}</span>
-          <input v-model="doctorShareDay" type="date" />
-        </label>
-        <div class="doctor-shares-date__quick">
-          <button type="button" @click="selectShareDay(todayDateKey())">
-            {{ translateDashboardLabel("Aujourd'hui") }}
-          </button>
-          <button type="button" @click="selectShareDay(yesterdayDateKey())">
-            {{ translateDashboardLabel('Hier') }}
-          </button>
-        </div>
-      </div>
-      <label v-else class="doctor-shares-date">
-        <span>{{ translateDashboardLabel('Mois') }}</span>
-        <input v-model="doctorShareMonth" type="month" />
-      </label>
-      <UiSelect v-model="doctorShareDoctorId" :label="translateDashboardLabel('Médecin')">
-        <option value="">{{ translateDashboardLabel('Tous (somme globale)') }}</option>
-        <option v-for="doc in doctorsWithShare" :key="doc.id" :value="doc.id">
-          {{ fullName(doc.firstName, doc.lastName) }}
-        </option>
-      </UiSelect>
-      <div class="doctor-shares-section__actions">
-        <UiButton
-          v-if="canSettleSelectedDoctorCash"
-          type="button"
-          size="sm"
-          variant="secondary"
-          :icon="Wallet"
-          :loading="settlingDoctorShares"
-          @click="settleSelectedDoctorCash"
-        >
-          {{ translateDashboardLabel('Régler en espèces') }}
-        </UiButton>
-        <p v-else-if="!doctorShareDoctorId" class="doctor-shares-section__hint">
-          {{
-            translateDashboardLabel(
-              'Sélectionnez un médecin pour afficher le bouton de règlement.',
-            )
-          }}
-        </p>
-        <p
-          v-else-if="(selectedDoctorShareRow?.totalShareFcfa ?? 0) <= 0"
-          class="doctor-shares-section__hint"
-        >
-          {{ translateDashboardLabel('Rien à régler pour ce médecin.') }}
-        </p>
-        <UiButton
-          type="button"
-          size="sm"
-          variant="ghost"
-          :loading="loading"
-          @click="loadDoctorShares"
-        >
-          {{ translateDashboardLabel('Actualiser') }}
-        </UiButton>
-      </div>
-    </div>
-
     <div class="doctor-shares-cards" :class="{ 'doctor-shares-cards--loading': loading }">
       <UiStatCard
         label="Consultations"
@@ -347,6 +285,85 @@ defineExpose({ reload: loadDoctorShares })
       />
     </div>
 
+    <div class="doctor-shares-section__filters">
+      <UiSelect v-model="doctorSharePeriod" :label="translateDashboardLabel('Période')">
+        <option value="day">{{ translateDashboardLabel('Jour') }}</option>
+        <option value="month">{{ translateDashboardLabel('Mois') }}</option>
+      </UiSelect>
+      <label v-if="doctorSharePeriod === 'day'" class="doctor-shares-date">
+        <span>{{ translateDashboardLabel('Date') }}</span>
+        <input v-model="doctorShareDay" type="date" />
+      </label>
+      <label v-else class="doctor-shares-date">
+        <span>{{ translateDashboardLabel('Mois') }}</span>
+        <input v-model="doctorShareMonth" type="month" />
+      </label>
+      <UiSelect v-model="doctorShareDoctorId" :label="translateDashboardLabel('Médecin')">
+        <option value="">{{ translateDashboardLabel('Tous (somme globale)') }}</option>
+        <option v-for="doc in doctorsWithShare" :key="doc.id" :value="doc.id">
+          {{ fullName(doc.firstName, doc.lastName) }}
+        </option>
+      </UiSelect>
+    </div>
+
+    <div class="doctor-shares-section__actions">
+      <div v-if="doctorSharePeriod === 'day'" class="doctor-shares-section__action-group">
+        <UiButton type="button" size="sm" variant="outline" @click="selectShareDay(todayDateKey())">
+          {{ translateDashboardLabel("Aujourd'hui") }}
+        </UiButton>
+        <UiButton type="button" size="sm" variant="outline" @click="selectShareDay(yesterdayDateKey())">
+          {{ translateDashboardLabel('Hier') }}
+        </UiButton>
+      </div>
+      <div class="doctor-shares-section__action-group doctor-shares-section__action-group--tools">
+        <UiButton
+          type="button"
+          size="sm"
+          variant="ghost"
+          :loading="loading"
+          @click="loadDoctorShares"
+        >
+          {{ translateDashboardLabel('Actualiser') }}
+        </UiButton>
+        <UiButton
+          type="button"
+          size="sm"
+          variant="secondary"
+          :icon="History"
+          :aria-expanded="showHistory"
+          @click="showHistory = !showHistory"
+        >
+          {{ showHistory ? 'Masquer l’historique' : 'Historique des règlements' }}
+        </UiButton>
+      </div>
+      <div class="doctor-shares-section__action-group doctor-shares-section__action-group--settle">
+        <UiButton
+          v-if="canSettleSelectedDoctorCash"
+          type="button"
+          size="sm"
+          variant="secondary"
+          :icon="Wallet"
+          :loading="settlingDoctorShares"
+          @click="settleSelectedDoctorCash"
+        >
+          {{ translateDashboardLabel('Régler en espèces') }}
+        </UiButton>
+        <p v-else-if="!doctorShareDoctorId" class="doctor-shares-section__hint">
+          {{
+            translateDashboardLabel(
+              'Sélectionnez un médecin pour afficher le bouton de règlement.',
+            )
+          }}
+        </p>
+        <p
+          v-else-if="(selectedDoctorShareRow?.totalShareFcfa ?? 0) <= 0"
+          class="doctor-shares-section__hint"
+        >
+          {{ translateDashboardLabel('Rien à régler pour ce médecin.') }}
+        </p>
+      </div>
+    </div>
+
     <p
       v-if="settleSharesMessage"
       class="doctor-shares-section__message"
@@ -354,6 +371,7 @@ defineExpose({ reload: loadDoctorShares })
     >
       {{ settleSharesMessage }}
     </p>
+    <DoctorShareSettlementsHistory v-if="showHistory" ref="historyRef" />
   </section>
 </template>
 
@@ -391,16 +409,12 @@ defineExpose({ reload: loadDoctorShares })
   align-items: end;
 }
 
-.doctor-shares-date-wrap {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: end;
+.doctor-shares-section__filters :deep(.ui-field) {
+  margin-bottom: 0;
+  min-width: 0;
 }
 
-.doctor-shares-date-wrap .doctor-shares-date {
-  flex: 1 1 9rem;
-}
+.doctor-shares-date { min-width: 0; }
 
 .doctor-shares-date span {
   display: block;
@@ -422,29 +436,6 @@ defineExpose({ reload: loadDoctorShares })
   color: var(--text);
 }
 
-.doctor-shares-date__quick {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.doctor-shares-date__quick button {
-  height: var(--app-control-height);
-  padding: 0 0.75rem;
-  border: 1px solid var(--primary-200, #99f6e4);
-  border-radius: 8px;
-  background: #fff;
-  color: var(--text);
-  font: inherit;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.doctor-shares-date__quick button:hover {
-  border-color: var(--primary, #0f766e);
-  color: var(--primary, #0f766e);
-}
-
 .doctor-shares-cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -456,11 +447,23 @@ defineExpose({ reload: loadDoctorShares })
 }
 
 .doctor-shares-section__actions {
-  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.75rem 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.doctor-shares-section__action-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.doctor-shares-section__action-group--settle {
+  margin-inline-start: auto;
 }
 
 .doctor-shares-section__hint {
@@ -482,8 +485,21 @@ defineExpose({ reload: loadDoctorShares })
   color: #be123c;
 }
 
-@media (max-width: 1100px) {
-  .doctor-shares-section__filters,
+@media (max-width: 700px) {
+  .doctor-shares-section__filters {
+    grid-template-columns: 1fr;
+  }
+
+  .doctor-shares-section__action-group--settle {
+    margin-inline-start: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .doctor-shares-section__header {
+    flex-wrap: wrap;
+  }
+
   .doctor-shares-cards {
     grid-template-columns: 1fr;
   }

@@ -8,6 +8,10 @@ export type FinancialKpis = {
   expensesModuleFcfa?: number
   netMonthFcfa: number
   netChangePercent: number
+  netIncompleteCostLinesCount: number
+  netEstimatedCostLinesCount: number
+  netEstimatedDoctorSharesCount: number
+  netPreviousUncertain: boolean
   /** Salaires et avances réellement versés sur la période. */
   payrollMonthFcfa: number
   payrollChangePercent: number

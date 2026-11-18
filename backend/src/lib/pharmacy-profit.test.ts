@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { allocateNetRevenueByLine, productUnitCostFcfa } from "./pharmacy-profit.js";
+import { allocateNetRevenueByLine, productUnitCostFcfa, sumSoldProductCosts } from "./pharmacy-profit.js";
 
 const box = {
   purchasePriceFcfa: 3000,
@@ -41,5 +41,18 @@ describe("pharmacy-profit", () => {
     );
     assert.deepEqual(amounts, [1, 2]);
     assert.equal(amounts.reduce((sum, amount) => sum + amount, 0), 3);
+  });
+
+  it("compte les coûts des quantités vendues moins les retours, sans compter le stock", () => {
+    const saved = { unitCostFcfa: 700, unitPriceFcfa: 1200, product: box };
+    const historical = { unitCostFcfa: null, unitPriceFcfa: 600, product: box };
+    const unknown = { ...historical, product: { ...box, purchasePriceFcfa: null } };
+    assert.deepEqual(sumSoldProductCosts(
+      [{ ...saved, quantity: 3 }, { ...historical, quantity: 2 }, { ...unknown, quantity: 1 }],
+      [{ saleLine: saved, quantity: 1 }],
+    ), { costFcfa: 2000, missingCount: 1, estimatedCount: 1 });
+    assert.deepEqual(sumSoldProductCosts([], [{ saleLine: saved, quantity: 2 }]), {
+      costFcfa: -1400, missingCount: 0, estimatedCount: 0,
+    });
   });
 });

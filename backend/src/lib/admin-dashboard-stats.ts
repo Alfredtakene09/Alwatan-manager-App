@@ -354,6 +354,10 @@ export type FinancialKpis = {
   expensesModuleFcfa: number;
   netMonthFcfa: number;
   netChangePercent: number;
+  netIncompleteCostLinesCount: number;
+  netEstimatedCostLinesCount: number;
+  netEstimatedDoctorSharesCount: number;
+  netPreviousUncertain: boolean;
   /** Salaires et avances réellement versés sur la période. */
   payrollMonthFcfa: number;
   payrollChangePercent: number;
@@ -380,6 +384,10 @@ function financialKpisFrom(
     expensesModuleFcfa: current.chargesFcfa,
     netMonthFcfa: current.netFcfa,
     netChangePercent: percentChange(current.netFcfa, prev.netFcfa),
+    netIncompleteCostLinesCount: current.incompleteCostLinesCount,
+    netEstimatedCostLinesCount: current.estimatedCostLinesCount,
+    netEstimatedDoctorSharesCount: current.estimatedDoctorSharesCount,
+    netPreviousUncertain: prev.incompleteCostLinesCount > 0 || prev.estimatedCostLinesCount > 0 || prev.estimatedDoctorSharesCount > 0,
     payrollMonthFcfa: current.payrollFcfa,
     payrollChangePercent: percentChange(current.payrollFcfa, prev.payrollFcfa),
     payrollSalariesFcfa: current.payrollSalariesFcfa,

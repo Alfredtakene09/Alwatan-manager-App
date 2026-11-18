@@ -22,7 +22,6 @@ const { uiText } = useAppI18n()
 
 <style scoped>
 .payroll-mass-card {
-  width: min(100%, 16rem);
-  margin-bottom: 0.85rem;
+  width: min(100%, 14rem);
 }
 </style>

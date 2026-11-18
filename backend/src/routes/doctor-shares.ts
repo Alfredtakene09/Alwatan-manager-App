@@ -20,6 +20,7 @@ import { effectiveSurgeryAssistant, resolveAssistantPercent } from "../lib/docto
 import { buildSharePaymentUpdate } from "../lib/surgery-share-payments.js";
 import { requireAuth, requireAnyModule } from "../middleware/auth.js";
 import { DIRECTION_GESTIONNAIRE_ROLES } from "../lib/roles.js";
+import { doctorShareSettlementRange } from "../lib/doctor-share-history.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -50,6 +51,37 @@ function parsePeriod(query: z.infer<typeof periodQuerySchema>) {
 router.get("/doctors", requireDirection, async (_req, res) => {
   const doctors = await listDoctorsWithPercentShares();
   return res.json(doctors);
+});
+
+router.get("/settlements", requireDirection, async (req, res) => {
+  const range = doctorShareSettlementRange(req.query.from, req.query.to);
+  if (!range) return res.status(400).json({ error: "Période de règlement invalide." });
+
+  const claims = await prisma.doctorShareClaim.findMany({
+    where: {
+      status: { in: [DoctorShareClaimStatus.SETTLED_CASH, DoctorShareClaimStatus.SETTLED_PAYROLL] },
+      settledAt: range,
+    },
+    select: {
+      id: true,
+      kind: true,
+      amountFcfa: true,
+      businessDate: true,
+      settledAt: true,
+      status: true,
+      doctorUser: { select: { firstName: true, lastName: true } },
+      settledBy: { select: { firstName: true, lastName: true } },
+      invoice: { select: { patient: { select: { firstName: true, lastName: true, code: true } } } },
+      surgeryCase: { select: { visit: { select: { patient: { select: { firstName: true, lastName: true, code: true } } } } } },
+    },
+    orderBy: [{ settledAt: "desc" }, { id: "asc" }],
+  });
+  return res.json({
+    rows: claims.map(({ invoice, surgeryCase, ...claim }) => ({
+      ...claim,
+      patient: invoice?.patient ?? surgeryCase?.visit.patient ?? null,
+    })),
+  });
 });
 
 router.get("/receivable", async (req, res) => {

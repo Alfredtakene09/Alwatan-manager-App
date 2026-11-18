@@ -1,4 +1,4 @@
-import { PayrollStatus, SalaryAdvanceStatus } from "@prisma/client";
+import { PayrollStatus, SalaryAdvanceStatus, type Prisma } from "@prisma/client";
 import { toBusinessDateBound } from "./cash-shift.js";
 import { prisma } from "./db.js";
 
@@ -26,21 +26,22 @@ export function paidPayrollNetFcfa(row: {
   return Math.max(0, row.grossFcfa + row.primeFcfa - row.advanceDeductionFcfa);
 }
 
+export function paidPayrollWhereBetween(from: Date, to: Date): Prisma.EmployeePayrollWhereInput {
+  return { status: PayrollStatus.PAID, paidAt: { gte: from, lt: to } };
+}
+
 /**
  * Sorties liées aux salaires sur la période, pour le bénéfice net :
- * - paies versées, au net, rattachées à leur mois de paie (septembre payé en octobre → septembre) ;
+ * - paies versées, au net, à leur date effective de paiement ;
  * - avances, au mois où elles ont été versées (sinon elles ne sortaient de la caisse qu'à la retenue).
  * L'avance retenue est déjà déduite du net de paie : elle n'est pas comptée deux fois.
  */
 export async function sumPayrollOutflowBetween(from: Date, to: Date) {
-  const months = payrollMonthsStartingIn(from, to);
   const [payrolls, advances] = await Promise.all([
-    months.length
-      ? prisma.employeePayroll.findMany({
-          where: { status: PayrollStatus.PAID, OR: months },
-          select: { grossFcfa: true, primeFcfa: true, advanceDeductionFcfa: true },
-        })
-      : Promise.resolve([]),
+    prisma.employeePayroll.findMany({
+      where: paidPayrollWhereBetween(from, to),
+      select: { grossFcfa: true, primeFcfa: true, advanceDeductionFcfa: true },
+    }),
     prisma.salaryAdvance.aggregate({
       where: {
         status: { not: SalaryAdvanceStatus.CANCELLED },

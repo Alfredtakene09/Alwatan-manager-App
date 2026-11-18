@@ -3,6 +3,8 @@ import { prisma } from "./db.js";
 export type PharmacyProfitPeriod = {
   revenueFcfa: number;
   costFcfa: number;
+  periodCostFcfa: number;
+  estimatedCostLinesCount: number;
   profitFcfa: number;
   marginPercent: number;
   /** Lignes vendues sans prix d'achat connu : exclues du CA et du coût ci-dessus. */
@@ -30,6 +32,8 @@ function emptyProfit(): PharmacyProfitPeriod {
   return {
     revenueFcfa: 0,
     costFcfa: 0,
+    periodCostFcfa: 0,
+    estimatedCostLinesCount: 0,
     profitFcfa: 0,
     marginPercent: 0,
     excludedLinesCount: 0,
@@ -69,6 +73,34 @@ function lineUnitCost(line: {
 }): number | null {
   if (line.unitCostFcfa != null) return line.unitCostFcfa;
   return productUnitCostFcfa(line.product, inferSoldByDetail(line.product, line.unitPriceFcfa));
+}
+
+type ProductCostLine = {
+  unitCostFcfa: number | null;
+  unitPriceFcfa: number;
+  product: CostProduct;
+};
+
+export function sumSoldProductCosts(
+  sales: Array<ProductCostLine & { quantity: number }>,
+  returns: Array<{ quantity: number; saleLine: ProductCostLine }>,
+) {
+  let costFcfa = 0;
+  let missingCount = 0;
+  let estimatedCount = 0;
+  for (const { line, quantity, sign } of [
+    ...sales.map((line) => ({ line, quantity: line.quantity, sign: 1 })),
+    ...returns.map((row) => ({ line: row.saleLine, quantity: row.quantity, sign: -1 })),
+  ]) {
+    const cost = lineUnitCost(line);
+    if (cost == null) {
+      missingCount += 1;
+    } else {
+      if (line.unitCostFcfa == null) estimatedCount += 1;
+      costFcfa += sign * quantity * cost;
+    }
+  }
+  return { costFcfa, missingCount, estimatedCount };
 }
 
 /** Part encaissée de la vente (remise / gratuité déduites), entre 0 et 1. */
@@ -154,7 +186,7 @@ export async function computePharmacyProfit(
 
   const result = emptyProfit();
   let revenueFcfa = 0;
-  let costFcfa = 0;
+  const soldCosts = sumSoldProductCosts(saleLines, returns);
   const linesByPrescription = new Map<
     string,
     {
@@ -179,12 +211,10 @@ export async function computePharmacyProfit(
       const lineNet = lineNetAmounts[index];
       const unitCost = lineUnitCost(line);
       if (unitCost == null) {
-        result.excludedLinesCount += 1;
         result.excludedRevenueFcfa += lineNet;
         continue;
       }
       revenueFcfa += lineNet;
-      costFcfa += line.quantity * unitCost;
     }
   }
   for (const row of returns) {
@@ -194,18 +224,20 @@ export async function computePharmacyProfit(
       continue;
     }
     revenueFcfa -= row.netRefundFcfa;
-    costFcfa -= row.quantity * unitCost;
   }
 
   revenueFcfa = Math.max(0, revenueFcfa);
-  costFcfa = Math.max(0, costFcfa);
+  const periodCostFcfa = soldCosts.costFcfa;
+  const costFcfa = Math.max(0, periodCostFcfa);
   const profitFcfa = revenueFcfa - costFcfa;
   return {
     revenueFcfa,
     costFcfa,
+    periodCostFcfa,
+    estimatedCostLinesCount: soldCosts.estimatedCount,
     profitFcfa,
     marginPercent: revenueFcfa > 0 ? Math.round((profitFcfa / revenueFcfa) * 1000) / 10 : 0,
-    excludedLinesCount: result.excludedLinesCount,
+    excludedLinesCount: soldCosts.missingCount,
     excludedRevenueFcfa: Math.max(0, result.excludedRevenueFcfa),
   };
 }

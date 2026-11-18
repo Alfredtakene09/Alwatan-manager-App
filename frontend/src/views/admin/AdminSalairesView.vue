@@ -468,7 +468,6 @@ onMounted(reloadPayrollData)
 
     <template v-if="activeTab === 'mois'">
       <UiCard title="Fiches de paie" :description="`Suivi des paiements — ${periodLabel}`">
-        <CurrentPayrollMassCard :amount="payload?.currentPayrollMassFcfa ?? null" />
         <div class="payroll-progress">
           <div class="payroll-progress__bar">
             <div class="payroll-progress__fill" :style="{ width: `${progress}%` }" />
@@ -477,36 +476,39 @@ onMounted(reloadPayrollData)
         </div>
 
         <div class="payroll-filters-row">
-          <div class="payroll-search">
-            <Search :size="16" class="payroll-search__icon" />
-            <input
-              v-model="searchQuery"
-              type="search"
-              class="payroll-search__input"
-              placeholder="Rechercher un employé, un poste…"
-              aria-label="Rechercher une fiche de paie"
-            />
+          <div class="payroll-filters-controls">
+            <div class="payroll-search">
+              <Search :size="16" class="payroll-search__icon" />
+              <input
+                v-model="searchQuery"
+                type="search"
+                class="payroll-search__input"
+                placeholder="Rechercher un employé, un poste…"
+                aria-label="Rechercher une fiche de paie"
+              />
+            </div>
+            <select v-model="categoryFilter" class="payroll-job-select" aria-label="Filtrer par catégorie">
+              <option v-for="option in STAFF_CATEGORY_FILTER_OPTIONS" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+            <select v-model="jobTitleFilter" class="payroll-job-select" aria-label="Filtrer par poste">
+              <option value="">Tous les postes</option>
+              <option v-for="title in jobTitleOptions" :key="title" :value="title">{{ title }}</option>
+            </select>
+            <UiButton
+              v-if="isFiltered"
+              variant="success"
+              :disabled="payingFiltered || loading || !filteredRows.length"
+              @click="payFilteredRows"
+            >
+              {{ payingFiltered ? 'Paiement…' : `Payer la sélection (${filteredRows.length})` }}
+            </UiButton>
+            <span v-else-if="pendingRows.length" class="payroll-filters-hint">
+              Filtrez par catégorie ou par poste pour payer plusieurs fiches à la fois.
+            </span>
           </div>
-          <select v-model="categoryFilter" class="payroll-job-select" aria-label="Filtrer par catégorie">
-            <option v-for="option in STAFF_CATEGORY_FILTER_OPTIONS" :key="option.value" :value="option.value">
-              {{ option.label }}
-            </option>
-          </select>
-          <select v-model="jobTitleFilter" class="payroll-job-select" aria-label="Filtrer par poste">
-            <option value="">Tous les postes</option>
-            <option v-for="title in jobTitleOptions" :key="title" :value="title">{{ title }}</option>
-          </select>
-          <UiButton
-            v-if="isFiltered"
-            variant="success"
-            :disabled="payingFiltered || loading || !filteredRows.length"
-            @click="payFilteredRows"
-          >
-            {{ payingFiltered ? 'Paiement…' : `Payer la sélection (${filteredRows.length})` }}
-          </UiButton>
-          <span v-else-if="pendingRows.length" class="payroll-filters-hint">
-            Filtrez par catégorie ou par poste pour payer plusieurs fiches à la fois.
-          </span>
+          <CurrentPayrollMassCard :amount="payload?.currentPayrollMassFcfa ?? null" />
         </div>
 
         <div v-if="loading" class="chart-empty">Chargement…</div>
@@ -580,11 +582,19 @@ onMounted(reloadPayrollData)
 
 <style scoped>
 .payroll-filters-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 14rem);
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.payroll-filters-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.6rem;
-  margin-bottom: 0.75rem;
+  min-width: 0;
 }
 
 .payroll-search {
@@ -777,6 +787,14 @@ onMounted(reloadPayrollData)
 }
 
 @media (max-width: 720px) {
+  .payroll-filters-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .payroll-filters-row > :last-child {
+    justify-self: end;
+  }
+
   .salaires-toolbar__tab {
     flex: 1 1 auto;
     justify-content: center;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { paidPayrollNetFcfa, payrollMonthsStartingIn } from "./payroll-outflow.js";
+import { paidPayrollNetFcfa, paidPayrollWhereBetween, payrollMonthsStartingIn } from "./payroll-outflow.js";
 
 describe("sorties salaires du tableau de bord", () => {
   it("rattache un mois complet à son mois de paie", () => {
@@ -30,5 +30,14 @@ describe("sorties salaires du tableau de bord", () => {
       370_000,
     );
     assert.equal(paidPayrollNetFcfa({ grossFcfa: 100_000, primeFcfa: 0, advanceDeductionFcfa: 150_000 }), 0);
+  });
+
+  it("filtre les paiements par leur date effective et non leur mois de paie", () => {
+    const from = new Date(2026, 10, 15);
+    const to = new Date(2026, 10, 18);
+    assert.deepEqual(paidPayrollWhereBetween(from, to), {
+      status: "PAID",
+      paidAt: { gte: from, lt: to },
+    });
   });
 });

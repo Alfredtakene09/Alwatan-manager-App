@@ -352,34 +352,35 @@ defineExpose({ reload: loadPayroll })
     :description="`Paie de ${periodLabel} — préparez, filtrez et validez les salaires`"
   >
     <div class="payroll-toolbar">
-      <div class="payroll-toolbar__period">
-        <label class="payroll-toolbar__period-label">
-          <CalendarDays :size="16" />
-          Période de paie
-        </label>
-        <input v-model="periodInput" type="month" class="payroll-toolbar__month-input" />
+      <div class="payroll-toolbar__controls">
+        <div class="payroll-toolbar__period">
+          <label class="payroll-toolbar__period-label">
+            <CalendarDays :size="16" />
+            Période de paie
+          </label>
+          <input v-model="periodInput" type="month" class="payroll-toolbar__month-input" />
+        </div>
+        <div class="payroll-toolbar__actions">
+          <UiButton
+            variant="primary"
+            :icon="ClipboardList"
+            :disabled="preparing || loading || unpreparing"
+            @click="preparePayroll"
+          >
+            {{ preparing ? 'Préparation…' : 'Préparer la paie du mois' }}
+          </UiButton>
+          <UiButton
+            v-if="payload?.prepared"
+            variant="danger"
+            :disabled="!canUnprepare || unpreparing || preparing || loading"
+            @click="unpreparePayroll"
+          >
+            {{ unpreparing ? 'Annulation…' : 'Annuler la paie préparée' }}
+          </UiButton>
+        </div>
       </div>
-      <div class="payroll-toolbar__actions">
-        <UiButton
-          variant="primary"
-          :icon="ClipboardList"
-          :disabled="preparing || loading || unpreparing"
-          @click="preparePayroll"
-        >
-          {{ preparing ? 'Préparation…' : 'Préparer la paie du mois' }}
-        </UiButton>
-        <UiButton
-          v-if="payload?.prepared"
-          variant="danger"
-          :disabled="!canUnprepare || unpreparing || preparing || loading"
-          @click="unpreparePayroll"
-        >
-          {{ unpreparing ? 'Annulation…' : 'Annuler la paie préparée' }}
-        </UiButton>
-      </div>
+      <CurrentPayrollMassCard :amount="payload?.currentPayrollMassFcfa ?? null" />
     </div>
-
-    <CurrentPayrollMassCard :amount="payload?.currentPayrollMassFcfa ?? null" />
 
     <div v-if="payload?.prepared" class="payroll-kpis">
       <article class="payroll-kpi payroll-kpi--warn">
@@ -587,12 +588,19 @@ defineExpose({ reload: loadPayroll })
 
 <style scoped>
 .payroll-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 14rem);
+  align-items: center;
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.payroll-toolbar__controls {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  justify-content: space-between;
   gap: 0.85rem;
-  margin-bottom: 1rem;
+  min-width: 0;
 }
 
 .payroll-toolbar__actions {
@@ -600,6 +608,16 @@ defineExpose({ reload: loadPayroll })
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+@media (max-width: 720px) {
+  .payroll-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .payroll-toolbar > :last-child {
+    justify-self: end;
+  }
 }
 
 .payroll-toolbar__period {

@@ -12,7 +12,6 @@ import {
   Wallet,
   Scissors,
   Smile,
-  Baby,
 } from '@lucide/vue'
 import api from '@/api/client'
 import { useAuthStore } from '@/stores/auth'
@@ -68,6 +67,8 @@ const overview = ref<AdminDashboardOverview | null>(null)
 const gestionnaireOverview = ref<GestionnaireDashboardOverview | null>(null)
 const loading = ref(false)
 const loadError = ref('')
+const dismissedNetWarning = ref(false)
+let overviewRequestId = 0
 
 const showAdminSection = computed(() =>
   auth.user ? canAccessModule(auth.user.role, 'admin') : false,
@@ -128,6 +129,18 @@ const EXPENSE_COLORS: Record<string, string> = {
   autres: '#64748b',
 }
 
+const netDataQuality = computed(() => {
+  const k = gestionnaireOverview.value?.financialKpis ?? overview.value?.financialKpis
+  if (!k) return null
+  return {
+    missing: k.netIncompleteCostLinesCount,
+    estimatedCosts: k.netEstimatedCostLinesCount,
+    estimatedShares: k.netEstimatedDoctorSharesCount,
+    uncertain: k.netIncompleteCostLinesCount > 0 || k.netEstimatedCostLinesCount > 0 || k.netEstimatedDoctorSharesCount > 0,
+    previousUncertain: k.netPreviousUncertain,
+  }
+})
+
 const summaryStats = computed((): SummaryStat[] => {
   void localeCode.value
   const k = gestionnaireOverview.value?.financialKpis ?? overview.value?.financialKpis
@@ -155,11 +168,13 @@ const summaryStats = computed((): SummaryStat[] => {
     },
     {
       id: 'net',
-      label: translateDashboardLabel('Bénéfice net'),
+      label: uiText(netDataQuality.value?.uncertain ? 'Bénéfice net estimé' : 'Bénéfice net'),
       value: formatFcfa(k.netMonthFcfa),
       icon: TrendingUp,
       variant: 'blue',
-      trend: formatTrendPercentLocalized(k.netChangePercent, !isFullMonthRange.value),
+      trend: netDataQuality.value?.uncertain || netDataQuality.value?.previousUncertain
+        ? ''
+        : formatTrendPercentLocalized(k.netChangePercent, !isFullMonthRange.value),
     },
     {
       id: 'payroll',
@@ -174,28 +189,6 @@ const summaryStats = computed((): SummaryStat[] => {
         formatTrendPercentLocalized(k.payrollChangePercent, !isFullMonthRange.value),
       ].join(' · '),
     },
-    ...(overview.value?.operationsByService
-      ? [
-          {
-            id: 'odontologie',
-            label: translateDashboardLabel('Odontologie'),
-            value: formatFcfa(operationGroups.value.odontologie.amountFcfa),
-            icon: Smile,
-            variant: 'amber' as const,
-            detail: operationCountLabel(operationGroups.value.odontologie.count),
-            trend: periodCaption.value,
-          },
-          {
-            id: 'accouchements',
-            label: translateDashboardLabel('Accouchements (Autres)'),
-            value: formatFcfa(operationGroups.value.accouchement.amountFcfa),
-            icon: Baby,
-            variant: 'rose' as const,
-            detail: operationCountLabel(operationGroups.value.accouchement.count),
-            trend: periodCaption.value,
-          },
-        ]
-      : []),
   ]
 })
 
@@ -394,13 +387,25 @@ const operationServicesTrend = computed(() => {
 const operationEntryCards = computed(() => {
   const groups = operationGroups.value
   return [
-    { id: 'operation', label: 'Opérations', icon: Scissors, variant: 'amber' as const, group: groups.operation },
-  ].map((card) => ({
-    ...card,
-    value: formatFcfa(card.group.amountFcfa),
-    detail: operationCountLabel(card.group.count),
-    trend: operationServicesTrend.value,
-  }))
+    {
+      id: 'operation',
+      label: 'Opérations',
+      icon: Scissors,
+      variant: 'amber' as const,
+      value: formatFcfa(groups.operation.amountFcfa),
+      detail: operationCountLabel(groups.operation.count),
+      trend: operationServicesTrend.value,
+    },
+    {
+      id: 'odontologie-accouchements',
+      label: uiText('Odontologie et accouchements'),
+      icon: Smile,
+      variant: 'rose' as const,
+      value: formatFcfa(groups.odontologie.amountFcfa + groups.accouchement.amountFcfa),
+      detail: operationCountLabel(groups.odontologie.count + groups.accouchement.count),
+      trend: periodCaption.value,
+    },
+  ]
 })
 
 type DashboardExportRow = { label: string; value: string; extra?: string; extra2?: string }
@@ -463,6 +468,9 @@ function dashboardExportPayload() {
     value: formatFcfa(overview.value?.financialKpis.entriesMonthFcfa ?? 0),
     extra: '',
   })
+  for (const card of operationEntryCards.value) {
+    revenueRows.push({ label: uiText(card.label), value: card.value, extra: card.detail })
+  }
   if (revenueRows.length) {
     sections.push({
       title: uiText('Entrées financières par module'),
@@ -571,54 +579,36 @@ function exportDashboardExcel() {
 const canExportDashboard = computed(() => !loading.value && dashboardExportPayload().hasRows)
 
 async function loadOverview() {
+  const requestId = ++overviewRequestId
   loading.value = true
   loadError.value = ''
   try {
-    const tasks: Promise<void>[] = []
     const params = dateFrom.value && dateTo.value ? periodQuery.value : {}
-
-    if (showAdminSection.value) {
-      tasks.push(
-        api.get<AdminDashboardOverview>('/dashboard/admin', { params }).then(({ data }) => {
-          overview.value = data
-          if (!dateFrom.value && data.period?.from && data.period.to) {
-            dateFrom.value = data.period.from
-            dateTo.value = data.period.to
-          }
-        }),
-      )
-    } else {
-      overview.value = null
-    }
-
-    if (showGestionnaireSection.value) {
-      tasks.push(
-        api.get<GestionnaireDashboardOverview>('/dashboard/gestionnaire', { params }).then(({ data }) => {
-          gestionnaireOverview.value = data
-        }),
-      )
-    } else {
-      gestionnaireOverview.value = null
-    }
-
-    if (!tasks.length) {
-      overview.value = null
-      gestionnaireOverview.value = null
-    } else {
-      await Promise.all(tasks)
+    const [adminResponse, gestionnaireResponse] = await Promise.all([
+      showAdminSection.value ? api.get<AdminDashboardOverview>('/dashboard/admin', { params }) : null,
+      showGestionnaireSection.value ? api.get<GestionnaireDashboardOverview>('/dashboard/gestionnaire', { params }) : null,
+    ])
+    if (requestId !== overviewRequestId) return
+    overview.value = adminResponse?.data ?? null
+    gestionnaireOverview.value = gestionnaireResponse?.data ?? null
+    if (!dateFrom.value && adminResponse?.data.period?.from && adminResponse.data.period.to) {
+      dateFrom.value = adminResponse.data.period.from
+      dateTo.value = adminResponse.data.period.to
     }
   } catch {
+    if (requestId !== overviewRequestId) return
     loadError.value = 'Impossible de charger le tableau de bord.'
     overview.value = null
     gestionnaireOverview.value = null
   } finally {
-    loading.value = false
+    if (requestId === overviewRequestId) loading.value = false
   }
 }
 
 onMounted(loadOverview)
 
 watch([dateFrom, dateTo], ([from, to], [prevFrom, prevTo]) => {
+  dismissedNetWarning.value = false
   if (!prevFrom && !prevTo) return
   if (from > to) {
     dateTo.value = from
@@ -682,6 +672,20 @@ watch([dateFrom, dateTo], ([from, to], [prevFrom, prevTo]) => {
     </template>
 
     <div class="admin-dashboard">
+      <p class="net-calculation-hint">
+        {{ uiText('Bénéfice net : recettes et entrées, moins les dépenses hors achats de stock, le coût des produits vendus, les salaires et les parts médecins réglées.') }}
+      </p>
+      <div v-if="netDataQuality?.uncertain && !dismissedNetWarning" class="net-quality-warning" role="status">
+        <span>
+          {{ uiText('Le bénéfice est estimé : certains coûts d’achat sont absents ou anciens, ou certaines parts réglées ne disposent pas d’un montant historique fiable.') }}
+          {{ translateTemplate('Coûts manquants : {missing} · coûts estimés : {costs} · parts estimées : {shares}', {
+            missing: netDataQuality.missing,
+            costs: netDataQuality.estimatedCosts,
+            shares: netDataQuality.estimatedShares,
+          }) }}
+        </span>
+        <button type="button" class="net-quality-warning__close" :aria-label="uiText('Fermer l’avertissement')" @click="dismissedNetWarning = true">×</button>
+      </div>
       <section v-if="showAdminSection" class="finance-entry-section">
         <div class="finance-entry-section__header">
           <h3>Entrées financières par module</h3>
@@ -797,6 +801,35 @@ watch([dateFrom, dateTo], ([from, to], [prevFrom, prevTo]) => {
 <style scoped>
 @import '@/styles/dashboard-charts.css';
 
+.net-calculation-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.net-quality-warning {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid #fcd34d;
+  border-radius: 10px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.8125rem;
+}
+
+.net-quality-warning__close {
+  border: 0;
+  padding: 0 0.2rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1.25rem;
+  line-height: 1;
+}
 .admin-dashboard {
   display: flex;
   flex-direction: column;
