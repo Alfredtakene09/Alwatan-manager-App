@@ -219,11 +219,6 @@ onMounted(() => {
         <UiInput v-model="form.address" label="Adresse" :disabled="loading || saving" />
 
         <UiInput v-model="form.phones" label="Téléphone(s)" :disabled="loading || saving" />
-        <UiInput
-          v-model="form.printFooter"
-          label="Mention / pied de page"
-          :disabled="loading || saving"
-        />
 
         <UiInput v-model="form.nif" label="NIF" :disabled="loading || saving" />
         <UiInput v-model="form.rc" label="RC" :disabled="loading || saving" />
@@ -288,9 +283,23 @@ onMounted(() => {
 
 .clinic-info-page__fields {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.75rem 1rem;
   align-items: start;
+}
+
+.clinic-info-page__fields .clinic-preview {
+  grid-column: span 2;
+}
+
+@media (max-width: 1000px) {
+  .clinic-info-page__fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .clinic-info-page__fields .clinic-preview {
+    grid-column: auto;
+  }
 }
 
 .clinic-logo-field,

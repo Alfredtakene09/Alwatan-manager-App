@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute, RouterLink } from 'vue-router'
+import { useRoute } from 'vue-router'
 import axios from 'axios'
-import { UserRound, Plus, Save, Briefcase, Stethoscope, Banknote, Info, Phone, Users, UserCheck, Building2, Palmtree, UserX, Search, Camera } from '@lucide/vue'
+import { UserRound, Plus, Save, Briefcase, Stethoscope, Banknote, Phone, Users, UserCheck, Building2, Palmtree, UserX, Search, Camera } from '@lucide/vue'
 import api from '@/api/client'
 import { formatFcfa, formatFcfaPlain, fullName, canViewEmployeeCompensation } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth'
@@ -246,13 +246,6 @@ const employeeInitials = computed(() => {
 const employeeProfileLabel = computed(() =>
   isMedecinProfile.value ? uiText('Profil médecin') : uiText('Profil personnel'),
 )
-
-const employeeModalSubtitle = computed(() => {
-  if (modalEmployeeName.value) return modalEmployeeName.value
-  return uiText(
-    'Fiche personnelle — configurez le poste et, pour un médecin, la rémunération des consultations',
-  )
-})
 
 const previewDoctor = computed(() => ({
   id: '',
@@ -1240,7 +1233,6 @@ onMounted(async () => {
       v-if="modalOpen"
       title-id="employee-modal-title"
       :title="editingId ? 'Modifier l\'employé' : 'Nouvel employé'"
-      :subtitle="employeeModalSubtitle"
       :icon="isMedecinProfile ? Stethoscope : UserRound"
       :size="isMedecinProfile || showPayrollSection || showSalaryField ? 'large' : 'wide'"
       class="employee-form-modal"
@@ -1264,9 +1256,6 @@ onMounted(async () => {
           </label>
         </div>
         <div class="employee-hero__content">
-          <p class="employee-hero__eyebrow">
-            {{ editingId ? uiText('Mise à jour fiche') : uiText('Nouvelle fiche personnel') }}
-          </p>
           <strong class="employee-hero__name">{{ modalEmployeeName ?? uiText('Nom à renseigner') }}</strong>
           <div class="employee-hero__badges">
             <span class="employee-hero__badge">{{ employeeProfileLabel }}</span>
@@ -1290,7 +1279,6 @@ onMounted(async () => {
           <UserRound :size="15" />
           Identité
         </h3>
-        <p class="form-panel__intro">{{ uiText('Prénom et nom séparés par un espace dans le champ nom complet.') }}</p>
         <div class="form-grid-2">
           <UiInput v-model="form.displayName" label="Nom complet" required placeholder="Ex. Hassan Mahamat" />
           <UiInput
@@ -1323,9 +1311,6 @@ onMounted(async () => {
             max="99"
             placeholder="Ex. 10"
           />
-          <p class="form-panel__hint">
-            {{ uiText('Pourcentage reversé à cet assistant sur les opérations.') }}
-          </p>
         </template>
 
         <div class="profile-picker" role="radiogroup" :aria-label="uiText('Profil employé')">
@@ -1335,9 +1320,8 @@ onMounted(async () => {
             :class="{ 'profile-picker__option--active': form.profile === 'STAFF' }"
             @click="onProfileChange('STAFF')"
           >
-            <Briefcase :size="18" />
+            <Briefcase :size="15" />
             <span class="profile-picker__label">{{ uiText('Personnel') }}</span>
-            <span class="profile-picker__hint">{{ uiText('Administration, technique, accueil…') }}</span>
           </button>
           <button
             type="button"
@@ -1345,9 +1329,8 @@ onMounted(async () => {
             :class="{ 'profile-picker__option--active': form.profile === 'MEDECIN' }"
             @click="onProfileChange('MEDECIN')"
           >
-            <Stethoscope :size="18" />
+            <Stethoscope :size="15" />
             <span class="profile-picker__label">{{ uiText('Médecin') }}</span>
-            <span class="profile-picker__hint">{{ uiText('Consultations et rémunération') }}</span>
           </button>
         </div>
 
@@ -1356,7 +1339,6 @@ onMounted(async () => {
           <span class="status-toggle__box" aria-hidden="true" />
           <span class="status-toggle__text">
             <strong>{{ uiText('Employé actif') }}</strong>
-            <small>{{ uiText('Les employés inactifs restent dans le registre mais ne sont plus proposés') }}</small>
           </span>
         </label>
       </section>
@@ -1367,11 +1349,6 @@ onMounted(async () => {
           <Stethoscope :size="15" />
           Spécialité &amp; services
         </h3>
-        <p v-if="!editingId || (editingId && !employeesById.get(editingId)?.hasUserAccount)" class="form-panel__hint">
-          Après enregistrement,
-          <RouterLink to="/admin/utilisateurs">créez le compte utilisateur</RouterLink>
-          lié à cet employé.
-        </p>
         <div class="doctor-category-field" role="radiogroup" aria-label="Catégorie du médecin">
           <p class="specialty-field__label">
             {{ uiText('Catégorie') }} <span class="req">*</span>
@@ -1391,7 +1368,6 @@ onMounted(async () => {
               @click="form.doctorCategory = option.value"
             >
               <span class="profile-picker__label">{{ uiText(option.label) }}</span>
-              <span class="profile-picker__hint">{{ uiText(option.hint) }}</span>
             </button>
           </div>
         </div>
@@ -1413,10 +1389,6 @@ onMounted(async () => {
         <div class="clinic-services-picker">
           <p class="clinic-services-picker__label">
             {{ uiText('Services cliniques') }} <span class="req">*</span>
-          </p>
-          <p class="form-panel__hint">
-            Cochez un ou plusieurs services. Le service « par défaut » sert pour la consultation et le
-            catalogue d’examens (Laboratoire et Hospitalisation restent toujours disponibles).
           </p>
           <p v-if="!clinicServices.length" class="form-panel__hint">
             {{ uiText('Aucun service disponible — créez-en depuis Administration → Services.') }}
@@ -1447,10 +1419,6 @@ onMounted(async () => {
               </button>
             </li>
           </ul>
-          <p v-if="selectedClinicServiceCount > 1" class="form-panel__hint">
-            {{ selectedClinicServiceCount }} services liés — le médecin apparaîtra pour chacun à la
-            réception.
-          </p>
         </div>
 
         <UiInput
@@ -1462,9 +1430,6 @@ onMounted(async () => {
           max="99"
           placeholder="Ex. 30"
         />
-        <p v-if="!isSurgeryAssistantProfile" class="form-panel__hint">
-          {{ uiText('Pourcentage appliqué quand ce médecin est sélectionné comme chirurgien pour une opération.') }}
-        </p>
       </section>
 
       <section v-if="isMedecinProfile" class="form-panel form-panel--accent">
@@ -1478,31 +1443,7 @@ onMounted(async () => {
             @click="onDoctorCompensationTypeChange(option.value)"
           >
             <strong>{{ option.label }}</strong>
-            <span>{{ option.hint }}</span>
           </button>
-        </div>
-
-        <div v-if="form.doctorCompensationType === 'FIXED_SALARY'" class="info-callout">
-          <Info :size="16" />
-          <p>
-            Renseignez le salaire mensuel ci-dessous et le prix de consultation (tarif patient).
-            Si le prix est renseigné, il s’affiche automatiquement à la réception.
-          </p>
-        </div>
-
-        <div v-else-if="form.doctorCompensationType === 'COMBINED'" class="info-callout">
-          <Info :size="16" />
-          <p>
-            Salaire mensuel fixe + part sur les consultations (tarif et validité configurés
-            ci-dessous). Les deux modes de rémunération s'appliquent en parallèle.
-          </p>
-        </div>
-
-        <div v-else class="info-callout">
-          <Info :size="16" />
-          <p>
-            Rémunération par quota sur les consultations : aucun salaire fixe mensuel n'est demandé.
-          </p>
         </div>
 
         <template v-if="form.doctorCompensationType === 'FIXED_SALARY'">
@@ -1513,9 +1454,6 @@ onMounted(async () => {
             min="1"
             placeholder="5000"
           />
-          <p class="form-panel__hint">
-            Tarif payé par le patient à la réception. Laissez vide pour une saisie manuelle à chaque visite.
-          </p>
         </template>
 
         <template v-else-if="isQuotaDoctor">
@@ -1595,16 +1533,6 @@ onMounted(async () => {
           <Banknote :size="15" />
           Salaire
         </h3>
-        <p class="form-panel__intro">
-          Salaire fixe mensuel — utilisé pour la paie
-          {{
-            form.doctorCompensationType === 'COMBINED'
-              ? ' (en plus de la part quota)'
-              : isMedecinProfile
-                ? ' (médecin en rémunération fixe)'
-                : ''
-          }}.
-        </p>
         <UiInput money
           v-model="form.fixedSalaryFcfa"
           label="Salaire fixe (FCFA)"
@@ -1629,17 +1557,6 @@ onMounted(async () => {
           <Banknote :size="15" />
           {{ showSalaryField ? 'Salaire & contrat' : 'Contrat' }}
         </h3>
-        <p class="form-panel__intro">
-          <template v-if="form.doctorCompensationType === 'COMBINED'">
-            Salaire mensuel, part quota sur les consultations, prime et situation contractuelle.
-          </template>
-          <template v-else-if="showSalaryField">
-            Salaire fixe mensuel, prime et situation contractuelle — utilisés pour la paie.
-          </template>
-          <template v-else>
-            Situation contractuelle — la rémunération se fait par quota sur les consultations.
-          </template>
-        </p>
 
         <UiInput
           v-if="!isMedecinProfile"
@@ -1709,17 +1626,17 @@ onMounted(async () => {
             :class="{ 'gestionnaire-payment-methods__option--active': form.contractStatus === option.value }"
             @click="form.contractStatus = option.value"
           >
-            <component :is="option.icon" :size="18" />
+            <component :is="option.icon" :size="15" />
             <span class="gestionnaire-payment-methods__label">{{ option.label }}</span>
-            <span class="form-panel__hint">{{ option.hint }}</span>
           </button>
         </div>
       </section>
 
       <template #footer>
-        <UiButton variant="ghost" @click="closeModal">Annuler</UiButton>
+        <UiButton variant="ghost" size="sm" @click="closeModal">Annuler</UiButton>
         <UiButton
           variant="primary"
+          size="sm"
           :icon="Save"
           :disabled="saving || !canSaveEmployee"
           @click="saveEmployee"
@@ -2136,10 +2053,9 @@ onMounted(async () => {
 
 .profile-picker__option {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.25rem;
-  padding: 0.85rem 0.9rem;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.7rem;
   border: 2px solid var(--border);
   border-radius: 11px;
   background: var(--surface-muted, #f4f6ef);
@@ -2167,7 +2083,7 @@ onMounted(async () => {
 }
 
 .profile-picker__label {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   font-weight: 800;
 }
 
@@ -2180,9 +2096,9 @@ onMounted(async () => {
 
 .status-toggle {
   display: flex;
-  align-items: flex-start;
-  gap: 0.7rem;
-  padding: 0.75rem 0.85rem;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
   border-radius: 10px;
   background: var(--surface-muted, #f4f6ef);
   border: 1px solid var(--border);
@@ -2240,6 +2156,13 @@ onMounted(async () => {
   line-height: 1.35;
 }
 
+.employee-form-modal .gestionnaire-payment-methods__option {
+  flex-direction: row;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.6rem;
+}
+
 .comp-type-picker {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2248,10 +2171,9 @@ onMounted(async () => {
 
 .comp-type-picker__option {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 0.2rem;
-  padding: 0.8rem 0.9rem;
+  padding: 0.45rem 0.7rem;
   border: 2px solid var(--border);
   border-radius: 10px;
   background: #fff;
