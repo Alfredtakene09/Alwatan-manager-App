@@ -1709,6 +1709,9 @@ export const CLINIC_PRINT_STYLES = `
   body.print-thermal .thermal-receipt--day-closure .day-closure__period {
     font-size: 15px;
   }
+  body.print-thermal .thermal-receipt--day-closure .day-closure__shift {
+    color: #dc2626;
+  }
   body.print-thermal .thermal-receipt--day-closure .day-closure__filter {
     font-size: 13px;
     font-weight: 700;
@@ -2486,6 +2489,7 @@ export function buildDayClosureReceiptHtml(data: DayClosureReceiptData): string 
 <div class="${thermalTicketRootClass('thermal-receipt--day-closure')}" dir="ltr">
   ${buildThermalClinicHeaderHtml({ name: 'CLINIQUE AL WATAN' })}
   <p class="day-closure__period" dir="ltr">${escapeHtml(title)}</p>
+  ${data.shiftLabel ? `<p class="day-closure__period day-closure__shift" dir="ltr">${escapeHtml(fr(data.shiftLabel))}</p>` : ''}
   ${filterHtml}
   <hr class="thermal-receipt__rule" />
 

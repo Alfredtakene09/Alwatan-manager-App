@@ -1440,6 +1440,7 @@ export default {
     'Décaissement impossible.': 'تعذر الصرف.',
     Matin: 'صباح',
     Soir: 'مساء',
+    'Matin et soir': 'صباح ومساء',
     Nuit: 'ليل',
     'Matin ({start}h – {end}h)': 'صباح ({start}h – {end}h)',
     'Soir ({start}h – {end}h)': 'مساء ({start}h – {end}h)',

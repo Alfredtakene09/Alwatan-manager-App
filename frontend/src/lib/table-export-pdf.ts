@@ -186,6 +186,7 @@ function drawClinicHeader(
   logo: PdfLogo | null,
   density: PdfDensity,
   subtitle?: string,
+  shiftLabel?: string | null,
 ): number {
   const pageWidth = doc.internal.pageSize.getWidth()
   let logoBottom = 0
@@ -230,6 +231,14 @@ function drawClinicHeader(
     const lines = doc.splitTextToSize(cleanSubtitle, pageWidth - 28) as string[]
     doc.text(lines, pageWidth / 2, y, { align: 'center' })
     y += (lines.length - 1) * density.captionStep
+  }
+  const cleanShift = pdfText(shiftLabel ?? '').trim()
+  if (cleanShift) {
+    y += density.compactLines ? 4.5 : 6.5
+    doc.setFont(fontFor(cleanShift), 'bold')
+    doc.setFontSize(density.caption + 1)
+    doc.setTextColor(220, 38, 38)
+    doc.text(cleanShift, pageWidth / 2, y, { align: 'center' })
   }
   y += density.compactLines ? 5 : 9
   return y
@@ -344,6 +353,7 @@ function renderReportPdf(
   rows: any[],
   options: {
     subtitle?: string
+    shiftLabel?: string | null
     captionRows?: ExportCaptionRow[]
     footerLabel?: string
     totalsRows?: ExportCaptionRow[]
@@ -357,7 +367,7 @@ function renderReportPdf(
   const pageHeight = doc.internal.pageSize.getHeight()
   const footerLabel = pdfText(options?.footerLabel ?? '')
 
-  let y = drawClinicHeader(doc, title, logo, density, options?.subtitle)
+  let y = drawClinicHeader(doc, title, logo, density, options?.subtitle, options?.shiftLabel)
   if (options?.captionRows?.length) {
     y = drawCaptions(doc, options.captionRows, y, density) + (density.compactLines ? 1.5 : 3)
   }
@@ -439,6 +449,7 @@ export async function saveReportPdfFile(
   rows: any[],
   options?: {
     subtitle?: string
+    shiftLabel?: string | null
     captionRows?: ExportCaptionRow[]
     footerLabel?: string
     totalsRows?: ExportCaptionRow[]

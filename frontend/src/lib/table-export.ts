@@ -28,6 +28,8 @@ export type { ExportCaptionRow, ExportCell, ExportColumn, ExportSection }
 export type TableExportOptions = {
   /** PDF uniquement : ligne centrée sous le titre. */
   subtitle?: string
+  /** Poste (Matin / Soir) : en rouge sous le titre du PDF, en légende dans Word et Excel. */
+  shiftLabel?: string | null
   captionRows?: ExportCaptionRow[]
   totalsRows?: ExportCaptionRow[]
   /** Si défini, remplace le tableau unique (groupes / récapitulatif). */
@@ -173,6 +175,7 @@ export function exportTablePdf<T>(
   void import('@/lib/table-export-pdf').then(({ saveReportPdfFile }) =>
     saveReportPdfFile(title, columns, exportRows, {
       subtitle: options?.subtitle,
+      shiftLabel: options?.shiftLabel,
       captionRows: options?.captionRows,
       footerLabel: reportPdfFooterLabel(generatedAt),
       totalsRows: options?.totalsRows,
@@ -195,6 +198,7 @@ export function exportTableExcel<T>(
   const matrix = options?.sections?.length
     ? sectionsToMatrix(options.sections, { totalsRows: options?.totalsRows })
     : rowsToMatrix(columns, rows, { totalsRows: options?.totalsRows })
+  if (options?.shiftLabel) matrix.unshift([`${translateUi('Poste')} : ${options.shiftLabel}`], [])
   const sheet = XLSX.utils.aoa_to_sheet(matrix)
   sheet['!cols'] = options?.sections?.length ? excelMatrixColWidths(matrix) : excelColWidths(columns, rows)
 
@@ -229,7 +233,13 @@ export async function exportTableWord<T>(
   rows: T[],
   options?: TableExportOptions,
 ): Promise<void> {
-  const captionRows = defaultReportCaptionRows(options?.captionRows, options?.generatedAt)
+  const captionRows = defaultReportCaptionRows(
+    [
+      ...(options?.shiftLabel ? [{ label: 'Poste', value: options.shiftLabel }] : []),
+      ...(options?.captionRows ?? []),
+    ],
+    options?.generatedAt,
+  )
   const logo = await fetchClinicLogo()
   const emptyLabel = translateUi('Aucune donnée')
   const sections = exportableSections(options?.sections)

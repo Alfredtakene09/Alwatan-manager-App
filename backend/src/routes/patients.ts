@@ -1,3 +1,4 @@
+import { receptionistShiftLabel } from "../lib/reception-shift.js";
 import { Router } from "express";
 import { z } from "zod";
 import { InvoiceStatus, InvoiceType, PatientCategory, UserRole, VisitStatus, type Prisma } from "@prisma/client";
@@ -1205,12 +1206,16 @@ router.get("/registration-summary", requireModule("reception"), async (req, res)
       ...(andFilters.length > 0 ? { AND: andFilters } : {}),
     };
 
-    const lines = await buildRegistrationSummary({
-      patientWhere,
-      receptionistId: receptionistScopeUserId(user, createdById),
-      period: { from: rangeStart, to: rangeEndExclusive },
-    });
-    return res.json({ lines });
+    const receptionistId = receptionistScopeUserId(user, createdById);
+    const [lines, shiftLabel] = await Promise.all([
+      buildRegistrationSummary({
+        patientWhere,
+        receptionistId,
+        period: { from: rangeStart, to: rangeEndExclusive },
+      }),
+      receptionistId ? receptionistShiftLabel(receptionistId, rangeStart, rangeEndExclusive) : null,
+    ]);
+    return res.json({ lines, shiftLabel });
   } catch (error) {
     console.error("GET /patients/registration-summary failed:", error);
     return res.status(500).json({ error: "Impossible de calculer le cumul des enregistrements." });

@@ -1358,6 +1358,7 @@ export default {
     'Décaissement impossible.': 'Décaissement impossible.',
     Matin: 'Matin',
     Soir: 'Soir',
+    'Matin et soir': 'Matin et soir',
     Nuit: 'Nuit',
     'Matin ({start}h – {end}h)': 'Matin ({start}h – {end}h)',
     'Soir ({start}h – {end}h)': 'Soir ({start}h – {end}h)',

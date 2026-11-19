@@ -1439,6 +1439,7 @@ export default {
     'Décaissement impossible.': 'Unable to disburse.',
     Matin: 'Morning',
     Soir: 'Evening',
+    'Matin et soir': 'Morning and evening',
     Nuit: 'Night',
     'Matin ({start}h – {end}h)': 'Morning ({start}h – {end}h)',
     'Soir ({start}h – {end}h)': 'Evening ({start}h – {end}h)',

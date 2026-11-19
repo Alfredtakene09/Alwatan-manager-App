@@ -1068,12 +1068,15 @@ function registrationExportSections(
   return sections
 }
 
-async function loadRegistrationSummary(): Promise<RegistrationSummaryLine[]> {
+/** Poste (Matin / Soir) déduit de l'ordre des connexions, quand une seule réceptionniste est concernée. */
+type RegistrationSummary = { lines: RegistrationSummaryLine[]; shiftLabel: string | null }
+
+async function loadRegistrationSummary(): Promise<RegistrationSummary> {
   let from = listFrom.value || todayInputValue()
   let to = listTo.value || from
   if (from > to) [from, to] = [to, from]
 
-  const { data } = await api.get<{ lines: RegistrationSummaryLine[] }>(
+  const { data } = await api.get<{ lines: RegistrationSummaryLine[]; shiftLabel?: string | null }>(
     '/patients/registration-summary',
     {
       params: {
@@ -1088,7 +1091,10 @@ async function loadRegistrationSummary(): Promise<RegistrationSummaryLine[]> {
       },
     },
   )
-  return Array.isArray(data?.lines) ? data.lines : []
+  return {
+    lines: Array.isArray(data?.lines) ? data.lines : [],
+    shiftLabel: data?.shiftLabel ?? null,
+  }
 }
 
 const exportingPatients = ref(false)
@@ -1097,13 +1103,15 @@ async function exportPatients(format: 'pdf' | 'excel' | 'word') {
   if (exportingPatients.value) return
   exportingPatients.value = true
   try {
-    const sections = registrationExportSections(await loadRegistrationSummary())
+    const summary = await loadRegistrationSummary()
+    const sections = registrationExportSections(summary.lines)
     if (!sections.length) {
       showAlert('Aucune prestation à exporter sur cette période.', 'error')
       return
     }
     const options = {
       subtitle: patientExportSubtitle(),
+      shiftLabel: summary.shiftLabel ? uiText(summary.shiftLabel) : null,
       captionRows: patientExportCaptionRows(),
       sections,
       orientation: 'portrait' as const,
@@ -1312,7 +1320,7 @@ async function printRegistrationCumul() {
     let from = listFrom.value || todayInputValue()
     let to = listTo.value || from
     if (from > to) [from, to] = [to, from]
-    const lines = await loadRegistrationSummary()
+    const { lines, shiftLabel } = await loadRegistrationSummary()
     const totalFcfa = lines.reduce((sum, line) => sum + line.amountFcfa, 0)
     const doctorShareFcfa = lines.reduce((sum, line) => sum + line.doctorShareFcfa, 0)
     const clinicShareFcfa = lines.reduce(
@@ -1328,6 +1336,7 @@ async function printRegistrationCumul() {
         closedAt: new Date().toISOString(),
         receptionistName: currentReceptionistName() || '—',
         receptionistUsername: auth.user?.username || null,
+        shiftLabel,
         collectedFcfa: totalFcfa,
         expensesFcfa: 0,
         netFcfa: totalFcfa,
