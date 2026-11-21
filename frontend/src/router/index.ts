@@ -369,12 +369,7 @@ const router = createRouter({
           component: () => import('@/views/logistique/LogistiqueReportsView.vue'),
           meta: { module: 'logistique' },
         },
-        {
-          path: 'factures',
-          name: 'factures',
-          component: () => import('@/views/comptabilite/FacturesIndividuellesView.vue'),
-          meta: { module: 'factures' },
-        },
+        { path: 'factures', redirect: '/comptabilite/factures' },
         { path: 'admin', redirect: '/comptabilite/types-examen/operation' },
         {
           path: 'admin/employes',

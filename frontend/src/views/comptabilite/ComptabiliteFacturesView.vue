@@ -7,6 +7,9 @@ import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import AmountFcfa from '@/components/ui/AmountFcfa.vue'
+import ExportButtons from '@/components/ui/ExportButtons.vue'
+import { exportTablePdf, type ExportColumn } from '@/lib/table-export'
+import { formatFcfa } from '@/lib/format-fcfa'
 import {
   buildJourneyInvoiceHtml,
   buildPrintDocumentHtml,
@@ -144,6 +147,32 @@ function statusOf(row: { totalFcfa: number; paidFcfa: number; remainingFcfa: num
   return { label: 'En attente', cls: 'is-pending' }
 }
 
+const exportColumns: ExportColumn<JourneyRow>[] = [
+  { header: 'N° facture', value: (row) => row.reference },
+  { header: 'Date', value: (row) => dateTimeText(row.date), widthWeight: 1.3 },
+  { header: 'Patient', value: (row) => `${row.patient.firstName} ${row.patient.lastName} (${row.patient.code})`, widthWeight: 1.8 },
+  { header: 'Prestations', value: (row) => row.sections.map((s) => uiText(SECTION_LABELS[s] ?? s)).join(', '), widthWeight: 1.6 },
+  { header: 'Total', value: (row) => formatFcfa(row.totalFcfa) },
+  { header: 'Payé', value: (row) => formatFcfa(row.paidFcfa) },
+  { header: 'Reste', value: (row) => formatFcfa(row.remainingFcfa) },
+  { header: 'Statut', value: (row) => uiText(statusOf(row).label) },
+]
+
+function exportPdf() {
+  exportTablePdf(uiText('Factures'), exportColumns, rows.value, {
+    orientation: 'landscape',
+    captionRows: [
+      { label: 'Période', value: `${from.value || '…'} → ${to.value || '…'}` },
+      ...(search.value.trim() ? [{ label: 'Recherche', value: search.value.trim() }] : []),
+    ],
+    totalsRows: [
+      { label: 'Total facturé', value: formatFcfa(totals.value.total) },
+      { label: 'Encaissé', value: formatFcfa(totals.value.paid) },
+      { label: 'Reste à payer', value: formatFcfa(totals.value.remaining) },
+    ],
+  })
+}
+
 onMounted(load)
 </script>
 
@@ -153,7 +182,16 @@ onMounted(load)
       title="Factures"
       subtitle="Une facture unique par parcours patient : consultation, examens, opération, hospitalisation et pharmacie"
       :icon="FileText"
-    />
+    >
+      <template #actions>
+        <ExportButtons
+          :show-excel="false"
+          :show-word="false"
+          :disabled="loading || !rows.length"
+          @pdf="exportPdf"
+        />
+      </template>
+    </UiPageHeader>
 
     <UiCard direct class="factures-filters">
       <div class="factures-filters__row">

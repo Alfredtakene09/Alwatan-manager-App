@@ -512,7 +512,7 @@ const directionOperationalNav: NavSection[] = [
         children: [
           {
             to: '/comptabilite/factures',
-            label: 'Factures par parcours',
+            label: 'Factures',
             icon: FileText,
             module: 'comptabilite',
             description: 'Facture unique par parcours patient',
@@ -524,12 +524,6 @@ const directionOperationalNav: NavSection[] = [
             module: 'admin',
             badgeKey: 'depenses',
             uiAction: 'comptabilite.depenses',
-          },
-          {
-            to: '/factures',
-            label: 'Factures individuelles',
-            icon: FileText,
-            module: 'factures',
           },
           {
             to: '/admin/salaires',
