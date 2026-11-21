@@ -11,6 +11,18 @@ router.use(requireAuth, requireModule("reception"));
 const nameSchema = z.string().trim().min(2).max(160);
 const DUPLICATE_ERROR = "Ce partenaire existe déjà.";
 
+/** Champ facultatif : vide → null. */
+const optionalText = (max: number) =>
+  z.string().trim().max(max).nullable().optional().transform((v) => (v ? v : v === undefined ? undefined : null));
+
+const detailsSchema = z.object({
+  phone: optionalText(40),
+  contactName: optionalText(160),
+  address: optionalText(255),
+  email: optionalText(160).refine((v) => !v || /^\S+@\S+\.\S+$/.test(v), "Adresse e-mail invalide."),
+  notes: optionalText(1000),
+});
+
 /** Seul l'administrateur gère la liste ; la réception ne fait que la lire. */
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (req.user?.role !== "ADMIN") {
@@ -33,10 +45,12 @@ router.get("/", async (req, res) => {
 });
 
 router.post("/", requireAdmin, async (req, res) => {
-  const parsed = z.object({ name: nameSchema }).safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Nom du partenaire invalide (2 caractères minimum)." });
+  const parsed = detailsSchema.extend({ name: nameSchema }).safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Données invalides." });
+  }
   try {
-    const partner = await prisma.partner.create({ data: { name: parsed.data.name } });
+    const partner = await prisma.partner.create({ data: parsed.data });
     return res.status(201).json(partner);
   } catch (error) {
     if (isDuplicate(error)) return res.status(409).json({ error: DUPLICATE_ERROR });
@@ -45,10 +59,12 @@ router.post("/", requireAdmin, async (req, res) => {
 });
 
 router.patch("/:id", requireAdmin, async (req, res) => {
-  const parsed = z
-    .object({ name: nameSchema.optional(), active: z.boolean().optional() })
+  const parsed = detailsSchema
+    .extend({ name: nameSchema.optional(), active: z.boolean().optional() })
     .safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Données invalides." });
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Données invalides." });
+  }
   const existing = await prisma.partner.findUnique({ where: { id: String(req.params.id) } });
   if (!existing) return res.status(404).json({ error: "Partenaire introuvable." });
   try {

@@ -1643,9 +1643,15 @@ model DeletedRecord {
 
 /// Partenaires / ONG proposés à l'enregistrement des patients ONG (Patient.ongName garde le nom).
 model Partner {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  name        String   @unique
+  /// Coordonnées facultatives
+  phone       String?
+  contactName String?
+  address     String?
+  email       String?
+  notes       String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
