@@ -40,7 +40,7 @@ function todayIso(offsetDays = 0) {
 }
 
 const search = ref('')
-const from = ref(todayIso(-30))
+const from = ref(`${todayIso().slice(0, 8)}01`)
 const to = ref(todayIso())
 const rows = ref<JourneyRow[]>([])
 const loading = ref(false)
