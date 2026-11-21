@@ -112,7 +112,8 @@ function personName(p?: { firstName: string; lastName: string } | null) {
   return p ? `${p.firstName} ${p.lastName}`.trim() : null;
 }
 
-type ListQuery = { q?: unknown; from?: unknown; to?: unknown; limit?: unknown };
+/** `ong` : nom exact du partenaire (Patient.ongName) pour ne lister que ses patients. */
+type ListQuery = { q?: unknown; from?: unknown; to?: unknown; limit?: unknown; ong?: unknown };
 
 /** GET / — liste des parcours facturés (une ligne = une facture unique). */
 router.get("/", async (req, res) => {
@@ -141,16 +142,23 @@ export async function listJourneyInvoices(query: ListQuery) {
     }
   }
 
-  const patientFilter: Prisma.PatientWhereInput | undefined = q
-    ? {
-        OR: [
-          { code: { contains: q, mode: "insensitive" } },
-          { firstName: { contains: q, mode: "insensitive" } },
-          { lastName: { contains: q, mode: "insensitive" } },
-          { phone: { contains: q } },
-        ],
-      }
-    : undefined;
+  const ong = String(query.ong ?? "").trim();
+  const patientFilter: Prisma.PatientWhereInput | undefined =
+    q || ong
+      ? {
+          ...(ong ? { ongName: ong } : {}),
+          ...(q
+            ? {
+                OR: [
+                  { code: { contains: q, mode: "insensitive" } },
+                  { firstName: { contains: q, mode: "insensitive" } },
+                  { lastName: { contains: q, mode: "insensitive" } },
+                  { phone: { contains: q } },
+                ],
+              }
+            : {}),
+        }
+      : undefined;
 
   const visits = await prisma.visit.findMany({
     where: {

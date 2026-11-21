@@ -9,6 +9,7 @@ import {
   InterventionCategory,
 } from "@prisma/client";
 import { prisma } from "../lib/db.js";
+import { syncPartnerExamInvoices } from "../lib/partner-exam-invoices.js";
 import {
   EXAMS_PRESCRIBED_PREFIX,
   LAB_RESULTS_PREFIX,
@@ -990,6 +991,23 @@ router.post("/prescribe-exams", async (req, res) => {
           },
         });
         return consultationAfterLab;
+      }
+
+      // ONG / partenaire : examens envoyés directement au labo, facturés en attente au partenaire.
+      if (visit.patient.category === PatientCategory.ONG && hasExams && requiresLabWork) {
+        await syncPartnerExamInvoices(tx, {
+          visitId: visit.id,
+          patientId: visit.patientId,
+          notes: notes ?? null,
+          issuedById: user.id,
+        });
+        return tx.consultation.update({
+          where: { id: consultation.id },
+          data: {
+            labSentToLabAt: consultation.labSentToLabAt ?? new Date(),
+            labApprovedById: consultation.labApprovedById ?? user.id,
+          },
+        });
       }
 
       return consultation;

@@ -29,4 +29,18 @@ describe("facture consultation", () => {
     assert.equal(data.status, "PENDING");
     assert.equal(data.paidAmountFcfa, 0);
   });
+
+  it("laisse PENDING avec le montant complet pour un patient ONG / partenaire", () => {
+    const data = consultationInvoiceCreateData(PatientCategory.ONG, {
+      invoiceNumber: "FAC-003",
+      patientId: "p1",
+      visitId: "v1",
+      amountFcfa: 5000,
+      issuedById: "u1",
+    });
+    assert.equal(data.status, "PENDING");
+    assert.equal(data.amountFcfa, 5000);
+    assert.equal(data.paidAmountFcfa, 0);
+    assert.equal(data.payments, undefined);
+  });
 });

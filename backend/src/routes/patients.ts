@@ -902,8 +902,12 @@ router.get("/", async (req, res) => {
               invoice.type === InvoiceType.LAB_EXAM && invoice.visitId === latestLabInvoice.visitId,
           )
         : [];
+      const mappedConsultation = mapConsultationPayment(consultationInvoice);
       const payment = consultationInvoice
-        ? mapConsultationPayment(consultationInvoice)
+        ? // ONG / partenaire : pas d'encaissement à la réception (l'admin la marque payée).
+          mappedConsultation && rest.category === PatientCategory.ONG
+          ? { ...mappedConsultation, payable: false }
+          : mappedConsultation
         : mapCombinedExamPayment(visitLabInvoices);
       return {
         ...rest,

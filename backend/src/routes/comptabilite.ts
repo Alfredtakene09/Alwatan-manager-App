@@ -1098,6 +1098,12 @@ router.post("/", cashierAccess, async (req, res) => {
       if (!invoice || invoice.type !== InvoiceType.CONSULTATION) {
         return res.status(404).json({ error: "Facture de consultation introuvable." });
       }
+      if (invoice.patient?.category === PatientCategory.ONG) {
+        return res.status(409).json({
+          error:
+            "Consultation réglée par le partenaire : l'administrateur la marque payée depuis la page Factures.",
+        });
+      }
       if (
         invoice.status === InvoiceStatus.PAID ||
         invoice.status === InvoiceStatus.CANCELLED

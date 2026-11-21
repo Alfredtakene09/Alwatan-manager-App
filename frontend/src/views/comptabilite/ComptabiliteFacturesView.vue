@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { FileText, Printer, Search, RefreshCw, X } from '@lucide/vue'
+import { FileText, Printer, Search, RefreshCw, X, CheckCircle2 } from '@lucide/vue'
+import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/client'
+import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
+import { translateTemplate } from '@/lib/dashboard-i18n'
+import { useAuthStore } from '@/stores/auth'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import UiPageHeader from '@/components/ui/UiPageHeader.vue'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -39,8 +43,14 @@ function todayIso(offsetDays = 0) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+const route = useRoute()
+const router = useRouter()
+/** Partenaire / ONG passé par le lien de la liste des partenaires (?partenaire=Nom). */
+const partner = computed(() => String(route.query.partenaire ?? '').trim())
+
 const search = ref('')
-const from = ref(`${todayIso().slice(0, 8)}01`)
+// Avec un partenaire : toutes les dates par défaut, pour voir l'historique complet.
+const from = ref(partner.value ? '' : `${todayIso().slice(0, 8)}01`)
 const to = ref(todayIso())
 const rows = ref<JourneyRow[]>([])
 const loading = ref(false)
@@ -75,7 +85,12 @@ async function load() {
   error.value = ''
   try {
     const { data } = await api.get<JourneyRow[]>('/comptabilite/factures-parcours', {
-      params: { q: search.value.trim() || undefined, from: from.value || undefined, to: to.value || undefined },
+      params: {
+        q: search.value.trim() || undefined,
+        from: from.value || undefined,
+        to: to.value || undefined,
+        ong: partner.value || undefined,
+      },
     })
     rows.value = data
   } catch (e: unknown) {
@@ -91,7 +106,40 @@ watch(search, () => {
   if (searchTimer) clearTimeout(searchTimer)
   searchTimer = setTimeout(load, 350)
 })
-watch([from, to], load)
+watch([from, to, partner], load)
+
+const auth = useAuthStore()
+/** Règlement par le partenaire : admin uniquement, depuis la liste filtrée sur un partenaire. */
+const canMarkPartnerPaid = computed(() => !!partner.value && auth.user?.role === 'ADMIN')
+const markingId = ref<string | null>(null)
+
+async function markPartnerPaid(row: JourneyRow) {
+  const confirmed = await confirmAppModal({
+    type: 'CONFIRM',
+    title: uiText('Marquer payée'),
+    message: translateTemplate(
+      'Marquer la facture {ref} comme réglée par {partner} ({amount}) ? La part du médecin sera comptée à partir d’aujourd’hui.',
+      { ref: row.reference, partner: partner.value, amount: formatFcfa(row.remainingFcfa) },
+    ),
+    confirmLabel: uiText('Marquer payée'),
+  })
+  if (!confirmed) return
+  markingId.value = row.visitId
+  try {
+    await api.post(`/partners/visits/${row.visitId}/mark-paid`)
+    await load()
+    if (selectedId.value === row.visitId) await openDetail(row)
+  } catch (e) {
+    await showApiErrorModal(e, uiText('Impossible de marquer la facture payée.'))
+  } finally {
+    markingId.value = null
+  }
+}
+
+function clearPartner() {
+  const { partenaire: _removed, ...query } = route.query
+  void router.replace({ query })
+}
 
 async function fetchDetail(visitId: string) {
   const { data } = await api.get<JourneyInvoiceData>(`/comptabilite/factures-parcours/${visitId}`)
@@ -163,6 +211,7 @@ function exportPdf() {
     orientation: 'landscape',
     captionRows: [
       { label: 'Période', value: `${from.value || '…'} → ${to.value || '…'}` },
+      ...(partner.value ? [{ label: 'ONG / Partenaire', value: partner.value }] : []),
       ...(search.value.trim() ? [{ label: 'Recherche', value: search.value.trim() }] : []),
     ],
     totalsRows: [
@@ -210,6 +259,12 @@ onMounted(load)
         <UiButton variant="outline" :icon="RefreshCw" :loading="loading" @click="load">
           {{ uiText('Actualiser') }}
         </UiButton>
+        <span v-if="partner" class="factures-partner-chip">
+          {{ uiText('ONG / Partenaire') }} : <strong>{{ partner }}</strong>
+          <button type="button" :aria-label="uiText('Retirer le filtre partenaire')" @click="clearPartner">
+            <X :size="14" />
+          </button>
+        </span>
       </div>
       <div class="factures-summary">
         <div><span>{{ uiText('Factures') }}</span><strong>{{ rows.length }}</strong></div>
@@ -262,6 +317,16 @@ onMounted(load)
                   <span class="factures-status" :class="statusOf(row).cls">{{ uiText(statusOf(row).label) }}</span>
                 </td>
                 <td class="factures-actions">
+                  <UiButton
+                    v-if="canMarkPartnerPaid && row.remainingFcfa > 0"
+                    size="sm"
+                    variant="outline"
+                    :icon="CheckCircle2"
+                    :disabled="markingId === row.visitId"
+                    @click.stop="markPartnerPaid(row)"
+                  >
+                    {{ uiText('Marquer payée') }}
+                  </UiButton>
                   <UiButton size="sm" variant="ghost" :icon="Printer" @click.stop="printRow(row)">
                     {{ uiText('Imprimer') }}
                   </UiButton>
@@ -314,6 +379,26 @@ onMounted(load)
 }
 .factures-field--search {
   flex: 1 1 260px;
+}
+
+.factures-partner-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.4rem 0.3rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  background: var(--surface-muted, #f1f5f9);
+}
+
+.factures-partner-chip button {
+  display: inline-flex;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.1rem;
 }
 .factures-field--search input {
   width: 100%;

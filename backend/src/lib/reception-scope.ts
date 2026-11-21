@@ -1,4 +1,4 @@
-import { InvoiceStatus, UserRole, VisitStatus, type Prisma } from "@prisma/client";
+import { InvoiceStatus, PatientCategory, UserRole, VisitStatus, type Prisma } from "@prisma/client";
 import { COLLECTED_INVOICE_TYPES } from "./revenue-stats.js";
 import { EXTERNAL_PATIENT_VISIT_NOTE } from "./visit-external.js";
 
@@ -100,7 +100,16 @@ export function registrationSummaryInvoiceWhere(options: {
       { payments: { none: { recordedBy: { role: UserRole.RECEPTIONNISTE } } } },
     ],
   };
+  // Consultation ONG / partenaire : réglée par le partenaire, hors cumul de la réception.
+  const notPartnerConsultation: Prisma.InvoiceWhereInput = {
+    OR: [
+      { type: { not: "CONSULTATION" } },
+      { patientId: null },
+      { patient: { category: { not: PatientCategory.ONG } } },
+    ],
+  };
   const registeredFilters = [
+    notPartnerConsultation,
     ...(options.period ? [staysOnRegistrationDay] : []),
     ...(receptionistId ? [registrationSummaryReceptionistWhere(receptionistId)] : []),
   ];

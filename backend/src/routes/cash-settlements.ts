@@ -13,7 +13,7 @@ import {
   parseShiftSlot,
   SHIFT_SLOT_LABELS,
 } from "../lib/cash-shift.js";
-import { comptabiliteInvoicePatientWhere } from "../lib/patient-billing.js";
+import { comptabiliteInvoicePatientWhere, pendingCashConsultationWhere } from "../lib/patient-billing.js";
 import {
   aggregateDayRoleTotals,
   COLLECTED_INVOICE_TYPES,
@@ -91,8 +91,7 @@ async function fetchUnsettledInvoices(
       OR: [
         { status: "PAID", paidAt: { gte: from, lt: to } },
         {
-          type: InvoiceType.CONSULTATION,
-          status: "PENDING",
+          ...pendingCashConsultationWhere(),
           createdAt: { gte: from, lt: to },
         },
       ],

@@ -1,8 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Building2, Plus, Pencil, Save, EyeOff, Eye, Phone, UserRound, MapPin, Mail } from '@lucide/vue'
+import {
+  Building2,
+  Plus,
+  Pencil,
+  Save,
+  EyeOff,
+  Eye,
+  Phone,
+  UserRound,
+  MapPin,
+  Mail,
+  FileText,
+  Trash2,
+} from '@lucide/vue'
 import api from '@/api/client'
-import { showApiErrorModal } from '@/lib/api-modal-helper'
+import { confirmAppModal, showApiErrorModal } from '@/lib/api-modal-helper'
+import { RouterLink } from 'vue-router'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import UiCard from '@/components/ui/UiCard.vue'
@@ -84,6 +98,24 @@ async function save() {
   }
 }
 
+async function removePartner(partner: Partner) {
+  const confirmed = await confirmAppModal({
+    title: uiText('Supprimer le partenaire'),
+    message: translateTemplate(
+      'Supprimer « {name} » de la liste ? Les dossiers et factures de ses patients sont conservés.',
+      { name: partner.name },
+    ),
+    confirmLabel: uiText('Supprimer'),
+  })
+  if (!confirmed) return
+  try {
+    await api.delete(`/partners/${partner.id}`)
+    partners.value = partners.value.filter((p) => p.id !== partner.id)
+  } catch (error) {
+    await showApiErrorModal(error, uiText('Impossible de supprimer le partenaire.'))
+  }
+}
+
 async function toggleActive(partner: Partner) {
   try {
     await api.patch(`/partners/${partner.id}`, { active: !partner.active })
@@ -152,6 +184,16 @@ onMounted(load)
                   @click="toggleActive(partner)"
                 >
                   {{ partner.active ? uiText('Masquer') : uiText('Réactiver') }}
+                </UiButton>
+                <RouterLink
+                  class="invoices-link"
+                  :to="{ name: 'comptabilite-factures', query: { partenaire: partner.name } }"
+                >
+                  <FileText :size="14" />
+                  {{ uiText('Factures') }}
+                </RouterLink>
+                <UiButton variant="ghost" size="sm" :icon="Trash2" class="delete-btn" @click="removePartner(partner)">
+                  Supprimer
                 </UiButton>
               </td>
             </tr>
@@ -240,6 +282,26 @@ onMounted(load)
 .partners-table .sub {
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+.invoices-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--primary-700, #4b5d2a);
+  text-decoration: none;
+  vertical-align: middle;
+}
+
+.invoices-link:hover {
+  text-decoration: underline;
+}
+
+.delete-btn {
+  color: var(--danger, #dc2626);
 }
 
 .partners-table tr.inactive td {

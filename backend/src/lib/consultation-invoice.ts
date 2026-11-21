@@ -1,13 +1,22 @@
-import { InvoiceStatus, InvoiceType, type PatientCategory, type Prisma } from "@prisma/client";
+import { InvoiceStatus, InvoiceType, PatientCategory, type Prisma } from "@prisma/client";
 import { immediatePaidInvoiceData } from "./invoice-paid.js";
 import { shouldCreateImmediateInvoice } from "./patient-billing.js";
+
+/**
+ * Consultation encaissée à la réception dès l'enregistrement.
+ * ONG / partenaire : facturée au partenaire, reste en attente jusqu'à ce que l'admin la marque payée
+ * (la part du médecin ne compte qu'à ce moment-là).
+ */
+function paidAtRegistration(category: PatientCategory) {
+  return shouldCreateImmediateInvoice(category) && category !== PatientCategory.ONG;
+}
 
 /** Données facture consultation lors d'un encaissement immédiat à la réception. */
 export function consultationInvoicePaymentData(category: PatientCategory): {
   status: InvoiceStatus;
   paidAt: Date | null;
 } {
-  if (!shouldCreateImmediateInvoice(category)) {
+  if (!paidAtRegistration(category)) {
     return { status: InvoiceStatus.PENDING, paidAt: null };
   }
   return { status: InvoiceStatus.PAID, paidAt: new Date() };
@@ -36,7 +45,7 @@ export function consultationInvoiceCreateData(
   },
 ): Prisma.InvoiceCreateInput {
   const paid =
-    shouldCreateImmediateInvoice(category) && base.amountFcfa > 0
+    paidAtRegistration(category) && base.amountFcfa > 0
       ? immediatePaidInvoiceData(base.amountFcfa, base.issuedById)
       : {
           amountFcfa: base.amountFcfa,

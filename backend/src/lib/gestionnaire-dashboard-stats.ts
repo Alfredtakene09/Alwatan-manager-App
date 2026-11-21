@@ -22,7 +22,7 @@ import {
   COMPTABLE_DISBURSEMENT_WORKFLOW_HINT,
 } from "./gestionnaire-comptable-disbursement.js";
 import { buildFinancialKpis, type DashboardDateRange } from "./admin-dashboard-stats.js";
-import { comptabiliteInvoicePatientWhere } from "./patient-billing.js";
+import { comptabiliteInvoicePatientWhere, pendingCashConsultationWhere } from "./patient-billing.js";
 import {
   COLLECTED_INVOICE_TYPES,
   invoiceCollectedAt,
@@ -409,8 +409,7 @@ async function computeGlobalCashBalance() {
       OR: [
         { status: InvoiceStatus.PAID },
         {
-          type: InvoiceType.CONSULTATION,
-          status: InvoiceStatus.PENDING,
+          ...pendingCashConsultationWhere(),
         },
       ],
     },
@@ -518,8 +517,7 @@ async function buildCashAlerts() {
       OR: [
         { status: InvoiceStatus.PAID },
         {
-          type: InvoiceType.CONSULTATION,
-          status: InvoiceStatus.PENDING,
+          ...pendingCashConsultationWhere(),
         },
       ],
     },

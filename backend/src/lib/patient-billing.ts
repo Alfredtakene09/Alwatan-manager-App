@@ -1,4 +1,4 @@
-import { InvoiceStatus, PatientCategory } from "@prisma/client";
+import { InvoiceStatus, InvoiceType, PatientCategory, type Prisma } from "@prisma/client";
 
 export function isExemptPatient(category: PatientCategory) {
   return category === PatientCategory.ASSOCIE;
@@ -56,6 +56,18 @@ const BILLABLE_CATEGORIES: PatientCategory[] = [
 
 export function shouldCreateImmediateInvoice(category: PatientCategory) {
   return BILLABLE_CATEGORIES.includes(category);
+}
+
+/**
+ * Consultation en attente comptée comme due par la caisse réception.
+ * Hors ONG / partenaire : réglée par le partenaire, jamais par le réceptionniste.
+ */
+export function pendingCashConsultationWhere(): Prisma.InvoiceWhereInput {
+  return {
+    type: InvoiceType.CONSULTATION,
+    status: InvoiceStatus.PENDING,
+    patient: { category: { not: PatientCategory.ONG } },
+  };
 }
 
 /** Patients pris en compte dans la comptabilité classique (hors associés). */

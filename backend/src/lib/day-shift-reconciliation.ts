@@ -10,6 +10,7 @@ import {
   shiftHoursLabel,
 } from "./cash-shift.js";
 import { collectedInvoicesWhere, collectedAmountFcfa, invoiceCollectedAt } from "./revenue-stats.js";
+import { pendingCashConsultationWhere } from "./patient-billing.js";
 
 /**
  * Réconciliation « Recettes du jour » vs créneaux caisse.
@@ -250,8 +251,7 @@ export async function buildDayShiftReconciliation(businessDate: Date): Promise<D
           OR: [
             { status: "PAID", paidAt: { gte: from, lt: to } },
             {
-              type: "CONSULTATION",
-              status: "PENDING",
+              ...pendingCashConsultationWhere(),
               createdAt: { gte: from, lt: to },
             },
           ],
