@@ -69,6 +69,12 @@ const router = createRouter({
           meta: { module: 'reception' },
         },
         {
+          path: 'reception/patient-ong',
+          name: 'reception-patient-ong',
+          component: () => import('@/views/reception/ReceptionOngPatientView.vue'),
+          meta: { module: 'reception' },
+        },
+        {
           path: 'reception/operations',
           name: 'reception-operations',
           component: () => import('@/views/reception/ReceptionOperationsView.vue'),

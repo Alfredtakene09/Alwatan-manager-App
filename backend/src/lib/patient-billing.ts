@@ -139,6 +139,6 @@ export function resolveEditedConsultationAmount(input: {
 export const PATIENT_CATEGORY_LABELS: Record<PatientCategory, string> = {
   [PatientCategory.STANDARD]: "Standard",
   [PatientCategory.ASSOCIE]: "Associé / enfant (exonéré)",
-  [PatientCategory.ONG]: "Standard",
+  [PatientCategory.ONG]: "ONG / Partenaire",
   [PatientCategory.PERSONNEL]: "Personnel (réduction)",
 };

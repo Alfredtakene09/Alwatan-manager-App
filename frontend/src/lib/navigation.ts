@@ -28,6 +28,7 @@ import {
   Warehouse,
   Hospital,
   Plus,
+  Handshake,
 } from '@lucide/vue'
 import type { AppUserRole } from './roles'
 import { canAccessModule, canManageLabStock, canManagePharmacyCatalog, PHARMACY_MANAGEMENT_ROLES } from './roles'
@@ -291,11 +292,11 @@ const receptionNav: NavSection[] = [
             description: 'Réduction sur le parcours — recommandé par le personnel',
           },
           {
-            to: '/reception/operations',
-            label: 'Opérations',
-            icon: Scissors,
+            to: '/reception/patient-ong',
+            label: 'ONG / Partenaire',
+            icon: Handshake,
             module: 'reception',
-            description: 'Enregistré par et état du paiement',
+            description: 'Patients pris en charge par une ONG ou un partenaire',
           },
         ],
       },
@@ -460,11 +461,11 @@ const directionOperationalNav: NavSection[] = [
             module: 'reception',
           },
           {
-            to: '/reception/operations',
-            label: 'Opérations',
-            icon: Scissors,
+            to: '/reception/patient-ong',
+            label: 'ONG / Partenaire',
+            icon: Handshake,
             module: 'reception',
-            description: 'Enregistré par et état du paiement',
+            description: 'Patients pris en charge par une ONG ou un partenaire',
           },
         ],
       },

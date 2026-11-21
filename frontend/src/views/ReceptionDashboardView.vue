@@ -1861,7 +1861,7 @@ function assignEditForm(detail: PatientDetail) {
     phone: detail.phone ?? '',
     service: recordedService,
     gender: detail.gender ?? 'F',
-    category: detail.category === 'ONG' ? 'STANDARD' : (detail.category ?? 'STANDARD'),
+    category: detail.category ?? 'STANDARD',
     doctorId: visit?.doctorId ?? '',
     treatingDoctorId: detail.treatingDoctorId ?? '',
     consultationAmount: recordedAmount != null ? String(recordedAmount) : '',

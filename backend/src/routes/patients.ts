@@ -112,6 +112,8 @@ const patientSchema = z
     address: z.string().optional(),
     category: z.nativeEnum(PatientCategory).optional(),
     recommendedByName: z.string().optional(),
+    /** Patient ONG / partenaire : organisation qui prend en charge. */
+    ongName: z.string().max(160).optional(),
     /** Patient personnel : % de réduction sur tout le parcours (20 par défaut). */
     discountPercent: z.number().int().min(0).max(100).nullable().optional(),
     /** Médecin traitant permanent du dossier (optionnel) */
@@ -146,7 +148,7 @@ function staffDiscountPercentField(category: PatientCategory, requested?: number
 }
 
 function resolvePatientCategory(category?: PatientCategory | null) {
-  if (!category || category === PatientCategory.ONG) return PatientCategory.STANDARD;
+  if (!category) return PatientCategory.STANDARD;
   return category;
 }
 
@@ -1466,7 +1468,7 @@ router.post(
           gender: body.gender,
           address: body.address,
           category: resolvePatientCategory(requestedCategory),
-          ongName: null,
+          ongName: requestedCategory === PatientCategory.ONG ? normalizeRecommendedByName(body.ongName) : null,
           discountPercent: staffDiscountPercentField(requestedCategory, body.discountPercent),
           recommendedByName: normalizeRecommendedByName(body.recommendedByName),
           treatingDoctorId: treatingDoctorId ?? null,
@@ -1627,7 +1629,10 @@ router.post("/", requireModule("reception"), requireUiAction("reception.create_p
           gender: body.gender,
           address: body.address,
           category: resolvePatientCategory(body.category),
-          ongName: null,
+          ongName:
+            resolvePatientCategory(body.category) === PatientCategory.ONG
+              ? normalizeRecommendedByName(body.ongName)
+              : null,
           discountPercent: staffDiscountPercentField(
             resolvePatientCategory(body.category),
             body.discountPercent,
@@ -1884,7 +1889,12 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
           gender: body.gender,
           address: body.address,
           category: nextCategory,
-          ongName: null,
+          ongName:
+            nextCategory !== PatientCategory.ONG
+              ? null
+              : body.ongName !== undefined
+                ? normalizeRecommendedByName(body.ongName)
+                : existing.ongName,
           ...(nextCategory !== PatientCategory.PERSONNEL
             ? { discountPercent: null }
             : body.discountPercent !== undefined || existing.category !== PatientCategory.PERSONNEL

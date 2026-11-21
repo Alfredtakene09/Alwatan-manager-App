@@ -1640,3 +1640,12 @@ model DeletedRecord {
   @@index([deletedAt])
   @@index([batchId])
 }
+
+/// Partenaires / ONG proposés à l'enregistrement des patients ONG (Patient.ongName garde le nom).
+model Partner {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

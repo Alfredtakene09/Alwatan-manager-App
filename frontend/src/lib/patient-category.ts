@@ -46,12 +46,12 @@ export function isDeferredCategory(_category: PatientCategory) {
   return false
 }
 
-/** Réduction et encart total — uniquement pour les patients Standard. */
+/** Réduction et encart total — patients Standard et ONG / Partenaire (facturés pareil). */
 export function showConsultationBillingSummary(category: PatientCategory) {
-  return category === 'STANDARD'
+  return category === 'STANDARD' || category === 'ONG'
 }
 
 export function patientCategoryLabel(category: PatientCategory) {
-  if (category === 'ONG') return 'Standard'
+  if (category === 'ONG') return 'ONG / Partenaire'
   return PATIENT_CATEGORIES.find((c) => c.value === category)?.label ?? category
 }
