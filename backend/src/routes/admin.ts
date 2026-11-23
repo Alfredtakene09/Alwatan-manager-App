@@ -393,7 +393,7 @@ async function validateEmployeeForUser(
   if (employee.user && employee.user.id !== currentUserId) {
     return { error: "Cet employé est déjà lié à un compte utilisateur." as const };
   }
-  if (role === UserRole.MEDECIN && !resolveEmployeeIsMedecin(employee.isMedecin, employee.jobTitle)) {
+  if (role === UserRole.MEDECIN && !resolveEmployeeIsMedecin(employee.isMedecin || undefined, employee.jobTitle)) {
     return { error: "Un compte médecin doit être lié à un employé médecin." as const };
   }
   return { employee };
@@ -664,7 +664,7 @@ router.put("/employees/:id", requireModule("utilisateurs"), async (req, res) => 
     const body = updateEmployeeSchema.parse(req.body);
     const existing = await prisma.employee.findUnique({
       where: { id: employeeId },
-      include: { user: { select: { role: true } } },
+      include: { user: { select: { role: true, username: true } } },
     });
     if (!existing) return res.status(404).json({ error: "Employé introuvable" });
 
@@ -676,7 +676,7 @@ router.put("/employees/:id", requireModule("utilisateurs"), async (req, res) => 
     );
     if (existing.user?.role === UserRole.MEDECIN && !nextIsMedecin) {
       return res.status(409).json({
-        error: "Impossible de retirer le statut médecin : un compte utilisateur médecin y est lié.",
+        error: `Impossible de passer cette fiche en Personnel : le compte « ${existing.user.username} » a le rôle Médecin. Changez d'abord le rôle de ce compte dans Utilisateurs, puis enregistrez la fiche.`,
       });
     }
 

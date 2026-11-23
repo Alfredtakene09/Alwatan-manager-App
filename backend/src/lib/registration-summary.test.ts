@@ -713,3 +713,53 @@ describe("noms des médecins dans le cumul exporté", () => {
     assert.deepEqual(lines[0]?.doctorNames, ["Fatime Saleh"]);
   });
 });
+
+describe("acte d'odontologie d'un patient externe", () => {
+  type Priced = Parameters<typeof summarizeRegistrationInvoices>[0][number];
+  const dentist = {
+    id: "atif",
+    firstName: "ATIF",
+    lastName: "ALI MUSA",
+    role: UserRole.MEDECIN,
+    employee: { ...david().employee, consultationQuotaPercent: 75, surgeryQuotaPercent: 40 },
+  };
+  const act = (id: string, kind: string, visitNotes: string | null) =>
+    ({
+      id,
+      patientId: `p-${id}`,
+      type: InvoiceType.LAB_EXAM,
+      status: InvoiceStatus.PAID,
+      amountFcfa: 15_000,
+      paidAmountFcfa: 15_000,
+      billingExamKind: kind,
+      surgeryCaseId: null,
+      hospitalizationId: null,
+      createdAt: new Date(2026, 10, 21, 9),
+      paidAt: new Date(2026, 10, 21, 9),
+      payments: [],
+      surgeryCase: null,
+      hospitalization: null,
+      visit: {
+        consultationFeeFcfa: null,
+        reductionFcfa: 0,
+        notes: visitNotes,
+        assignedDoctor: dentist,
+        patient: { service: "Odontologie" },
+        consultation: { doctor: dentist, clinicalNotes: null },
+      },
+    }) as unknown as Priced;
+
+  it("reste un examen mais donne au médecin son % de consultation", () => {
+    const [line] = summarizeRegistrationInvoices([act("o1", "odonto", "PATIENT_EXTERNE")]);
+    assert.equal(line?.group, "exam");
+    assert.equal(line?.doctorShareFcfa, 11_250);
+    assert.equal(line?.doctorPercent, 75);
+    assert.deepEqual(line?.doctorNames, ["ATIF ALI MUSA"]);
+    assert.equal((line?.doctorShareFcfa ?? 0) + (line?.clinicShareFcfa ?? 0), 15_000);
+  });
+
+  it("ne donne toujours pas de part sur un examen de laboratoire", () => {
+    const [line] = summarizeRegistrationInvoices([act("l1", "examen", "PATIENT_EXTERNE")]);
+    assert.equal(line?.doctorShareFcfa ?? 0, 0);
+  });
+});

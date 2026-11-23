@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { effectiveDoctorCategory, inferDoctorCategory, normalizeDoctorCategory } from "./doctor-profile.js";
+import {
+  effectiveDoctorCategory,
+  inferDoctorCategory,
+  normalizeDoctorCategory,
+  resolveEmployeeIsMedecin,
+} from "./doctor-profile.js";
 
 describe("catégorie médecin", () => {
   it("déduit la catégorie du poste, puis de la spécialité", () => {
@@ -38,5 +43,17 @@ describe("catégorie médecin", () => {
     );
     assert.equal(normalizeDoctorCategory("GENERALISTE", false), null);
     assert.equal(normalizeDoctorCategory("GENERALISTE", true), "GENERALISTE");
+  });
+});
+
+describe("profil médecin ou personnel", () => {
+  it("garde le choix Personnel même avec un poste de médecin (ex. Radiologue)", () => {
+    assert.equal(resolveEmployeeIsMedecin(false, "Radiologue"), false);
+    assert.equal(resolveEmployeeIsMedecin(true, "Technicien radio"), true);
+  });
+
+  it("déduit le profil du poste quand aucun choix n'est fait", () => {
+    assert.equal(resolveEmployeeIsMedecin(undefined, "Radiologue"), true);
+    assert.equal(resolveEmployeeIsMedecin(undefined, "Technicien radio"), false);
   });
 });

@@ -462,12 +462,22 @@ export function operationShare(invoice: PricedInvoice, amountFcfa: number): Shar
   };
 }
 
+/**
+ * Acte d'odontologie ou de spécialité : pour un patient externe il reste dans la ligne
+ * examen, mais le médecin touche son % de consultation comme pour un patient consulté.
+ */
+function paysConsultationShare(invoice: SummaryInvoice, group: DayClosureLineGroup): boolean {
+  if (group === "consultation") return true;
+  const kind = invoice.billingExamKind?.trim();
+  return group === "exam" && invoice.type === InvoiceType.LAB_EXAM && (kind === "odonto" || kind === "specialty");
+}
+
 function invoiceShare(
   invoice: PricedInvoice,
   group: DayClosureLineGroup,
   amountFcfa: number,
 ): ShareResult {
-  if (group === "consultation") return consultationShare(invoice, amountFcfa);
+  if (paysConsultationShare(invoice, group)) return consultationShare(invoice, amountFcfa);
   if (group === "operation") return operationShare(invoice, amountFcfa);
   return NO_SHARE;
 }
@@ -891,8 +901,9 @@ export function summarizeRegistrationInvoices(invoices: PricedInvoice[]): Regist
     const surgeonName = group === "operation" ? lineDoctorName(invoice, group) : "";
     const assistantName = group === "operation" ? operationAssistantName(invoice) : "";
     // Consultation : le médecin affiché est celui dont la part est calculée.
-    const consultationDoctorName =
-      group === "consultation" ? lineDoctorName(invoice, group) : "";
+    const consultationDoctorName = paysConsultationShare(invoice, group)
+      ? lineDoctorName(invoice, group)
+      : "";
     if (surgeonName) row.doctorNameSet.add(surgeonName);
     if (assistantName) row.doctorNameSet.add(assistantName);
     if (consultationDoctorName) row.doctorNameSet.add(consultationDoctorName);
@@ -922,7 +933,7 @@ export function summarizeRegistrationInvoices(invoices: PricedInvoice[]): Regist
     if (group === "operation") {
       addDoctorShare(row, surgeonName, surgeonOperationShare(invoice, shareBase));
       addDoctorShare(row, assistantName, assistantOperationShare(invoice, shareBase));
-    } else if (group === "consultation") {
+    } else if (consultationDoctorName) {
       addDoctorShare(row, consultationDoctorName, share);
     }
     // Reste clinique : part médecins + part clinique = montant de la ligne.

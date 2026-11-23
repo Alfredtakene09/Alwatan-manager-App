@@ -739,7 +739,7 @@ router.put("/employees/:id", async (req, res) => {
     const body = gestionnaireEmployeeSchema.partial().parse(req.body);
     const existing = await prisma.employee.findUnique({
       where: { id: employeeId },
-      include: { user: { select: { role: true } } },
+      include: { user: { select: { role: true, username: true } } },
     });
     if (!existing) return res.status(404).json({ error: "Employé introuvable" });
 
@@ -751,7 +751,7 @@ router.put("/employees/:id", async (req, res) => {
     );
     if (existing.user?.role === UserRole.MEDECIN && !nextIsMedecin) {
       return res.status(409).json({
-        error: "Impossible de retirer le statut médecin : un compte utilisateur médecin y est lié.",
+        error: `Impossible de passer cette fiche en Personnel : le compte « ${existing.user.username} » a le rôle Médecin. Changez d'abord le rôle de ce compte dans Utilisateurs, puis enregistrez la fiche.`,
       });
     }
 
