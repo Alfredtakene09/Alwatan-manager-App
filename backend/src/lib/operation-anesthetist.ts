@@ -1,6 +1,6 @@
 /**
  * Anesthésiste obligatoire (avec son %) pour toute opération enregistrée,
- * sauf en Ophtalmologie et en Odontologie.
+ * sauf en Ophtalmologie et en Odontologie, et jamais pour un accouchement.
  */
 
 const ANESTHETIST_OPTIONAL_SERVICE_KEYS = ["ophtalm", "odonto"];
@@ -15,6 +15,14 @@ function foldServiceName(value: string | null | undefined) {
 export function isAnesthetistOptionalService(serviceName: string | null | undefined) {
   const folded = foldServiceName(serviceName);
   return ANESTHETIST_OPTIONAL_SERVICE_KEYS.some((key) => folded.includes(key));
+}
+
+/** Opérations sans anesthésiste du tout (repérées par leur nom). */
+const ANESTHETIST_EXEMPT_OPERATION_KEYS = ["accouchement"];
+
+export function isAnesthetistExemptOperation(operationLabel: string | null | undefined) {
+  const folded = foldServiceName(operationLabel);
+  return ANESTHETIST_EXEMPT_OPERATION_KEYS.some((key) => folded.includes(key));
 }
 
 export type OperationAnesthetistInput = {
@@ -38,7 +46,9 @@ export const OPERATION_ANESTHETIST_REQUIRED_MESSAGE =
 export function operationAnesthetistError(
   serviceName: string | null | undefined,
   assistant: OperationAnesthetistInput,
+  operationLabel?: string | null,
 ) {
+  if (isAnesthetistExemptOperation(operationLabel)) return null;
   if (isAnesthetistOptionalService(serviceName)) return null;
   return hasOperationAnesthetist(assistant) ? null : OPERATION_ANESTHETIST_REQUIRED_MESSAGE;
 }

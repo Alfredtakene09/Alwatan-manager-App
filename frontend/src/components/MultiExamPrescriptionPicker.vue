@@ -21,6 +21,7 @@ import UiButton from '@/components/ui/UiButton.vue'
 import api from '@/api/client'
 import { formatFcfa } from '@/lib/format-fcfa'
 import { clinicPercentFromSplits } from '@/lib/intervention-splits'
+import { isAnesthetistExemptOperation } from '@/lib/operation-anesthetist'
 import {
   EXAM_KIND_LABELS,
   EXAM_KIND_ORDER,
@@ -925,9 +926,13 @@ const showOperationPricePanel = computed(
     (receptionistFreePrice.value && !!selectedOperationServiceId.value),
 )
 
+/** Accouchement : pas d'anesthésiste — ni panneau, ni part. */
+const operationWithoutAnesthetist = computed(() => isAnesthetistExemptOperation(cartOperationLabel.value))
+
 const showOperationAssistantPanel = computed(
   () =>
     props.showOperationAssistant &&
+    !operationWithoutAnesthetist.value &&
     (!!cartOperationLabel.value ||
       (receptionistFreePrice.value && !!selectedOperationServiceId.value)),
 )
@@ -1059,13 +1064,15 @@ const operationSharePreview = computed(() => {
   const formAssistantPct = assistantForm.value.withAssistant
     ? Math.min(99, Math.max(0, Math.round(Number(assistantForm.value.percent) || 0)))
     : 0
-  const assistantPct = Math.min(
-    100,
-    Math.max(
-      0,
-      formAssistantPct || Math.round(exam.anesthesiologistPercent ?? 0),
-    ),
-  )
+  const assistantPct = operationWithoutAnesthetist.value
+    ? 0
+    : Math.min(
+        100,
+        Math.max(
+          0,
+          formAssistantPct || Math.round(exam.anesthesiologistPercent ?? 0),
+        ),
+      )
   const clinicPct = clinicPercentFromSplits(surgeonPct, assistantPct)
   const surgeonShareFcfa = Math.round((total * surgeonPct) / 100)
   const assistantShareFcfa =
@@ -1248,7 +1255,7 @@ function emitOperationAssistant() {
     emit('update:operationAssistant', null)
     return
   }
-  if (!assistantForm.value.withAssistant) {
+  if (operationWithoutAnesthetist.value || !assistantForm.value.withAssistant) {
     emit('update:operationAssistant', { anesthesiologistPercent: 0 })
     return
   }

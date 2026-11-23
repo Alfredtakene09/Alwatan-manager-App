@@ -247,6 +247,7 @@ const operationAnesthetistOk = computed(() => {
       operationLabel: examsByKind.value.operation?.find(Boolean) ?? null,
     }),
     operationAssistant.value,
+    examsByKind.value.operation?.find(Boolean) ?? null,
   )
 })
 const operationPercentReady = computed(() => {

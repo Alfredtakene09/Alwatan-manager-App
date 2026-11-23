@@ -256,6 +256,7 @@ const registerAnesthetistReady = computed(() =>
       operationLabel: registerExams.value.operation?.find(Boolean) ?? null,
     }),
     operationAssistant.value,
+    registerExams.value.operation?.find(Boolean) ?? null,
   ),
 )
 

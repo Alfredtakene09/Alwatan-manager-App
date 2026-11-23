@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   hasOperationAnesthetist,
+  isAnesthetistExemptOperation,
   isAnesthetistOptionalService,
   operationAnesthetistError,
 } from "./operation-anesthetist.js";
@@ -22,6 +23,15 @@ describe("anesthésiste obligatoire sur une opération", () => {
     assert.equal(hasOperationAnesthetist({ anesthesiologistId: "u1", anesthesiologistPercent: 11 }), true);
     assert.equal(hasOperationAnesthetist({ anesthesiologistName: "AWAD", anesthesiologistPercent: 11 }), true);
     assert.equal(hasOperationAnesthetist({ anesthesiologistName: "  ", anesthesiologistPercent: 11 }), false);
+  });
+
+  it("n'exige jamais d'anesthésiste pour un accouchement", () => {
+    assert.equal(isAnesthetistExemptOperation("Accouchement naturel"), true);
+    assert.equal(isAnesthetistExemptOperation("ACCOUCHEMENT"), true);
+    assert.equal(isAnesthetistExemptOperation("Césarienne"), false);
+    assert.equal(isAnesthetistExemptOperation(null), false);
+    assert.equal(operationAnesthetistError("Gynécologie", null, "Accouchement naturel"), null);
+    assert.ok(operationAnesthetistError("Gynécologie", null, "Césarienne"));
   });
 
   it("refuse une opération sans anesthésiste hors services exemptés", () => {

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { operationAnesthetistError } from "../lib/operation-anesthetist.js";
+import { isAnesthetistExemptOperation, operationAnesthetistError } from "../lib/operation-anesthetist.js";
 import { z } from "zod";
 import { ConsultationQuotaMode, InterventionCategory, InvoiceStatus, InvoiceType, PatientCategory, Prisma, SurgeryStatus, UserRole, VisitStatus } from "@prisma/client";
 import { prisma } from "../lib/db.js";
@@ -170,6 +170,9 @@ function mapVisitWithBilling<T extends {
     },
   };
 }
+
+/** Nombre maximal de visites renvoyées par une file (les plus récentes sont gardées). */
+const VISIT_QUEUE_LIMIT = 300;
 
 const router = Router();
 router.use(requireAuth);
@@ -393,15 +396,17 @@ router.get("/", async (req, res) => {
       ...(Object.keys(ownVisits).length ? [ownVisits] : []),
     ],
   };
-  const visits = await prisma.visit.findMany({
+  const recentFirst = queue === "consulted" || queue === "my-patients";
+  // Les files d'attente s'affichent de la plus ancienne à la plus récente, mais la limite doit
+  // garder les visites les PLUS RÉCENTES : sinon, dès que la file dépasse la limite, les
+  // patients du jour disparaissent derrière d'anciennes visites jamais clôturées.
+  const fetched = await prisma.visit.findMany({
     where: consultationWhere,
     include: visitInclude,
-    orderBy:
-      queue === "consulted" || queue === "my-patients"
-        ? { updatedAt: "desc" }
-        : { createdAt: "asc" },
-    take: queue === "consulted" ? 200 : 100,
+    orderBy: recentFirst ? { updatedAt: "desc" } : [{ createdAt: "desc" }, { id: "desc" }],
+    take: VISIT_QUEUE_LIMIT,
   });
+  const visits = recentFirst ? fetched : fetched.reverse();
 
   let viewerDoctor: DoctorProfile | null = null;
   if (canAccessModule(user.role, "consultation") && queue !== "supervision") {
@@ -1553,7 +1558,10 @@ async function syncReceptionOperationCase(
         ? quota
         : intervention.surgeonPercent;
 
-  const assistant = params.operationAssistant;
+  // Accouchement : jamais d'anesthésiste, même si la fiche du catalogue en porte un.
+  const assistant = isAnesthetistExemptOperation(intervention.label)
+    ? { anesthesiologistPercent: 0 }
+    : params.operationAssistant;
   let assistantPercent = Math.min(
     99,
     Math.max(
@@ -2257,7 +2265,11 @@ router.post("/external-lab-order", requireModule("reception"), async (req, res) 
         body.service ??
         postedOperationLabels[0] ??
         null;
-      const anesthetistError = operationAnesthetistError(serviceName, body.operationAssistant);
+      const anesthetistError = operationAnesthetistError(
+        serviceName,
+        body.operationAssistant,
+        postedOperationLabels[0],
+      );
       if (anesthetistError) return res.status(400).json({ error: anesthetistError });
     }
 
