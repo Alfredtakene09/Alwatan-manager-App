@@ -165,14 +165,16 @@ export function inferIsMedecinFromJobTitle(jobTitle?: string | null): boolean {
   );
 }
 
-/** Profil médecin explicite ou déduit du poste. */
+/**
+ * Profil médecin : le choix fait sur la fiche (Médecin / Personnel) prime ;
+ * sans choix, il est déduit du poste (ex. « Radiologue »).
+ */
 export function resolveEmployeeIsMedecin(
   explicit: boolean | undefined,
   jobTitle?: string | null,
 ): boolean {
-  if (explicit === true) return true;
-  if (explicit === false && !inferIsMedecinFromJobTitle(jobTitle)) return false;
-  return Boolean(explicit) || inferIsMedecinFromJobTitle(jobTitle);
+  if (explicit !== undefined) return explicit;
+  return inferIsMedecinFromJobTitle(jobTitle);
 }
 
 /** Retourne la valeur Prisma à persister, ou `undefined` si le champ ne doit pas être touché. */
