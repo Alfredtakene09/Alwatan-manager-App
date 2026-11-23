@@ -401,15 +401,45 @@ export async function hardDeleteEmployee(
   return hardDeleteLoadedEmployee(existing, actorUserId);
 }
 
-/** Suppression définitive depuis la liste des utilisateurs. */
+/**
+ * Suppression définitive depuis la liste des utilisateurs : retire uniquement le compte
+ * application. La fiche employé (paies, services, rémunération) est conservée.
+ */
 export async function hardDeleteUserAccount(
   userId: string,
   actorUserId: string,
 ): Promise<EmployeeDeletionResult> {
-  const existing = await prisma.employee.findFirst({
-    where: { user: { id: userId } },
-    include: { user: { select: { id: true, role: true, active: true } } },
+  const existing = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, role: true, active: true, firstName: true, lastName: true },
   });
   if (!existing) return { mode: "not_found" };
-  return hardDeleteLoadedEmployee(existing, actorUserId);
+  if (existing.id === actorUserId) {
+    return { mode: "blocked", status: 409, error: "Vous ne pouvez pas supprimer votre propre compte." };
+  }
+  if (existing.role === UserRole.ADMIN && existing.active) {
+    const others = await countOtherActiveAdmins(existing.id);
+    if (others === 0) return { mode: "blocked", status: 409, error: LAST_ACTIVE_ADMIN_ERROR };
+  }
+
+  const displayName = `${existing.firstName} ${existing.lastName}`.trim();
+  try {
+    await prisma.$transaction(async (tx) => {
+      await clearOptionalUserLinks(tx, existing.id, displayName);
+      await tx.user.delete({ where: { id: existing.id } });
+    });
+  } catch (error) {
+    if (error instanceof PersonDeleteBlockedError) {
+      return { mode: "blocked", status: 409, error: error.message };
+    }
+    if (isForeignKeyError(error)) {
+      return { mode: "blocked", status: 409, error: PERSON_DELETE_BLOCKED };
+    }
+    throw error;
+  }
+
+  return {
+    mode: "hard",
+    message: `Le compte de « ${displayName} » a été supprimé. Sa fiche employé est conservée.`,
+  };
 }
