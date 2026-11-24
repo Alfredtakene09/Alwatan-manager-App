@@ -193,6 +193,8 @@ const receptionistPatientEditSchema = z
       }),
     service: z.string().max(120).optional(),
     doctorId: z.string().optional(),
+    /** Patient ONG : partenaire qui prend en charge. */
+    ongName: z.string().max(160).optional(),
   })
   .strict()
   .superRefine((data, ctx) => {
@@ -1730,6 +1732,9 @@ router.patch("/:id", requireModule("reception"), requireUiAction("reception.edit
             ageUnit: body.ageUnit,
             phone: body.phone === undefined ? undefined : body.phone.trim() || null,
             service: body.service === undefined ? undefined : body.service.trim() || null,
+            ...(body.ongName !== undefined && existing.category === PatientCategory.ONG
+              ? { ongName: normalizeRecommendedByName(body.ongName) }
+              : {}),
             updatedById: req.user!.id,
           },
           include: { treatingDoctor: { select: treatingDoctorSelect } },

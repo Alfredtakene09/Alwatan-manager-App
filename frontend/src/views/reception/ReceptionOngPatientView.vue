@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { UserPlus, RotateCcw, Printer, Handshake, Building2 } from '@lucide/vue'
+import { UserPlus, RotateCcw, Printer, Handshake, Building2, Pencil, Trash2, Save } from '@lucide/vue'
 import api from '@/api/client'
-import { showDuplicateModalFromError } from '@/lib/api-modal-helper'
+import { confirmAppModal, showApiErrorModal, showDuplicateModalFromError } from '@/lib/api-modal-helper'
 import { fullName } from '@/lib/roles'
-import { parsePatientAge, splitPatientFullName, formatPatientAge } from '@/lib/patient-name'
+import { joinPatientFullName, parsePatientAge, splitPatientFullName } from '@/lib/patient-name'
 import { normalizePatientAgeUnit, type PatientAgeUnit } from '@/lib/patient-age'
 import {
   doctorMatchesService,
@@ -14,8 +14,12 @@ import {
   sortDoctorsForReception,
   type DoctorOption,
 } from '@/lib/doctor-compensation'
-import { CLINIC } from '@/lib/clinic'
-import { buildClinicPrintHeader, cancelPrintWindow, openPrintDocument, reservePrintWindow } from '@/lib/print-document'
+import {
+  buildConsultationReceiptHtml,
+  cancelPrintWindow,
+  openPrintDocument,
+  reservePrintWindow,
+} from '@/lib/print-document'
 import { useAppI18n } from '@/i18n/useAppI18n'
 import { translateTemplate } from '@/lib/dashboard-i18n'
 import ReceptionPatientIdentityFields from '@/components/reception/ReceptionPatientIdentityFields.vue'
@@ -32,6 +36,7 @@ import { useAuthStore } from '@/stores/auth'
 const auth = useAuthStore()
 /** L'onglet Partenaires (gestion de la liste) est réservé à l'administrateur. */
 const isAdmin = computed(() => auth.user?.role === 'ADMIN')
+const isReceptionist = computed(() => auth.user?.role === 'RECEPTIONNISTE')
 const activeTab = ref<'patients' | 'partners'>('patients')
 
 function goToPartnersTab() {
@@ -65,6 +70,24 @@ const message = ref('')
 const messageType = ref<'success' | 'error'>('success')
 const search = ref('')
 const partners = ref<Array<{ id: string; name: string }>>([])
+/** Dossier en cours de modification (null = nouvel enregistrement). */
+const editingId = ref<string | null>(null)
+const busyRowId = ref<string | null>(null)
+
+type OngPatientDetail = OngPatientRow & {
+  treatingDoctorId?: string | null
+  waitingVisit?: {
+    doctorId?: string | null
+    doctor?: { firstName: string; lastName: string } | null
+    serviceName?: string | null
+    consultationFeeFcfa?: number | null
+    consultationAmountFcfa?: number | null
+    reductionFcfa?: number | null
+    totalFcfa?: number | null
+    invoiceNumber?: string | null
+  } | null
+  consultationPayment?: { amountFcfa?: number | null; invoiceNumber?: string | null } | null
+}
 
 async function loadPartners() {
   try {
@@ -158,9 +181,63 @@ function syncDoctorsForService() {
 
 async function openFormModal() {
   await Promise.all([loadServices(), loadPartners()])
+  editingId.value = null
   resetForm()
   message.value = ''
   showFormModal.value = true
+}
+
+async function openEditModal(row: OngPatientRow) {
+  busyRowId.value = row.id
+  try {
+    const [{ data }] = await Promise.all([
+      api.get<OngPatientDetail>(`/patients/${row.id}`),
+      loadServices(),
+      loadPartners(),
+    ])
+    editingId.value = row.id
+    message.value = ''
+    form.value = {
+      fullName: joinPatientFullName(data.firstName, data.lastName),
+      age: data.age != null ? String(data.age) : '',
+      ageUnit: normalizePatientAgeUnit(data.ageUnit),
+      phone: data.phone ?? '',
+      service: data.service?.trim() || data.waitingVisit?.serviceName?.trim() || '',
+      gender: data.gender ?? 'F',
+      ongName: data.ongName ?? '',
+      doctorId: data.waitingVisit?.doctorId ?? '',
+      treatingDoctorId: data.treatingDoctorId ?? '',
+    }
+    showFormModal.value = true
+  } catch (error) {
+    await showApiErrorModal(error, 'Impossible de charger le dossier patient.')
+  } finally {
+    busyRowId.value = null
+  }
+}
+
+async function deleteOngPatient(row: OngPatientRow) {
+  const confirmed = await confirmAppModal({
+    type: 'DELETE',
+    title: uiText('Supprimer le patient (admin)'),
+    message: translateTemplate(
+      'Supprimer le dossier {code} — {name} ? Visites, consultations et documents liés seront supprimés. La somme déjà encaissée sera aussi retirée du solde. Cette action est irréversible.',
+      { code: row.code, name: fullName(row.firstName, row.lastName) },
+    ),
+    confirmLabel: uiText('Supprimer'),
+  })
+  if (!confirmed) return
+  busyRowId.value = row.id
+  try {
+    await api.delete(`/patients/${row.id}`)
+    message.value = translateTemplate('Dossier {code} supprimé.', { code: row.code })
+    messageType.value = 'success'
+    await loadQueue()
+  } catch (error) {
+    await showApiErrorModal(error, 'Impossible de supprimer ce patient.')
+  } finally {
+    busyRowId.value = null
+  }
 }
 
 async function loadDoctors() {
@@ -203,7 +280,8 @@ async function loadQueue() {
 
 async function registerOngPatient() {
   if (!canRegister.value || registering.value) return
-  reservePrintWindow('A4')
+  if (editingId.value) return updateOngPatient(editingId.value)
+  reservePrintWindow('80mm')
   registering.value = true
   message.value = ''
   try {
@@ -230,7 +308,7 @@ async function registerOngPatient() {
       doctor: getDoctorName(form.value.doctorId),
     })
     messageType.value = 'success'
-    printFiche({ ...data.patient, createdAt: new Date().toISOString() })
+    await printOngReceipt(data.patient.id)
     showFormModal.value = false
     resetForm()
     await loadQueue()
@@ -249,22 +327,85 @@ async function registerOngPatient() {
   }
 }
 
-function printFiche(row: OngPatientRow) {
-  const patientName = fullName(row.firstName, row.lastName)
+async function updateOngPatient(patientId: string) {
+  registering.value = true
+  message.value = ''
+  try {
+    const { firstName, lastName } = parsedName.value
+    // La réceptionniste a un formulaire restreint (pas de sexe ni de médecin traitant).
+    await api.patch(`/patients/${patientId}`, {
+      firstName,
+      lastName,
+      age: parsedAge.value ?? undefined,
+      ageUnit: form.value.ageUnit,
+      phone: form.value.phone.trim(),
+      service: form.value.service || undefined,
+      doctorId: form.value.doctorId || undefined,
+      ongName: form.value.ongName.trim(),
+      ...(isReceptionist.value
+        ? {}
+        : {
+            gender: form.value.gender,
+            category: 'ONG',
+            treatingDoctorId: form.value.treatingDoctorId || null,
+          }),
+    })
+    message.value = uiText('Dossier mis à jour.')
+    messageType.value = 'success'
+    showFormModal.value = false
+    editingId.value = null
+    await loadQueue()
+  } catch (error: unknown) {
+    const shown = await showDuplicateModalFromError(error)
+    if (!shown) await showApiErrorModal(error, 'Impossible de modifier le dossier.')
+  } finally {
+    registering.value = false
+  }
+}
+
+/** Reçu de consultation 80 mm, identique aux autres patients (fenêtre déjà réservée). */
+async function printOngReceipt(patientId: string) {
+  const { data: detail } = await api.get<OngPatientDetail>(`/patients/${patientId}`)
+  const visit = detail.waitingVisit
+  const payment = detail.consultationPayment
+  const reduction = Math.max(0, visit?.reductionFcfa ?? 0)
+  const fee = Number(visit?.consultationFeeFcfa) || Number(visit?.consultationAmountFcfa) || 0
+  const invoiceNet = Number(visit?.totalFcfa) || Number(payment?.amountFcfa) || 0
+  const amount = fee > 0 ? fee : invoiceNet > 0 ? invoiceNet + reduction : 0
+  const total = invoiceNet > 0 ? invoiceNet : Math.max(0, amount - reduction)
   openPrintDocument(
-    `${uiText('Fiche patient ONG / Partenaire')} ${row.code}`,
-    `
-${buildClinicPrintHeader(uiText('Fiche patient — ONG / Partenaire'))}
-  <div class="row"><span>${uiText('Date')}</span><strong>${dateTimeText(row.createdAt)}</strong></div>
-  <div class="row"><span>${uiText('Patient')}</span><strong>${patientName}</strong></div>
-  <div class="row"><span>${uiText('Matricule')}</span><strong>${row.code}</strong></div>
-  ${row.ongName ? `<div class="row"><span>${uiText('ONG / Partenaire')}</span><strong>${row.ongName}</strong></div>` : ''}
-  ${row.service ? `<div class="row"><span>${uiText('Service')}</span><strong>${clinicServiceText(row.service)}</strong></div>` : ''}
-  ${row.phone ? `<div class="row"><span>${uiText('Téléphone')}</span><strong>${row.phone}</strong></div>` : ''}
-  ${row.age != null ? `<div class="row"><span>${uiText('Âge')}</span><strong>${formatPatientAge(row.age, normalizePatientAgeUnit(row.ageUnit))}</strong></div>` : ''}
-  <div class="footer">${CLINIC.fullAddress}<br>${CLINIC.phoneLabel} — ${CLINIC.email}</div>
-`,
+    translateTemplate('Reçu {code}', { code: detail.code }),
+    buildConsultationReceiptHtml({
+      patientCode: detail.code,
+      patientName: fullName(detail.firstName, detail.lastName),
+      doctorName: visit?.doctor ? `Dr ${fullName(visit.doctor.firstName, visit.doctor.lastName)}` : '—',
+      amount,
+      reduction,
+      total,
+      invoiceNumber: visit?.invoiceNumber ?? payment?.invoiceNumber ?? uiText('Facturation différée'),
+      date: new Date().toLocaleString('fr-FR'),
+      age: detail.age,
+      ageUnit: normalizePatientAgeUnit(detail.ageUnit),
+      gender: detail.gender,
+      phone: detail.phone,
+      processedBy: auth.user ? fullName(auth.user.firstName, auth.user.lastName) : undefined,
+    }),
+    { pageSize: '80mm', autoPrint: true, thermalTight: true },
   )
+}
+
+async function printReceiptForRow(row: OngPatientRow) {
+  if (busyRowId.value) return
+  busyRowId.value = row.id
+  reservePrintWindow('80mm')
+  try {
+    await printOngReceipt(row.id)
+  } catch (error) {
+    cancelPrintWindow()
+    await showApiErrorModal(error, "Impossible d'imprimer le reçu.")
+  } finally {
+    busyRowId.value = null
+  }
 }
 
 const queueCountLabel = computed(() => {
@@ -350,7 +491,35 @@ onMounted(() => {
               <td>{{ row.phone || '—' }}</td>
               <td>{{ dateTimeText(row.createdAt) }}</td>
               <td class="col-actions">
-                <UiButton variant="ghost" size="sm" :icon="Printer" @click="printFiche(row)">Fiche</UiButton>
+                <UiButton
+                  variant="ghost"
+                  size="sm"
+                  :icon="Printer"
+                  :title="uiText('Imprimer le reçu')"
+                  :aria-label="uiText('Imprimer le reçu')"
+                  :disabled="!!busyRowId"
+                  @click="printReceiptForRow(row)"
+                />
+                <UiButton
+                  variant="ghost"
+                  size="sm"
+                  :icon="Pencil"
+                  :title="uiText('Modifier')"
+                  :aria-label="uiText('Modifier')"
+                  :disabled="!!busyRowId"
+                  @click="openEditModal(row)"
+                />
+                <UiButton
+                  v-if="isAdmin"
+                  variant="ghost"
+                  size="sm"
+                  class="action-delete"
+                  :icon="Trash2"
+                  :title="uiText('Supprimer')"
+                  :aria-label="uiText('Supprimer')"
+                  :disabled="!!busyRowId"
+                  @click="deleteOngPatient(row)"
+                />
               </td>
             </tr>
           </tbody>
@@ -362,7 +531,7 @@ onMounted(() => {
     <UiFormModal
       v-if="showFormModal"
       title-id="ong-patient-modal-title"
-      title="Nouveau patient ONG / Partenaire"
+      :title="editingId ? 'Modifier le patient ONG / Partenaire' : 'Nouveau patient ONG / Partenaire'"
       subtitle="Le parcours est facturé comme un patient standard"
       :icon="UserPlus"
       @close="showFormModal = false"
@@ -431,10 +600,10 @@ onMounted(() => {
           type="submit"
           form="ong-patient-form"
           variant="primary"
-          :icon="UserPlus"
+          :icon="editingId ? Save : UserPlus"
           :disabled="!canRegister || registering"
         >
-          {{ registering ? uiText('Enregistrement…') : uiText('Enregistrer') }}
+          {{ registering ? uiText('Enregistrement…') : uiText(editingId ? 'Mettre à jour' : 'Enregistrer') }}
         </UiButton>
       </template>
     </UiFormModal>
@@ -442,6 +611,10 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.col-actions :deep(.action-delete) {
+  color: #be123c;
+}
+
 .ong-form {
   display: flex;
   flex-direction: column;
