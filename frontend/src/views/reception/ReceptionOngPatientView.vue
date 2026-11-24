@@ -121,12 +121,13 @@ const filteredQueue = computed(() => {
 
 const canRegister = computed(() => {
   const { firstName, lastName } = parsedName.value
+  // Téléphone facultatif (comme à la réception), mais au moins 6 chiffres s'il est saisi.
   const phoneDigits = form.value.phone.replace(/\D/g, '')
   return (
     firstName.length >= 2 &&
     lastName.length >= 2 &&
     parsedAge.value !== null &&
-    phoneDigits.length >= 6 &&
+    (!form.value.phone.trim() || phoneDigits.length >= 6) &&
     !!form.value.service &&
     form.value.ongName.trim().length >= 2 &&
     !!form.value.doctorId
